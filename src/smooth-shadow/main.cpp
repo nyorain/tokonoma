@@ -85,15 +85,16 @@ int main(int argc, const char** argv) {
 	instanceInfo.enabledExtensionCount = iniExtensions.size();
 	instanceInfo.ppEnabledExtensionNames = iniExtensions.data();
 
+	std::vector<const char*> layers;
 	if(useValidation) {
-		std::vector<const char*> layers = {
-			"VK_LAYER_LUNARG_standard_validation"
-		};
+		layers.push_back("VK_LAYER_LUNARG_standard_validation");
+	}
 
-		if(args["renderdoc"]) {
-			layers.push_back("VK_LAYER_RENDERDOC_Capture");
-		}
+	if(args["renderdoc"]) {
+		layers.push_back("VK_LAYER_RENDERDOC_Capture");
+	}
 
+	if(!layers.empty()) {
 		instanceInfo.enabledLayerCount = layers.size();
 		instanceInfo.ppEnabledLayerNames = layers.data();
 	}

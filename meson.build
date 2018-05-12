@@ -40,5 +40,6 @@ dep_dlg = dependency('dlg', fallback: ['dlg', 'dlg_dep'])
 dep_ny = dependency('ny', fallback: ['ny', 'ny_dep'])
 dep_vulkan = dependency('vulkan')
 
+subdir('src/shaders')
 subdir('src/stage')
 subdir('src/smooth-shadow')

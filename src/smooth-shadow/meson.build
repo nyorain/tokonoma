@@ -1,6 +1,7 @@
 smooth_shadow_src = [
 	'light.cpp',
 	'main.cpp',
+	shaders,
 ]
 
 executable('smooth_shadow',

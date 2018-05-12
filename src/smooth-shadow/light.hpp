@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stage/geometry.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/framebuffer.hpp>
@@ -11,7 +12,7 @@
 class LightSystem;
 
 struct ShadowSegment {
-	kyo::Segment2f seg;
+	doi::Segment2f seg;
 	float opacity;
 };
 
@@ -36,14 +37,14 @@ public:
 	const auto& framebuffer() const { return framebuffer_; }
 
 protected:
-	void writeUBO(std::byte*& data);
+	void writeUBO(nytl::Span<std::byte>& data);
 	void init(LightSystem& system);
 
 protected:
 	vpp::Framebuffer framebuffer_;
 	vpp::ViewableImage shadowTarget_;
 
-	vpp::SharedBuffer buffer_;
+	vpp::SubBuffer buffer_;
 	vpp::TrDs shadowDs_;
 	vpp::TrDs lightDs_;
 };
@@ -51,7 +52,7 @@ protected:
 /// Owns and manages all lights in a level.
 class LightSystem {
 public:
-	LightSystem(const vpp::Device& dev);
+	LightSystem(vpp::Device& dev);
 
 	void renderLights(vk::CommandBuffer);
 	void renderShadowBuffers(vk::CommandBuffer);
@@ -62,26 +63,33 @@ public:
 	void update(double delta);
 	void updateDevice();
 
+	auto& device() const { return dev_; }
+	const auto& shadowDsLayout() const { return shadowDsLayout_; }
+	const auto& lightDsLayout() const { return lightDsLayout_; }
+	const auto& shadowPass() const { return shadowPass_; }
+	const auto& lightPass() const { return lightPass_; }
+
 protected:
-	nytl::Vec2ui renderSize;
-	vpp::ViewableImage renderTarget;
-	vpp::Framebuffer framebuffer;
+	vpp::Device& dev_;
+	nytl::Vec2ui renderSize_;
+	vpp::ViewableImage renderTarget_;
+	vpp::Framebuffer framebuffer_;
 
-	vpp::RenderPass renderPass; // should be called lightPass
-	vpp::RenderPass shadowPass;
+	vpp::RenderPass lightPass_;
+	vpp::RenderPass shadowPass_;
 
-	vpp::Pipeline shadowPipe;
-	vpp::Pipeline lightPipe;
-	vpp::Pipeline mirrorLightPipe;
-	vpp::Pipeline mirrorShadowPipe;
-	vpp::Sampler sampler;
+	vpp::Pipeline shadowPipe_;
+	vpp::Pipeline lightPipe_;
+	vpp::Pipeline mirrorLightPipe_;
+	vpp::Pipeline mirrorShadowPipe_;
+	vpp::Sampler sampler_;
 
-	vpp::TrDsLayout shadowDsLayout;
-	vpp::TrDsLayout lightDsLayout;
-	vpp::PipelineLayout shadowPipeLayout;
-	vpp::PipelineLayout lightPipeLayout;
+	vpp::TrDsLayout shadowDsLayout_;
+	vpp::TrDsLayout lightDsLayout_;
+	vpp::PipelineLayout shadowPipeLayout_;
+	vpp::PipelineLayout lightPipeLayout_;
 
-	std::vector<ShadowSegment> segments;
-	vpp::SharedBuffer vertexBuffer;
-	std::vector<Light> lights;
+	std::vector<ShadowSegment> segments_;
+	vpp::SubBuffer vertexBuffer_;
+	std::vector<Light> lights_;
 };
