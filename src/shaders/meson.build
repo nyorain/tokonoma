@@ -3,10 +3,13 @@ shaders_dep = [
 ]
 
 shaders_src = [
+	'fullscreen.vert',
+
 	'light.vert',
 	'light.frag',
 	'shadow.vert',
-	'shadow.frag'
+	'shadow.frag',
+	'light_pp.frag',
 ]
 
 shaders = []

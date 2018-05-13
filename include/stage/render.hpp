@@ -29,7 +29,8 @@ struct RendererCreateInfo {
 
 class Renderer : public vpp::DefaultRenderer {
 public:
-	nytl::Callback<void(vk::CommandBuffer)> onRender;
+	std::function<void(vk::CommandBuffer)> beforeRender;
+	std::function<void(vk::CommandBuffer)> onRender;
 
 public:
 	Renderer(const RendererCreateInfo& info);

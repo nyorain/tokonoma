@@ -21,6 +21,7 @@ Circle lightCircle() {
 }
 
 void main() {
+	// TODO: benchmark if branching here really makes sense
 	if(inValue.x < 0) {
 		outColor = shadowValue(lightCircle(), inPos, inPointA, inPointB);
 	} else {

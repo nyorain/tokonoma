@@ -14,11 +14,6 @@ layout(location = 2) out vec2 outPointB;
 layout(location = 3) out float outOpacity;
 layout(location = 4) out vec2 outValue;
 
-layout(set = 0, binding = 0) uniform Level {
-	vec2 scale;
-	vec2 translate;
-} level;
-
 layout(set = 1, binding = 0) uniform Light {
 	vec4 _color;
 	vec2 position;
@@ -39,7 +34,7 @@ void main() {
 	outPointA = swap ? inPointB : inPointA;
 	outPointB = swap ? inPointA : inPointB;
 
-	ShadowVertex vert = smoothShadowVertex(gl_VertexIndex, inPointA, inPointB, 
+	ShadowVertex vert = smoothShadowVertex(gl_VertexIndex, inPointA, inPointB,
 		lightCircle(), inOpacity > 0);
 
 	outOpacity = abs(inOpacity);

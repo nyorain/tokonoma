@@ -2,20 +2,45 @@
 // Distributed under the Boost Software License, Version 1.0.
 // See accompanying file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt
 
+#include "light.hpp"
 #include <stage/window.hpp>
 #include <stage/render.hpp>
 #include <argagg.hpp>
 
 #include <vpp/instance.hpp>
 #include <vpp/device.hpp>
+#include <vpp/trackedDescriptor.hpp>
+#include <vpp/sharedBuffer.hpp>
 #include <vpp/physicalDevice.hpp>
+#include <vpp/pipelineInfo.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/vk.hpp>
 
 #include <ny/backend.hpp>
 #include <ny/appContext.hpp>
 
+#include <nytl/mat.hpp>
+#include <nytl/matOps.hpp>
 #include <dlg/dlg.hpp>
+
+#include <optional>
+
+#include <shaders/fullscreen.vert.h>
+#include <shaders/light_pp.frag.h>
+
+template<typename T>
+void scale(nytl::Mat4<T>& mat, nytl::Vec3<T> fac) {
+	for(auto i = 0; i < 3; ++i) {
+		mat[i][i] *= fac[i];
+	}
+}
+
+template<typename T>
+void translate(nytl::Mat4<T>& mat, nytl::Vec3<T> move) {
+	for(auto i = 0; i < 3; ++i) {
+		mat[i][3] += move[i];
+	}
+}
 
 constexpr auto appName = "smooth-shadow";
 constexpr auto engineName = "vpp";
@@ -156,17 +181,157 @@ int main(int argc, const char** argv) {
 
 	auto renderer = Renderer(renderInfo);
 
+	// resources
+	auto subBuf = vpp::SubBuffer(device.bufferAllocator(),
+		sizeof(nytl::Mat4f), vk::BufferUsageBits::uniformBuffer,
+		4u, device.hostMemoryTypes());
+
+	auto viewLayoutBindings = {
+		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::vertex)};
+	auto viewLayout = vpp::TrDsLayout(device, viewLayoutBindings);
+	auto viewDs = vpp::TrDs(device.descriptorAllocator(), viewLayout);
+	vpp::DescriptorSetUpdate update(viewDs);
+	update.uniform({{subBuf.buffer(), subBuf.offset(), subBuf.size()}});
+	update.apply();
+
+	LightSystem lightSystem(device, viewLayout);
+	auto& light = lightSystem.addLight();
+	light.position = {0.5f, 0.5f};
+
+	auto& light1 = lightSystem.addLight();
+	light1.position = {2.0f, 2.0f};
+
+	// post-process/combine
+	auto info = vk::SamplerCreateInfo {};
+	auto sampler = vpp::Sampler(device, info);
+	auto ppBindings = {
+		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &sampler.vkHandle()),
+	};
+
+	auto ppLayout = vpp::TrDsLayout(device, ppBindings);
+	auto pipeSets = {ppLayout.vkHandle()};
+
+	vk::PipelineLayoutCreateInfo plInfo;
+	plInfo.setLayoutCount = 1;
+	plInfo.pSetLayouts = pipeSets.begin();
+	auto ppPipeLayout = vpp::PipelineLayout {device, plInfo};
+
+	auto combineVertex = vpp::ShaderModule(device, fullscreen_vert_data);
+	auto combineFragment = vpp::ShaderModule(device, light_pp_frag_data);
+
+	vpp::GraphicsPipelineInfo combinePipeInfo(renderer.renderPass(),
+		ppPipeLayout, vpp::ShaderProgram({
+			{combineVertex, vk::ShaderStageBits::vertex},
+			{combineFragment, vk::ShaderStageBits::fragment}
+	}));
+
+	combinePipeInfo.assembly.topology = vk::PrimitiveTopology::triangleFan;
+
+	vk::Pipeline vkPipe;
+	vk::createGraphicsPipelines(device, {}, 1, combinePipeInfo.info(),
+		nullptr, vkPipe);
+	auto ppPipe = vpp::Pipeline(device, vkPipe);
+
+	auto ppDs = vpp::TrDs(device.descriptorAllocator(), ppLayout);
+	vpp::DescriptorSetUpdate ppDsUpdate(ppDs);
+	ppDsUpdate.imageSampler({{{}, lightSystem.renderTarget().vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ppDsUpdate.apply();
+
 	// main loop stuff
+	auto transform = nytl::identity<4, float>();
 	auto run = true;
-	window.onResize = [&](const auto& ev) { renderer.resize(ev.size); };
+	std::optional<nytl::Vec2ui> resize;
+	window.onResize = [&](const auto& ev) {
+		resize = ev.size;
+
+		auto w = ev.size.x / float(ev.size.y);
+		auto h = 1.f;
+		auto fac = 10 / std::sqrt(w * w + h * h);
+
+		auto s = nytl::Vec {
+			(2.f / (fac * w)),
+			(2.f / (fac * h)), 1
+			// 2.f / ev.size.x,
+			// -2.f / ev.size.y, 1
+		};
+
+		transform = nytl::identity<4, float>();
+		scale(transform, s);
+		translate(transform, {-1, -1, 0});
+	};
 	window.onClose = [&](const auto&) { run = false; };
 
+	renderer.beforeRender = [&](auto cmdBuf) {
+		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
+			lightSystem.lightPipeLayout(), 0, {viewDs}, {});
+		lightSystem.renderLights(cmdBuf);
+	};
+
+	renderer.onRender = [&](auto cmdBuf) {
+		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
+			ppPipeLayout, 0, {ppDs}, {});
+		vk::cmdBindPipeline(cmdBuf, vk::PipelineBindPoint::graphics, ppPipe);
+		vk::cmdDraw(cmdBuf, 4, 1, 0, 0);
+	};
+
+	// initial event poll
+	if(!appContext->pollEvents()) {
+		dlg_info("pollEvents returned false");
+		return 0;
+	}
+
+	using Clock = std::chrono::high_resolution_clock;
+	using Secf = std::chrono::duration<float, std::ratio<1, 1>>;
+	auto lastFrame = Clock::now();
+
+	std::uint64_t frameID {};
 	while(run) {
+		// - update device -
+		if(resize) {
+			auto size = *resize;
+			resize = {};
+			renderer.resize(size);
+			auto map = subBuf.memoryMap();
+			std::memcpy(map.ptr(), &transform, sizeof(transform));
+		}
+
+		lightSystem.updateDevice();
+
+		// - submit and present -
+		auto wait = true;
+		auto res = renderer.render(&frameID);
+		if(res != vk::Result::success) {
+			auto retry =
+				res == vk::Result::suboptimalKHR ||
+				res == vk::Result::errorOutOfDateKHR;
+			if(retry) {
+				dlg_debug("Skipping suboptimal/outOfDate frame");
+				wait = false;
+			} else {
+				dlg_error("render error: {}", vk::name(res));
+				return EXIT_FAILURE;
+			}
+		}
+
+		// - update logical state, process events -
+		auto now = Clock::now();
+		auto diff = now - lastFrame;
+		auto deltaCount = std::chrono::duration_cast<Secf>(diff).count();
+		lastFrame = now;
+
 		if(!appContext->pollEvents()) {
 			dlg_info("pollEvents returned false");
 			return 0;
 		}
 
-		renderer.renderBlock();
+		lightSystem.update(deltaCount);
+
+		// - wait for rendering to finish -
+		if(wait) {
+			device.queueSubmitter().wait(frameID);
+		}
 	}
 }

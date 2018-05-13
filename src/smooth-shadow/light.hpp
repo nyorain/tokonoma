@@ -26,10 +26,13 @@ public:
 	bool valid {true};
 	nytl::Vec4f color {1.f, 1.f, 1.f, 1.f};
 	nytl::Vec2f position {};
-	float radius {0.04};
+	float radius {0.02};
 	float strength {1.f};
 
 public:
+	Light(LightSystem& system);
+
+	bool updateDevice();
 	const auto& buffer() const { return buffer_; }
 	const auto& lightDs() const { return lightDs_.vkHandle(); }
 	const auto& shadowDs() const { return shadowDs_.vkHandle(); }
@@ -52,25 +55,29 @@ protected:
 /// Owns and manages all lights in a level.
 class LightSystem {
 public:
-	LightSystem(vpp::Device& dev);
+	LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout);
 
 	void renderLights(vk::CommandBuffer);
 	void renderShadowBuffers(vk::CommandBuffer);
 
+	void addSegment(const ShadowSegment&);
 	Light& addLight();
-	bool removeLight(Light&);
+	bool removeLight(Light&); // TODO: not working
 
 	void update(double delta);
-	void updateDevice();
+	bool updateDevice();
 
 	auto& device() const { return dev_; }
 	const auto& shadowDsLayout() const { return shadowDsLayout_; }
 	const auto& lightDsLayout() const { return lightDsLayout_; }
 	const auto& shadowPass() const { return shadowPass_; }
 	const auto& lightPass() const { return lightPass_; }
+	const auto& lightPipeLayout() const { return lightPipeLayout_; }
+	const auto& renderTarget() const { return renderTarget_; }
 
 protected:
 	vpp::Device& dev_;
+	vk::DescriptorSetLayout viewLayout_;
 	nytl::Vec2ui renderSize_;
 	vpp::ViewableImage renderTarget_;
 	vpp::Framebuffer framebuffer_;
@@ -80,8 +87,6 @@ protected:
 
 	vpp::Pipeline shadowPipe_;
 	vpp::Pipeline lightPipe_;
-	vpp::Pipeline mirrorLightPipe_;
-	vpp::Pipeline mirrorShadowPipe_;
 	vpp::Sampler sampler_;
 
 	vpp::TrDsLayout shadowDsLayout_;

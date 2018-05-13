@@ -81,6 +81,10 @@ void Renderer::record(const RenderBuffer& buf)
 	auto cmdBuf = buf.commandBuffer;
 	vk::beginCommandBuffer(cmdBuf, {});
 
+	if(beforeRender) {
+		beforeRender(cmdBuf);
+	}
+
 	vk::cmdBeginRenderPass(cmdBuf, {
 		renderPass(),
 		buf.framebuffer,
@@ -93,7 +97,9 @@ void Renderer::record(const RenderBuffer& buf)
 	vk::cmdSetViewport(cmdBuf, 0, 1, vp);
 	vk::cmdSetScissor(cmdBuf, 0, 1, {0, 0, width, height});
 
-	onRender(cmdBuf);
+	if(onRender) {
+		onRender(cmdBuf);
+	}
 
 	vk::cmdEndRenderPass(cmdBuf);
 	vk::endCommandBuffer(cmdBuf);

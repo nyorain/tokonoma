@@ -3,6 +3,8 @@
 #include <vpp/formats.hpp>
 #include <vpp/pipelineInfo.hpp>
 #include <vpp/vk.hpp>
+#include <vpp/debug.hpp>
+
 #include <dlg/dlg.hpp>
 #include <nytl/tmpUtil.hpp>
 
@@ -17,17 +19,20 @@ constexpr auto shadowBufSize = 512;
 
 template<typename T>
 void write(nytl::Span<std::byte>& span, T&& data) {
-	dlg_assert(span.size() > sizeof(data));
+	dlg_assert(span.size() >= sizeof(data));
 	std::memcpy(span.data(), &data, sizeof(data));
 	span = span.slice(sizeof(data), span.size() - sizeof(data));
 }
-
 
 void Light::writeUBO(nytl::Span<std::byte>& data) {
 	write(data, color);
 	write(data, position);
 	write(data, radius);
 	write(data, strength);
+}
+
+Light::Light(LightSystem& system) {
+	init(system);
 }
 
 void Light::init(LightSystem& system) {
@@ -76,8 +81,17 @@ void Light::init(LightSystem& system) {
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 }
 
+bool Light::updateDevice() {
+	auto map = buffer_.memoryMap();
+	auto span = map.span();
+	writeUBO(span);
+	return false;
+}
+
 // LightSystem
-LightSystem::LightSystem(vpp::Device& dev) : dev_(dev) {
+LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
+		: dev_(dev), viewLayout_(viewLayout) {
+
 	// we use this format for hdr tone mapping
 	// guaranteed to be supported for our usage by the standard
 	constexpr auto lightFormat = vk::Format::r16g16b16a16Sfloat;
@@ -93,7 +107,7 @@ LightSystem::LightSystem(vpp::Device& dev) : dev_(dev) {
 	attachments[0].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
 	attachments[0].initialLayout = vk::ImageLayout::undefined;
 	attachments[0].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	attachments[0].samples = lightSamples;
+	attachments[0].samples = vk::SampleCountBits::e1;
 
 	vk::AttachmentReference colorRef;
 	colorRef.attachment = 0;
@@ -117,9 +131,8 @@ LightSystem::LightSystem(vpp::Device& dev) : dev_(dev) {
 	shadowPass_ = {dev, rpinfo};
 
 	// framebuffer
-	renderSize_ = {1480, 720};
-	renderSize_ *= 0.5f;
-	//renderSize *= 2;
+	renderSize_ = {1920, 1080};
+	// renderSize_ *= 0.5f;
 
 	auto usage = vk::ImageUsageBits::colorAttachment |
 		vk::ImageUsageBits::inputAttachment |
@@ -127,7 +140,6 @@ LightSystem::LightSystem(vpp::Device& dev) : dev_(dev) {
 
 	auto targetInfo = vpp::ViewableImageCreateInfo::color(dev,
 		{renderSize_[0], renderSize_[1], 1}, usage, {lightFormat}).value();
-	targetInfo.img.samples = lightSamples;
 	renderTarget_ = {dev, targetInfo};
 
 	auto imgView = renderTarget_.vkImageView();;
@@ -174,14 +186,14 @@ LightSystem::LightSystem(vpp::Device& dev) : dev_(dev) {
 	};
 
 	shadowDsLayout_ = {dev, shadowBindings};
-	auto shadowSets = {lvl.defaultDsLayout().vkHandle(), shadowDsLayout_.vkHandle()};
+	auto shadowSets = {viewLayout_, shadowDsLayout_.vkHandle()};
 	vk::PipelineLayoutCreateInfo plInfo;
 	plInfo.setLayoutCount = shadowSets.size();
 	plInfo.pSetLayouts = shadowSets.begin();
 	shadowPipeLayout_ = {dev, plInfo};
 
 	lightDsLayout_ = {dev, lightBindings};
-	auto lightSets = {lvl.defaultDsLayout().vkHandle(), lightDsLayout_.vkHandle()};
+	auto lightSets = {viewLayout_, lightDsLayout_.vkHandle()};
 	plInfo.setLayoutCount = lightSets.size();
 	plInfo.pSetLayouts = lightSets.begin();
 	lightPipeLayout_ = {dev, plInfo};
@@ -205,6 +217,7 @@ LightSystem::LightSystem(vpp::Device& dev) : dev_(dev) {
 			{lightFragment, vk::ShaderStageBits::fragment}
 	}));
 
+	// shadow
 	constexpr auto stride = sizeof(float) * 5; // inPointA, inPointB, opacity
 	auto bufferBinding = vk::VertexInputBindingDescription {
 		0, stride, vk::VertexInputRate::instance
@@ -228,24 +241,27 @@ LightSystem::LightSystem(vpp::Device& dev) : dev_(dev) {
 	shadowInfo.assembly.topology = vk::PrimitiveTopology::triangleStrip;
 
 	vk::PipelineColorBlendAttachmentState shadowBlendAttachment;
+	shadowBlendAttachment.blendEnable = true;
 	shadowBlendAttachment.colorBlendOp = vk::BlendOp::add;
 	shadowBlendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
 	shadowBlendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
 	shadowInfo.blend.attachmentCount = 1;
 	shadowInfo.blend.pAttachments = &shadowBlendAttachment;
 
+	// light
 	lightInfo.assembly.topology = vk::PrimitiveTopology::triangleFan;
 	lightInfo.flags(vk::PipelineCreateBits::allowDerivatives);
 
 	vk::PipelineColorBlendAttachmentState lightBlendAttachment;
-	lightBlendAttachment.srcColorBlendFactor = vk::BlendFactor::oneMinusDstAlpha;
+	lightBlendAttachment.blendEnable = true;
+	lightBlendAttachment.srcColorBlendFactor = vk::BlendFactor::srcAlpha;
 	lightBlendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
 	lightBlendAttachment.colorWriteMask =
 		vk::ColorComponentBits::r |
 		vk::ColorComponentBits::g |
 		vk::ColorComponentBits::b;
 	lightInfo.blend.attachmentCount = 1;
-	lightInfo.blend.pAttachments = &shadowBlendAttachment;
+	lightInfo.blend.pAttachments = &lightBlendAttachment;
 
 	auto pipes = vk::createGraphicsPipelines(dev, {}, {
 			shadowInfo.info(),
@@ -263,66 +279,48 @@ LightSystem::LightSystem(vpp::Device& dev) : dev_(dev) {
 		vk::BufferUsageBits::indirectBuffer, 4, hostTypes};
 }
 
-void LightSystem::update(double delta) {
-	nytl::unused(delta);
-	if(!lights_.empty()) {
-		segments_.clear();
-
-		// TODO: should not contain all entities...
-		//  also should not be run every frame (wasted for static shadow
-		//  entities [real static])
-		for(auto& entity : level.entities()) {
-			auto shadow = entity->part<parts::Shadow>();
-			if(!shadow) {
-				continue;
-			}
-
-			shadow->lines(*entity, segments);
-		}
-	}
+void LightSystem::addSegment(const ShadowSegment& seg) {
+	segments_.push_back(seg);
 }
 
-void LightSystem::updateDevice() {
+void LightSystem::update(double) {
+}
+
+bool LightSystem::updateDevice() {
 	bool rerecord = false;
-	for(auto& light : lights) {
+	for(auto& light : lights_) {
 		if(light.valid) {
 			rerecord |= light.updateDevice();
 		}
 	}
 
-	for(auto& light : mirrorLights) {
-		if(light.valid) {
-			rerecord |= light.updateDevice();
-		}
-	}
-
-	auto& dev = level.device();
 	auto neededSize = sizeof(vk::DrawIndirectCommand);
-	neededSize += segments.size() * sizeof(Light::Segment);
-	if(vertexBuffer.size() < neededSize) {
-		vertexBuffer = dev.bufferAllocator().alloc(true, neededSize * 2,
+	neededSize += segments_.size() * sizeof(segments_[0]);
+	if(vertexBuffer_.size() < neededSize) {
+		auto memBits = device().hostMemoryTypes();
+		vertexBuffer_ = {};
+		vertexBuffer_ = {device().bufferAllocator(), neededSize * 2,
 			vk::BufferUsageBits::vertexBuffer |
-			vk::BufferUsageBits::indirectBuffer, 4);
+			vk::BufferUsageBits::indirectBuffer, 4, memBits};
 		rerecord = true;
 	}
 
 	{
-		auto map = vertexBuffer.memoryMap();
-		auto ptr = map.ptr();
+		auto map = vertexBuffer_.memoryMap();
+		auto span = map.span();
 
 		vk::DrawIndirectCommand cmd;
 		cmd.firstInstance = 0;
 		cmd.firstVertex = 0;
-		cmd.instanceCount = segments.size();
+		cmd.instanceCount = segments_.size();
 		cmd.vertexCount = 6;
 
-		write(ptr, cmd);
-		memcpy(ptr, segments.data(), segments.size() * sizeof(Light::Segment));
+		write(span, cmd);
+		memcpy(span.data(), segments_.data(),
+			segments_.size() * sizeof(segments_[0]));
 	}
 
-	if(rerecord) {
-		level.rerecord();
-	}
+	return rerecord;
 }
 
 void LightSystem::renderLights(vk::CommandBuffer cmdBuf) {
@@ -330,14 +328,14 @@ void LightSystem::renderLights(vk::CommandBuffer cmdBuf) {
 	renderShadowBuffers(cmdBuf);
 
 	// render lights into one light buffer
-	vpp::DebugRegion rLights(level.device(), cmdBuf, "renderLights");
+	// vpp::DebugRegion rLights(device(), cmdBuf, "renderLights");
 
 	static const vk::ClearValue clearValue = {{0.f, 0.f, 0.f, 0.0f}};
-	auto width = renderSize[0];
-	auto height = renderSize[1];
+	auto width = renderSize_[0];
+	auto height = renderSize_[1];
 	vk::cmdBeginRenderPass(cmdBuf, {
-		renderPass,
-		framebuffer,
+		lightPass_,
+		framebuffer_,
 		{0u, 0u, width, height},
 		1,
 		&clearValue
@@ -347,7 +345,22 @@ void LightSystem::renderLights(vk::CommandBuffer cmdBuf) {
 	vk::cmdSetViewport(cmdBuf, 0, 1, vp);
 	vk::cmdSetScissor(cmdBuf, 0, 1, {0, 0, width, height});
 
-	renderLightsDirect(cmdBuf);
+	vk::cmdBindVertexBuffers(cmdBuf, 0, {vertexBuffer_.buffer()},
+		{vertexBuffer_.offset() + sizeof(vk::DrawIndirectCommand)});
+	vk::cmdBindPipeline(cmdBuf, vk::PipelineBindPoint::graphics,
+		lightPipe_);
+
+	// render normal lights
+	for(auto& light : lights_) {
+		if(!light.valid)  {
+			continue;
+		}
+
+		// vpp::DebugRegion dr(device(), cmdBuf, "light", light.color);
+		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
+			lightPipeLayout_, 1, {light.lightDs()}, {});
+		vk::cmdDraw(cmdBuf, 4, 1, 0, 0);
+	}
 
 	vk::cmdEndRenderPass(cmdBuf);
 }
@@ -355,30 +368,27 @@ void LightSystem::renderLights(vk::CommandBuffer cmdBuf) {
 void LightSystem::renderShadowBuffers(vk::CommandBuffer cmdBuf) {
 	static const vk::ClearValue clearValue = {{0., 0., 0., 0.f}};
 
-	vpp::DebugRegion rShadow(level.device(), cmdBuf, "shadowBuffers");
+	// vpp::DebugRegion rShadow(device(), cmdBuf, "shadowBuffers");
 
 	vk::cmdBindPipeline(cmdBuf, vk::PipelineBindPoint::graphics,
-		shadowPipe);
-	vk::cmdBindVertexBuffers(cmdBuf, 0, {vertexBuffer.buffer().vkHandle()},
-		{vertexBuffer.offset() + sizeof(vk::DrawIndirectCommand)});
-	// TODO: not really needed, is it?
-	vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
-		shadowPipeLayout, 0, {level.defaultDs()}, {});
+		shadowPipe_);
+	vk::cmdBindVertexBuffers(cmdBuf, 0, {vertexBuffer_.buffer().vkHandle()},
+		{vertexBuffer_.offset() + sizeof(vk::DrawIndirectCommand)});
 	vk::Viewport vp {
 		0.f, 0.f,
 		(float) shadowBufSize, (float) shadowBufSize,
 		0.f, 1.f};
 
 	// render normal lights into their buffers
-	vpp::DebugRegion rNormal(level.device(), cmdBuf, "normal");
+	// vpp::DebugRegion rNormal(device(), cmdBuf, "normal");
 
-	for(auto& light : lights) {
+	for(auto& light : lights_) {
 		if(!light.valid) {
 			continue;
 		}
 
 		vk::cmdBeginRenderPass(cmdBuf, {
-			shadowPass,
+			shadowPass_,
 			light.framebuffer(),
 			{0u, 0u, shadowBufSize, shadowBufSize},
 			1,
@@ -388,138 +398,20 @@ void LightSystem::renderShadowBuffers(vk::CommandBuffer cmdBuf) {
 		vk::cmdSetViewport(cmdBuf, 0, 1, vp);
 		vk::cmdSetScissor(cmdBuf, 0, 1, {0, 0, shadowBufSize, shadowBufSize});
 		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
-			shadowPipeLayout, 1, {light.shadowDs()}, {});
+			shadowPipeLayout_, 1, {light.shadowDs()}, {});
 
-		vk::cmdDrawIndirect(cmdBuf, vertexBuffer.buffer(),
-			vertexBuffer.offset(), 1, 0);
+		vk::cmdDrawIndirect(cmdBuf, vertexBuffer_.buffer(),
+			vertexBuffer_.offset(), 1, 0);
 		vk::cmdEndRenderPass(cmdBuf);
-	}
-
-	rNormal = {};
-
-	// mirror lights
-	vpp::DebugRegion rMirror(level.device(), cmdBuf, "mirrors");
-	for(auto& light : mirrorLights) {
-		if(!light.valid) {
-			continue;
-		}
-
-		vk::cmdBeginRenderPass(cmdBuf, {
-			shadowPass,
-			light.framebuffer(),
-			{0u, 0u, shadowBufSize, shadowBufSize},
-			1,
-			&clearValue
-		}, {});
-
-		vk::cmdSetViewport(cmdBuf, 0, 1, vp);
-		vk::cmdSetScissor(cmdBuf, 0, 1, {0, 0, shadowBufSize, shadowBufSize});
-		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
-			shadowPipeLayout, 1, {light.shadowDs()}, {});
-
-		// NOTE: for multiple mirror bounces we would have to do
-		// this multiple times (when the original light is a mirror
-		// light as well... creating a mirror-segment chain).
-		//
-		// We should then probably use a more complex transformation in
-		// shadowMirror.vert (not just using multiple Light ubos, but
-		// combining the mirror transformation on the cpu).
-		// We still would have to draw multiple shadow passes
-
-		// normal mirror shadows
-		vk::cmdBindPipeline(cmdBuf, vk::PipelineBindPoint::graphics,
-			shadowPipe);
-		vk::cmdDrawIndirect(cmdBuf, vertexBuffer.buffer(),
-			vertexBuffer.offset(), 1, 0);
-
-		// mirrored mirror shadows
-		vk::cmdBindPipeline(cmdBuf, vk::PipelineBindPoint::graphics,
-			mirrorShadowPipe);
-		vk::cmdDrawIndirect(cmdBuf, vertexBuffer.buffer(),
-			vertexBuffer.offset(), 1, 0);
-
-		vk::cmdEndRenderPass(cmdBuf);
-	}
-
-	rMirror = {};
-}
-
-void LightSystem::renderLightsDirect(vk::CommandBuffer cmdBuf) {
-	vk::cmdBindVertexBuffers(cmdBuf, 0, {vertexBuffer.buffer()},
-		{vertexBuffer.offset() + sizeof(vk::DrawIndirectCommand)});
-	vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
-		lightPipeLayout, 0, {level.defaultDs()}, {});
-	vk::cmdBindPipeline(cmdBuf, vk::PipelineBindPoint::graphics,
-		lightPipe);
-
-	// render normal lights
-	for(auto& light : lights) {
-		if(!light.valid)  {
-			continue;
-		}
-
-		vpp::DebugRegion dr(level.device(), cmdBuf, "light", light.color);
-		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
-			lightPipeLayout, 1, {light.lightDs()}, {});
-		vk::cmdDraw(cmdBuf, 4, 1, 0, 0);
-	}
-
-	vk::cmdBindPipeline(cmdBuf, vk::PipelineBindPoint::graphics,
-		mirrorLightPipe);
-
-	// render mirror lights
-	for(auto& light : mirrorLights) {
-		if(!light.valid)  {
-			continue;
-		}
-
-		// render light. Will blend with shadow
-		vpp::DebugRegion dr(level.device(), cmdBuf, "mlight", light.color);
-		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
-			lightPipeLayout, 1, {light.lightDs()}, {});
-		vk::cmdDraw(cmdBuf, 6, 1, 0, 0);
 	}
 }
 
-SimpleLight& LightSystem::addLight() {
-	level.rerecord();
-	auto& dsAlloc = level.dsAllocator();
-	auto ret = lights.get(dsAlloc, shadowDsLayout,
-		lightDsLayout, shadowPass).first;
-	ret->valid = true;
-	return *ret;
+Light& LightSystem::addLight() {
+	return lights_.emplace_back(*this);
 }
 
 bool LightSystem::removeLight(Light& light) {
 	// TODO
-	auto checkMirrors = [&]{
-		for(auto it = mirrorLights.begin(); it != mirrorLights.end(); ++it) {
-			if(it->original == &light) {
-				it->valid = false;
-				mirrorLights.erase(it);
-			}
-		}
-	};
-
-	auto it = std::find_if(lights.begin(), lights.end(),
-		[&](auto& l){ return &l == &light; });
-	if(it != lights.end()) {
-		it->valid = false;
-		lights.erase(it);
-		// checkMirrors();
-		return true;
-	}
-
-	auto it2 = std::find_if(mirrorLights.begin(), mirrorLights.end(),
-		[&](auto& l){ return &l == &light; });
-	if(it2 != mirrorLights.end()) {
-		it->valid = false;
-		mirrorLights.erase(it2);
-		// checkMirrors();
-		return true;
-	}
-
+	nytl::unused(light);
 	return false;
 }
-
-} // namespace parts
