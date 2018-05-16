@@ -31,6 +31,7 @@ class Renderer : public vpp::DefaultRenderer {
 public:
 	std::function<void(vk::CommandBuffer)> beforeRender;
 	std::function<void(vk::CommandBuffer)> onRender;
+	std::function<void(vk::CommandBuffer)> afterRender;
 
 public:
 	Renderer(const RendererCreateInfo& info);

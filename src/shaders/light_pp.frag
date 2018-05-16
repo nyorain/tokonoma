@@ -12,7 +12,7 @@ void main() {
 
 	vec3 scene = vec3(1, 1, 1);
 	vec3 light = texture(lightTex, inUV).rgb;
-	
+
 	vec3 hdrColor = scene * light;
 	vec3 mapped = vec3(1.0) - exp(-hdrColor * exposure);
     mapped = pow(mapped, vec3(1.0 / gamma));

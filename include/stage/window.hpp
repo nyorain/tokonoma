@@ -18,6 +18,7 @@ public:
 	std::function<void(const ny::MouseMoveEvent&)> onMouseMove;
 	std::function<void(const ny::MouseButtonEvent&)> onMouseButton;
 	std::function<void(const ny::MouseWheelEvent&)> onMouseWheel;
+	std::function<void(const ny::MouseCrossEvent&)> onMouseCross;
 	std::function<void(const ny::SizeEvent&)> onResize;
 	std::function<void(const ny::CloseEvent&)> onClose;
 	std::function<void()> onSurfaceDestroyed;

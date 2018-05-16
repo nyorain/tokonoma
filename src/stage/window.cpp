@@ -91,6 +91,9 @@ void MainWindow::mouseMove(const ny::MouseMoveEvent& event) {
 
 void MainWindow::mouseCross(const ny::MouseCrossEvent& event) {
 	mouseOver_ = event.entered;
+	if(onMouseCross) {
+		onMouseCross(event);
+	}
 }
 
 void MainWindow::key(const ny::KeyEvent& ev) {

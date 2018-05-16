@@ -102,6 +102,11 @@ void Renderer::record(const RenderBuffer& buf)
 	}
 
 	vk::cmdEndRenderPass(cmdBuf);
+
+	if(afterRender) {
+		afterRender(cmdBuf);
+	}
+
 	vk::endCommandBuffer(cmdBuf);
 }
 

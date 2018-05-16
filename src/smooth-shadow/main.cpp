@@ -18,6 +18,8 @@
 
 #include <ny/backend.hpp>
 #include <ny/appContext.hpp>
+#include <ny/keyboardContext.hpp>
+#include <ny/key.hpp>
 
 #include <nytl/mat.hpp>
 #include <nytl/matOps.hpp>
@@ -98,6 +100,7 @@ int main(int argc, const char** argv) {
 	}
 
 	auto appContext = backend.createAppContext();
+	auto* kc = appContext->keyboardContext();
 
 	// vulkan init: instance
 	auto iniExtensions = appContext->vulkanExtensions();
@@ -196,14 +199,19 @@ int main(int argc, const char** argv) {
 	update.apply();
 
 	LightSystem lightSystem(device, viewLayout);
+	lightSystem.addSegment({{{1.f, 1.f}, {2.f, 1.f}}, -1.f});
+
 	auto& light = lightSystem.addLight();
 	light.position = {0.5f, 0.5f};
 
 	auto& light1 = lightSystem.addLight();
 	light1.position = {2.0f, 2.0f};
 
+	auto currentLight = &light;
+
 	// post-process/combine
 	auto info = vk::SamplerCreateInfo {};
+	info.maxAnisotropy = 1.0;
 	auto sampler = vpp::Sampler(device, info);
 	auto ppBindings = {
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
@@ -253,16 +261,20 @@ int main(int argc, const char** argv) {
 
 		auto s = nytl::Vec {
 			(2.f / (fac * w)),
-			(2.f / (fac * h)), 1
+			(-2.f / (fac * h)), 1
 			// 2.f / ev.size.x,
 			// -2.f / ev.size.y, 1
 		};
 
 		transform = nytl::identity<4, float>();
 		scale(transform, s);
-		translate(transform, {-1, -1, 0});
+		translate(transform, {-1, 1, 0});
 	};
-	window.onClose = [&](const auto&) { run = false; };
+
+	window.onClose = [&](const auto&) {
+		run = false;
+	};
+
 
 	renderer.beforeRender = [&](auto cmdBuf) {
 		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
@@ -298,7 +310,9 @@ int main(int argc, const char** argv) {
 			std::memcpy(map.ptr(), &transform, sizeof(transform));
 		}
 
-		lightSystem.updateDevice();
+		if(lightSystem.updateDevice()) {
+			renderer.invalidate();
+		}
 
 		// - submit and present -
 		auto wait = true;
@@ -325,6 +339,22 @@ int main(int argc, const char** argv) {
 		if(!appContext->pollEvents()) {
 			dlg_info("pollEvents returned false");
 			return 0;
+		}
+
+		if(currentLight) {
+			auto fac = 0.5 * deltaCount;
+			if(kc->pressed(ny::Keycode::d)) {
+				currentLight->position += nytl::Vec {fac, 0.f};
+			}
+			if(kc->pressed(ny::Keycode::a)) {
+				currentLight->position += nytl::Vec {-fac, 0.f};
+			}
+			if(kc->pressed(ny::Keycode::w)) {
+				currentLight->position += nytl::Vec {0.f, fac};
+			}
+			if(kc->pressed(ny::Keycode::s)) {
+				currentLight->position += nytl::Vec {0.f, -fac};
+			}
 		}
 
 		lightSystem.update(deltaCount);

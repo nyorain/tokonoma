@@ -4,12 +4,15 @@ stage_deps = [
   dep_ny,
   dep_nytl,
   dep_dlg,
+  dep_rvg,
+  dep_vui,
   dep_vulkan
 ]
 
 stage_src = [
 	'render.cpp',
 	'window.cpp',
+	'app.cpp',
 ]
 
 stage_inc = [

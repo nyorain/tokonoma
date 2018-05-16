@@ -168,14 +168,18 @@ ShadowVertex smoothShadowVertex(int vertexID, vec2 segA, vec2 segB,
 // returns the light strength falloff at the given point (for the given
 // light position and strength).
 // Good source: https://imdoingitwrong.wordpress.com/2011/01/31/light-attenuation/
-float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength) {
-	float d = length(point - lightPos);
+float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength,
+		vec3 p, float cutoff) {
 
-	d -= radius;
-	const vec3 p = vec3(1, 2 / radius, 1 / (radius * radius));
+	float d = length(point - lightPos) - radius;
 	float f = strength / (p.x + p.y * d + p.z * d * d);
-	f = max((f - 0.0001) / (1 - 0.0001), 0.0);
+	f = max((f - cutoff) / (1 - cutoff), 0.0);
 	return f;
+}
+
+float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength) {
+	const vec3 p = vec3(1, 2 / radius, 1 / (radius * radius));
+	return lightFalloff(lightPos, point, radius, strength, p, 0.01);
 }
 
 // returns by how much the given point is occluded by the given segment

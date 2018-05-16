@@ -16,17 +16,12 @@ struct ShadowSegment {
 	float opacity;
 };
 
-struct ShadowVertex {
-	nytl::Vec2f pos;
-	float opacity;
-};
-
 class Light {
 public:
 	bool valid {true};
-	nytl::Vec4f color {1.f, 1.f, 1.f, 1.f};
+	nytl::Vec4f color {1.f, 1.f, 0.7f, 1.f};
 	nytl::Vec2f position {};
-	float radius {0.02};
+	float radius {0.2};
 	float strength {1.f};
 
 public:
@@ -96,5 +91,5 @@ protected:
 
 	std::vector<ShadowSegment> segments_;
 	vpp::SubBuffer vertexBuffer_;
-	std::vector<Light> lights_;
+	std::deque<Light> lights_;
 };

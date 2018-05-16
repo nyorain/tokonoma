@@ -7,6 +7,7 @@
 
 #include <dlg/dlg.hpp>
 #include <nytl/tmpUtil.hpp>
+#include <nytl/vecOps.hpp>
 
 #include <shaders/light.frag.h>
 #include <shaders/light.vert.h>
@@ -244,7 +245,8 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 	shadowBlendAttachment.blendEnable = true;
 	shadowBlendAttachment.colorBlendOp = vk::BlendOp::add;
 	shadowBlendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
-	shadowBlendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
+	shadowBlendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
+	shadowBlendAttachment.colorWriteMask = vk::ColorComponentBits::r;
 	shadowInfo.blend.attachmentCount = 1;
 	shadowInfo.blend.pAttachments = &shadowBlendAttachment;
 

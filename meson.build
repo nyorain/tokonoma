@@ -38,8 +38,16 @@ dep_vpp = dependency('vpp', fallback: ['vpp', 'vpp_dep'])
 dep_nytl = dependency('nytl MASTER', fallback: ['nytl', 'nytl_dep'])
 dep_dlg = dependency('dlg', fallback: ['dlg', 'dlg_dep'])
 dep_ny = dependency('ny', fallback: ['ny', 'ny_dep'])
+dep_rvg = dependency('rvg', fallback: ['rvg', 'rvg_dep'])
+dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
 
 subdir('src/shaders')
 subdir('src/stage')
+
+# projects
 subdir('src/smooth-shadow')
+
+executable('pendulum',
+	'src/pendulum/main.cpp',
+	dependencies: stage_dep)
