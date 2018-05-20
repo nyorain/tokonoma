@@ -5,11 +5,16 @@
 #include <rvg/shapes.hpp>
 #include <rvg/context.hpp>
 #include <rvg/paint.hpp>
-#include <nytl/vec.hpp>
+
+#include <vui/dat.hpp>
+#include <vui/gui.hpp>
+
 #include <ny/appContext.hpp>
 #include <ny/event.hpp>
 #include <ny/keyboardContext.hpp>
 #include <ny/key.hpp>
+
+#include <nytl/vec.hpp>
 #include <dlg/dlg.hpp>
 
 // Pendulum
@@ -90,10 +95,50 @@ public:
 			return false;
 		}
 
+		// pendulum
 		pendulum_ = {rvgContext(), {400, 250}};
 		whitePaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::white)};
 		redPaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::red)};
-		renderer().invalidate();
+
+		// gui
+		using namespace vui::dat;
+		auto as = vui::autoSize;
+		panel_ = &gui().create<Panel>(nytl::Rect2f {20.f, 0.f, as, as});
+
+		auto createValueTextfield = [&](auto& at, auto name, float& value) {
+			auto start = std::to_string(value);
+			auto& t = at.template create<Textfield>(name, start).textfield();
+			t.onSubmit = [&, name](auto& tf) {
+				try {
+					value = std::stof(tf.utf8());
+				} catch(const std::exception& err) {
+					dlg_error("Invalid float for {}: {}", name, tf.utf8());
+					return;
+				}
+			};
+		};
+
+		panel_->create<Button>("reset").onClick = [&]{
+			pendulum_.angle = 0.f;
+			pendulum_.avel = 0.f;
+		};
+
+		panel_->create<Button>("slow").onClick = [&]{
+			pendulum_.avel = 0.f;
+		};
+
+		panel_->create<Button>("push").onClick = [&]{
+			pendulum_.avel *= 2.f;
+		};
+
+		auto& folder = panel_->create<Folder>("constants");
+		createValueTextfield(folder, "mass", pendulum_.constants.m);
+		createValueTextfield(folder, "gravity", pendulum_.constants.g);
+		createValueTextfield(folder, "length", pendulum_.constants.l);
+		createValueTextfield(folder, "j (pen)", pendulum_.constants.j);
+		createValueTextfield(folder, "c (pend)", pendulum_.constants.c);
+
+		panel_->toggle();
 		return true;
 	}
 
@@ -107,6 +152,8 @@ public:
 
 		redPaint_.bind(cb);
 		pendulum_.mass.fill(cb);
+
+		gui().draw(cb);
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -121,26 +168,27 @@ public:
 
 		// input
 		auto& kc = *appContext().keyboardContext();
+		// float u = xVel_ * std::pow(xFriction_, dt) - xVel_;
 		float u = -xFriction_ * xVel_;
 		auto c = pendulum_.center;
 		if(c.x < 0.f) {
 			c.x = 0.f;
 			u = -xVel_ / dt;
 		} else if(kc.pressed(ny::Keycode::left)) {
-			u -= 200.f;
+			u -= 5.f;
 		}
 
 		if(c.x > window().size().x) {
 			c.x = window().size().x;
 			u = -xVel_ / dt;
 		} else if(kc.pressed(ny::Keycode::right)) {
-			u += 200.f;
+			u += 5.f;
 		}
 
-		u *= dt;
-		xVel_ += u;
+		xVel_ += dt * u;
 
-		auto scale = 0.02 * pendulum_.screenLength / pendulum_.constants.l;
+		// auto scale = 1.4f * pendulum_.screenLength / pendulum_.constants.l;
+		auto scale = 800.f;
 		c.x += scale * dt * xVel_;
 		pendulum_.changeCenter(c);
 
@@ -152,8 +200,10 @@ protected:
 	rvg::Paint whitePaint_;
 	rvg::Paint redPaint_;
 
+	vui::dat::Panel* panel_ {};
+
 	float xVel_ {};
-	float xFriction_ {0.95};
+	float xFriction_ {8.f}; // not as it should be...
 };
 
 // main

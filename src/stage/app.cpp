@@ -13,6 +13,7 @@
 #include <ny/appContext.hpp>
 #include <ny/backend.hpp>
 #include <ny/windowContext.hpp>
+#include <ny/key.hpp>
 #include <dlg/dlg.hpp>
 
 #include <nytl/vecOps.hpp>
@@ -223,7 +224,7 @@ bool App::init(const AppSettings& settings) {
 	impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath, fontHeight);
 	impl_->fontAtlas->bake(rvgContext());
 
-	impl_->gui.emplace(rvgContext(), *impl_->defaultFont, vui::Styles {});
+	impl_->gui.emplace(rvgContext(), *impl_->defaultFont);
 
 	return true;
 }
@@ -265,6 +266,7 @@ void App::afterRender(vk::CommandBuffer) {
 
 void App::run() {
 	run_ = true;
+	rvgContext().rerecord(); // trigger initial record
 
 	using Clock = std::chrono::high_resolution_clock;
 	using Secf = std::chrono::duration<float, std::ratio<1, 1>>;
@@ -280,13 +282,13 @@ void App::run() {
 
 	while(run_) {
 		// - update device data -
+		if(updateDevice()) {
+			renderer().invalidate();
+		}
+
 		if(resize_) {
 			resize_ = {};
 			renderer().resize(window().size());
-		}
-
-		if(updateDevice()) {
-			renderer().invalidate();
 		}
 
 		// - submit and present -
@@ -351,37 +353,61 @@ bool App::updateDevice() {
 void App::resize(const ny::SizeEvent& ev) {
 	resize_ = true;
 
-	/*
 	// non-window but scaled normal cords
 	// e.g. used for a level view
+	/*
 	auto w = ev.size.x / float(ev.size.y);
 	auto h = 1.f;
 	auto fac = 10 / std::sqrt(w * w + h * h);
 	auto s = nytl::Vec { (2.f / (fac * w)), (-2.f / (fac * h)), 1 };
 	*/
 
+	// window-coords, origin bottom left
 	auto s = nytl::Vec{ 2.f / ev.size.x, -2.f / ev.size.y, 1};
 	auto transform = nytl::identity<4, float>();
 	scale(transform, s);
 	translate(transform, {-1, 1, 0});
 	impl_->windowTransform.matrix(transform);
+
+	// window-coords, origin top left
+	s = nytl::Vec{ 2.f / ev.size.x, 2.f / ev.size.y, 1};
+	transform = nytl::identity<4, float>();
+	scale(transform, s);
+	translate(transform, {-1, -1, 0});
+	gui().transform(transform);
 }
 
 void App::close(const ny::CloseEvent&) {
 	run_ = false;
 }
 
-void App::key(const ny::KeyEvent&) {
+void App::key(const ny::KeyEvent& ev) {
+	gui().key({(vui::Key) ev.keycode, ev.pressed});
+	if(ev.pressed && !ev.utf8.empty() && !ny::specialKey(ev.keycode)) {
+		gui().textInput({ev.utf8.c_str()});
+	}
 }
-void App::mouseButton(const ny::MouseButtonEvent&) {
+
+void App::mouseButton(const ny::MouseButtonEvent& ev) {
+	auto p = static_cast<nytl::Vec2f>(ev.position);
+	auto b = static_cast<vui::MouseButton>(ev.button);
+	gui().mouseButton({ev.pressed, b, p});
 }
-void App::mouseMove(const ny::MouseMoveEvent&) {
+
+void App::mouseMove(const ny::MouseMoveEvent& ev) {
+	gui().mouseMove({static_cast<nytl::Vec2f>(ev.position)});
 }
-void App::mouseWheel(const ny::MouseWheelEvent&) {
+
+void App::mouseWheel(const ny::MouseWheelEvent& ev) {
+	gui().mouseWheel({ev.value.y});
 }
-void App::mouseCross(const ny::MouseCrossEvent&) {
+
+void App::mouseCross(const ny::MouseCrossEvent& ev) {
+	gui().mouseOver(ev.entered);
 }
-void App::focus(const ny::FocusEvent&) {
+
+void App::focus(const ny::FocusEvent& ev) {
+	gui().focus(ev.gained);
 }
 
 ny::AppContext& App::appContext() const {
