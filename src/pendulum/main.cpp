@@ -32,6 +32,9 @@ public:
 	float angle {0.01f};
 	float avel {0.f};
 
+	// in last step
+	float accel {0.f};
+
 	nytl::Vec2f center;
 	rvg::CircleShape fixture;
 	rvg::CircleShape mass;
@@ -61,7 +64,7 @@ public:
 		angle += dt * avel;
 
 		auto& c = constants;
-		auto accel = c.m * c.l * (u * std::cos(angle) + c.g * std::sin(angle));
+		accel = c.m * c.l * (u * std::cos(angle) + c.g * std::sin(angle));
 		accel -= c.c * avel;
 		accel /= (c.j + c.m * c.l * c.l);
 		avel += dt * accel;
@@ -103,10 +106,11 @@ public:
 		// gui
 		using namespace vui::dat;
 		auto as = vui::autoSize;
-		panel_ = &gui().create<Panel>(nytl::Rect2f {20.f, 0.f, as, as});
+		panel_ = &gui().create<Panel>(nytl::Rect2f {50.f, 0.f, 250.f, as}, 27.f);
 
 		auto createValueTextfield = [&](auto& at, auto name, float& value) {
 			auto start = std::to_string(value);
+			start.resize(4);
 			auto& t = at.template create<Textfield>(name, start).textfield();
 			t.onSubmit = [&, name](auto& tf) {
 				try {
@@ -131,6 +135,16 @@ public:
 			pendulum_.avel *= 2.f;
 		};
 
+		panel_->create<Checkbox>("manual").checkbox().onToggle = [&](auto& c){
+			manual_ = c.checked();
+		};
+
+		auto& f1 = panel_->create<Folder>("state");
+		angleLabel_ = &f1.create<Label>("angle", "0");
+		avelLabel_ = &f1.create<Label>("avel", "0");
+		xvelLabel_ = &f1.create<Label>("xvel", "0");
+		uLabel_ = &f1.create<Label>("x accel", "0");
+
 		auto& folder = panel_->create<Folder>("constants");
 		createValueTextfield(folder, "mass", pendulum_.constants.m);
 		createValueTextfield(folder, "gravity", pendulum_.constants.g);
@@ -138,7 +152,9 @@ public:
 		createValueTextfield(folder, "j (pen)", pendulum_.constants.j);
 		createValueTextfield(folder, "c (pend)", pendulum_.constants.c);
 
+		folder.open(false);
 		panel_->toggle();
+
 		return true;
 	}
 
@@ -171,28 +187,77 @@ public:
 		// float u = xVel_ * std::pow(xFriction_, dt) - xVel_;
 		float u = -xFriction_ * xVel_;
 		auto c = pendulum_.center;
-		if(c.x < 0.f) {
-			c.x = 0.f;
-			u = -xVel_ / dt;
-		} else if(kc.pressed(ny::Keycode::left)) {
-			u -= 5.f;
-		}
 
-		if(c.x > window().size().x) {
-			c.x = window().size().x;
-			u = -xVel_ / dt;
-		} else if(kc.pressed(ny::Keycode::right)) {
-			u += 5.f;
+		if(manual_) {
+			if(c.x < 0.f) {
+				c.x = 0.f;
+				u = -xVel_ / dt;
+			} else if(kc.pressed(ny::Keycode::left)) {
+				u -= 5.f;
+			}
+
+			if(c.x > window().size().x) {
+				c.x = window().size().x;
+				u = -xVel_ / dt;
+			} else if(kc.pressed(ny::Keycode::right)) {
+				u += 5.f;
+			}
+		} else {
+			auto& c = pendulum_.constants;
+			auto v = 0.f;
+
+			// works somewhat nicely, after an hour of playing around
+			v -= c.m * c.l * c.g * std::sin(pendulum_.angle);
+			v += c.c * pendulum_.avel;
+			v /= (c.l * c.m * std::cos(pendulum_.angle));
+			v *= 3.f;
+
+			// formulas derived from logic.
+			// v += std::cos(pendulum_.angle) * pendulum_.avel;
+			// v -= std::sin(pendulum_.angle);
+
+			v = std::clamp(v, -10.f, 10.f);
+			u += v;
 		}
 
 		xVel_ += dt * u;
 
 		// auto scale = 1.4f * pendulum_.screenLength / pendulum_.constants.l;
-		auto scale = 800.f;
+		auto scale = 400.f;
 		c.x += scale * dt * xVel_;
 		pendulum_.changeCenter(c);
 
 		pendulum_.update(dt, u);
+
+		// labels
+		auto labelState = [&](auto& lbl, auto& val) {
+			auto str = std::to_string(val);
+			str.resize(std::min<unsigned>(str.size(), 4u));
+			lbl.label(str);
+		};
+
+		auto a = ((int) nytl::degrees(pendulum_.angle)) % 360;
+		labelState(*angleLabel_, a);
+		labelState(*xvelLabel_, xVel_);
+		labelState(*avelLabel_, pendulum_.avel);
+		labelState(*uLabel_, u);
+	}
+
+	// NOTE: test messing with gui
+	void key(const ny::KeyEvent& ev) override {
+		App::key(ev);
+		if(ev.pressed && ev.keycode == ny::Keycode::q) {
+			auto& f = panel_->create<vui::dat::Folder>("hidden");
+			f.create<vui::dat::Button>("Create a kitten");
+			f.open(false);
+			tmpWidgets_.push_back(&f);
+		} else if(ev.pressed && ev.keycode == ny::Keycode::c) {
+			if(!tmpWidgets_.empty()) {
+				auto w = tmpWidgets_.back();
+				tmpWidgets_.pop_back();
+				panel_->remove(*w);
+			}
+		}
 	}
 
 protected:
@@ -201,6 +266,14 @@ protected:
 	rvg::Paint redPaint_;
 
 	vui::dat::Panel* panel_ {};
+	vui::dat::Label* angleLabel_ {};
+	vui::dat::Label* avelLabel_ {};
+	vui::dat::Label* xvelLabel_ {};
+	vui::dat::Label* uLabel_ {};
+
+	bool manual_ {};
+
+	std::vector<vui::Widget*> tmpWidgets_ {};
 
 	float xVel_ {};
 	float xFriction_ {8.f}; // not as it should be...

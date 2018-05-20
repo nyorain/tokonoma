@@ -28,7 +28,7 @@ namespace doi {
 // constants
 constexpr auto startMsaa = vk::SampleCountBits::e1;
 constexpr auto clearColor = std::array<float, 4>{{0.f, 0.f, 0.f, 1.f}};
-constexpr auto fontHeight = 14;
+constexpr auto fontHeight = 11;
 constexpr auto baseResPath = "../";
 
 // util
@@ -220,7 +220,9 @@ bool App::init(const AppSettings& settings) {
 	impl_->fontAtlas.emplace(rvgContext());
 
 	std::string fontPath = baseResPath;
-	fontPath += "assets/LiberationSans-Regular.ttf";
+	fontPath += "assets/Roboto-Regular.ttf";
+	// fontPath += "assets/OpenSans-Light.ttf";
+	// fontPath += "build/Lucida-Grande.ttf"; // nonfree
 	impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath, fontHeight);
 	impl_->fontAtlas->bake(rvgContext());
 
@@ -286,27 +288,32 @@ void App::run() {
 			renderer().invalidate();
 		}
 
+resize:
 		if(resize_) {
 			resize_ = {};
 			renderer().resize(window().size());
 		}
 
 		// - submit and present -
-		auto wait = true;
 		auto res = renderer().render(&submitID, {impl_->nextFrameWait});
-		impl_->nextFrameWait.clear();
 
 		if(res != vk::Result::success) {
-			auto retry =
-				res == vk::Result::suboptimalKHR ||
-				res == vk::Result::errorOutOfDateKHR;
+			auto retry = (res == vk::Result::errorOutOfDateKHR);
 			if(retry) {
 				dlg_debug("Skipping suboptimal/outOfDate frame");
-				wait = false;
+				if(!appContext().pollEvents()) {
+					dlg_info("upate pollEvents returned false");
+					return;
+				}
+
+				// TODO: AAARGH
+				goto resize;
 			} else {
 				dlg_error("render error: {}", vk::name(res));
 				return;
 			}
+		} else {
+			impl_->nextFrameWait.clear();
 		}
 
 		// wait for this frame at the end of this loop
@@ -314,9 +321,7 @@ void App::run() {
 		// since we don't want to destroy resources before
 		// rendering has finished
 		auto waiter = nytl::ScopeGuard {[&] {
-			if(wait) {
-				vulkanDevice().queueSubmitter().wait(submitID);
-			}
+			vulkanDevice().queueSubmitter().wait(submitID);
 		}};
 
 		// - update logcial state -
