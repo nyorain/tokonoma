@@ -283,7 +283,6 @@ protected:
 int main(int argc, const char** argv) {
 	PendulumApp app;
 	if(!app.init({"pendulum", {*argv, std::size_t(argc)}})) {
-		dlg_fatal("Initialization failed");
 		return EXIT_FAILURE;
 	}
 

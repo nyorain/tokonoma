@@ -220,9 +220,11 @@ vpp::RenderPass createRenderPass(const vpp::Device& dev,
 	dependency.srcSubpass = vk::subpassExternal;
 	dependency.srcStageMask =
 		vk::PipelineStageBits::host |
+		vk::PipelineStageBits::colorAttachmentOutput |
 		vk::PipelineStageBits::transfer;
 	dependency.srcAccessMask = vk::AccessBits::hostWrite |
-		vk::AccessBits::transferWrite;
+		vk::AccessBits::transferWrite |
+		vk::AccessBits::colorAttachmentWrite;
 	dependency.dstSubpass = 0u;
 	dependency.dstStageMask = vk::PipelineStageBits::allGraphics;
 	dependency.dstAccessMask = vk::AccessBits::uniformRead |

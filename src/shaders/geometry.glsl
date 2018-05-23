@@ -177,9 +177,13 @@ float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength,
 	return f;
 }
 
+float lightCutoff(float radius, float strength, float lightThresh) {
+	return radius * (sqrt(strength / lightThresh ) - 1);
+}
+
 float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength) {
 	const vec3 p = vec3(1, 2 / radius, 1 / (radius * radius));
-	return lightFalloff(lightPos, point, radius, strength, p, 0.01);
+	return lightFalloff(lightPos, point, radius, strength, p, 0.001);
 }
 
 // returns by how much the given point is occluded by the given segment

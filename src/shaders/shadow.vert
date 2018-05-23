@@ -18,13 +18,13 @@ layout(set = 1, binding = 0) uniform Light {
 	vec4 _color;
 	vec2 position;
 	float radius;
+	float _strength;
+	float bounds;
 } light;
 
 Circle lightCircle() {
 	return Circle(light.position, light.radius);
 }
-
-const float scale = 1 / 3.0;
 
 void main() {
 	Line segLine = {inPointA, inPointB - inPointA};
@@ -41,6 +41,7 @@ void main() {
 	outPos = vert.pos;
 	outValue = vert.opacity;
 
+	float scale = 1 / light.bounds;
 	gl_Position.xy = scale * (outPos - light.position);
 	gl_Position.zw = vec2(0.f, 1.f);
 }

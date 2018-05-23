@@ -16,18 +16,38 @@ struct ShadowSegment {
 	float opacity;
 };
 
+/// Simple blackbody approxmiation.
+/// Converts kelvin color temparature (1000K - 40000K) to a rbg color.
+nytl::Vec3f blackbody(unsigned kelvin);
+
+/// Computes the radius of the light bounds for a given
+/// light radius and strength.
+float lightBounds(float radius, float strength);
+
+/// Computes the need shadow buffer size for a light with the given
+/// bounds.
+unsigned shadowBufSize(float bounds);
+
 class Light {
 public:
-	bool valid {true};
-	nytl::Vec4f color {1.f, 1.f, 0.7f, 1.f};
-	nytl::Vec2f position {};
-	float radius {0.2};
-	float strength {1.f};
+	nytl::Vec2f position;
+	nytl::Vec4f color;
 
 public:
-	Light(LightSystem& system);
+	Light(LightSystem& system, nytl::Vec2f pos,
+		float radius = 0.2, float strength = 1.f,
+		nytl::Vec4f color = {1.f, 1.f, 0.8f, 1.f});
 
 	bool updateDevice();
+	void radius(float, bool recreate = true);
+	void strength(float, bool recreate = true);
+
+	float radius() const { return radius_; }
+	float strength() const { return strength_; }
+	float bounds() const { return bounds_; }
+	unsigned bufSize() const { return bufSize_; }
+	const auto& system() const { return system_; }
+
 	const auto& buffer() const { return buffer_; }
 	const auto& lightDs() const { return lightDs_.vkHandle(); }
 	const auto& shadowDs() const { return shadowDs_.vkHandle(); }
@@ -36,9 +56,18 @@ public:
 
 protected:
 	void writeUBO(nytl::Span<std::byte>& data);
-	void init(LightSystem& system);
+	void init();
+	void createBuf();
 
 protected:
+	LightSystem& system_;
+
+	bool recreate_ {};
+	float radius_;
+	float strength_;
+	float bounds_;
+	unsigned bufSize_;
+
 	vpp::Framebuffer framebuffer_;
 	vpp::ViewableImage shadowTarget_;
 
@@ -56,10 +85,8 @@ public:
 	void renderShadowBuffers(vk::CommandBuffer);
 
 	void addSegment(const ShadowSegment&);
-	Light& addLight();
+	Light& addLight(); // TODO: arguments
 	bool removeLight(Light&); // TODO: not working
-
-	void update(double delta);
 	bool updateDevice();
 
 	auto& device() const { return dev_; }
