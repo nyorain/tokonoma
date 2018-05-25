@@ -47,6 +47,7 @@ subdir('src/stage')
 
 # projects
 subdir('src/smooth-shadow')
+subdir('src/pursuers')
 
 executable('pendulum',
 	'src/pendulum/main.cpp',

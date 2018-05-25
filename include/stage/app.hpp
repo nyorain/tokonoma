@@ -45,10 +45,12 @@ public:
 	rvg::Transform& windowTransform() const;
 	vui::Gui& gui() const;
 
+	vk::SampleCountBits samples() const;
+
 protected:
 	// argument parsing
 	virtual argagg::parser argParser() const;
-	virtual void handleArgs(const argagg::parser_results&);
+	virtual bool handleArgs(const argagg::parser_results&);
 
 	// recording
 	virtual void render(vk::CommandBuffer);
@@ -80,6 +82,7 @@ protected:
 		bool vsync;
 		bool layers;
 		bool renderdoc;
+		unsigned samples;
 	} args_;
 };
 

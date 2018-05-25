@@ -26,7 +26,6 @@
 namespace doi {
 
 // constants
-constexpr auto startMsaa = vk::SampleCountBits::e1;
 constexpr auto clearColor = std::array<float, 4>{{0.f, 0.f, 0.f, 1.f}};
 constexpr auto fontHeight = 11;
 constexpr auto baseResPath = "../";
@@ -69,6 +68,7 @@ struct App::Impl {
 	std::optional<vui::Gui> gui;
 
 	std::vector<vpp::StageSemaphore> nextFrameWait;
+	vk::SampleCountBits samples;
 };
 
 // App
@@ -197,9 +197,21 @@ bool App::init(const AppSettings& settings) {
 	auto presentQueue = vulkanDevice().queue(queueFam);
 
 	// renderer
+	impl_->samples = vk::SampleCountBits::e1;
+	switch(args_.samples) {
+		case 1u: impl_->samples = vk::SampleCountBits::e1; break;
+		case 2u: impl_->samples = vk::SampleCountBits::e2; break;
+		case 4u: impl_->samples = vk::SampleCountBits::e4; break;
+		case 8u: impl_->samples = vk::SampleCountBits::e8; break;
+		case 16u: impl_->samples = vk::SampleCountBits::e16; break;
+		default:
+			dlg_fatal("Invalid multisample setting");
+			return false;
+	}
+
 	auto renderInfo = RendererCreateInfo {
 		vulkanDevice(), vkSurf, window().size(), *presentQueue,
-		startMsaa, args_.vsync, clearColor
+		impl_->samples, args_.vsync, clearColor
 	};
 
 	impl_->renderer.emplace(renderInfo);
@@ -215,6 +227,8 @@ bool App::init(const AppSettings& settings) {
 
 	// additional stuff
 	rvg::ContextSettings rvgcs {renderer().renderPass(), 0u};
+	rvgcs.samples = samples();
+
 	impl_->rvgContext.emplace(vulkanDevice(), rvgcs);
 	impl_->windowTransform = {rvgContext()};
 	impl_->fontAtlas.emplace(rvgContext());
@@ -249,14 +263,20 @@ argagg::parser App::argParser() const {
 			"no-vsync",
 			{"--no-vsync"},
 			"Disable vsync", 0
+		}, {
+			"multisamples",
+			{"--multisamples", "-m"},
+			"Sets the samples to use", 1
 		}
 	}};
 }
 
-void App::handleArgs(const argagg::parser_results& result) {
+bool App::handleArgs(const argagg::parser_results& result) {
 	args_.layers = !result["no-validation"];
 	args_.vsync = !result["no-vsync"];
 	args_.renderdoc = result["renderdoc"];
+	args_.samples = result["multisamples"].as<unsigned>(1);
+	return true;
 }
 
 void App::render(vk::CommandBuffer) {
@@ -443,6 +463,10 @@ vui::Gui& App::gui() const {
 
 rvg::Transform& App::windowTransform() const {
 	return impl_->windowTransform;
+}
+
+vk::SampleCountBits App::samples() const {
+	return impl_->samples;
 }
 
 } // namespace doi
