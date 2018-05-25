@@ -75,6 +75,10 @@ struct ShadowVertex {
 	vec2 opacity;
 };
 
+vec2 normal(vec2 v) {
+	return vec2(-v.y, v.x);
+}
+
 // Returns the vertexID-th (mod 6) vertex of the smooth shadow vertex from
 // the given light and segment.
 // If oneSided is true, the segment will only generate shadow if
@@ -86,11 +90,38 @@ ShadowVertex smoothShadowVertex(int vertexID, vec2 segA, vec2 segB,
 	Line line = {segA, segB - segA};
 
 	// TODO: correct projections (not just the '1000 * x' stuff)
-	const float proj = 100;
+	const float proj = 1000;
 
 	// special case: light is (almost) collinear with the segment
 	// this results in shadows on both side of the segment
+	// Line circleLine = {light.center, normal(line.dir)};
+	// vec2 facs = intersectionFacs(line, circleLine);
+
+	// TODO: sqrt avoidable here?
+	// float ll = length(line.dir);
+	// if(abs(facs.y / ll) < light.radius) {
+	
 	if(distance(light.center, line) < light.radius) {
+			/*
+		if(abs(facs.x - clamp(facs.x, 0, 1)) < (light.radius / ll)) {
+			// fullscreen... ?
+			const vec2[] values = {
+				{-proj, proj},
+				{proj, -proj},
+				{proj, proj},
+				{-proj, proj},
+				{-proj, proj},
+				{-proj, proj},
+			};
+
+			ShadowVertex ret = {values[vertexID % 6], vec2(-1, 0)};
+
+			// just no shadow at all?
+			ShadowVertex ret = {vec2(0, 0), vec2(0, 0)};
+			return ret;
+		}
+			*/
+
 		// a is always the near point.
 		vec2 da = segA - light.center;
 		vec2 db = segB - light.center;
@@ -169,9 +200,13 @@ ShadowVertex smoothShadowVertex(int vertexID, vec2 segA, vec2 segB,
 // light position and strength).
 // Good source: https://imdoingitwrong.wordpress.com/2011/01/31/light-attenuation/
 float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength,
-		vec3 p, float cutoff) {
+		vec3 p, float cutoff, bool constantInner) {
 
 	float d = length(point - lightPos) - radius;
+	if(constantInner) {
+		d = max(d, 0);
+	}
+
 	float f = strength / (p.x + p.y * d + p.z * d * d);
 	f = max((f - cutoff) / (1 - cutoff), 0.0);
 	return f;
@@ -183,12 +218,23 @@ float lightCutoff(float radius, float strength, float lightThresh) {
 
 float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength) {
 	const vec3 p = vec3(1, 2 / radius, 1 / (radius * radius));
-	return lightFalloff(lightPos, point, radius, strength, p, 0.001);
+	return lightFalloff(lightPos, point, radius, strength, p,
+		0.01, true);
 }
 
 // returns by how much the given point is occluded by the given segment
 // from the given light.
+// TODO: rework this to a more simple (and generally working) algorithm
 float shadowValue(Circle light, vec2 point, vec2 segA, vec2 segB) {
+	// TODO: just for testing
+	/*
+	vec2 d = light.center - point;
+	if(dot(d, d) < light.radius * light.radius) {
+		return 0.5f;
+	}
+	*/
+
+	// start
 	vec2 minProj = circlePoint(light, point, -1);
 	vec2 maxProj = circlePoint(light, point, 1);
 	Line lightSeg = {minProj, maxProj - minProj};

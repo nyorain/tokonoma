@@ -7,7 +7,7 @@
 #include <dlg/dlg.hpp>
 #include <algorithm>
 
-namespace kyo {
+namespace doi {
 
 LineIntersection intersection(Line2f lineA, Line2f lineB) {
     dlg_assert(lineB.direction != nytl::approx(nytl::Vec2f {0, 0}));
@@ -258,4 +258,26 @@ nytl::Vec2f circlePoint(nytl::Vec2f circleCenter, float circleRadius,
 	return circleCenter + (circleRadius / lop) * q;
 }
 
-} // namespace kyo
+bool contains(Circle circle, nytl::Vec2f p) {
+	auto d = dot(p - circle.center, p - circle.center);
+	return d < circle.radius * circle.radius;
+}
+
+bool intersects(Circle circle, nytl::Rect2f rect) {
+	auto cc = circle.center;
+
+	using namespace rhs;
+	float dx = cc[0] - std::clamp(cc[0], left(rect), right(rect));
+	float dy = cc[1] - std::clamp(cc[1], bottom(rect), top(rect));
+
+	float dd = (dx * dx) + (dy * dy);
+	return dd < (circle.radius * circle.radius);
+}
+
+bool intersects(Circle a, Circle b) {
+	auto rr = a.radius + b.radius;
+	auto diff = b.center - a.center;
+	return (rr * rr) > nytl::dot(diff, diff);
+}
+
+} // namespace doi

@@ -38,45 +38,23 @@ uint32_t nextPowerOfTwo(uint32_t n) {
 // Tweak this function for better/more performant shadows
 unsigned shadowBufSize(float bounds) {
 	// for a light with bounds radius of 1 we use this size
-	constexpr auto normSize = 256;
+	constexpr auto normSize = 192;
 	auto next = nextPowerOfTwo(normSize * bounds);
 	return std::clamp(next, 32u, 2048u);
 }
 
 float lightCutoff(float r, float strength, float lightThresh) {
-	return r * (sqrt(strength / lightThresh ) - 1);
+	return r * (std::sqrt(strength / lightThresh ) - 1);
 }
 
 float lightBounds(float radius, float strength) {
 	// if changed here, also change in geometry.glsl
-	constexpr auto lightThresh = 0.001;
-	return lightCutoff(radius, strength, lightThresh);
+	constexpr auto lightThresh = 0.01;
+	return radius + lightCutoff(radius, strength, lightThresh);
 }
 
 nytl::Vec3f blackbody(unsigned temp) {
-	// http://www.tannerhelland.com/4435/convert-temperature-rgb-algorithm-code/
 	// http://www.zombieprototypes.com/?p=210
-
-	/* old
-	   t = std::clamp(t, 1000u, 40000u) / 100u;
-	   float r, g, b;
-
-	   if(t <= 66) {
-	   r = 1.f;
-	   g = 0.39008157876 * std::log(t) - 0.63184144378;
-	   b = 0.54320678911 * std::log(t - 10) - 1.19625408914;
-	   } else {
-	   r = 1.29293618606f * std::pow(t - 60.f, -0.1332047592f);
-	   g = 1.1298908609 * std::pow(t, -0.0755148492);
-	   b = 1.f;
-	   }
-
-
-	   return {std::clamp(r, 0.f, 1.f),
-	   std::clamp(g, 0.f, 1.f),
-	   std::clamp(b, 0.f, 1.f)};
-	   */
-
 	// this version based upon https://github.com/neilbartlett/color-temperature,
 	// licensed under MIT.
 	float t = temp / 100.f;

@@ -12,6 +12,7 @@ stage_deps = [
 stage_src = [
 	'render.cpp',
 	'window.cpp',
+	'geometry.cpp',
 	'app.cpp',
 ]
 

@@ -29,6 +29,7 @@ Renderer::Renderer(const RendererCreateInfo& info) :
 
 	scInfo_ = vpp::swapchainCreateInfo(info.dev, info.surface,
 		{info.size[0], info.size[1]}, prefs);
+
 	renderPass_ = createRenderPass(info.dev, scInfo_.imageFormat, samples());
 	vpp::DefaultRenderer::init(renderPass_, scInfo_);
 }

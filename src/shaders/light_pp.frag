@@ -1,21 +1,22 @@
 #version 450
 
-layout(set = 0, binding = 0) uniform sampler2D lightTex;
-
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outColor;
 
+layout(set = 0, binding = 0) uniform sampler2D lightTex;
+layout(set = 0, binding = 1) uniform UBO {
+	float exposure;
+	float gamma;
+} ubo;
+
 // https://learnopengl.com/Advanced-Lighting/HDR
 void main() {
-	const float gamma = 1.0;
-	const float exposure = 1.0;
-
 	vec3 scene = vec3(1, 1, 1);
-	vec3 light = texture(lightTex, inUV).rgb;
+	vec3 light = max(texture(lightTex, inUV).rgb, 0.f);
 
 	vec3 hdrColor = scene * light;
-	vec3 mapped = vec3(1.0) - exp(-hdrColor * exposure);
-    mapped = pow(mapped, vec3(1.0 / gamma));
+	vec3 mapped = vec3(1.0) - exp(-hdrColor * ubo.exposure);
+    mapped = pow(mapped, vec3(1.0 / ubo.gamma));
 
 	outColor.rgb = mapped;
 	outColor.a = 1.f;

@@ -11,7 +11,10 @@
 #include <ny/keyboardContext.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/pipelineInfo.hpp>
+#include <dlg/dlg.hpp>
+
 #include <optional>
+#include <random>
 
 #include <shaders/fullscreen.vert.h>
 #include <shaders/light_pp.frag.h>
@@ -55,17 +58,28 @@ public:
 		update.apply();
 
 		lightSystem_.emplace(device, viewDsLayout_);
-		lightSystem().addSegment({{{1.f, 1.f}, {2.f, 1.f}}, -1.f});
+		lightSystem().addSegment({{{1.f, 1.f}, {3.f, 1.f}}, -1.f});
+		lightSystem().addSegment({{{3.f, 1.f}, {3.f, 3.f}}, -1.f});
+		lightSystem().addSegment({{{3.f, 3.f}, {1.f, 3.f}}, -1.f});
+		lightSystem().addSegment({{{1.f, 3.f}, {1.f, 1.f}}, -1.f});
 
-		light1_ = &lightSystem().addLight();
-		light1_->position = {0.5f, 0.5f};
-		light1_->color = static_cast<nytl::Vec4f>(blackbody(8000u));
-		light1_->color[3] = 1.f;
 
-		light2_ = &lightSystem().addLight();
-		light2_->color = static_cast<nytl::Vec4f>(blackbody(2000u));
-		light2_->color[3] = 1.f;
-		light2_->position = {2.0f, 2.0f};
+		std::mt19937 rgen;
+		rgen.seed(std::time(nullptr));
+
+		std::uniform_real_distribution<float> posDistr(0.f, 5.f);
+		std::uniform_int_distribution<unsigned> colDistr(2000u, 10000u);
+		std::uniform_real_distribution<float> radDistr(0.008f, 0.3f);
+		std::uniform_real_distribution<float> strengthDistr(0.2f, 1.5f);
+
+		for(auto i = 0u; i < 20u; ++i) {
+			auto& light = lightSystem().addLight();
+			light.position = {posDistr(rgen), posDistr(rgen)};
+			light.color = static_cast<nytl::Vec4f>(blackbody(colDistr(rgen)));
+			light.color[3] = 1.f;
+			light.radius(radDistr(rgen));
+			light.strength(strengthDistr(rgen));
+		}
 
 		// post-process/combine
 		auto info = vk::SamplerCreateInfo {};
@@ -79,6 +93,8 @@ public:
 		auto ppBindings = {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::fragment)
 		};
 
 		pp_.dsLayout = vpp::TrDsLayout(device, ppBindings);
@@ -108,10 +124,37 @@ public:
 		pp_.ds = vpp::TrDs(device.descriptorAllocator(), pp_.dsLayout);
 		vpp::DescriptorSetUpdate ppDsUpdate(pp_.ds);
 
+		pp_.ubo = {device.bufferAllocator(), sizeof(float) * 2,
+			vk::BufferUsageBits::uniformBuffer};
+
 		auto imgview = lightSystem().renderTarget().vkImageView();
 		ppDsUpdate.imageSampler({{{}, imgview,
 			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ppDsUpdate.uniform({{pp_.ubo.buffer(), pp_.ubo.offset(),
+			pp_.ubo.size()}});
 		ppDsUpdate.apply();
+
+		// gui
+		using namespace vui::dat;
+		auto as = vui::autoSize;
+		panel_ = &gui().create<Panel>(nytl::Rect2f {50.f, 0.f, 250.f, as}, 27.f);
+
+		auto createValueTextfield = [&](auto& at, auto name, float& value) {
+			auto start = std::to_string(value);
+			start.resize(4);
+			auto& t = at.template create<Textfield>(name, start).textfield();
+			t.onSubmit = [&, name](auto& tf) {
+				try {
+					value = std::stof(tf.utf8());
+				} catch(const std::exception& err) {
+					dlg_error("Invalid float for {}: {}", name, tf.utf8());
+					return;
+				}
+			};
+		};
+
+		createValueTextfield(*panel_, "gamma", pp_.gamma);
+		createValueTextfield(*panel_, "exposure", pp_.exposure);
 
 		return true;
 	}
@@ -125,6 +168,10 @@ public:
 			auto map = ubo_.memoryMap();
 			std::memcpy(map.ptr(), &viewTransform_, sizeof(viewTransform_));
 		}
+
+		auto map = pp_.ubo.memoryMap();
+		std::memcpy(map.ptr(), &pp_.exposure, sizeof(float));
+		std::memcpy(map.ptr() + 4, &pp_.gamma, sizeof(float));
 
 		return ret;
 	}
@@ -167,11 +214,6 @@ public:
 
 	void key(const ny::KeyEvent& ev) override {
 		App::key(ev);
-		if(ev.pressed && ev.keycode == ny::Keycode::k1) {
-			currentLight_ = light1_;
-		} else if(ev.pressed && ev.keycode == ny::Keycode::k2) {
-			currentLight_ = light2_;
-		}
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -184,13 +226,18 @@ public:
 		auto s = nytl::Vec {
 			(2.f / (fac * w)),
 			(-2.f / (fac * h)), 1
-			// 2.f / ev.size.x,
-			// -2.f / ev.size.y, 1
 		};
 
 		viewTransform_ = nytl::identity<4, float>();
 		scale(viewTransform_, s);
 		translate(viewTransform_, {-1, 1, 0});
+
+		using namespace nytl::vec::operators;
+		windowToLevel_ = nytl::identity<4, float>();
+		scale(windowToLevel_, nytl::Vec {
+			fac * w / ev.size.x, -fac * h / ev.size.y, 1.f});
+		translate(windowToLevel_, {0.f, fac * h, 0.f});
+
 		updateView_ = true;
 	}
 
@@ -200,6 +247,20 @@ public:
 
 	void mouseButton(const ny::MouseButtonEvent& ev) override {
 		App::mouseButton(ev);
+		auto pos4 = nytl::Vec4f(ev.position);
+		pos4[3] = 1.f;
+
+		auto pos = nytl::Vec2f(windowToLevel_ * pos4);
+		for(auto& light : lightSystem().lights()) {
+			if(contains(light, pos)) {
+				currentLight_ = &light;
+			}
+		}
+	}
+
+	bool contains(const Light& light, nytl::Vec2f pos) {
+		doi::Circle circle {light.position, light.radius()};
+		return doi::contains(circle, pos);
 	}
 
 	LightSystem& lightSystem() { return *lightSystem_; }
@@ -213,19 +274,22 @@ protected:
 	vpp::Sampler sampler_;
 
 	nytl::Mat4f viewTransform_;
-	// nytl::Mat4f windowToLevel_;
+	nytl::Mat4f windowToLevel_;
 
 	struct {
+		vpp::SubBuffer ubo;
 		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
+
+		float exposure {1.f};
+		float gamma {1.f};
 	} pp_; // post process; combine pass
 
-	Light* light1_ {};
-	Light* light2_ {};
-
 	Light* currentLight_ {};
+
+	vui::dat::Panel* panel_ {};
 };
 
 // main

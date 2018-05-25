@@ -97,6 +97,9 @@ public:
 	const auto& lightPipeLayout() const { return lightPipeLayout_; }
 	const auto& renderTarget() const { return renderTarget_; }
 
+	auto& lights() { return lights_; }
+	auto& lights() const { return lights_; }
+
 protected:
 	vpp::Device& dev_;
 	vk::DescriptorSetLayout viewLayout_;

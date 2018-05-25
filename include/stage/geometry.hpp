@@ -172,7 +172,7 @@ Order order(nytl::Vec2f point, const Line2f& line, nytl::Vec2f dir);
 
 /// Projects the given point onto the given rectangle from the given origin.
 /// Has undefined behavior if origin does not lay inside view.
-nytl::Vec2f rectProject(nytl::Vec2f origin, nytl::Vec2f point, nytl::Rect2f rect);
+nytl::Vec2f rectProject(nytl::Vec2f origin, nytl::Vec2f point, nytl::Rect2f);
 
 // Returns the point on the given circle for which the tangent goes through
 // the given point. If minMaxFac is -1, will return the minimum point
@@ -180,8 +180,41 @@ nytl::Vec2f rectProject(nytl::Vec2f origin, nytl::Vec2f point, nytl::Rect2f rect
 nytl::Vec2f circlePoint(nytl::Vec2f circleCenter, float circleRadius,
 	nytl::Vec2f point, float minMaxFac);
 
+/// Represents a circle shape.
+struct Circle {
+	nytl::Vec2f center;
+	float radius;
+};
+
+bool contains(Circle, nytl::Vec2f);
+bool intersects(Circle a, Circle b);
+bool intersects(Circle, nytl::Rect2f);
+inline bool intersects(nytl::Rect2f rect, Circle circle) {
+	return intersects(circle, rect);
+}
+
 // Assume mathematical (i.e. top and right is positive) coord system
 namespace rhs {
+
+template<std::size_t D, typename T>
+auto left(const nytl::Rect<D, T>& rect) {
+    return rect.position.x;
+}
+
+template<std::size_t D, typename T>
+auto right(const nytl::Rect<D, T>& rect) {
+    return rect.position.x + rect.size.x;
+}
+
+template<std::size_t D, typename T>
+auto top(const nytl::Rect<D, T>& rect) {
+    return rect.position.y + rect.size.y;
+}
+
+template<std::size_t D, typename T>
+auto bottom(const nytl::Rect<D, T>& rect) {
+    return rect.position.y;
+}
 
 template<std::size_t D, typename T>
 auto bottomLeft(const nytl::Rect<D, T>& rect) {
@@ -202,6 +235,10 @@ template<std::size_t D, typename T>
 auto topRight(const nytl::Rect<D, T>& rect) {
     return rect.position + rect.size;
 }
+
+// Returns the left/right normal of a 2d vector
+inline nytl::Vec2f lnormal(nytl::Vec2f vec) { return {-vec[1], vec[0]}; }
+inline nytl::Vec2f rnormal(nytl::Vec2f vec) { return {vec[1], -vec[0]}; }
 
 } // namespace rhs
 } // namespace doi

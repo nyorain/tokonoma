@@ -51,3 +51,7 @@ subdir('src/smooth-shadow')
 executable('pendulum',
 	'src/pendulum/main.cpp',
 	dependencies: stage_dep)
+
+executable('pg',
+	'src/playground/main1.cpp',
+	dependencies: stage_dep)
