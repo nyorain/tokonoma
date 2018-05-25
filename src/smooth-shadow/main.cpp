@@ -125,7 +125,7 @@ public:
 		vpp::DescriptorSetUpdate ppDsUpdate(pp_.ds);
 
 		pp_.ubo = {device.bufferAllocator(), sizeof(float) * 2,
-			vk::BufferUsageBits::uniformBuffer};
+			vk::BufferUsageBits::uniformBuffer, 4u, device.hostMemoryTypes()};
 
 		auto imgview = lightSystem().renderTarget().vkImageView();
 		ppDsUpdate.imageSampler({{{}, imgview,
