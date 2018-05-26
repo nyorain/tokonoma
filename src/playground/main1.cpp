@@ -1,5 +1,5 @@
-#include <nytl/matOps.hpp>
 #include <dlg/dlg.hpp>
+#include <nytl/matOps.hpp>
 
 /*
 template<std::size_t I, typename F, typename DF, typename V>
@@ -41,6 +41,7 @@ double newton(F&& f, double start = 0) {
 		}, start);
 }
 
+/*
 int main() {
 	auto f = [](auto x) {
 		return x * std::sin(x) - x;
@@ -49,4 +50,20 @@ int main() {
 	auto x = newton(f);
 	dlg_info(x);
 	dlg_info(f(x));
+}
+*/
+
+int main() {
+	/*
+	nytl::Mat3f m = {1, 0, 0, 2, 1, 0, 1, 2, 3};
+	dlg_info(m * nytl::transpose(m));
+
+	auto lup = nytl::LUDecomposition<3, float> {m, nytl::transpose(m), nytl::identity<3, bool>()};
+	dlg_info(nytl::luEvaluate(lup, nytl::Vec3f {0, -1, 7}));
+	dlg_info(((m * nytl::transpose(m)) * nytl::luEvaluate(lup, nytl::Vec3f {0, -1, 7})));
+	*/
+
+	nytl::Mat3f m = {2,6,4, 0,2,4, 1,4,6};
+	auto lup = nytl::luDecomp(m);
+	dlg_info("{} \n {} \n {}", lup.lower, lup.upper, lup.perm);
 }
