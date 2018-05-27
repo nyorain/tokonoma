@@ -51,11 +51,13 @@ void translate(nytl::Mat4<T>& mat, nytl::Vec3<T> move) {
 // listener
 struct GuiListener : public vui::GuiListener {
 	App* app_;
+	/*
 	void cursor(vui::Cursor cursor) override {
 		dlg_assert(app_);
 		auto c = static_cast<ny::CursorType>(cursor);
 		app_->window().windowContext().cursor({c});
 	}
+	*/
 };
 
 } // anon namespace
@@ -343,7 +345,9 @@ void App::run() {
 			// on output).
 			auto res = renderer().render(&submitID, {impl_->nextFrameWait});
 			if(submitID) {
-				dlg_debug("Presenting failed. Skipping presenting frame");
+				if(res != vk::Result::success) {
+					dlg_debug("Presenting failed. Skipping presenting frame");
+				}
 				break;
 			}
 

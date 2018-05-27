@@ -8,6 +8,8 @@
 #include <vpp/pipelineInfo.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
+#include <vui/dat.hpp>
+#include <vui/gui.hpp>
 #include <ny/key.hpp>
 #include <dlg/dlg.hpp>
 #include <cstring>
@@ -16,43 +18,104 @@
 #include <shaders/line.vert.h>
 #include <shaders/line.frag.h>
 
-constexpr auto pointCount = 256;
-class Particle {
+constexpr auto pointCount = 128; // needs to be updated in line.vert
+constexpr auto particleCount = 2000;
+
+struct Parameters {
+	bool normalize; // whether to normalize distance
+	float friction; // per 100ms
+
+	struct {
+		float constant;
+		float invDist;
+		float maxInvDist;
+	} attraction;
+};
+
+Parameters p1 = {
+	false,
+	0.9,
+	{
+		2.f,
+		2.f,
+		100.f
+	},
+};
+
+Parameters p2 = {
+	true,
+	0.3,
+	{
+		5.f,
+		1.f,
+		50.f
+	},
+};
+
+class PursuerSystem {
 public:
-	Particle* follow;
+	Parameters params = p1;
 
 public:
-	Particle(vpp::Device& dev, Particle* xfollow, nytl::Vec2f pos,
-			nytl::Vec4f color) : follow(xfollow), pos_(pos), color_(color) {
+	PursuerSystem(vpp::Device& dev) {
+		auto pcount = pointCount * particleCount;
+		auto size = pcount * sizeof(nytl::Vec2f);
+		buf_ = {dev, {{}, size, vk::BufferUsageBits::vertexBuffer},
+			dev.hostMemoryTypes()};
 
-		points_.resize(pointCount, pos_);
-		auto size = points_.size() * sizeof(points_[0]);
-		buf_ = {dev.bufferAllocator(), size,
-			vk::BufferUsageBits::vertexBuffer, 4u, dev.hostMemoryTypes()};
+		// setup
+		std::mt19937 rgen;
+		rgen.seed(std::time(nullptr));
+		std::uniform_real_distribution<float> posDistr(-1.f, 1.f);
+
+		particles_.reserve(particleCount);
+		points_.resize(pcount);
+		for(auto i = 0u; i < particleCount; ++i) {
+			auto pos = nytl::Vec2f {posDistr(rgen), posDistr(rgen)};
+			float b = 0.2 + 0.3 * i / float(particleCount);
+			auto col = nytl::Vec4f {0.2f, 0.9f - b, b, 1.f};
+			particles_.push_back({pos, {}, col});
+			for(auto j = 0u; j < pointCount; ++j) {
+				points_[i * pointCount + j] = pos;
+			}
+		}
+
 	}
 
 	void update(double dt) {
-		dlg_assert(follow);
-		pos_ += dt * vel_;
+		// shift all position by one
+		auto size = (points_.size() - 1) * (sizeof(points_[0]));
+		std::memmove(points_.data() + 1, points_.data(), size);
 
-		// slow down
-		vel_ *= std::pow(0.9, dt * 100.f);
+		auto follow = &particles_.back();
+		auto i = 0u;
+		for(auto& p : particles_) {
+			p.pos += dt * p.vel;
+			points_[i] = p.pos;
+			p.vel *= std::pow(params.friction, dt * 100.f);
 
-		// gravitation to last particle
-		auto d = follow->pos() - pos_;
-		auto dd = dot(d, d);
+			auto d = follow->pos - p.pos;
+			auto dd = dot(d, d);
 
-		if(dd != 0.f) {
-			auto fac = 0.f;
-			fac += std::min(1.f / dd, 100.f);
-			// fac = std::min(5.f / std::sqrt(dd), 10.f);
-			fac += 2.f;
-			// normalize(d);
-			vel_ += dt * fac * d;
+			if(dd != 0.f) {
+				auto fac = params.attraction.constant;
+				fac += std::min(params.attraction.invDist / dd,
+					params.attraction.maxInvDist);
+
+				if(params.normalize) {
+					normalize(d);
+				}
+
+				p.vel += dt * fac * d;
+
+				// == ideas ==
+				// add invSqrtDist attraction
+				// fac += std::min(0.2f / std::sqrt(dd), 30.f);
+			}
+
+			follow = &p;
+			i += pointCount;
 		}
-
-		points_.pop_back();
-		points_.insert(points_.begin(), pos_);
 	}
 
 	void updateDevice() {
@@ -61,17 +124,31 @@ public:
 		std::memcpy(map.ptr(), points_.data(), size);
 	}
 
-	nytl::Vec2f pos() const { return pos_; }
-	nytl::Vec2f vel() const { return vel_; }
-	nytl::Vec4f color() const { return color_; }
-	const auto& buf() const { return buf_; }
+	void render(vk::CommandBuffer cb, vk::PipelineLayout layout) {
+		// could be done more efficiently if we ignore color i guess
+		auto offset = 0u;
+		for(auto& p : particles_) {
+			auto c = p.color;
+			vk::cmdPushConstants(cb, layout,
+				vk::ShaderStageBits::fragment, 0u, sizeof(c), &c);
+			vk::cmdBindVertexBuffers(cb, 0, {buf_},
+				{offset});
+			vk::cmdDraw(cb, pointCount, 1, 0, 0);
+			offset += pointCount * sizeof(nytl::Vec2f);
+		}
+	}
 
 protected:
 	std::vector<nytl::Vec2f> points_;
-	vpp::SubBuffer buf_;
-	nytl::Vec2f pos_ {};
-	nytl::Vec2f vel_ {};
-	nytl::Vec4f color_ {};
+
+	struct Particle {
+		nytl::Vec2f pos {};
+		nytl::Vec2f vel {};
+		nytl::Vec4f color {};
+	};
+
+	std::vector<Particle> particles_;
+	vpp::Buffer buf_;
 };
 
 class PursuersApp : public doi::App {
@@ -117,36 +194,55 @@ public:
 			nullptr, vkPipe);
 		particlePipe_ = {dev, vkPipe};
 
-		// particles
-		constexpr auto particleCount = 1000u;
-		auto needed = particleCount * sizeof(nytl::Vec2f) * pointCount;
-		dev.bufferAllocator().reserve(2 * needed,
-			vk::BufferUsageBits::vertexBuffer, 4u, dev.hostMemoryTypes());
+		system_.emplace(dev);
 
-		std::mt19937 rgen;
-		rgen.seed(std::time(nullptr));
-		std::uniform_real_distribution<float> posDistr(-1.f, 1.f);
+		// gui
+		using namespace vui::dat;
+		auto as = vui::autoSize;
+		panel_ = &gui().create<Panel>(nytl::Rect2f {50.f, 0.f, 250.f, as}, 27.f);
 
-		Particle* last = nullptr;
-		particles_.reserve(particleCount);
-		for(auto i = 0u; i < particleCount; ++i) {
-			auto pos = nytl::Vec2f {posDistr(rgen), posDistr(rgen)};
-			float b = 0.2 + 0.3 * i / float(particleCount);
-			auto col = nytl::Vec4f {0.2f, 0.9f - b, b, 1.f};
-			particles_.emplace_back(dev, last, pos, col);
-			last = &particles_.back();
-		}
+		auto createValueTextfield = [&](auto& at, auto name, float& value) {
+			auto start = std::to_string(value);
+			start.resize(4);
+			auto& t = at.template create<Textfield>(name, start).textfield();
+			t.onSubmit = [&, name](auto& tf) {
+				try {
+					value = std::stof(tf.utf8());
+				} catch(const std::exception& err) {
+					dlg_error("Invalid float for {}: {}", name, tf.utf8());
+					return;
+				}
+			};
+		};
 
-		particles_.front().follow = &particles_.back();
+		auto& params = system_->params;
+		params = p2;
+		createValueTextfield(*panel_, "friction", params.friction);
+		panel_->create<Button>("Load 1").onClick = [&]{
+			params = p1;
+		};
+
+		panel_->create<Button>("Load 2").onClick = [&]{
+			params = p2;
+		};
+
+		auto& folder = panel_->create<Folder>("attraction");
+		auto& a = params.attraction;
+		createValueTextfield(folder, "constant", a.constant);
+		createValueTextfield(folder, "invDist", a.invDist);
+		createValueTextfield(folder, "maxInvDist", a.maxInvDist);
+		auto& cb = folder.create<Checkbox>("normalize").checkbox();
+		cb.set(params.normalize);
+		cb.onToggle = [&](const auto& c) {
+			params.normalize = c.checked();
+		};
+
 		return true;
 	}
 
 	bool updateDevice() override {
 		auto ret = App::updateDevice();
-		for(auto& p : particles_) {
-			p.updateDevice();
-		}
-
+		system_->updateDevice();
 		return ret;
 	}
 
@@ -158,12 +254,11 @@ public:
 		}
 
 		// frame_ = false;
-		for(auto& p : particles_) {
-			p.update(dt);
-		}
+		system_->update(dt);
 	}
 
 	void key(const ny::KeyEvent& ev) override {
+		App::key(ev);
 		if(ev.pressed && ev.keycode == ny::Keycode::n) {
 			frame_ = !frame_;
 		}
@@ -172,20 +267,15 @@ public:
 	void render(vk::CommandBuffer cb) override {
 		App::render(cb);
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, particlePipe_);
-		for(auto& p : particles_) {
-			auto c = p.color();
-			vk::cmdPushConstants(cb, particlePipeLayout_,
-				vk::ShaderStageBits::fragment, 0u, sizeof(c), &c);
-			vk::cmdBindVertexBuffers(cb, 0, {p.buf().buffer()},
-				{p.buf().offset()});
-			vk::cmdDraw(cb, pointCount, 1, 0, 0);
-		}
+		system_->render(cb, particlePipeLayout_);
+		gui().draw(cb);
 	}
 
 protected:
 	vpp::PipelineLayout particlePipeLayout_;
 	vpp::Pipeline particlePipe_;
-	std::vector<Particle> particles_;
+	std::optional<PursuerSystem> system_;
+	vui::dat::Panel* panel_;
 	bool frame_ {};
 };
 
