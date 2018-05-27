@@ -12,6 +12,7 @@
 #include <vpp/debug.hpp>
 #include <ny/appContext.hpp>
 #include <ny/backend.hpp>
+#include <ny/cursor.hpp>
 #include <ny/windowContext.hpp>
 #include <ny/key.hpp>
 #include <dlg/dlg.hpp>
@@ -47,6 +48,16 @@ void translate(nytl::Mat4<T>& mat, nytl::Vec3<T> move) {
 	}
 }
 
+// listener
+struct GuiListener : public vui::GuiListener {
+	App* app_;
+	void cursor(vui::Cursor cursor) override {
+		dlg_assert(app_);
+		auto c = static_cast<ny::CursorType>(cursor);
+		app_->window().windowContext().cursor({c});
+	}
+};
+
 } // anon namespace
 
 // App::Impl
@@ -65,6 +76,7 @@ struct App::Impl {
 	rvg::Transform windowTransform;
 	std::optional<rvg::FontAtlas> fontAtlas;
 	std::optional<rvg::Font> defaultFont;
+	GuiListener guiListener;
 	std::optional<vui::Gui> gui;
 
 	std::vector<vpp::StageSemaphore> nextFrameWait;
@@ -240,7 +252,9 @@ bool App::init(const AppSettings& settings) {
 	impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath, fontHeight);
 	impl_->fontAtlas->bake(rvgContext());
 
-	impl_->gui.emplace(rvgContext(), *impl_->defaultFont);
+	// gui
+	impl_->guiListener.app_ = this;
+	impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
 
 	return true;
 }
@@ -294,7 +308,7 @@ void App::run() {
 	using Secf = std::chrono::duration<float, std::ratio<1, 1>>;
 	auto lastFrame = Clock::now();
 
-	std::uint64_t submitID {};
+	std::optional<std::uint64_t> submitID {};
 
 	// initial event poll
 	if(!appContext().pollEvents()) {
@@ -304,44 +318,78 @@ void App::run() {
 
 	while(run_) {
 		// - update device data -
+		// the device will not using any of the resources we change here
 		if(updateDevice()) {
 			renderer().invalidate();
 		}
 
-resize:
+		// we have to resize here and not directly when we receive the
+		// even since we handles even during the logical update step
+		// in which we must change rendering resources.
 		if(resize_) {
 			resize_ = {};
 			renderer().resize(window().size());
 		}
 
 		// - submit and present -
-		auto res = renderer().render(&submitID, {impl_->nextFrameWait});
+		// we try to render and present (and if it does not succeed handle
+		// pending resize event) so long until it works. This is needed since
+		// we render and resize asynchronously
+		auto i = 0u;
+		while(true) {
+			// when this sets submitID to a valid value, a commandbuffer
+			// was submitted. Presenting might still have failed but we
+			// have to treat this as a regular frame (will just be skipped
+			// on output).
+			auto res = renderer().render(&submitID, {impl_->nextFrameWait});
+			if(submitID) {
+				dlg_debug("Presenting failed. Skipping presenting frame");
+				break;
+			}
 
-		if(res != vk::Result::success) {
-			auto retry = (res == vk::Result::errorOutOfDateKHR);
-			if(retry) {
-				dlg_debug("Skipping suboptimal/outOfDate frame");
-				if(!appContext().pollEvents()) {
-					dlg_info("upate pollEvents returned false");
-					return;
-				}
-
-				// TODO: AAARGH
-				goto resize;
-			} else {
-				dlg_error("render error: {}", vk::name(res));
+			// we land here when acquiring an image failed (or returned
+			// that its suboptimal).
+			// first we check whether its an expected error (due to
+			// resizing) and we want to rety or if it's something else.
+			dlg_assert(res != vk::Result::success);
+			auto retry = (res == vk::Result::errorOutOfDateKHR) ||
+				(res == vk::Result::suboptimalKHR);
+			if(!retry) {
+				// Unexpected and critical error. Has nothing to do
+				// with asynchronous resizing/rendering
+				dlg_fatal("render error: {}", vk::name(res));
 				return;
 			}
-		} else {
-			impl_->nextFrameWait.clear();
+
+			// so we know that acquiring the image probably failed
+			// due to an unhandled resize event. Poll for events
+			dlg_debug("Skipping suboptimal/outOfDate frame {}", ++i);
+			if(!appContext().pollEvents()) {
+				dlg_info("upate pollEvents returned false");
+				return;
+			}
+
+			// If there was a resize event handle it.
+			// We will try rendering/acquiring again in the next
+			// loop iteration.
+			if(resize_) {
+				resize_ = {};
+				renderer().resize(window().size());
+			} else {
+				dlg_warn("Skipped frame without resize event");
+			}
 		}
+
+		impl_->nextFrameWait.clear();
 
 		// wait for this frame at the end of this loop
 		// this way we also wait for it when update throws
 		// since we don't want to destroy resources before
 		// rendering has finished
 		auto waiter = nytl::ScopeGuard {[&] {
-			vulkanDevice().queueSubmitter().wait(submitID);
+			if(submitID) {
+				vulkanDevice().queueSubmitter().wait(*submitID);
+			}
 		}};
 
 		// - update logcial state -
