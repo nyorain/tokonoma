@@ -48,7 +48,9 @@ subdir('src/stage')
 # projects
 subdir('src/smooth-shadow')
 subdir('src/pursuers')
+subdir('src/fluids')
 
+# inline (for small projects)
 executable('pendulum',
 	'src/pendulum/main.cpp',
 	dependencies: stage_dep)

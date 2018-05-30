@@ -51,13 +51,11 @@ void translate(nytl::Mat4<T>& mat, nytl::Vec3<T> move) {
 // listener
 struct GuiListener : public vui::GuiListener {
 	App* app_;
-	/*
 	void cursor(vui::Cursor cursor) override {
 		dlg_assert(app_);
 		auto c = static_cast<ny::CursorType>(cursor);
 		app_->window().windowContext().cursor({c});
 	}
-	*/
 };
 
 } // anon namespace
@@ -320,62 +318,37 @@ void App::run() {
 
 	while(run_) {
 		// - update device data -
-		// the device will not using any of the resources we change here
 		if(updateDevice()) {
 			renderer().invalidate();
 		}
 
-		// we have to resize here and not directly when we receive the
-		// even since we handles even during the logical update step
-		// in which we must change rendering resources.
 		if(resize_) {
 			resize_ = {};
 			renderer().resize(window().size());
 		}
 
 		// - submit and present -
-		// we try to render and present (and if it does not succeed handle
-		// pending resize event) so long until it works. This is needed since
-		// we render and resize asynchronously
 		auto i = 0u;
 		while(true) {
-			// when this sets submitID to a valid value, a commandbuffer
-			// was submitted. Presenting might still have failed but we
-			// have to treat this as a regular frame (will just be skipped
-			// on output).
 			auto res = renderer().render(&submitID, {impl_->nextFrameWait});
 			if(submitID) {
-				if(res != vk::Result::success) {
-					dlg_debug("Presenting failed. Skipping presenting frame");
-				}
 				break;
 			}
 
-			// we land here when acquiring an image failed (or returned
-			// that its suboptimal).
-			// first we check whether its an expected error (due to
-			// resizing) and we want to rety or if it's something else.
 			dlg_assert(res != vk::Result::success);
 			auto retry = (res == vk::Result::errorOutOfDateKHR) ||
 				(res == vk::Result::suboptimalKHR);
 			if(!retry) {
-				// Unexpected and critical error. Has nothing to do
-				// with asynchronous resizing/rendering
 				dlg_fatal("render error: {}", vk::name(res));
 				return;
 			}
 
-			// so we know that acquiring the image probably failed
-			// due to an unhandled resize event. Poll for events
 			dlg_debug("Skipping suboptimal/outOfDate frame {}", ++i);
 			if(!appContext().pollEvents()) {
 				dlg_info("upate pollEvents returned false");
 				return;
 			}
 
-			// If there was a resize event handle it.
-			// We will try rendering/acquiring again in the next
-			// loop iteration.
 			if(resize_) {
 				resize_ = {};
 				renderer().resize(window().size());
