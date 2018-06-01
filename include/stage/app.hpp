@@ -59,7 +59,8 @@ protected:
 
 	// frame
 	virtual void update(double dt);
-	virtual bool updateDevice();
+	virtual void updateDevice();
+	void rerecord() { rerecord_ = true; }
 
 	// events
 	virtual void resize(const ny::SizeEvent&);
@@ -77,6 +78,7 @@ protected:
 
 	bool run_ {};
 	bool resize_ {};
+	bool rerecord_ {};
 
 	struct {
 		bool vsync;

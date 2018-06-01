@@ -318,14 +318,16 @@ void App::run() {
 
 	while(run_) {
 		// - update device data -
-		if(updateDevice()) {
-			renderer().invalidate();
-		}
+		updateDevice();
 
 		if(resize_) {
 			resize_ = {};
 			renderer().resize(window().size());
+		} else if(rerecord_) {
+			renderer().invalidate();
 		}
+
+		rerecord_ = false;
 
 		// - submit and present -
 		auto i = 0u;
@@ -389,7 +391,7 @@ void App::update(double dt) {
 	gui().update(dt);
 }
 
-bool App::updateDevice() {
+void App::updateDevice() {
 	auto [rec, seph] = rvgContext().upload();
 	if(seph) {
 		impl_->nextFrameWait.push_back({seph,
@@ -397,7 +399,7 @@ bool App::updateDevice() {
 	}
 
 	rec |= gui().updateDevice();
-	return rec;
+	rerecord_ |= rec;
 }
 
 void App::resize(const ny::SizeEvent& ev) {

@@ -159,9 +159,9 @@ public:
 		return true;
 	}
 
-	bool updateDevice() override {
-		auto ret = App::updateDevice();
-		ret |= lightSystem().updateDevice();
+	void updateDevice() override {
+		App::updateDevice();
+		rerecord_ |= lightSystem().updateDevice();
 
 		if(updateView_) {
 			updateView_ = false;
@@ -172,8 +172,6 @@ public:
 		auto map = pp_.ubo.memoryMap();
 		std::memcpy(map.ptr(), &pp_.exposure, sizeof(float));
 		std::memcpy(map.ptr() + 4, &pp_.gamma, sizeof(float));
-
-		return ret;
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {

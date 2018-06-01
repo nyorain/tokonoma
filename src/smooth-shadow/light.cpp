@@ -352,13 +352,13 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 				shadowPipeLayout_, vpp::ShaderProgram({
 					{shadowVertex, vk::ShaderStageBits::vertex},
 					{shadowFragment, vk::ShaderStageBits::fragment}
-					}));
+		}));
 
 		vpp::GraphicsPipelineInfo lightInfo(lightPass_,
 				lightPipeLayout_, vpp::ShaderProgram({
 					{lightVertex, vk::ShaderStageBits::vertex},
 					{lightFragment, vk::ShaderStageBits::fragment}
-					}));
+		}));
 
 		// shadow
 		constexpr auto stride = sizeof(float) * 5; // inPointA, inPointB, opacity

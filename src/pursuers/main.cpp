@@ -240,10 +240,9 @@ public:
 		return true;
 	}
 
-	bool updateDevice() override {
-		auto ret = App::updateDevice();
+	void updateDevice() override {
+		App::updateDevice();
 		system_->updateDevice();
-		return ret;
 	}
 
 	void update(double dt) override {

@@ -1,0 +1,30 @@
+#version 450
+
+layout (local_size_x = 1, local_size_y = 1) in;
+
+layout(binding = 0, OUT_FORMAT) uniform writeonly image2D out_field;
+layout(binding = 1) uniform sampler2D in_field;
+layout(binding = 2) uniform sampler2D in_vel;
+
+layout(binding = 3) uniform UBO {
+	float dt;
+} ubo;
+
+void main() {
+	vec2 size = (gl_WorkGroupSize * gl_NumWorkGroups).xy; // the image size
+	vec2 pos = gl_GlobalInvocationID.xy / size; // normalized position
+	vec2 vel = texture(in_vel, pos).xy;
+	vec2 from = pos - vel;
+	vec4 val = texture(in_field, from);
+
+	// TODO
+	if(length(pos - vec2(0.5, 0.5)) < 0.2) {
+#if OUT_FORMAT == r32f
+		val = vec4(1);
+#else
+		val = vec4(50);
+#endif
+	}
+
+	imageStore(out_field, ivec2(gl_GlobalInvocationID.xy), val);
+}

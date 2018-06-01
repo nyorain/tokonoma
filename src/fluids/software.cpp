@@ -231,9 +231,9 @@ template<typename T>
 void diffuse(Field<T>& f, const Field<T>& f0, float diff, float dt,
 		int boundary) {
 
-	constexpr auto iters = 5;
 	auto a = dt * diff * f.size().x * f.size().y;
 
+	constexpr auto iters = 20;
 	for(auto k = 0u; k < iters; ++k) {
 		for(auto x = 1u; x < f.size().x - 2; ++x) {
 			for(auto y = 1u; y < f.size().y - 2; ++y) {
@@ -244,6 +244,18 @@ void diffuse(Field<T>& f, const Field<T>& f0, float diff, float dt,
 
 		setBoundary(f, boundary);
 	}
+
+	/*
+	// auto a = 0.2f;
+	for(auto x = 1u; x < f.size().x - 2; ++x) {
+		for(auto y = 1u; y < f.size().y - 2; ++y) {
+			auto sum = f0(x - 1, y) + f0(x + 1, y) + f0(x, y - 1) + f0(x, y + 1);
+			f(x, y) = f0(x, y) + a * (sum - 4 * f0(x,y));
+		}
+	}
+
+	setBoundary(f, boundary);
+	*/
 }
 
 template<typename T>
@@ -255,6 +267,11 @@ void advect(Field<T>& f, const Field<T>& f0, const Field<nytl::Vec2f>& vel,
 		for(auto y = 1u; y < f.size().y - 2; ++y) {
 			auto bt = nytl::Vec2ui {x, y} - dt * vel(x, y);
 			f(x, y) = f0.sample(bt);
+
+			// auto ft = nytl::Vec2ui(nytl::Vec2ui {x, y} + dt * vel(x, y));
+			// ft = nytl::vec::cw::clamp(ft, {0, 0}, f.size() - nytl::Vec {1, 1});
+			// f(nytl::Vec2ui(ft)) += dt * f0(x, y);
+			// f(x, y) -= dt * f0(x, y);
 		}
 	}
 
@@ -318,7 +335,7 @@ void FluidSystem::velocityStep(float dt) {
 
 	// std::swap(vel_, vel0_);
 	diffuse(*vel_, *vel0_, 0.1f, dt, 1);
-	projectVelocity();
+	// projectVelocity();
 	std::swap(vel_, vel0_);
 	advect(*vel_, *vel0_, *vel0_, dt, 1); // TODO: wrong boundary
 	projectVelocity();
@@ -340,7 +357,7 @@ void FluidSystem::densityStep(float dt) {
 	}
 
 	// std::swap(density_, density0_);
-	diffuse(*density_, *density0_, 1.f, dt, 0);
+	diffuse(*density_, *density0_, 0.1f, dt, 0);
 	std::swap(density_, density0_);
 	advect(*density_, *density0_, *vel_, dt, 0);
 
@@ -371,7 +388,7 @@ void FluidSystem::projectVelocity() {
 	setBoundary(div_, 0);
 	setBoundary(p_, 0);
 
-	for ( k=0 ; k<5 ; k++ ) {
+	for ( k=0 ; k<30 ; k++ ) {
 		for ( i=1 ; i<=size_.x - 2 ; i++ ) {
 			for ( j=1 ; j<=size_.y - 2 ; j++ ) {
 				p_(i,j) = (div_(i,j)+p_(i-1,j)+p_(i+1,j)+ p_(i,j-1)+p_(i,j+1))/4;

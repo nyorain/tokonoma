@@ -9,6 +9,7 @@ geom_glsl = files('geometry.glsl')
 shaders_src = [
 	['common_shaders', [
 		['fullscreen.vert'],
+		['texture.frag'],
 	]],
 	['smooth_shadow_shaders', [
 		['light.vert'],
@@ -20,7 +21,11 @@ shaders_src = [
 	['pursuers_shaders', [
 		['line.vert'],
 		['line.frag'],
-	]]
+	]],
+	['fluid_shaders', [
+		['advect.comp', [], 'advect.vel.comp', ['-DOUT_FORMAT=rgba16f']],
+		['advect.comp', [], 'advect.dens.comp', ['-DOUT_FORMAT=r32f']],
+	]],
 ]
 
 # build them
@@ -30,13 +35,17 @@ foreach shader_group : shaders_src
 	shaders = get_variable(group_name, [])
 
 	foreach shader : shader_group[1]
-		s = shader[0]
-		name = s.underscorify() + '_data'
-		args = [glslang, '-V', '@INPUT@', '-o', '@OUTPUT@', '--vn', name]
+		file = shader[0]
+		name = shader.get(2, file)
+
+		data_name = name.underscorify() + '_data'
+		args = [glslang, '-V', '@INPUT@', '-o', '@OUTPUT@', '--vn', data_name]
+		args += shader.get(3, [])
+
 		header = custom_target(
-			s + '_spv',
-			output: s + '.h',
-			input: s,
+			name + '_spv',
+			output: name + '.h',
+			input: file,
 			depend_files: shader.get(1, []),
 			command: args)
 
