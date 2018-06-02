@@ -23,11 +23,8 @@ shaders_src = [
 		['line.frag'],
 	]],
 	['fluid_shaders', [
-		['advect.comp', [], 'advect.vel.comp', ['-DOUT_FORMAT=rgba16f']],
-		['advect.comp', [], 'advect.dens.comp', [
-		  '-DOUT_FORMAT=r32f',
-		  '-DVDEBUG=1',
-		]],
+		['advect.comp', [], 'advect.vel.comp', ['-DVELOCITY']],
+		['advect.comp', [], 'advect.dens.comp', ['-DDENSITY']],
 		['pressure.comp'],
 		['divergence.comp'],
 		['project.comp'],

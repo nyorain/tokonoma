@@ -2,12 +2,32 @@
 
 layout (local_size_x = 16, local_size_y = 16) in;
 
+#ifdef VELOCITY
+	#define OUT_FORMAT rgba16f
+#elif defined(DENSITY)
+	#define OUT_FORMAT r32f
+#endif
+
 layout(binding = 0, OUT_FORMAT) uniform writeonly image2D out_field;
 layout(binding = 2, rgba16f) uniform readonly image2D in_vel;
 layout(binding = 3) uniform sampler2D in_field;
 layout(binding = 4) uniform UBO {
+	vec2 mp0;
+	vec2 mp1;
 	float dt;
+	float velFac;
+	float densFac;
+	float radius;
 } ubo;
+
+// distance between point and segment (segA, segB)
+float distance(vec2 point, vec2 segA, vec2 segB) {
+	vec2 ab = segB - segA;
+	vec2 ap = point - segA;
+	float fac = dot(ap, ab) / dot(ab, ab);
+	vec2 clamped = segA + clamp(fac, 0, 1) * ab;
+	return length(point - clamped);
+}
 
 void main() {
 	vec2 pos = gl_GlobalInvocationID.xy;
@@ -17,16 +37,14 @@ void main() {
 	vec2 npos = (pos + vec2(0.5, 0.5)) / (gl_WorkGroupSize * gl_NumWorkGroups).xy;
 	vec4 val = texture(in_field, npos - ubo.dt * vel);
 
-	// TODO
-	if(length(pos - vec2(100, 100)) < 100) {
-#if VDEBUG == 1
-		val += ubo.dt * vec4(0.1);
-		// val += vec4(0.05, 0.05, 0, 0);
-#else
-		val += ubo.dt * 0.1 * (1, 1);
+	if(distance(pos, ubo.mp0, ubo.mp1) < ubo.radius) {
+#ifdef VELOCITY
+		vec2 mvel = ubo.mp1 - ubo.mp0;
+		val += ubo.dt * ubo.velFac * vec4(mvel, 0.0, 0.0);
+#elif defined(DENSITY)
+		val = clamp(val + ubo.dt * vec4(ubo.densFac), 0.0, 1.0);
 #endif
 	}
-	// val += ubo.dt * 0.1 * (vec4(sin(6.141 * npos.x), cos(6.141 * npos.y), 0, 0) + 1);
 
 	imageStore(out_field, ivec2(gl_GlobalInvocationID.xy), val);
 }

@@ -13,6 +13,7 @@
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
 #include <ny/key.hpp>
+#include <ny/mouseButton.hpp>
 #include <dlg/dlg.hpp>
 #include <cstring>
 #include <random>
@@ -25,19 +26,30 @@
 #include <shaders/pressure.comp.h>
 #include <shaders/project.comp.h>
 
+template<typename T>
+void write(nytl::Span<std::byte>& span, T&& data) {
+	dlg_assert(span.size() >= sizeof(data));
+	std::memcpy(span.data(), &data, sizeof(data));
+	span = span.slice(sizeof(data), span.size() - sizeof(data));
+}
+
 // == FluidSystem ==
 class FluidSystem {
 public:
-	static constexpr auto pressureIterations = 20u;
+	static constexpr auto pressureIterations = 120u;
+
+	float velocityFac {0.0};
+	float densityFac {0.0};
+	float radius {10.f};
 
 public:
 	FluidSystem(vpp::Device& dev, nytl::Vec2ui size);
 
-	void updateDevice(float dt);
+	void updateDevice(float dt, nytl::Vec2f mp0, nytl::Vec2f mp1);
 	void compute(vk::CommandBuffer);
 
 	const auto& density() const { return density_; }
-	const auto& velocity() const { return velocity_; }
+	const auto& velocity() const { return velocity0_; }
 	const auto& pressure() const { return pressure_; }
 	const auto& divergence() const { return divergence_; }
 
@@ -158,8 +170,17 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 	velocity_ = {dev, velInfo};
 	velocity0_ = {dev, velInfo};
 
+	// constexpr auto csz = vk::ComponentSwizzle::zero;
+	constexpr auto csr = vk::ComponentSwizzle::r;
+	// constexpr auto csg = vk::ComponentSwizzle::g;
+	// constexpr auto csb = vk::ComponentSwizzle::b;
+	// constexpr auto csa = vk::ComponentSwizzle::a;
+	constexpr auto cso = vk::ComponentSwizzle::one;
+	// constexpr auto csi = vk::ComponentSwizzle::identity;
+
 	auto scalarInfo = vpp::ViewableImageCreateInfo::color(dev, extent,
 		usage, {vk::Format::r32Sfloat}).value();
+	scalarInfo.view.components = {csr, csr, csr, cso};
 	density_ = {dev, scalarInfo};
 	density0_ = {dev, scalarInfo};
 
@@ -196,8 +217,9 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 	vk::deviceWaitIdle(dev);
 
 	// ds & stuff
-	ubo_ = {dev.bufferAllocator(), 4u, vk::BufferUsageBits::uniformBuffer,
-		4u, dev.hostMemoryTypes()};
+	constexpr auto uboSize = sizeof(float) * 8;
+	ubo_ = {dev.bufferAllocator(), uboSize,
+		vk::BufferUsageBits::uniformBuffer, 4u, dev.hostMemoryTypes()};
 
 	advectDensityDs_ = {dev.descriptorAllocator(), dsLayout_};
 	advectVelocityDs_ = {dev.descriptorAllocator(), dsLayout_};
@@ -225,7 +247,7 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 			update.skip();
 		}
 
-		update.uniform({{ubo_.buffer(), ubo_.offset(), 4u}});
+		update.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	};
 
 	// advect velocity: vel0, vel0 -> vel
@@ -242,9 +264,15 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 	updateDs(advectDensityDs_, &density_, nullptr, &velocity0_, &density0_);
 }
 
-void FluidSystem::updateDevice(float dt) {
+void FluidSystem::updateDevice(float dt, nytl::Vec2f mp0, nytl::Vec2f mp1) {
 	auto map = ubo_.memoryMap();
-	std::memcpy(map.ptr(), &dt, sizeof(dt));
+	auto data = map.span();
+	write(data, mp0);
+	write(data, mp1);
+	write(data, dt);
+	write(data, velocityFac);
+	write(data, densityFac);
+	write(data, radius);
 }
 
 void FluidSystem::compute(vk::CommandBuffer cb) {
@@ -449,7 +477,8 @@ public:
 
 	void updateDevice() override {
 		App::updateDevice();
-		system_->updateDevice(dt_);
+		system_->updateDevice(dt_, prevPos_, mpos_);
+		prevPos_ = mpos_;
 
 		if(changeView_) {
 			vpp::DescriptorSetUpdate update(ds_);
@@ -457,6 +486,26 @@ public:
 			changeView_ = {};
 			rerecord();
 		}
+	}
+
+	void mouseMove(const ny::MouseMoveEvent& ev) override {
+		App::mouseMove(ev);
+		using namespace nytl::vec::cw::operators;
+		mpos_ = 512.f * (nytl::Vec2f(ev.position) / window().size());
+	}
+
+	void mouseButton(const ny::MouseButtonEvent& ev) override {
+		App::mouseButton(ev);
+		if(ev.button == ny::MouseButton::left) {
+			system_->densityFac = ev.pressed * 0.5;
+		} else if(ev.button == ny::MouseButton::right) {
+			system_->velocityFac = ev.pressed * 0.5;
+		}
+	}
+
+	void mouseWheel(const ny::MouseWheelEvent& ev) override {
+		App::mouseWheel(ev);
+		system_->radius *= std::pow(1.1, ev.value.y);
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
@@ -473,6 +522,8 @@ public:
 protected:
 	std::optional<FluidSystem> system_;
 	float dt_ {};
+	nytl::Vec2f mpos_ {};
+	nytl::Vec2f prevPos_ {};
 
 	vk::ImageView changeView_ {};
 	vpp::Sampler sampler_;
