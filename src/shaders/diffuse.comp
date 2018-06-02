@@ -1,0 +1,35 @@
+#version 450
+
+layout (local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, r32f) uniform writeonly image2D out_field;
+layout(binding = 1, r32f) uniform readonly image2D in_field;
+
+layout(binding = 4) uniform UBO {
+	vec2 _mp0;
+	vec2 _mp1;
+	float dt;
+} ubo;
+
+float diff = 0.005f;
+// float diff = 1.f;
+
+// the idea is the same as for the pressure iterations:
+// jacobi iterations to solve poisson equation.
+// We could probably combine it into one compute shader program
+
+void main() {
+	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+	float l = imageLoad(in_field, pos + ivec2(-1, 0)).x;
+	float r = imageLoad(in_field, pos + ivec2(1, 0)).x;
+	float t = imageLoad(in_field, pos + ivec2(0, 1)).x;
+	float b = imageLoad(in_field, pos + ivec2(0, -1)).x;
+	float c = imageLoad(in_field, pos).x;
+
+	uvec2 size = (gl_NumWorkGroups * gl_WorkGroupSize).xy;
+	float a = diff * size.x * size.y;
+	float p = (l + r + t + b + a * c) / (4 + a);
+
+	imageStore(out_field, pos, vec4(p));
+}
+

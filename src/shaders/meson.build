@@ -28,6 +28,7 @@ shaders_src = [
 		['pressure.comp'],
 		['divergence.comp'],
 		['project.comp'],
+		['diffuse.comp', [], 'diffuse.dens.comp'],
 	]],
 ]
 

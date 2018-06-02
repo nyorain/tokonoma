@@ -34,12 +34,13 @@ void main() {
 	vec2 vel = imageLoad(in_vel, ivec2(pos)).xy;
 
 	// normalized position, workGroupSize * numWorkGroups is image size
-	vec2 npos = (pos + vec2(0.5, 0.5)) / (gl_WorkGroupSize * gl_NumWorkGroups).xy;
+	uvec2 size = (gl_WorkGroupSize * gl_NumWorkGroups).xy;
+	vec2 npos = (pos + vec2(0.5, 0.5)) / size;
 	vec4 val = texture(in_field, npos - ubo.dt * vel);
 
 	if(distance(pos, ubo.mp0, ubo.mp1) < ubo.radius) {
 #ifdef VELOCITY
-		vec2 mvel = ubo.mp1 - ubo.mp0;
+		vec2 mvel = (ubo.mp1 - ubo.mp0) / size;
 		val += ubo.dt * ubo.velFac * vec4(mvel, 0.0, 0.0);
 #elif defined(DENSITY)
 		val = clamp(val + ubo.dt * vec4(ubo.densFac), 0.0, 1.0);
