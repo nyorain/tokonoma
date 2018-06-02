@@ -1,0 +1,18 @@
+#version 450
+
+layout (local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, rgba16f) uniform writeonly image2D out_vel;
+layout(binding = 1, rgba16f) uniform readonly image2D in_vel;
+layout(binding = 2, r32f) uniform readonly image2D in_pressure;
+
+void main() {
+	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+	float l = imageLoad(in_pressure, pos + ivec2(-1, 0)).x;
+	float r = imageLoad(in_pressure, pos + ivec2(1, 0)).x;
+	float t = imageLoad(in_pressure, pos + ivec2(0, 1)).x;
+	float b = imageLoad(in_pressure, pos + ivec2(0, -1)).x;
+	vec2 grad = 0.5 * vec2(r - l, t - b);
+	vec2 vel = imageLoad(in_vel, pos).xy - grad;
+	imageStore(out_vel, pos, vec4(vel, 0.0, 0.0));
+}

@@ -1,0 +1,18 @@
+#version 450
+
+layout (local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, r32f) uniform writeonly image2D out_pressure;
+layout(binding = 1, r32f) uniform readonly image2D in_pressure;
+layout(binding = 2, r32f) uniform readonly image2D in_divergence;
+
+void main() {
+	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+	float div = imageLoad(in_divergence, pos).x;
+	float l = imageLoad(in_pressure, pos + ivec2(-1, 0)).x;
+	float r = imageLoad(in_pressure, pos + ivec2(1, 0)).x;
+	float t = imageLoad(in_pressure, pos + ivec2(0, 1)).x;
+	float b = imageLoad(in_pressure, pos + ivec2(0, -1)).x;
+	float p = (l + r + t + b - div) / 4.0;
+	imageStore(out_pressure, pos, vec4(p));
+}

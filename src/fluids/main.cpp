@@ -21,9 +21,15 @@
 #include <shaders/texture.frag.h>
 #include <shaders/advect.vel.comp.h>
 #include <shaders/advect.dens.comp.h>
+#include <shaders/divergence.comp.h>
+#include <shaders/pressure.comp.h>
+#include <shaders/project.comp.h>
 
 // == FluidSystem ==
 class FluidSystem {
+public:
+	static constexpr auto pressureIterations = 20u;
+
 public:
 	FluidSystem(vpp::Device& dev, nytl::Vec2ui size);
 
@@ -32,24 +38,42 @@ public:
 
 	const auto& density() const { return density_; }
 	const auto& velocity() const { return velocity_; }
+	const auto& pressure() const { return pressure_; }
+	const auto& divergence() const { return divergence_; }
 
 protected:
 	nytl::Vec2ui size_;
+
 	vpp::Sampler sampler_;
-	vpp::TrDsLayout dsLayout_;
-	vpp::TrDs advectDensityDs_;
-	vpp::TrDs advectVelocityDs_;
-	vpp::PipelineLayout pipeLayout_;
 	vpp::SubBuffer ubo_;
+	vpp::TrDsLayout dsLayout_;
+	vpp::PipelineLayout pipeLayout_;
 
 	vpp::Pipeline advectVel_;
+	vpp::TrDs advectVelocityDs_;
+
 	vpp::Pipeline advectDens_;
+	vpp::TrDs advectDensityDs_;
+
+	vpp::Pipeline divergencePipe_;
+	vpp::TrDs divergenceDs_;
+
+	vpp::Pipeline pressureIteration_;
+	vpp::TrDs pressureDs0_;
+	vpp::TrDs pressureDs1_;
+
+	vpp::Pipeline project_;
+	vpp::TrDs projectDs_;
 
 	vpp::ViewableImage velocity_;
 	vpp::ViewableImage velocity0_;
 
 	vpp::ViewableImage density_;
 	vpp::ViewableImage density0_;
+
+	vpp::ViewableImage divergence_;
+	vpp::ViewableImage pressure_;
+	vpp::ViewableImage pressure0_;
 };
 
 FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
@@ -69,8 +93,10 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 	auto advectBindings = {
 		vpp::descriptorBinding(vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
-		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+		vpp::descriptorBinding(vk::DescriptorType::storageImage,
+			vk::ShaderStageBits::compute),
+		vpp::descriptorBinding(vk::DescriptorType::storageImage,
+			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
 		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
@@ -87,6 +113,9 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 
 	auto advectVelShader = vpp::ShaderModule(dev, advect_vel_comp_data);
 	auto advectDensShader = vpp::ShaderModule(dev, advect_dens_comp_data);
+	auto divergenceShader = vpp::ShaderModule(dev, divergence_comp_data);
+	auto pressureShader = vpp::ShaderModule(dev, pressure_comp_data);
+	auto projectShader = vpp::ShaderModule(dev, project_comp_data);
 
 	vk::ComputePipelineCreateInfo advectInfoVel;
 	advectInfoVel.layout = pipeLayout_;
@@ -97,32 +126,56 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 	auto advectInfoDens = advectInfoVel;
 	advectInfoDens.stage.module = advectDensShader;
 
+	auto divergenceInfo = advectInfoVel;
+	divergenceInfo.stage.module = divergenceShader;
+
+	auto pressureInfo = advectInfoVel;
+	pressureInfo.stage.module = pressureShader;
+
+	auto projectInfo = advectInfoVel;
+	projectInfo.stage.module = projectShader;
+
 	auto pipes = vk::createComputePipelines(dev, {}, {
-		advectInfoVel, advectInfoDens});
+		advectInfoVel,
+		advectInfoDens,
+		divergenceInfo,
+		pressureInfo,
+		projectInfo});
 	advectVel_ = {dev, pipes[0]};
 	advectDens_ = {dev, pipes[1]};
+	divergencePipe_ = {dev, pipes[2]};
+	pressureIteration_ = {dev, pipes[3]};
+	project_ = {dev, pipes[4]};
 
 	// images
 	auto extent = vk::Extent3D {size.x, size.y, 1};
 	auto usage = vk::ImageUsageBits::sampled |
 		vk::ImageUsageBits::storage |
+		vk::ImageUsageBits::transferSrc | // TODO
 		vk::ImageUsageBits::transferDst;
 	auto velInfo = vpp::ViewableImageCreateInfo::color(dev, extent,
 		usage, {vk::Format::r16g16b16a16Sfloat}).value();
 	velocity_ = {dev, velInfo};
 	velocity0_ = {dev, velInfo};
 
-	auto densInfo = vpp::ViewableImageCreateInfo::color(dev, extent,
+	auto scalarInfo = vpp::ViewableImageCreateInfo::color(dev, extent,
 		usage, {vk::Format::r32Sfloat}).value();
-	density_ = {dev, densInfo};
-	density0_ = {dev, densInfo};
+	density_ = {dev, scalarInfo};
+	density0_ = {dev, scalarInfo};
+
+	pressure_ = {dev, scalarInfo};
+	pressure0_ = {dev, scalarInfo};
+
+	divergence_ = {dev, scalarInfo};
 
 	auto fam = dev.queueSubmitter().queue().family();
 	auto cmdBuf = dev.commandAllocator().get(fam);
 	auto layout = vk::ImageLayout::undefined;
 
 	vk::beginCommandBuffer(cmdBuf, {});
-	for(auto img : {&density_, &density0_, &velocity_, &velocity0_}) {
+	auto images = {&density_, &density0_, &velocity_, &velocity0_,
+		&pressure_, &pressure0_, &divergence_};
+	for(auto img : images) {
 		vpp::changeLayout(cmdBuf, img->vkImage(),
 			layout, vk::PipelineStageBits::topOfPipe, {},
 			vk::ImageLayout::general, vk::PipelineStageBits::transfer,
@@ -148,18 +201,45 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 
 	advectDensityDs_ = {dev.descriptorAllocator(), dsLayout_};
 	advectVelocityDs_ = {dev.descriptorAllocator(), dsLayout_};
+	divergenceDs_ = {dev.descriptorAllocator(), dsLayout_};
+	pressureDs0_ = {dev.descriptorAllocator(), dsLayout_};
+	pressureDs1_ = {dev.descriptorAllocator(), dsLayout_};
+	projectDs_ = {dev.descriptorAllocator(), dsLayout_};
 
-	vpp::DescriptorSetUpdate densUpdate(advectDensityDs_);
-	densUpdate.storage({{{}, density_.vkImageView(), vk::ImageLayout::general}});
-	densUpdate.imageSampler({{{}, density0_.vkImageView(), vk::ImageLayout::general}});
-	densUpdate.imageSampler({{{}, velocity_.vkImageView(), vk::ImageLayout::general}});
-	densUpdate.uniform({{ubo_.buffer(), ubo_.offset(), 4u}});
+	using VI = const vpp::ViewableImage;
+	auto updateDs = [&](auto& ds, VI* a, VI* b, VI* c, VI* d) {
+		constexpr auto layout = vk::ImageLayout::general;
+		vpp::DescriptorSetUpdate update(ds);
 
-	vpp::DescriptorSetUpdate velUpdate(advectVelocityDs_);
-	velUpdate.storage({{{}, velocity_.vkImageView(), vk::ImageLayout::general}});
-	velUpdate.imageSampler({{{}, velocity0_.vkImageView(), vk::ImageLayout::general}});
-	velUpdate.imageSampler({{{}, velocity0_.vkImageView(), vk::ImageLayout::general}});
-	velUpdate.uniform({{ubo_.buffer(), ubo_.offset(), 4u}});
+		for(auto& l : {a, b, c}) {
+			if(l) {
+				update.storage({{{}, l->vkImageView(), layout}});
+			} else {
+				update.skip();
+			}
+		}
+
+		if(d) {
+			update.imageSampler({{{}, d->vkImageView(), layout}});
+		} else {
+			update.skip();
+		}
+
+		update.uniform({{ubo_.buffer(), ubo_.offset(), 4u}});
+	};
+
+	// advect velocity: vel0, vel0 -> vel
+	// divergence: vel -> div
+	// project: div, vel -> vel0
+	// advect density: dens0, vel0 -> dens
+
+	updateDs(advectVelocityDs_, &velocity_, nullptr, &velocity0_, &velocity0_);
+	updateDs(divergenceDs_, &divergence_, &velocity_, nullptr, nullptr);
+	updateDs(pressureDs0_, &pressure0_, &pressure_, &divergence_, nullptr);
+	updateDs(pressureDs1_, &pressure_, &pressure0_, &divergence_, nullptr);
+	updateDs(projectDs_, &velocity0_, &velocity_, &pressure_, nullptr);
+
+	updateDs(advectDensityDs_, &density_, nullptr, &velocity0_, &density0_);
 }
 
 void FluidSystem::updateDevice(float dt) {
@@ -168,15 +248,124 @@ void FluidSystem::updateDevice(float dt) {
 }
 
 void FluidSystem::compute(vk::CommandBuffer cb) {
+	// dispatch sizes
+	auto dx = size_.x / 16;
+	auto dy = size_.y / 16;
+
+	// sync util
+	// we actually need a lot of synchronization here since we swap reading/
+	// writing from/to images all the time and have to make sure the previous
+	// command finished
+	// NOTE: the sync in this proc is probably not fully correct...
+	constexpr vk::ImageLayout general = vk::ImageLayout::general;
+	using PSB = vk::PipelineStageBits;
+	using AB = vk::AccessBits;
+	auto readWrite = AB::shaderRead | AB::shaderWrite;
+	auto barrier = [&](auto& img, auto srca, auto dsta) {
+		vk::ImageMemoryBarrier barrier;
+		barrier.oldLayout = general;
+		barrier.newLayout = general;
+		barrier.image = img.vkImage();
+		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+		barrier.srcAccessMask = srca;
+		barrier.dstAccessMask = dsta;
+		return barrier;
+	};
+
+	auto insertBarrier = [&](auto srcs, auto dsts,
+			std::initializer_list<vk::ImageMemoryBarrier> barriers) {
+		vk::cmdPipelineBarrier(cb, srcs, dsts, {}, {}, {}, barriers);
+		// nytl::unused(srcs, dsts, barriers);
+	};
+
+	// make sure reading the images is finished
+	insertBarrier(PSB::fragmentShader, PSB::computeShader,  {
+		barrier(velocity_, AB::shaderRead, AB::shaderWrite),
+		barrier(density_, AB::shaderRead, AB::shaderWrite),
+		barrier(divergence_, AB::shaderRead, AB::shaderWrite),
+		barrier(pressure_, AB::shaderRead, AB::shaderWrite),
+	});
+
+	// == velocity ==
+	// advect velocity
+	vk::ImageCopy full;
+	full.dstSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
+	full.srcSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
+	full.extent = {size_.x, size_.y, 1u};
+
+	vk::cmdCopyImage(cb, velocity0_.image(), vk::ImageLayout::general,
+		velocity_.image(), vk::ImageLayout::general, {full});
+
+	insertBarrier(PSB::transfer, PSB::computeShader, {
+		barrier(velocity_, AB::transferWrite, readWrite),
+	});
+
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, advectVel_);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 		pipeLayout_, 0, {advectVelocityDs_}, {});
-	vk::cmdDispatch(cb, size_.x, size_.y, 1);
+	vk::cmdDispatch(cb, dx, dy, 1);
 
+	insertBarrier(PSB::computeShader, PSB::computeShader, {
+		barrier(velocity_, readWrite, readWrite),
+	});
+
+	// compute divergence
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, divergencePipe_);
+	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+		pipeLayout_, 0, {divergenceDs_}, {});
+	vk::cmdDispatch(cb, dx, dy, 1);
+
+	// iterate pressure
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pressureIteration_);
+	for(auto i = 0u; i < pressureIterations / 2; ++i) {
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+			pipeLayout_, 0, {pressureDs0_}, {});
+		vk::cmdDispatch(cb, dx, dy, 1);
+
+		insertBarrier(PSB::computeShader, PSB::computeShader, {
+			barrier(pressure_, readWrite, readWrite),
+		});
+
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+			pipeLayout_, 0, {pressureDs1_}, {});
+		vk::cmdDispatch(cb, dx, dy, 1);
+
+		insertBarrier(PSB::computeShader, PSB::computeShader, {
+			barrier(pressure0_, readWrite, readWrite),
+		});
+	}
+
+	// project velocity
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, project_);
+	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+		pipeLayout_, 0, {projectDs_}, {});
+	vk::cmdDispatch(cb, dx, dy, 1);
+
+	insertBarrier(PSB::computeShader, PSB::computeShader, {
+		barrier(velocity0_, readWrite, readWrite),
+	});
+
+	// == density ==
+	vk::cmdCopyImage(cb, density_.image(), vk::ImageLayout::general,
+		density0_.image(), vk::ImageLayout::general, {full});
+
+	insertBarrier(PSB::transfer, PSB::computeShader, {
+		barrier(density0_, AB::transferWrite, AB::shaderRead),
+	});
+
+	// advect
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, advectDens_);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 		pipeLayout_, 0, {advectDensityDs_}, {});
-	vk::cmdDispatch(cb, size_.x, size_.y, 1);
+	vk::cmdDispatch(cb, dx, dy, 1);
+
+	// make sure writing has finished before reading
+	insertBarrier(PSB::computeShader, PSB::fragmentShader, {
+		barrier(density_, AB::shaderWrite, AB::shaderRead),
+		barrier(velocity_, AB::shaderWrite, AB::shaderRead),
+		barrier(pressure_, AB::shaderWrite, AB::shaderRead),
+		barrier(divergence_, AB::shaderWrite, AB::shaderRead),
+	});
 }
 
 // == FluidApp ==
@@ -243,15 +432,13 @@ public:
 		}
 
 		if(ev.keycode == ny::Keycode::d) {
-			auto iv = system_->density().vkImageView();
-			vpp::DescriptorSetUpdate update(ds_);
-			update.imageSampler({{{}, iv, vk::ImageLayout::general}});
-			rerecord();
+			changeView_ = system_->density().vkImageView();
 		} else if(ev.keycode == ny::Keycode::v) {
-			auto iv = system_->velocity().vkImageView();
-			vpp::DescriptorSetUpdate update(ds_);
-			update.imageSampler({{{}, iv, vk::ImageLayout::general}});
-			rerecord();
+			changeView_ = system_->velocity().vkImageView();
+		} else if(ev.keycode == ny::Keycode::q) {
+			changeView_ = system_->divergence().vkImageView();
+		} else if(ev.keycode == ny::Keycode::p) {
+			changeView_ = system_->pressure().vkImageView();
 		}
 	}
 
@@ -263,6 +450,13 @@ public:
 	void updateDevice() override {
 		App::updateDevice();
 		system_->updateDevice(dt_);
+
+		if(changeView_) {
+			vpp::DescriptorSetUpdate update(ds_);
+			update.imageSampler({{{}, changeView_, vk::ImageLayout::general}});
+			changeView_ = {};
+			rerecord();
+		}
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
@@ -280,6 +474,7 @@ protected:
 	std::optional<FluidSystem> system_;
 	float dt_ {};
 
+	vk::ImageView changeView_ {};
 	vpp::Sampler sampler_;
 	vpp::TrDsLayout dsLayout_;
 	vpp::TrDs ds_;

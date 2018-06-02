@@ -24,7 +24,13 @@ shaders_src = [
 	]],
 	['fluid_shaders', [
 		['advect.comp', [], 'advect.vel.comp', ['-DOUT_FORMAT=rgba16f']],
-		['advect.comp', [], 'advect.dens.comp', ['-DOUT_FORMAT=r32f']],
+		['advect.comp', [], 'advect.dens.comp', [
+		  '-DOUT_FORMAT=r32f',
+		  '-DVDEBUG=1',
+		]],
+		['pressure.comp'],
+		['divergence.comp'],
+		['project.comp'],
 	]],
 ]
 

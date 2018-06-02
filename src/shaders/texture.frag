@@ -6,4 +6,8 @@ layout(location = 0) out vec4 out_color;
 
 void main() {
 	out_color = texture(tex, in_uv);
+
+	// normalize (e.g. velocity)
+	// out_color.rgb *= 0.5;
+	// out_color.rgb += 0.5;
 }
