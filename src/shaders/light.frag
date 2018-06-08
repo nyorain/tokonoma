@@ -19,6 +19,12 @@ layout(location = 0) out vec4 outColor;
 void main() {
 	float lightFac = lightFalloff(light.position, inPos, light.radius,
 		light.strength);
+
+	// using the pow(2) here results in smaller shadow values which will lead
+	// to a smoother edge (but a less distinct smooth gradient)
+	// pow(1/ 2) here has the opposite effect
+	// float shadowFac = pow(texture(shadowTex, inUV).r, 2.2);
+	// float shadowFac = pow(texture(shadowTex, inUV).r, 1 / 2.2);
 	float shadowFac = texture(shadowTex, inUV).r;
 	outColor = light.color;
 	outColor.a *= lightFac;
@@ -42,7 +48,7 @@ void main() {
 
 	// 5. light eater
 	// outColor.a *= (1 - 5 * shadowFac);
-	
+
 	// 6. specific color eater
 	// outColor.rgb *= 1 - shadowFac;
 	// outColor.rg -= 5 * shadowFac;

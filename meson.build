@@ -56,5 +56,5 @@ executable('pendulum',
 	dependencies: stage_dep)
 
 executable('pg',
-	'src/playground/main1.cpp',
+	'src/playground/main3.cpp',
 	dependencies: stage_dep)

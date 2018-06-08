@@ -11,9 +11,13 @@ layout(binding = 4) uniform UBO {
 	float dt;
 } ubo;
 
-float diff = 0.005f;
-// float diff = 1.f;
+float diff = 1.f;
 
+// we just use the unstable method. Produces better results
+// and for diff <= 1 and dt reasonably small it's stable enough.
+// Probably won't work when framrate drops to under 10 or sth.
+
+// NOTE OLD:
 // the idea is the same as for the pressure iterations:
 // jacobi iterations to solve poisson equation.
 // We could probably combine it into one compute shader program
@@ -27,8 +31,8 @@ void main() {
 	float c = imageLoad(in_field, pos).x;
 
 	uvec2 size = (gl_NumWorkGroups * gl_WorkGroupSize).xy;
-	float a = diff * size.x * size.y;
-	float p = (l + r + t + b + a * c) / (4 + a);
+	// float p = (l + r + t + b + diff * c) / (4 + diff);
+	float p = c + ubo.dt * diff * (((l + r + t + b) / 4) - c);
 
 	imageStore(out_field, pos, vec4(p));
 }

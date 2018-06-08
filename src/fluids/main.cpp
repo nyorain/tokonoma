@@ -14,6 +14,8 @@
 #include <nytl/vecOps.hpp>
 #include <ny/key.hpp>
 #include <ny/mouseButton.hpp>
+#include <ny/appContext.hpp>
+#include <ny/keyboardContext.hpp>
 #include <dlg/dlg.hpp>
 #include <cstring>
 #include <random>
@@ -38,11 +40,11 @@ void write(nytl::Span<std::byte>& span, T&& data) {
 class FluidSystem {
 public:
 	static constexpr auto pressureIterations = 30u;
-	static constexpr auto diffuseDensIterations = 20u;
+	static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
 	float densityFac {0.0};
-	float radius {10.f};
+	float radius {15.f};
 
 public:
 	FluidSystem(vpp::Device& dev, nytl::Vec2ui size);
@@ -432,6 +434,7 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 
 	// diffuse
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, diffuseDens_);
+	/*
 	for(auto i = 0u; i < diffuseDensIterations / 2; ++i) {
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 			pipeLayout_, 0, {diffuseDens0_}, {});
@@ -449,6 +452,7 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 			barrier(density0_, readWrite, readWrite),
 		});
 	}
+	*/
 
 	// one final iterations for even swap count
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
@@ -510,7 +514,8 @@ public:
 		pipe_ = {dev, pipes[0]};
 
 		// system
-		system_.emplace(vulkanDevice(), nytl::Vec2ui {256, 256});
+		// NOTE: MUST be multiple of 16 due to work group size
+		system_.emplace(vulkanDevice(), nytl::Vec2ui {400, 400});
 
 		// ds
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
@@ -530,6 +535,9 @@ public:
 		if(ev.keycode == ny::Keycode::d) {
 			changeView_ = system_->density().vkImageView();
 			viewType_ = 1;
+		} else if(ev.keycode == ny::Keycode::f) {
+			changeView_ = system_->density().vkImageView();
+			viewType_ = 3;
 		} else if(ev.keycode == ny::Keycode::v) {
 			changeView_ = system_->velocity().vkImageView();
 			viewType_ = 2;
@@ -568,10 +576,14 @@ public:
 
 	void mouseButton(const ny::MouseButtonEvent& ev) override {
 		App::mouseButton(ev);
-		if(ev.button == ny::MouseButton::left) {
+
+		auto kc = appContext().keyboardContext();
+		auto space = kc->pressed(ny::Keycode::space);
+		if(ev.button == ny::MouseButton::left && !space) {
 			system_->densityFac = ev.pressed * 0.5;
-		} else if(ev.button == ny::MouseButton::right) {
-			system_->velocityFac = ev.pressed * 50.f;
+			system_->velocityFac = ev.pressed;
+		} else if(ev.button == ny::MouseButton::right || space) {
+			system_->velocityFac = ev.pressed * 100.f;
 		}
 	}
 
