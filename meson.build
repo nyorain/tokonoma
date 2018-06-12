@@ -55,6 +55,10 @@ executable('pendulum',
 	'src/pendulum/main.cpp',
 	dependencies: stage_dep)
 
+executable('dpend',
+	'src/dpend/main.cpp',
+	dependencies: stage_dep)
+
 executable('pg',
-	'src/playground/main3.cpp',
+	'src/playground/main2.cpp',
 	dependencies: stage_dep)
