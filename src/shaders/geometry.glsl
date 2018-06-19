@@ -8,6 +8,41 @@ struct Circle {
 	float radius;
 };
 
+struct LineCircleIntersection {
+	int num; // 0,1,2 
+	vec2 a;
+	vec2 b;
+};
+
+LineCircleIntersection intersections(Line line, Circle circle) {
+	float dx = line.dir.x;
+	float dy = line.dir.y;
+
+	float a = dot(line.dir, line.dir);
+	float b = 2 * dot(line.dir, line.point - circle.center);
+	float c = dot(line.point - circle.center, line.point - circle.center);
+	c -= circle.radius * circle.radius;
+
+	float det = b * b - 4 * a * c;
+
+	LineCircleIntersection ret;
+	if(det < 0) {
+		ret.num = 0;
+	} else if(det == 0) {
+		ret.num = 1;
+		float t = -b / (2 * a);
+		ret.a = line.point + t * line.dir;
+	} else { // det > 0
+		ret.num = 2;
+		float t = (-b - sqrt(det)) / (2 * a);
+		ret.a = line.point + t * line.dir;
+		t = (-b + sqrt(det)) / (2 * a);
+		ret.b = line.point + t * line.dir;
+	}
+
+	return ret;
+}
+
 float distance(vec2 point, Line line) {
 	vec2 n = normalize(vec2(line.dir.y, -line.dir.x));
 	return abs(dot(n, point - line.point));
@@ -17,11 +52,12 @@ float cross(vec2 a, vec2 b) {
 	return a.x * b.y - a.y * b.x;
 }
 
+float projectFac(vec2 point, Line line) {
+	return dot(point - line.point, line.dir) / dot(line.dir, line.dir);
+}
+
 vec2 project(vec2 point, Line line) {
-	vec2 ab = line.dir;
-	vec2 ap = point - line.point;
-	float fac = dot(ap, ab) / dot(ab, ab);
-	return line.point + fac * ab;
+	return line.point + projectFac(point, line) * line.dir;
 }
 
 vec2 mirror(vec2 point, Line line) {
@@ -89,21 +125,16 @@ ShadowVertex smoothShadowVertex(int vertexID, vec2 segA, vec2 segB,
 	vertexID = vertexID % 6;
 	Line line = {segA, segB - segA};
 
-	// TODO: correct projections (not just the '1000 * x' stuff)
-	const float proj = 1000;
+	// TODO: correct projections (not just the 'proj * x' stuff)
+	const float proj = 1e2;
+	const bool alwaysFullscreen = false; // debugging
 
-	// special case: light is (almost) collinear with the segment
-	// this results in shadows on both side of the segment
-	// Line circleLine = {light.center, normal(line.dir)};
-	// vec2 facs = intersectionFacs(line, circleLine);
-
-	// TODO: sqrt avoidable here?
-	// float ll = length(line.dir);
-	// if(abs(facs.y / ll) < light.radius) {
-	
-	if(distance(light.center, line) < light.radius) {
-			/*
-		if(abs(facs.x - clamp(facs.x, 0, 1)) < (light.radius / ll)) {
+	// TODO: more efficient check (without normalize/sqrt)
+	if(alwaysFullscreen || distance(light.center, line) < light.radius) {
+		// test if line intersects light
+		float pf = clamp(projectFac(light.center, line), 0, 1);
+		vec2 diff2 = (line.point + pf * line.dir) - light.center;
+		if(alwaysFullscreen || dot(diff2, diff2) < light.radius * light.radius) {
 			// fullscreen... ?
 			const vec2[] values = {
 				{-proj, proj},
@@ -117,10 +148,9 @@ ShadowVertex smoothShadowVertex(int vertexID, vec2 segA, vec2 segB,
 			ShadowVertex ret = {values[vertexID % 6], vec2(-1, 0)};
 
 			// just no shadow at all?
-			ShadowVertex ret = {vec2(0, 0), vec2(0, 0)};
+			// ShadowVertex ret = {vec2(0, 0), vec2(0, 0)};
 			return ret;
 		}
-			*/
 
 		// a is always the near point.
 		vec2 da = segA - light.center;
@@ -222,10 +252,97 @@ float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength) {
 		0.01, true);
 }
 
+bool normed(float val) {
+	return val >= 0.f && val <= 1.f;
+}
+
+bool normed(vec2 val) {
+	return normed(val.x) && normed(val.y);
+}
+
+// NOTE: WIP
+float shadowValue(Circle light, vec2 point, vec2 segA, vec2 segB) {
+	// NOTE: ideally, the algorithm below would treat this correctly
+	// TODO: test for finished algorithm
+	// point inside light
+	vec2 cp = point - light.center;
+	if(dot(cp, cp) < light.radius * light.radius) {
+		return 0.f;
+	}
+
+	Line seg = {segA, segB - segA};
+	vec2 minProj = circlePoint(light, point, -1);
+	vec2 maxProj = circlePoint(light, point, 1);
+	Line minSeg = {minProj, point - minProj};
+	Line maxSeg = {maxProj, point - maxProj};
+	vec2 minFacs = intersectionFacs(seg, minSeg);
+	vec2 maxFacs = intersectionFacs(seg, maxSeg);
+
+	// case 1: segment fully outside of light cone
+	if((minFacs.x < 0 && maxFacs.x < 0) || (minFacs.x > 1 && maxFacs.x > 1) ||
+	   (minFacs.y < 0 && maxFacs.y < 0) || (minFacs.y > 1 && maxFacs.y > 1) ||
+	   (minFacs.y < 0 && maxFacs.y > 1) || (minFacs.y > 1 && maxFacs.y < 0)) {
+		return 0.0f;
+	}
+
+	Line minMax = {minProj, maxProj - minProj};
+	Line maxMin = {maxProj, minProj - maxProj};
+
+	// now we know that the segment intersects/lies in light cone
+	// find intersection point
+	if(normed(minFacs)) {
+		if(normed(maxFacs)) {
+			// in this case the line segments intersect the light cone twice.
+			// this means no light gets to the point
+			
+			// TODO: performance, some redundant checks
+			// special case: segment intersects light
+			float pf = clamp(projectFac(light.center, seg), 0, 1);
+			vec2 diff2 = (seg.point + pf * seg.dir) - light.center;
+			if(dot(diff2, diff2) < light.radius * light.radius) {
+				LineCircleIntersection is = intersections(seg, light);
+				float l1 = length(is.a - is.b);
+
+				vec2 p1 = minSeg.point + minFacs.y * minSeg.dir;
+				vec2 p2 = maxSeg.point + maxFacs.y * maxSeg.dir;
+				float l2 = length(p1 - p2);
+
+				return 1 - l1 / l2;
+			}
+
+			return 1.f;
+		}
+
+		vec2 end = maxFacs.x < 0 ? segA : segB;
+
+		// TODO: correct endpoint in all cases
+		// also in else if branch below
+		/*
+		if(!normed(maxFacs.x)) {
+			vec2 end = maxFacs.x > 1 ? segA : segB;
+		} else if(!normed(maxFacs.y)) {
+			vec2 end = maxFacs.x > minFacs.x ? segA : segB;
+		}
+		*/
+
+		Line pl = {end, end - point};
+		return intersectionFacs(pl, minMax).y;
+	} else if(normed(maxFacs)) {
+		vec2 end = minFacs.x < 0 ? segA : segB;
+
+		Line pl = {end, end - point};
+		return intersectionFacs(pl, maxMin).y;
+	}
+
+	// yeah, we should never get here.
+	// set to 0.9 so we should see places where it is contant 0.9
+	return 0.9f;
+}
+
 // returns by how much the given point is occluded by the given segment
 // from the given light.
 // TODO: rework this to a more simple (and generally working) algorithm
-float shadowValue(Circle light, vec2 point, vec2 segA, vec2 segB) {
+float shadowValue2(Circle light, vec2 point, vec2 segA, vec2 segB) {
 	// TODO: just for testing
 	/*
 	vec2 d = light.center - point;

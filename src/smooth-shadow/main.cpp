@@ -62,8 +62,16 @@ public:
 		lightSystem().addSegment({{{3.f, 1.f}, {3.f, 3.f}}, -1.f});
 		lightSystem().addSegment({{{3.f, 3.f}, {1.f, 3.f}}, -1.f});
 		lightSystem().addSegment({{{1.f, 3.f}, {1.f, 1.f}}, -1.f});
+		lightSystem().addSegment({{{4.f, 1.f}, {6.f, 1.f}}, -1.f});
 
+		auto& light = lightSystem().addLight();
+		light.position = {4.f, 1.5f};
+		light.color = static_cast<nytl::Vec4f>(blackbody(3700));
+		light.color[3] = 1.f;
+		light.radius(0.25);
+		light.strength(1.f);
 
+		/*
 		std::mt19937 rgen;
 		rgen.seed(std::time(nullptr));
 
@@ -72,7 +80,7 @@ public:
 		std::uniform_real_distribution<float> radDistr(0.008f, 0.3f);
 		std::uniform_real_distribution<float> strengthDistr(0.2f, 1.5f);
 
-		for(auto i = 0u; i < 20u; ++i) {
+		for(auto i = 0u; i < 2u; ++i) {
 			auto& light = lightSystem().addLight();
 			light.position = {posDistr(rgen), posDistr(rgen)};
 			light.color = static_cast<nytl::Vec4f>(blackbody(colDistr(rgen)));
@@ -80,6 +88,7 @@ public:
 			light.radius(radDistr(rgen));
 			light.strength(strengthDistr(rgen));
 		}
+		*/
 
 		// post-process/combine
 		auto info = vk::SamplerCreateInfo {};
@@ -193,7 +202,7 @@ public:
 	void update(double dt) override {
 		App::update(dt);
 		if(currentLight_) {
-			auto fac = 2 * dt;
+			auto fac = dt;
 			auto kc = appContext().keyboardContext();
 			if(kc->pressed(ny::Keycode::d)) {
 				currentLight_->position += nytl::Vec {fac, 0.f};

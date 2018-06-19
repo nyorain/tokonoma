@@ -27,8 +27,8 @@ public:
 
 		float l1 {1.};
 		float l2 {1.};
-		float m1 {0.2};
-		float m2 {0.2};
+		float m1 {2.0};
+		float m2 {2.0};
 		float g {9.81};
 	} constants;
 
