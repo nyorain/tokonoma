@@ -13,6 +13,7 @@
 -I./build/subprojects/vpp/include
 -I./build/assets
 -I./build/src/
+-I./external/include
 -Wextra
 -Wall
 -Wpedantic

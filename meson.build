@@ -42,6 +42,10 @@ dep_rvg = dependency('rvg', fallback: ['rvg', 'rvg_dep'])
 dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
 
+external_inc = include_directories('external/include')
+libpath = join_paths(meson.source_root(), 'external', 'lib', build_machine.system())
+message('libpath: ' + libpath)
+
 subdir('src/shaders')
 subdir('src/stage')
 
@@ -49,6 +53,7 @@ subdir('src/stage')
 subdir('src/smooth-shadow')
 subdir('src/pursuers')
 subdir('src/fluids')
+subdir('src/mists')
 
 # inline (for small projects)
 executable('pendulum',

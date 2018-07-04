@@ -43,7 +43,8 @@ void main() {
 		// vec2 pos = light + off;
 		vec2 pos = light;
 		for(int i = 0; i < samples; ++i) {
-			accum -= fac * pow(texture(tex, pos).r, 1.5);
+			// accum -= fac * pow(texture(tex, pos).r, 1.5);
+			accum -= fac * texture(tex, pos).r;
 			pos += diff / samples;
 		}
 
@@ -51,7 +52,7 @@ void main() {
 		float lightFac = lightFalloff(light, in_uv, radius, 1.0);
 
 		out_color.rgb = vec3(texture(tex, in_uv).r);
-		out_color.rgb += vec3(lightFac * accum);
+		out_color.rgb += vec3(1, 1, 0.5) * vec3(lightFac * accum);
 
 		// #2: to make smoke hide somke behind it
 		// out_color.rgb += vec3(lightFac);

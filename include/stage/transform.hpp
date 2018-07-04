@@ -34,7 +34,7 @@ nytl::Mat4<P> translateMat(const nytl::Vec<3, P>& t) {
 }
 
 /// Returns a matrix that rotates by rot (in 2 dimensions).
-template<size_t D = 3, typename P = float>
+template<size_t D = 4, typename P = float>
 nytl::SquareMat<D, P> rotate(P rot) {
 	auto mat = nytl::identity<D, P>();
 
