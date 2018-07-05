@@ -248,8 +248,9 @@ float lightCutoff(float radius, float strength, float lightThresh) {
 
 float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength) {
 	const vec3 p = vec3(1, 2 / radius, 1 / (radius * radius));
+	const float lightTresh = 0.005; // corresponds to value in light.cpp
 	return lightFalloff(lightPos, point, radius, strength, p,
-		0.01, true);
+		lightTresh, true);
 }
 
 bool normed(float val) {
@@ -261,7 +262,7 @@ bool normed(vec2 val) {
 }
 
 // NOTE: WIP
-float shadowValue(Circle light, vec2 point, vec2 segA, vec2 segB) {
+float shadowValue2(Circle light, vec2 point, vec2 segA, vec2 segB) {
 	// NOTE: ideally, the algorithm below would treat this correctly
 	// TODO: test for finished algorithm
 	// point inside light
@@ -342,7 +343,7 @@ float shadowValue(Circle light, vec2 point, vec2 segA, vec2 segB) {
 // returns by how much the given point is occluded by the given segment
 // from the given light.
 // TODO: rework this to a more simple (and generally working) algorithm
-float shadowValue2(Circle light, vec2 point, vec2 segA, vec2 segB) {
+float shadowValue(Circle light, vec2 point, vec2 segA, vec2 segB) {
 	// TODO: just for testing
 	/*
 	vec2 d = light.center - point;

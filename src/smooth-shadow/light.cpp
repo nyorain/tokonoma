@@ -49,7 +49,7 @@ float lightCutoff(float r, float strength, float lightThresh) {
 
 float lightBounds(float radius, float strength) {
 	// if changed here, also change in geometry.glsl
-	constexpr auto lightThresh = 0.01;
+	constexpr auto lightThresh = 0.005;
 	return radius + lightCutoff(radius, strength, lightThresh);
 }
 
@@ -301,9 +301,13 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		samplerInfo.magFilter = vk::Filter::linear;
 		samplerInfo.minFilter = vk::Filter::linear;
 		samplerInfo.mipmapMode = vk::SamplerMipmapMode::nearest;
-		samplerInfo.addressModeU = vk::SamplerAddressMode::clampToEdge;
-		samplerInfo.addressModeV = vk::SamplerAddressMode::clampToEdge;
-		samplerInfo.addressModeW = vk::SamplerAddressMode::clampToEdge;
+		// samplerInfo.addressModeU = vk::SamplerAddressMode::clampToEdge;
+		// samplerInfo.addressModeV = vk::SamplerAddressMode::clampToEdge;
+		// samplerInfo.addressModeW = vk::SamplerAddressMode::clampToEdge;
+		samplerInfo.addressModeU = vk::SamplerAddressMode::clampToBorder;
+		samplerInfo.addressModeV = vk::SamplerAddressMode::clampToBorder;
+		samplerInfo.addressModeW = vk::SamplerAddressMode::clampToBorder;
+		samplerInfo.borderColor = vk::BorderColor::intOpaqueWhite;
 		samplerInfo.mipLodBias = 0;
 		samplerInfo.anisotropyEnable = false;
 		samplerInfo.maxAnisotropy = 1.0;

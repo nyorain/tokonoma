@@ -19,6 +19,13 @@
 #include <shaders/fullscreen.vert.h>
 #include <shaders/light_pp.frag.h>
 
+template<typename T>
+void write(nytl::Span<std::byte>& span, T&& data) {
+	dlg_assert(span.size() >= sizeof(data));
+	std::memcpy(span.data(), &data, sizeof(data));
+	span = span.slice(sizeof(data), span.size() - sizeof(data));
+}
+
 // TODO: move somewhere else
 template<typename T>
 void scale(nytl::Mat4<T>& mat, nytl::Vec3<T> fac) {
@@ -70,8 +77,8 @@ public:
 		light.color[3] = 1.f;
 		light.radius(0.25);
 		light.strength(1.f);
+		currentLight_ = &light;
 
-		/*
 		std::mt19937 rgen;
 		rgen.seed(std::time(nullptr));
 
@@ -88,7 +95,6 @@ public:
 			light.radius(radDistr(rgen));
 			light.strength(strengthDistr(rgen));
 		}
-		*/
 
 		// post-process/combine
 		auto info = vk::SamplerCreateInfo {};
@@ -107,10 +113,13 @@ public:
 		};
 
 		pp_.dsLayout = vpp::TrDsLayout(device, ppBindings);
-		auto pipeSets = {pp_.dsLayout.vkHandle()};
+		auto pipeSets = {
+			pp_.dsLayout.vkHandle(),
+			lightSystem().lightDsLayout().vkHandle()
+		};
 
 		vk::PipelineLayoutCreateInfo plInfo;
-		plInfo.setLayoutCount = 1;
+		plInfo.setLayoutCount = pipeSets.size();
 		plInfo.pSetLayouts = pipeSets.begin();
 		pp_.pipeLayout = {device, plInfo};
 
@@ -133,7 +142,8 @@ public:
 		pp_.ds = vpp::TrDs(device.descriptorAllocator(), pp_.dsLayout);
 		vpp::DescriptorSetUpdate ppDsUpdate(pp_.ds);
 
-		pp_.ubo = {device.bufferAllocator(), sizeof(float) * 2,
+		auto uboSize = sizeof(float) * 19;
+		pp_.ubo = {device.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, 4u, device.hostMemoryTypes()};
 
 		auto imgview = lightSystem().renderTarget().vkImageView();
@@ -164,6 +174,7 @@ public:
 
 		createValueTextfield(*panel_, "gamma", pp_.gamma);
 		createValueTextfield(*panel_, "exposure", pp_.exposure);
+		createValueTextfield(*panel_, "viewFac", pp_.viewFac);
 
 		return true;
 	}
@@ -179,8 +190,11 @@ public:
 		}
 
 		auto map = pp_.ubo.memoryMap();
-		std::memcpy(map.ptr(), &pp_.exposure, sizeof(float));
-		std::memcpy(map.ptr() + 4, &pp_.gamma, sizeof(float));
+		auto ptr = map.span();
+		write(ptr, windowToLevel_);
+		write(ptr, pp_.exposure);
+		write(ptr, pp_.gamma);
+		write(ptr, pp_.viewFac);
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
@@ -194,6 +208,10 @@ public:
 		App::render(cb);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pp_.pipeLayout, 0, {pp_.ds}, {});
+
+		auto lightds = currentLight_->lightDs();
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+			pp_.pipeLayout, 1, {lightds}, {});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
 		vk::cmdDraw(cb, 4, 1, 0, 0);
 		gui().draw(cb);
@@ -261,6 +279,7 @@ public:
 		for(auto& light : lightSystem().lights()) {
 			if(contains(light, pos)) {
 				currentLight_ = &light;
+				rerecord();
 			}
 		}
 	}
@@ -292,6 +311,7 @@ protected:
 
 		float exposure {1.f};
 		float gamma {1.f};
+		float viewFac {1.f};
 	} pp_; // post process; combine pass
 
 	Light* currentLight_ {};
