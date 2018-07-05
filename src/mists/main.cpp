@@ -1,9 +1,12 @@
 #include "physics.hpp"
 #include <stage/app.hpp>
 #include <stage/transform.hpp>
+#include <stage/window.hpp>
 #include <rvg/shapes.hpp>
 #include <rvg/paint.hpp>
 #include <rvg/context.hpp>
+#include <rvg/text.hpp>
+#include <vui/gui.hpp>
 #include <ny/event.hpp>
 #include <ny/key.hpp>
 #include <ny/appContext.hpp>
@@ -16,18 +19,22 @@
 #include <Box2D/Collision/Shapes/b2PolygonShape.h>
 
 #include <vector>
+#include <unordered_set>
 
 struct Metal {
 	rvg::RectShape shape;
+	rvg::Paint paint;
 	parts::Rigid rigid;
 	rvg::Transform transform;
 	b2MotorJoint* motor {};
 	bool push {};
+	rvg::Text label;
 };
 
 struct Player {
 	rvg::CircleShape shape;
 	parts::Rigid rigid;
+	b2MotorJoint* moveJoint {};
 };
 
 class Mists : public doi::App {
@@ -38,8 +45,12 @@ public:
 		}
 
 		levelTransform_ = {rvgContext()};
-		metalPaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::blue)};
+		labelPaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::red)};
 		playerPaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::white)};
+
+		metalPaint_ = rvg::colorPaint({0, 0, 255});
+		pushPaint_ = rvg::colorPaint({0, 255, 255});
+		pullPaint_ = rvg::colorPaint({255, 0, 255});
 
 		// player
 		player_.shape = {rvgContext(), {1.f, 1.f}, 0.2f, {true, 0.f}};
@@ -50,7 +61,8 @@ public:
 		// player_.rigid.fixture->SetDensity(20.f);
 
 		// metals
-		auto createMetal = [&](nytl::Vec2f pos, nytl::Vec2f size, float d) {
+		auto createMetal = [&](nytl::Vec2f pos, nytl::Vec2f size, float d,
+				std::string label) {
 			b2PolygonShape shape;
 			shape.SetAsBox(size.x / 2, size.y / 2);
 			metals_.emplace_back();
@@ -59,12 +71,20 @@ public:
 				{true, 0.f}};
 			metals_.back().transform = {rvgContext()};
 			metals_.back().rigid.fixture->SetDensity(d);
+			metals_.back().paint = {rvgContext(), metalPaint_};
+
+			auto& font = gui().font();
+			metals_.back().label = {rvgContext(), label, font, {}};
 		};
 
-		createMetal({2, 2}, {0.1, 0.1}, 0.8f);
-		createMetal({3, 2}, {0.1, 0.1}, 0.8f);
-		createMetal({2, 3}, {0.1, 0.1}, 0.8f);
-		createMetal({3, 3}, {0.1, 0.1}, 0.8f);
+		createMetal({2, 2}, {0.1, 0.1}, 1.f, "h");
+		createMetal({3, 2}, {0.1, 0.1}, 1.f, "j");
+		createMetal({2, 3}, {0.1, 0.1}, 1.f, "k");
+		// createMetal({3, 3}, {1.f, 1.f}, 1.f);
+
+		// createMetal({3, 3}, {0.1, 0.1}, 0.8f);
+		createMetal({5, 1}, {0.2, 1}, 1.f, "l");
+		metals_.back().rigid.body->SetType(b2_staticBody);
 
 		// createMetal({2, 2}, {0.5, 0.5}, 1.f);
 
@@ -72,15 +92,28 @@ public:
 		// createMetal({1, 6}, {0.2, 0.1}, 0.1f);
 		// createMetal({5, 0}, {2, 2}, 10.f);
 
+		// NOTE: test
+		// b2MotorJointDef mjd;
+		// mjd.Initialize(player_.rigid.body, metals_.back().rigid.body);
+		// mjd.maxForce = 0.5f;
+		// mjd.maxTorque = 0.f;
+		// mjd.correctionFactor = 0.5f;
+		// mjd.collideConnected = true;
+		// player_.moveJoint = (b2MotorJoint*) bworld().CreateJoint(&mjd);
+
 		return true;
 	}
 
 	void render(vk::CommandBuffer cb) override {
 		rvgContext().bindDefaults(cb);
-		metalPaint_.bind(cb);
 		for(auto& metal : metals_) {
+			metal.paint.bind(cb);
 			metal.transform.bind(cb);
 			metal.shape.fill(cb);
+
+			labelPaint_.bind(cb);
+			windowTransform().bind(cb);
+			metal.label.draw(cb);
 		}
 
 		levelTransform_.bind(cb);
@@ -112,7 +145,7 @@ public:
 		// input
 		auto kc = appContext().keyboardContext();
 		auto accel = nytl::Vec2f {0.f, 0.f};
-		auto fac = 0.5;
+		auto fac = 0.005;
 		if(kc->pressed(ny::Keycode::w)) {
 			accel.y += fac;
 		}
@@ -126,7 +159,16 @@ public:
 			accel.x += fac;
 		}
 
-		player_.rigid.body->ApplyForceToCenter({accel.x, accel.y}, true);
+		// player_.rigid.body->ApplyForceToCenter({accel.x, accel.y}, true);
+		player_.rigid.body->ApplyLinearImpulseToCenter({accel.x, accel.y}, true);
+		// auto vel = player_.rigid.body->GetLinearVelocity();
+		// vel += b2Vec2 {accel.x, accel.y};
+		// player_.rigid.body->SetLinearVelocity(vel);
+		// b2Vec2 pp = metals_.back().rigid.body->GetPosition();
+		// auto distance = player_.rigid.body->GetLocalPoint(pp);
+		// distance.x += accel.x;
+		// distance.y += accel.y;
+		// player_.moveJoint->SetLinearOffset(distance);
 
 		// physics
 		physics_.update(dt);
@@ -140,16 +182,61 @@ public:
 			mat = levelTransform_.matrix() * mat;
 			m.transform.matrix(mat);
 
+			nytl::Vec2f pp {p.x, p.y};
+			auto t = levelTransform_.matrix() * nytl::Vec4f{pp.x, pp.y, 0.f, 1.f};
+			pp = {t[0], t[1]};
+			pp.x = 0.5f * pp.x + 0.5f;
+			pp.y = 0.5f * pp.y + 0.5f;
+			pp.x *= window().size().x;
+			pp.y *= window().size().y;
+			pp.x -= 20;
+			m.label.change()->position = pp;
+
 			if(m.motor) {
+				// b2Vec2 bd = m.rigid.body->GetLinearVelocity() -
+					// player_.rigid.body->GetLinearVelocity();
 				b2Vec2 xB = m.rigid.body->GetPosition();
+				// xB -= 0.5 * player_.rigid.body->GetLinearVelocity();
+				// xB += 0.5 * m.rigid.body->GetLinearVelocity();
 				auto distance = player_.rigid.body->GetLocalPoint(xB);
+				auto dn = distance;
+				dn.Normalize();
+
+				// distance += m.rigid.body->GetLinearVelocity();
+				// distance -= player_.rigid.body->GetLinearVelocity();
+
 				if(m.push) {
-					m.motor->SetLinearOffset(100 * distance);
+					m.motor->SetLinearOffset(distance + dn);
+					// m.motor->SetLinearOffset(distance);
+				} else {
+					m.motor->SetLinearOffset(distance - dn);
+					// m.motor->SetLinearOffset(2 * distance);
 				}
 
-				float force = 0.05 + 0.1 / (distance.LengthSquared() + 1);
-				// float force = 0.05 + 0.1 / (distance.Length() + 1);
-				m.motor->SetMaxForce(force);
+				auto d = distance.LengthSquared();
+
+
+				// inverse square would be like magnetic/gravitational force
+				// we use (1 / (dist + 1)) instead of (real) (1 / dist) since
+				// this will dampen the falloff. You can still push/pull
+				// things somewhat far away
+
+				// float force = 0.001 / (d + 1);
+				float force = 0.01 + 0.1 / (std::sqrt(d) + 2);
+				// float force = 0.01 + 0.1 / (std::pow(d, 0.25) + 0.5);
+
+				if(m.rigid.body->GetType() == b2_staticBody) {
+					force *= std::sqrt(player_.rigid.body->GetMass());
+					force *= 1.f;
+				} else {
+					// force *= 10 * m.rigid.body->GetMass();
+					force *= std::sqrt(player_.rigid.body->GetMass());
+					force *= std::sqrt(m.rigid.body->GetMass());
+				}
+
+				// m.motor->SetMaxForce(force);
+				// m.motor->SetMinForce(force);
+				m.motor->SetCorrectionFactor(force);
 			}
 		}
 
@@ -175,6 +262,17 @@ public:
 		}
 		*/
 
+		if(ev.keycode == ny::Keycode::semicolon) {
+			push_ = ev.pressed;
+
+			// bad idea for multiple active push/pulls
+			/*
+			for(auto& active : active_) {
+				active->push = push_;
+			}
+			*/
+		}
+
 		if(auto it = assoc.find(ev.keycode); it != assoc.end() && !ev.repeat) {
 			if(it->second >= metals_.size()) {
 				return;
@@ -186,29 +284,40 @@ public:
 				dlg_info("Destroyed joint");
 				bworld().DestroyJoint(metal.motor);
 				metal.motor = nullptr;
+
+				if(!ev.pressed) {
+					auto it = active_.find(&metal);
+					dlg_assert(it != active_.end());
+					active_.erase(it);
+				}
 			}
 
 			if(!ev.pressed) {
+				*metal.paint.change() = metalPaint_;
 				return;
 			}
 
 			b2MotorJointDef def;
 			def.Initialize(player_.rigid.body, metal.rigid.body);
 			def.maxTorque = 0.f;
-			def.correctionFactor = 0.1f;
-			def.maxForce = 0.5f;
+			def.correctionFactor = 0.f;
+			def.maxForce = 1.f;
+			// def.minForce = 0.1f;
 			def.collideConnected = true;
 
-			bool push = ev.modifiers & ny::KeyboardModifier::ctrl;
-			if(push) {
-				def.linearOffset *= 100;
+			if(push_) {
+				def.linearOffset *= 2;
+				*metal.paint.change() = pushPaint_;
 			} else {
 				def.linearOffset = {};
+				*metal.paint.change() = pullPaint_;
 			}
 
 			dlg_info("Created joint");
 			metal.motor = static_cast<b2MotorJoint*>(bworld().CreateJoint(&def));
-			metal.push = push;
+			metal.push = push_;
+
+			active_.insert(&metal);
 		}
 	}
 
@@ -223,10 +332,15 @@ protected:
 	std::vector<Metal> metals_;
 
 	rvg::Transform levelTransform_;
-	rvg::Paint metalPaint_;
 	rvg::Paint playerPaint_;
+	rvg::Paint labelPaint_;
 
-	// bool push_ {true}; // otherwise pulling
+	rvg::PaintData metalPaint_;
+	rvg::PaintData pushPaint_;
+	rvg::PaintData pullPaint_;
+
+	bool push_ {false}; // otherwise pulling
+	std::unordered_set<Metal*> active_;
 };
 
 int main(int argc, const char** argv) {

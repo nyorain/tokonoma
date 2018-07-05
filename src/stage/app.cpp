@@ -28,7 +28,7 @@ namespace doi {
 
 // constants
 constexpr auto clearColor = std::array<float, 4>{{0.f, 0.f, 0.f, 1.f}};
-constexpr auto fontHeight = 11;
+constexpr auto fontHeight = 12;
 constexpr auto baseResPath = "../";
 
 // util
@@ -439,11 +439,12 @@ void App::resize(const ny::SizeEvent& ev) {
 	auto s = nytl::Vec { (2.f / (fac * w)), (-2.f / (fac * h)), 1 };
 	*/
 
+	// TODO: currently top left (for mists)
 	// window-coords, origin bottom left
-	auto s = nytl::Vec{ 2.f / ev.size.x, -2.f / ev.size.y, 1};
+	auto s = nytl::Vec{ 2.f / ev.size.x, 2.f / ev.size.y, 1};
 	auto transform = nytl::identity<4, float>();
 	scale(transform, s);
-	translate(transform, {-1, 1, 0});
+	translate(transform, {-1, -1, 0});
 	impl_->windowTransform.matrix(transform);
 
 	// window-coords, origin top left

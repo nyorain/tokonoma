@@ -80,6 +80,8 @@ Rigid::Rigid(b2World& world, nytl::Vec2f pos, const b2Shape& shape, bool dyn) {
 	b2FixtureDef fdf;
 	fdf.shape = &shape;
 	fdf.density = 1.f;
+	fdf.friction = 0.2f;
+	fdf.restitution = 0.0f;
 	fixture = body->CreateFixture(&fdf);
 }
 
@@ -137,6 +139,8 @@ void initRigid(Entity& rigid, b2World& world, const b2BodyDef& body,
 	b2FixtureDef fixture;
 	fixture.shape = &shape;
 	fixture.density = 1.f;
+	fixture.friction = 0.2f;
+	fixture.restitution = 0.0f;
 	initRigid(rigid, world, body, fixture);
 }
 

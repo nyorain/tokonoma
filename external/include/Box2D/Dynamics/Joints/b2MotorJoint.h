@@ -29,6 +29,7 @@ struct b2MotorJointDef : public b2JointDef
 		type = e_motorJoint;
 		linearOffset.SetZero();
 		angularOffset = 0.0f;
+		minForce = 0.0f;
 		maxForce = 1.0f;
 		maxTorque = 1.0f;
 		correctionFactor = 0.3f;
@@ -42,9 +43,12 @@ struct b2MotorJointDef : public b2JointDef
 
 	/// The bodyB angle minus bodyA angle in radians.
 	float32 angularOffset;
-	
+
 	/// The maximum motor force in N.
 	float32 maxForce;
+
+	/// The maximum motor force in N.
+	float32 minForce;
 
 	/// The maximum motor torque in N-m.
 	float32 maxTorque;
@@ -75,9 +79,11 @@ public:
 
 	/// Set the maximum friction force in N.
 	void SetMaxForce(float32 force);
+	void SetMinForce(float32 force);
 
 	/// Get the maximum friction force in N.
 	float32 GetMaxForce() const;
+	float32 GetMinForce() const;
 
 	/// Set the maximum friction torque in N*m.
 	void SetMaxTorque(float32 torque);
@@ -110,6 +116,7 @@ protected:
 	b2Vec2 m_linearImpulse;
 	float32 m_angularImpulse;
 	float32 m_maxForce;
+	float32 m_minForce;
 	float32 m_maxTorque;
 	float32 m_correctionFactor;
 
