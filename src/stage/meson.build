@@ -1,4 +1,5 @@
 # libstage
+dep_soundio = meson.get_compiler('cpp').find_library('soundio', dirs: libpath)
 stage_deps = [
   dep_vpp,
   dep_ny,
@@ -6,7 +7,8 @@ stage_deps = [
   dep_dlg,
   dep_rvg,
   dep_vui,
-  dep_vulkan
+  dep_vulkan,
+  dep_soundio
 ]
 
 stage_src = [
@@ -14,11 +16,13 @@ stage_src = [
 	'window.cpp',
 	'geometry.cpp',
 	'app.cpp',
+	'audio.cpp',
 ]
 
 stage_inc = [
 	include_directories('../../include'),
 	include_directories('..'),
+	external_inc,
 ]
 
 stage_lib = library('stage',
