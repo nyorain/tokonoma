@@ -74,7 +74,7 @@ Rigid::Rigid(b2World& world, nytl::Vec2f pos, const b2Shape& shape, bool dyn) {
 	bdf.position = {pos[0], pos[1]};
 	bdf.type = dyn ? b2_dynamicBody : b2_staticBody;
 	bdf.angularDamping = 0.5f;
-	bdf.linearDamping = 0.5f;
+	bdf.linearDamping = 2.f;
 	body = world.CreateBody(&bdf);
 
 	b2FixtureDef fdf;
@@ -151,6 +151,6 @@ void initRigid(Entity& rigid, b2World& world, nytl::Vec2f pos,
 	bdf.position = {pos[0], pos[1]};
 	bdf.type = dynamic ? b2_dynamicBody : b2_staticBody;
 	bdf.angularDamping = 0.5f;
-	bdf.linearDamping = 0.5f;
+	bdf.linearDamping = 2.f;
 	initRigid(rigid, world, bdf, shape);
 }

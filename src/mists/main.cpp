@@ -44,6 +44,8 @@ public:
 			return false;
 		}
 
+		physics_.world.SetWarmStarting(false);
+
 		levelTransform_ = {rvgContext()};
 		labelPaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::red)};
 		playerPaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::white)};
@@ -77,9 +79,9 @@ public:
 			metals_.back().label = {rvgContext(), label, font, {}};
 		};
 
-		createMetal({2, 2}, {0.1, 0.1}, 1.f, "h");
-		createMetal({3, 2}, {0.1, 0.1}, 1.f, "j");
-		createMetal({2, 3}, {0.1, 0.1}, 1.f, "k");
+		createMetal({2, 2}, {0.05, 0.05}, 0.3f, "h");
+		createMetal({3, 2}, {0.05, 0.05}, 0.3f, "j");
+		createMetal({2, 3}, {0.05, 0.05}, 0.3f, "k");
 		// createMetal({3, 3}, {1.f, 1.f}, 1.f);
 
 		// createMetal({3, 3}, {0.1, 0.1}, 0.8f);
@@ -145,7 +147,7 @@ public:
 		// input
 		auto kc = appContext().keyboardContext();
 		auto accel = nytl::Vec2f {0.f, 0.f};
-		auto fac = 0.005;
+		auto fac = 0.01;
 		if(kc->pressed(ny::Keycode::w)) {
 			accel.y += fac;
 		}
@@ -215,14 +217,13 @@ public:
 
 				auto d = distance.LengthSquared();
 
-
 				// inverse square would be like magnetic/gravitational force
 				// we use (1 / (dist + 1)) instead of (real) (1 / dist) since
 				// this will dampen the falloff. You can still push/pull
 				// things somewhat far away
 
-				// float force = 0.001 / (d + 1);
-				float force = 0.01 + 0.1 / (std::sqrt(d) + 2);
+				// float force = 0.5 / (d + 1);
+				float force = 0.001 + 0.1 / (std::sqrt(d) + 0.5);
 				// float force = 0.01 + 0.1 / (std::pow(d, 0.25) + 0.5);
 
 				if(m.rigid.body->GetType() == b2_staticBody) {
@@ -236,6 +237,8 @@ public:
 
 				// m.motor->SetMaxForce(force);
 				// m.motor->SetMinForce(force);
+				force = std::clamp(force, 0.f, 1.f);
+				dlg_debug(force);
 				m.motor->SetCorrectionFactor(force);
 			}
 		}
@@ -306,10 +309,8 @@ public:
 			def.collideConnected = true;
 
 			if(push_) {
-				def.linearOffset *= 2;
 				*metal.paint.change() = pushPaint_;
 			} else {
-				def.linearOffset = {};
 				*metal.paint.change() = pullPaint_;
 			}
 
