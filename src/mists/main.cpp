@@ -44,7 +44,7 @@ public:
 			return false;
 		}
 
-		physics_.world.SetWarmStarting(false);
+		// physics_.world.SetWarmStarting(false);
 
 		levelTransform_ = {rvgContext()};
 		labelPaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::red)};
@@ -60,6 +60,7 @@ public:
 		playerShape.m_radius = 0.2f;
 		playerShape.m_p.SetZero();
 		player_.rigid = {bworld(), {1.f, 1.f}, playerShape};
+		player_.rigid.body->SetLinearDamping(1.4f);
 		// player_.rigid.fixture->SetDensity(20.f);
 
 		// metals
@@ -79,9 +80,9 @@ public:
 			metals_.back().label = {rvgContext(), label, font, {}};
 		};
 
-		createMetal({2, 2}, {0.05, 0.05}, 0.3f, "h");
-		createMetal({3, 2}, {0.05, 0.05}, 0.3f, "j");
-		createMetal({2, 3}, {0.05, 0.05}, 0.3f, "k");
+		createMetal({2, 2}, {0.05, 0.05}, 2.f, "h");
+		createMetal({3, 2}, {0.05, 0.05}, 2.f, "j");
+		createMetal({2, 3}, {0.05, 0.05}, 2.f, "k");
 		// createMetal({3, 3}, {1.f, 1.f}, 1.f);
 
 		// createMetal({3, 3}, {0.1, 0.1}, 0.8f);
@@ -197,21 +198,26 @@ public:
 			if(m.motor) {
 				// b2Vec2 bd = m.rigid.body->GetLinearVelocity() -
 					// player_.rigid.body->GetLinearVelocity();
-				b2Vec2 xB = m.rigid.body->GetPosition();
 				// xB -= 0.5 * player_.rigid.body->GetLinearVelocity();
 				// xB += 0.5 * m.rigid.body->GetLinearVelocity();
-				auto distance = player_.rigid.body->GetLocalPoint(xB);
+
+				// b2Vec2 xB = m.rigid.body->GetPosition();
+				// auto distance = player_.rigid.body->GetLocalPoint(xB);
+
+				auto distance = m.rigid.body->GetPosition() - player_.rigid.body->GetPosition();
 				auto dn = distance;
 				dn.Normalize();
 
 				// distance += m.rigid.body->GetLinearVelocity();
 				// distance -= player_.rigid.body->GetLinearVelocity();
 
+				auto fac = 1.f;
 				if(m.push) {
 					m.motor->SetLinearOffset(distance + dn);
 					// m.motor->SetLinearOffset(distance);
 				} else {
 					m.motor->SetLinearOffset(distance - dn);
+					fac = -1.f;
 					// m.motor->SetLinearOffset(2 * distance);
 				}
 
@@ -223,23 +229,49 @@ public:
 				// things somewhat far away
 
 				// float force = 0.5 / (d + 1);
-				float force = 0.001 + 0.1 / (std::sqrt(d) + 0.5);
+				float force = 0.01 + 0.5 / (std::sqrt(d) + 0.25);
 				// float force = 0.01 + 0.1 / (std::pow(d, 0.25) + 0.5);
 
+				auto f1 = -fac * force;
+				auto f2 = fac * force * player_.rigid.body->GetMass();
+
+				// alternative force ideas:
+				// 1) f1 = m1 * m2 * invDistance; f2 = -f1; -- gravity like
+				// 2) f1 = m2 * invDistance; f2 = m1 * invDistance
+				//    will make smaller objects even faster; larger ones even
+				//    slower. Looks somewhat nicer i think
+				// Currently the weight of the player is used as well
+				// but this probably conflicts with the original lore
+
 				if(m.rigid.body->GetType() == b2_staticBody) {
-					force *= std::sqrt(player_.rigid.body->GetMass());
-					force *= 1.f;
+					// force *= std::sqrt(player_.rigid.body->GetMass());
+
+					// force *= player_.rigid.body->GetMass();
 				} else {
 					// force *= 10 * m.rigid.body->GetMass();
-					force *= std::sqrt(player_.rigid.body->GetMass());
-					force *= std::sqrt(m.rigid.body->GetMass());
+					// force *= std::sqrt(player_.rigid.body->GetMass());
+					// force *= std::sqrt(m.rigid.body->GetMass());
+
+					// force *= player_.rigid.body->GetMass();
+					// force *= m.rigid.body->GetMass();
+
+					f1 *= m.rigid.body->GetMass();
 				}
 
 				// m.motor->SetMaxForce(force);
 				// m.motor->SetMinForce(force);
-				force = std::clamp(force, 0.f, 1.f);
+				force = std::clamp(force, 0.f, 50.f);
 				dlg_debug(force);
-				m.motor->SetCorrectionFactor(force);
+
+				// m.rigid.body->ApplyLinearImpulseToCenter(-fac * force * dn, true);
+				// player_.rigid.body->ApplyLinearImpulseToCenter(fac * force * dn, true);
+				// m.motor->SetCorrectionFactor(force);
+
+				// m.rigid.body->ApplyForceToCenter(-fac * force * dn, true);
+				// player_.rigid.body->ApplyForceToCenter(fac * force * dn, true);
+
+				player_.rigid.body->ApplyForceToCenter(f1 * dn, true);
+				m.rigid.body->ApplyForceToCenter(f2 * dn, true);
 			}
 		}
 
@@ -306,7 +338,7 @@ public:
 			def.correctionFactor = 0.f;
 			def.maxForce = 1.f;
 			// def.minForce = 0.1f;
-			def.collideConnected = true;
+			def.collideConnected = false;
 
 			if(push_) {
 				*metal.paint.change() = pushPaint_;

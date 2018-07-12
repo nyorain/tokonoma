@@ -20,6 +20,7 @@ namespace argagg {
 } // namespace argagg
 
 namespace doi {
+
 struct AppSettings {
 	const char* name;
 	nytl::Span<const char*> args;

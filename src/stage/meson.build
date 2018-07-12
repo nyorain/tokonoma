@@ -1,5 +1,6 @@
 # libstage
 dep_soundio = meson.get_compiler('cpp').find_library('soundio', dirs: libpath)
+dep_b2d = meson.get_compiler('cpp').find_library('Box2D', dirs: libpath)
 stage_deps = [
   dep_vpp,
   dep_ny,
@@ -8,7 +9,8 @@ stage_deps = [
   dep_rvg,
   dep_vui,
   dep_vulkan,
-  dep_soundio
+  dep_soundio,
+  dep_b2d,
 ]
 
 stage_src = [
@@ -17,6 +19,7 @@ stage_src = [
 	'geometry.cpp',
 	'app.cpp',
 	'audio.cpp',
+	'physics.cpp',
 ]
 
 stage_inc = [

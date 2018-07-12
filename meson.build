@@ -54,6 +54,7 @@ subdir('src/smooth-shadow')
 subdir('src/pursuers')
 subdir('src/fluids')
 subdir('src/mists')
+subdir('src/fun')
 
 # inline (for small projects)
 executable('pendulum',

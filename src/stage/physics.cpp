@@ -1,7 +1,8 @@
-#include "physics.hpp"
-#include "entity.hpp"
+#include <stage/physics.hpp>
 #include <dlg/dlg.hpp>
 #include <Box2D/Dynamics/Contacts/b2Contact.h>
+
+namespace doi {
 
 PhysicsSystem::PhysicsSystem() {
 	world.SetContactListener(&contactListener);
@@ -9,6 +10,7 @@ PhysicsSystem::PhysicsSystem() {
 
 void PhysicsSystem::ContactListener::BeginContact(b2Contact* pcontact) {
 	dlg_assert(pcontact);
+	/*
 	auto& contact = *pcontact;
 
 	auto bodyA = contact.GetFixtureA()->GetBody();
@@ -17,6 +19,7 @@ void PhysicsSystem::ContactListener::BeginContact(b2Contact* pcontact) {
 	auto bodyB = contact.GetFixtureB()->GetBody();
 	auto eB = static_cast<Entity*>(bodyB->GetUserData());
 
+	/
 	if(eA) {
 		auto listener = eA->part<parts::Contact>();
 		if(listener) {
@@ -30,10 +33,13 @@ void PhysicsSystem::ContactListener::BeginContact(b2Contact* pcontact) {
 			listener->begin({*eB, eA, contact, false});
 		}
 	}
+	*/
 }
 
 void PhysicsSystem::ContactListener::EndContact(b2Contact* pcontact) {
 	dlg_assert(pcontact);
+
+	/*
 	auto& contact = *pcontact;
 
 	auto bodyA = contact.GetFixtureA()->GetBody();
@@ -55,6 +61,7 @@ void PhysicsSystem::ContactListener::EndContact(b2Contact* pcontact) {
 			listener->end({*eB, eA, contact, false});
 		}
 	}
+	*/
 }
 
 void PhysicsSystem::update(double delta) {
@@ -73,15 +80,15 @@ Rigid::Rigid(b2World& world, nytl::Vec2f pos, const b2Shape& shape, bool dyn) {
 	b2BodyDef bdf;
 	bdf.position = {pos[0], pos[1]};
 	bdf.type = dyn ? b2_dynamicBody : b2_staticBody;
-	bdf.angularDamping = 0.5f;
+	bdf.angularDamping = 1.f;
 	bdf.linearDamping = 0.5f;
 	body = world.CreateBody(&bdf);
 
 	b2FixtureDef fdf;
 	fdf.shape = &shape;
 	fdf.density = 1.f;
-	fdf.friction = 0.2f;
-	fdf.restitution = 0.0f;
+	fdf.friction = 0.5f;
+	fdf.restitution = 0.05f;
 	fixture = body->CreateFixture(&fdf);
 }
 
@@ -119,6 +126,7 @@ void swap(Rigid& a, Rigid& b) {
 
 } // namespace parts
 
+/*
 void initRigid(Entity& rigid, b2World& world, const b2BodyDef& body,
 		const b2FixtureDef& fixture) {
 
@@ -154,3 +162,6 @@ void initRigid(Entity& rigid, b2World& world, nytl::Vec2f pos,
 	bdf.linearDamping = 0.5f;
 	initRigid(rigid, world, bdf, shape);
 }
+*/
+
+} // namespace doi
