@@ -3,21 +3,24 @@
 #include <soundio/soundio.h>
 #include <dlg/dlg.hpp>
 
+#include <chrono>
 #include <stdexcept>
 
 namespace doi {
 namespace {
 
+constexpr static auto cfac16 = 32767.0; // 2^15 (16 - 1 sign bit)
+constexpr static auto cfac32 = 2147483648.0; // 2^31 (32 - 1 sign bit)
+
+
 template<typename T>
-void check(T* ptr, const char* msg)
-{
+void assertValid(T* ptr, const char* msg) {
 	if(ptr == nullptr) {
 		throw std::runtime_error(msg);
 	}
 }
 
-void checkSoundIo(int err, const char* msg)
-{
+void checkSoundIo(int err, const char* msg) {
 	if(err == SoundIoErrorNone) {
 		return;
 	}
@@ -31,23 +34,21 @@ void checkSoundIo(int err, const char* msg)
 } // anonymous namespace
 
 // AudioPlayer
-AudioPlayer::AudioPlayer()
-{
+AudioPlayer::AudioPlayer() {
 	init();
 }
 
-AudioPlayer::~AudioPlayer()
-{
+AudioPlayer::~AudioPlayer() {
 	finish();
 }
 
-void AudioPlayer::init()
-{
+void AudioPlayer::init() {
+
 	// TODO: currently hardcoded settings
 	// TODO: clamp softwareLatency to supported device range
 	constexpr auto sampleRate = 48000;
-	constexpr auto softwareLatency = 0.1;
 	constexpr auto channelCount = 2u;
+	prefLatency_ = 1 / 60.f;
 
 	// TODO: on_device_change callback? additional callbacks?
 	// at least on_backend_disconnect
@@ -56,7 +57,7 @@ void AudioPlayer::init()
 
 	// soundio
 	soundio_ = soundio_create();
-	check(soundio_, "soundio_create failed");
+	assertValid(soundio_, "soundio_create failed");
 	soundio_->userdata = this;
 
 	// backend
@@ -106,7 +107,7 @@ void AudioPlayer::init()
 	}
 
 	device_ = soundio_get_output_device(soundio_, defaultID);
-	check(device_, "soundio_get_output_device failed");
+	assertValid(device_, "soundio_get_output_device failed");
 	dlg_info("using soundio device {} ({})", defaultID, device_->name);
 
 	// sample rate
@@ -157,11 +158,11 @@ void AudioPlayer::init()
 
 	// layout
 	auto layout = soundio_channel_layout_get_default(channelCount);
-	check(layout, "soundio_channel_layout_get_default failed");
+	assertValid(layout, "soundio_channel_layout_get_default failed");
 
 	// stream
 	stream_ = soundio_outstream_create(device_);
-	check(stream_, "soundio_outstream_create failed");
+	assertValid(stream_, "soundio_outstream_create failed");
 
 	stream_->write_callback = &AudioPlayer::cbWrite;
 	stream_->error_callback = &AudioPlayer::cbError;
@@ -171,7 +172,7 @@ void AudioPlayer::init()
 	stream_->sample_rate = sampleRate;
 	stream_->layout = *layout;
 	stream_->userdata = this;
-	stream_->software_latency = softwareLatency;
+	stream_->software_latency = prefLatency_;
 
 	checkSoundIo(soundio_outstream_open(stream_), "soundio_outstream_open");
 	checkSoundIo(soundio_outstream_start(stream_), "soundio_outstream_start");
@@ -179,8 +180,7 @@ void AudioPlayer::init()
 	dlg_info("using software latency {}", stream_->software_latency);
 }
 
-void AudioPlayer::finish()
-{
+void AudioPlayer::finish() {
 	// we don't have to lock a mutex here, soundio has to care
 	// of this internally and locking mutex_ might trigger
 	// a deadlock (since sounio probably joins the audio thread)
@@ -197,16 +197,54 @@ void AudioPlayer::finish()
 	}
 }
 
-Audio& AudioPlayer::add(std::unique_ptr<Audio> audio)
-{
+void AudioPlayer::audioLoop() {
+	using namespace std::literals::chrono_literals;
+	auto fillLimit = stream_->sample_rate * prefLatency_ * 2;
+	auto lastTime = std::chrono::high_resolution_clock::duration {};
+
+	while(true) {
+		auto waitTime = std::chrono::duration<float>(prefLatency_ / 2);
+		std::this_thread::sleep_for(waitTime - lastTime);
+
+		auto count = soundio_ring_buffer_fill_count(buffer_);
+		if(count >= fillLimit) {
+			continue;
+		}
+
+		auto now = std::chrono::high_resolution_clock::now();
+		auto diff = fillLimit - count;
+		auto ptr = soundio_ring_buffer_write_ptr(buffer_);
+
+		{
+			// NOTE: this function must be realtime so this mutex
+			// lock *might* be problematic. Just make sure
+			// to keep this in mind when getting audio issues
+			// at some point
+			std::lock_guard lock(mutex_);
+			for(auto& audio : audios_) {
+				try {
+					audio->render(bufferCache_, format_, frames);
+				} catch(const std::exception& err) {
+					dlg_error("audio->render: {}", err.what());
+				}
+			}
+		}
+
+		soundio_ring_buffer_advance_write_ptr(leftBuffer_, diff);
+		soundio_ring_buffer_advance_write_ptr(rightBuffer_, diff);
+
+		lastTime = std::chrono::high_resolution_clock::now() - now;
+	}
+}
+
+Audio& AudioPlayer::add(std::unique_ptr<Audio> audio) {
 	dlg_assert(audio);
 	std::lock_guard lock(mutex());
 	audios_.push_back(std::move(audio));
 	return *audios_.back();
 }
 
-bool AudioPlayer::remove(Audio& audio)
-{
+bool AudioPlayer::remove(Audio& audio) {
 	// if we only read we don't need to lock the mutex
 	auto it = std::find_if(audios_.begin(), audios_.end(), [&](auto& s) {
 		return s.get() == &audio;
@@ -221,8 +259,7 @@ bool AudioPlayer::remove(Audio& audio)
 	return true;
 }
 
-void AudioPlayer::update()
-{
+void AudioPlayer::update() {
 	if(error_.load()) {
 		dlg_debug("Trying to reinitialize audio player");
 		finish();
@@ -233,34 +270,30 @@ void AudioPlayer::update()
 	}
 }
 
-void AudioPlayer::cbWrite(struct SoundIoOutStream* stream, int min, int max)
-{
+void AudioPlayer::cbWrite(struct SoundIoOutStream* stream, int min, int max) {
 	dlg_assert(stream && stream->userdata);
 	reinterpret_cast<AudioPlayer*>(stream->userdata)->output(stream, min, max);
 }
 
-void AudioPlayer::cbUnderflow(struct SoundIoOutStream*)
-{
+void AudioPlayer::cbUnderflow(struct SoundIoOutStream*) {
 	// TODO: can we fill the buffer here?
 	dlg_warn("audio buffer underflow");
 }
 
-void AudioPlayer::cbError(struct SoundIoOutStream* stream, int)
-{
+void AudioPlayer::cbError(struct SoundIoOutStream* stream, int) {
 	dlg_assert(stream && stream->userdata);
 	reinterpret_cast<AudioPlayer*>(stream->userdata)->error(stream);
 }
 
-void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max)
-{
+void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max) {
 	dlg_assert(stream == stream_);
 	if(error_.load()) {
 		dlg_error("AudioPlayer output called with error flag set");
 		return;
 	}
 
-	// TODO: don't just use a random clamped value
-	auto remaining = std::clamp(4096, min, max);
+	auto prefSamples = int(prefLatency_ * stream_->sample_rate);
+	auto remaining = std::clamp(prefSamples, min, max);
 
 	while(remaining > 0) {
 		int frames = remaining;
@@ -314,76 +347,81 @@ void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max)
 	}
 }
 
-void AudioPlayer::error(struct SoundIoOutStream* stream)
-{
+void AudioPlayer::error(struct SoundIoOutStream* stream) {
 	dlg_assert(stream == stream_);
 	dlg_error("critical audio error, trying to reinitialize in next frame");
 	error_.store(true);
 }
 
 // util
-void convert(void* from, AudioFormat fmtFrom, void* to, AudioFormat fmtTo, bool add)
-{
-	constexpr static auto fac16 = 32767.0; // 2^15 (16 - 1 sign bit)
-	constexpr static auto fac32 = 2147483648.0; // 2^31 (32 - 1 sign bit)
+template<typename T>
+void writeAdd(T val, std::byte* to, bool add) {
+	auto* ptr = *reinterpret_cast<T*>(to);
+	*ptr = add * (*ptr) + val;
+}
 
-	// TODO: optimize case where from == to
+template<typename To, typename From>
+void doConvert(const std::byte* from, std::byte* to, std::size_t count,
+		bool add, double fac1, double fac2) {
 
-	double val; // normalized
-	switch(fmtFrom) {
+	// the real conversion loop. As compact as possible
+	// reinterpret_cast instead of memcpy since its allowed for
+	// std::byte (does not break strict aliasing) and should/could be faster
+	for(auto i = 0u; i < count; ++i) {
+		double val = *reinterpret_cast<const From*>(from) / fac1;
+		auto ptr = reinterpret_cast<To*>(to);
+		if(add) {
+			*ptr += val * fac2;
+		} else {
+			*ptr = val * fac2;
+		}
+
+		from += sizeof(From);
+		to += sizeof(To);
+	}
+}
+
+template<typename From>
+void toSwitch(const std::byte* from, std::byte* to, std::size_t count,
+		bool add, double fac1, AudioFormat fmtTo) {
+	switch(fmtTo) {
 		case AudioFormat::f32:
-			val = *reinterpret_cast<float*>(from);
+			doConvert<From, float>(from, to, count, add, fac1, 1.0);
 			break;
 		case AudioFormat::f64:
-			val = *reinterpret_cast<double*>(from);
+			doConvert<From, double>(from, to, count, add, fac1, 1.0);
 			break;
 		case AudioFormat::s16:
-			val = *reinterpret_cast<std::int16_t*>(from) / fac16;
+			doConvert<From, std::int16_t>(from, to, count, add, fac1, cfac16);
 			break;
 		case AudioFormat::s32:
-			val = *reinterpret_cast<std::int32_t*>(from) / fac32;
+			doConvert<From, std::int32_t>(from, to, count, add, fac1, cfac32);
+			break;
+		default:
+			dlg_error("convert: invalid fmtTo");
+			return;
+	}
+}
+
+void convert(const std::byte* from, AudioFormat fmtFrom, std::byte* to,
+		AudioFormat fmtTo, std::size_t count, bool add) {
+
+	switch(fmtFrom) {
+		case AudioFormat::f32:
+			toSwitch<float>(from, to, count, add, 1.0, fmtTo);
+			break;
+		case AudioFormat::f64:
+			toSwitch<double>(from, to, count, add, 1.0, fmtTo);
+			break;
+		case AudioFormat::s16:
+			toSwitch<std::int16_t>(from, to, count, add, cfac16, fmtTo);
+			break;
+		case AudioFormat::s32:
+			toSwitch<std::int32_t>(from, to, count, add, cfac32, fmtTo);
 			break;
 		default:
 			dlg_error("convert: invalid fmtFrom");
 			return;
-	}
-
-	if(add) {
-		switch(fmtTo) {
-			case AudioFormat::f32:
-				*reinterpret_cast<float*>(to) += val;
-				break;
-			case AudioFormat::f64:
-				*reinterpret_cast<double*>(to) += val;
-				break;
-			case AudioFormat::s16:
-				*reinterpret_cast<std::int16_t*>(to) += val * fac16;
-				break;
-			case AudioFormat::s32:
-				*reinterpret_cast<std::int32_t*>(to) += val * fac32;
-				break;
-			default:
-				dlg_error("convert: invalid fmtTo");
-				return;
-		}
-	} else {
-		switch(fmtTo) {
-			case AudioFormat::f32:
-				*reinterpret_cast<float*>(to) = val;
-				break;
-			case AudioFormat::f64:
-				*reinterpret_cast<double*>(to) = val;
-				break;
-			case AudioFormat::s16:
-				*reinterpret_cast<std::int16_t*>(to) = val * fac16;
-				break;
-			case AudioFormat::s32:
-				*reinterpret_cast<std::int32_t*>(to) = val * fac32;
-				break;
-			default:
-				dlg_error("convert: invalid fmtTo");
-				return;
-		}
 	}
 }
 

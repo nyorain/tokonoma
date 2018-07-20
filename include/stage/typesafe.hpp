@@ -3,7 +3,7 @@
 #include <functional>
 #include <ostream>
 
-namespace stage {
+namespace doi {
 
 /// Typesafe (tagged) wrapper around a value of type 'T'
 template<typename Tag, typename T>
@@ -31,14 +31,14 @@ std::ostream& operator<<(std::ostream& os, const Typesafe<Tag, T>& a) {
 	return (os << a.value);
 }
 
-} // namespace kyo
+} // namespace doi
 
 // hash specialization
 namespace std {
 
 template<typename Tag, typename T>
-struct hash<stage::Typesafe<Tag, T>> {
-	constexpr auto operator()(const stage::Typesafe<Tag, T>& obj) const {
+struct hash<doi::Typesafe<Tag, T>> {
+	constexpr auto operator()(const doi::Typesafe<Tag, T>& obj) const {
 		return std::hash<T>()(obj.value);
     }
 };
