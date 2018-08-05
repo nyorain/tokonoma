@@ -40,7 +40,9 @@ void main() {
 
 	// closer the the line it is applied with factor 0, at the max distance
 	// with factor 0
-	float fac = 1 - (distance(pos, ubo.mp0, ubo.mp1) / ubo.radius);
+	// NOTE:; radius isn't really the radius with the sqrt but it looks
+	// somewhat smoother like this
+	float fac = 1 - sqrt(distance(pos, ubo.mp0, ubo.mp1) / ubo.radius);
 	if(fac > 0.f) {
 #ifdef VELOCITY
 		vec2 mvel = (ubo.mp1 - ubo.mp0) / size;

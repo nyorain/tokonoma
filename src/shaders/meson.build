@@ -9,7 +9,7 @@ geom_glsl = files('geometry.glsl')
 shaders_src = [
 	['common_shaders', [
 		['fullscreen.vert'],
-		['texture.frag'],
+		['incolor.frag'],
 	]],
 	['smooth_shadow_shaders', [
 		['light.vert'],
@@ -29,7 +29,13 @@ shaders_src = [
 		['divergence.comp'],
 		['project.comp'],
 		['diffuse.comp', [], 'diffuse.dens.comp'],
+		['texture.frag'],
 	]],
+	['automaton_shaders', [
+		['hex.vert'],
+		['predprey.comp'],
+	]],
+
 ]
 
 # build them

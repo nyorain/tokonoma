@@ -365,20 +365,25 @@ void App::run() {
 			// so we know that acquiring the image probably failed
 			// due to an unhandled resize event. Poll for events
 			dlg_debug("Skipping suboptimal/outOfDate frame {}", ++i);
-			if(!appContext().pollEvents()) {
-				dlg_info("upate pollEvents returned false");
-				return;
+
+			// we assume here that a return value of suboptimal/outOfDate
+			// means that there was a resize and that means we _must_ get
+			// a resize event at some point.
+			// If this assumption is wrong, the application will block
+			// from here until resized
+			while(!resize_) {
+				if(!appContext().waitEvents()) {
+					dlg_info("waitEvents returned false");
+					return;
+				}
 			}
 
-			// If there was a resize event handle it.
+			// Handle the received resize event
 			// We will try rendering/acquiring again in the next
 			// loop iteration.
-			if(resize_) {
-				resize_ = {};
-				renderer().resize(window().size());
-			} else {
-				dlg_warn("Skipped frame without resize event");
-			}
+			resize_ = {};
+			dlg_info("resize: {}", window().size());
+			renderer().resize(window().size());
 		}
 
 		impl_->nextFrameWait.clear();

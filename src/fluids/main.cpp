@@ -44,7 +44,7 @@ public:
 
 	float velocityFac {0.0};
 	float densityFac {0.0};
-	float radius {15.f};
+	float radius {20.f};
 
 public:
 	FluidSystem(vpp::Device& dev, nytl::Vec2ui size);
@@ -583,13 +583,13 @@ public:
 			system_->densityFac = ev.pressed * 0.5;
 			system_->velocityFac = ev.pressed;
 		} else if(ev.button == ny::MouseButton::right || space) {
-			system_->velocityFac = ev.pressed * 100.f;
+			system_->velocityFac = ev.pressed * 150.f;
 		}
 	}
 
 	void mouseWheel(const ny::MouseWheelEvent& ev) override {
 		App::mouseWheel(ev);
-		system_->radius *= std::pow(1.1, ev.value.y);
+		system_->radius *= std::pow(1.01, ev.value.y);
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {

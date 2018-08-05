@@ -69,6 +69,16 @@ executable('audio',
 	'src/audio/main.cpp',
 	dependencies: stage_dep)
 
+executable('dummy',
+	'src/dummy/main.cpp',
+	dependencies: stage_dep)
+
+executable('automaton', [
+	  'src/automaton/main.cpp',
+	  automaton_shaders,
+	  common_shaders,
+	], dependencies: stage_dep)
+
 # executable('pg',
 # 	'src/playground/main2.cpp',
 # 	dependencies: stage_dep)

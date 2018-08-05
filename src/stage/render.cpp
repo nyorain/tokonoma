@@ -217,13 +217,18 @@ vpp::RenderPass createRenderPass(const vpp::Device& dev,
 	if(sampleCount != vk::SampleCountBits::e1)
 		subpass.pResolveAttachments = &resolveReference;
 
+	// most general dependency
+	// should cover almost all cases of external access to data that
+	// is read during a render pass (host, transfer, compute shader)
 	vk::SubpassDependency dependency;
 	dependency.srcSubpass = vk::subpassExternal;
 	dependency.srcStageMask =
 		vk::PipelineStageBits::host |
+		vk::PipelineStageBits::computeShader |
 		vk::PipelineStageBits::colorAttachmentOutput |
 		vk::PipelineStageBits::transfer;
 	dependency.srcAccessMask = vk::AccessBits::hostWrite |
+		vk::AccessBits::shaderWrite |
 		vk::AccessBits::transferWrite |
 		vk::AccessBits::colorAttachmentWrite;
 	dependency.dstSubpass = 0u;
