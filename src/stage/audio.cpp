@@ -6,7 +6,42 @@
 #include <chrono>
 #include <stdexcept>
 
+// NOTES: we assume:
+//  - 48 kHz sampling is available
+//  - stereo audio output is available
+
+// TODO(complicated/may be not possible): function to clear local buffer?
+// using soundio_ring_buffer_clear. But then we might have nothing to
+// render in the output function.
+// But would be nice e.g. when an Audio impl is added/removed
+// NOTE: pretty sure using the soundio_ring_buffer_clear will always
+// have the potential for a data race (ub) or advance beyond filled.
+// maybe modify soundio/pull request upstream? e.g. the advance_read_ptr
+// function could return bool or sth. Would require more atomic magics.
+
 namespace doi {
+
+/// The raw audio format of a ChannelBuffer.
+/// Audio implementations should support all of them.
+/// Formats always imply native endian representation.
+/// AudioPlayer will generally prefer the formats in the
+/// following order: f32 > f64 > s16 > s32
+enum class AudioFormat {
+	s16, // 16-bit signed int
+	s32, // 32-bit signed int
+	f32, // 32-bit float
+	f64 // 64-bit float (double)
+};
+
+/// Utility functions that converts a sample between the audio formats.
+/// \param from The buffer which holds 'count' audio samples in format 'fmtFrom'
+/// \param to The out buffer which holds space for 'count' audio samples
+///        in format 'fmtTo'
+/// \param count The number of audio samples to convert
+/// \param add Whether to add the values instead of overwriting them.
+void convert(const std::byte* from, AudioFormat fmtFrom, std::byte* to,
+	AudioFormat fmtTo, std::size_t count, bool add);
+
 namespace {
 
 constexpr static auto cfac16 = 32767.0; // 2^15 (16 - 1 sign bit)
@@ -44,21 +79,16 @@ AudioPlayer::~AudioPlayer() {
 
 void AudioPlayer::init() {
 
-	// TODO: currently hardcoded settings
-	// TODO: clamp softwareLatency to supported device range
+	// NOTE: currently hardcoded settings
 	constexpr auto sampleRate = 48000;
 	constexpr auto channelCount = 2u;
-	prefLatency_ = 1 / 60.f;
-
-	// TODO: on_device_change callback? additional callbacks?
-	// at least on_backend_disconnect
-
-	// TODO: wrap debug loops in dlg_check blocks
+	constexpr auto prefLatency = 1 / 60.f;
 
 	// soundio
 	soundio_ = soundio_create();
 	assertValid(soundio_, "soundio_create failed");
 	soundio_->userdata = this;
+	soundio_->on_backend_disconnect = cbBackendDisconnect;
 
 	// backend
 	auto count = soundio_backend_count(soundio_);
@@ -77,25 +107,35 @@ void AudioPlayer::init() {
 	count = soundio_output_device_count(soundio_);
 	dlg_assert(count >= 0);
 
-	// TODO: debug output channel layouts?
+	dlg_debug("Found {} soundio devices", count);
 	for(auto i = 0; i < count; ++i) {
 		auto dev = soundio_get_output_device(soundio_, i);
-		dlg_debug("soundio device {}: {}", i, dev->name);
-		dlg_debug("\tdevice is raw: {}", dev->is_raw);
-		dlg_debug("\tdevice current sample rate: {}", dev->sample_rate_current);
-		dlg_debug("\tdevice latency min: {}", dev->software_latency_min);
-		dlg_debug("\tdevice latency max: {}", dev->software_latency_max);
-		dlg_debug("\tdevice current format: {}",
-			soundio_format_string(dev->current_format));
+		dlg_debug("<< soundio device {}: {} >>", i, dev->name);
+		dlg_debug("  raw: {}{}", std::boolalpha, dev->is_raw);
+		dlg_debug("  device latency min: {}", dev->software_latency_min);
+		dlg_debug("  device latency max: {}", dev->software_latency_max);
 
+		dlg_debug("  device current format: {}",
+			soundio_format_string(dev->current_format));
 		for(auto i = 0; i < dev->format_count; ++i) {
 			auto fmt = soundio_format_string(dev->formats[i]);
-			dlg_debug("\tdevice supports format {}", fmt);
+			dlg_debug("    supported format: {}", fmt);
 		}
 
+		dlg_debug("  current sample rate: {}", dev->sample_rate_current);
 		for(auto i = 0; i < dev->sample_rate_count; ++i) {
 			auto& range = dev->sample_rates[i];
-			dlg_debug("\tdevice sample range ({}, {})", range.min, range.max);
+			dlg_debug("    supported sample range: ({}, {})",
+				range.min, range.max);
+		}
+
+		auto cl = dev->current_layout.name;
+		dlg_debug("  current channel layout: {}", cl ? cl : "<none>");
+		for(auto i = 0; i < dev->layout_count; ++i) {
+			auto& layout = dev->layouts[i];
+			if(layout.name) {
+				dlg_debug("    available layout: {}", layout.name);
+			}
 		}
 
 		soundio_device_unref(dev);
@@ -111,8 +151,6 @@ void AudioPlayer::init() {
 	dlg_info("using soundio device {} ({})", defaultID, device_->name);
 
 	// sample rate
-	// TODO: maybe also support 44100 if needed?
-	// how to resample stuff? we would have to expose it somehow
 	bool foundSampleRate = false;
 	for(auto i = 0; i < device_->sample_rate_count; ++i) {
 		auto& range = device_->sample_rates[i];
@@ -130,7 +168,7 @@ void AudioPlayer::init() {
 
 	// format
 	enum SoundIoFormat format;
-	int rate = 0;
+	int rating = 0;
 	for(auto i = 0; i < device_->format_count; ++i) {
 		auto f = device_->formats[i];
 		if(f == SoundIoFormatFloat32NE) {
@@ -140,19 +178,19 @@ void AudioPlayer::init() {
 		} else if(f == SoundIoFormatFloat64NE) {
 			format = f;
 			format_ = AudioFormat::f64;
-			rate = 3;
-		} else if(f == SoundIoFormatS16NE && rate < 2) {
+			rating = 3;
+		} else if(f == SoundIoFormatS16NE && rating < 2) {
 			format = f;
 			format_ = AudioFormat::s16;
-			rate = 2;
-		} else if(f == SoundIoFormatS32NE && rate < 1) {
+			rating = 2;
+		} else if(f == SoundIoFormatS32NE && rating < 1) {
 			format = f;
 			format_ = AudioFormat::s32;
-			rate = 1;
+			rating = 1;
 		}
 	}
 
-	if(rate == 0) {
+	if(rating == 0) {
 		throw std::runtime_error("sound io device has no supported format");
 	}
 
@@ -172,12 +210,21 @@ void AudioPlayer::init() {
 	stream_->sample_rate = sampleRate;
 	stream_->layout = *layout;
 	stream_->userdata = this;
-	stream_->software_latency = prefLatency_;
+	stream_->software_latency = prefLatency;
 
 	checkSoundIo(soundio_outstream_open(stream_), "soundio_outstream_open");
-	checkSoundIo(soundio_outstream_start(stream_), "soundio_outstream_start");
-
 	dlg_info("using software latency {}", stream_->software_latency);
+
+	// create ring buffer
+	auto frameCount = 2 * bufferTime_ * stream_->sample_rate + 1024u;
+	auto byteSize = frameCount * stream_->bytes_per_frame;
+	buffer_ = soundio_ring_buffer_create(soundio_, byteSize);
+	assertValid(buffer_, "Failed to create soundio ring buffer");
+
+	// start audio thread
+	audioThread_ = std::thread {[=]{ audioLoop(); }};
+
+	checkSoundIo(soundio_outstream_start(stream_), "soundio_outstream_start");
 }
 
 void AudioPlayer::finish() {
@@ -199,40 +246,49 @@ void AudioPlayer::finish() {
 
 void AudioPlayer::audioLoop() {
 	using namespace std::literals::chrono_literals;
-	auto fillLimit = stream_->sample_rate * prefLatency_ * 2;
+	auto fillLimit = stream_->sample_rate * bufferTime_ * 2;
 	auto lastTime = std::chrono::high_resolution_clock::duration {};
 
 	while(true) {
-		auto waitTime = std::chrono::duration<float>(prefLatency_ / 2);
-		std::this_thread::sleep_for(waitTime - lastTime);
+		// we subtract a the time we needed to render the audio last time,
+		// otherwise when rendering takes really long and then we sleep
+		// normally, we might run out of frames.
+		auto waitTime = std::chrono::duration<float>(bufferTime_ / 2);
+		if(lastTime >= waitTime) {
+			dlg_warn("Audio thread too slow/too much work");
+		} else {
+			std::this_thread::sleep_for(waitTime - lastTime);
+		}
 
 		auto count = soundio_ring_buffer_fill_count(buffer_);
+		count /= stream_->bytes_per_frame;
 		if(count >= fillLimit) {
+			lastTime = {};
 			continue;
 		}
 
 		auto now = std::chrono::high_resolution_clock::now();
-		auto diff = fillLimit - count;
-		auto ptr = soundio_ring_buffer_write_ptr(buffer_);
+		auto frames = std::max<unsigned>(fillLimit - count, 1024u);
+		dlg_info("filling {} frames", frames);
+		dlg_assert(int(frames) < soundio_ring_buffer_free_count(buffer_));
+
+		auto bytes = stream_->bytes_per_frame * frames;
+		auto ptr = reinterpret_cast<float*>(
+			soundio_ring_buffer_write_ptr(buffer_));
+		std::memset(ptr, 0, bytes);
 
 		{
-			// NOTE: this function must be realtime so this mutex
-			// lock *might* be problematic. Just make sure
-			// to keep this in mind when getting audio issues
-			// at some point
 			std::lock_guard lock(mutex_);
 			for(auto& audio : audios_) {
 				try {
-					audio->render(bufferCache_, format_, frames);
+					audio->render(*ptr, frames);
 				} catch(const std::exception& err) {
 					dlg_error("audio->render: {}", err.what());
 				}
 			}
 		}
 
-		soundio_ring_buffer_advance_write_ptr(leftBuffer_, diff);
-		soundio_ring_buffer_advance_write_ptr(rightBuffer_, diff);
-
+		soundio_ring_buffer_advance_write_ptr(buffer_, bytes);
 		lastTime = std::chrono::high_resolution_clock::now() - now;
 	}
 }
@@ -260,13 +316,12 @@ bool AudioPlayer::remove(Audio& audio) {
 }
 
 void AudioPlayer::update() {
+	soundio_flush_events(soundio_);
 	if(error_.load()) {
 		dlg_debug("Trying to reinitialize audio player");
 		finish();
 		error_.store(false);
-		auto oldformat = format_;
 		init();
-		onReinit(*this, oldformat == format_);
 	}
 }
 
@@ -276,13 +331,23 @@ void AudioPlayer::cbWrite(struct SoundIoOutStream* stream, int min, int max) {
 }
 
 void AudioPlayer::cbUnderflow(struct SoundIoOutStream*) {
-	// TODO: can we fill the buffer here?
 	dlg_warn("audio buffer underflow");
 }
 
-void AudioPlayer::cbError(struct SoundIoOutStream* stream, int) {
+void AudioPlayer::cbError(struct SoundIoOutStream* stream, int err) {
+	dlg_warn("soundio error: {}", soundio_strerror(err));
 	dlg_assert(stream && stream->userdata);
-	reinterpret_cast<AudioPlayer*>(stream->userdata)->error(stream);
+	auto ap = reinterpret_cast<AudioPlayer*>(stream->userdata);
+	dlg_assert(ap->stream_ == stream);
+	ap->error_.store(true);
+}
+
+void AudioPlayer::cbBackendDisconnect(struct SoundIo* soundio, int err) {
+	dlg_warn("soundio backend disconnected: {}", soundio_strerror(err));
+	dlg_assert(soundio && soundio->userdata);
+	auto ap = reinterpret_cast<AudioPlayer*>(soundio->userdata);
+	dlg_assert(ap->soundio_ == soundio);
+	ap->error_.store(true);
 }
 
 void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max) {
@@ -292,7 +357,7 @@ void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max) {
 		return;
 	}
 
-	auto prefSamples = int(prefLatency_ * stream_->sample_rate);
+	auto prefSamples = int(bufferTime_ * stream_->sample_rate);
 	auto remaining = std::clamp(prefSamples, min, max);
 
 	while(remaining > 0) {
@@ -309,32 +374,51 @@ void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max) {
 			break;
 		}
 
-		remaining -= frames;
-
-		// bufferCache_ must never be accessed in main thread
-		bufferCache_.clear();
-		for(auto i = 0u; i < 2u; ++i) { // TODO: hardcoded channel count
-			auto ptr = reinterpret_cast<std::byte*>(areas[i].ptr);
-			auto step = static_cast<unsigned int>(areas[i].step);
-			bufferCache_.push_back({ptr, step});
-			std::memset(ptr, 0, step * frames); // clear buffers
+		// write from buffer
+		auto available = soundio_ring_buffer_fill_count(buffer_);
+		available /= 2 * sizeof(float);
+		if(available < frames) {
+			dlg_warn("AudioPlayer::output: not enough data available ({}, {})",
+				available, frames);
 		}
 
-		{
-			// NOTE: this function must be realtime so this mutex
-			// lock *might* be problematic. Just make sure
-			// to keep this in mind when getting audio issues
-			// at some point
-			std::lock_guard lock(mutex_);
-			for(auto& audio : audios_) {
-				try {
-					audio->render(bufferCache_, format_, frames);
-				} catch(const std::exception& err) {
-					dlg_error("audio->render: {}", err.what());
-				}
+		// we assume that the ring buffer is never cleared
+		available = std::min(available, frames);
+		auto readPtr = reinterpret_cast<const std::byte*>(
+			soundio_ring_buffer_read_ptr(buffer_));
+
+		// TODO: detect special (memcpy/loop convert) cases for performance
+		for(auto i = 0u; i < unsigned(available); ++i) {
+			auto sz = sizeof(float);
+			if(format_ == AudioFormat::f32) {
+				std::memcpy(areas[0].ptr, readPtr, sz);
+				std::memcpy(areas[1].ptr, readPtr + sz, sz);
+			} else {
+				convert(readPtr, AudioFormat::f32,
+					reinterpret_cast<std::byte*>(areas[0].ptr),
+					format_, 1u, false);
+				convert(readPtr + sz, AudioFormat::f32,
+					reinterpret_cast<std::byte*>(areas[1].ptr),
+					format_, 1u, false);
 			}
+
+			areas[0].ptr += areas[0].step;
+			areas[1].ptr += areas[1].step;
+			readPtr += 2 * sz;
 		}
 
+		auto byteSize = stream_->bytes_per_frame * available;
+		soundio_ring_buffer_advance_read_ptr(buffer_, byteSize);
+
+		// fill rest with zeroes. Should not happend in normal case
+		for(auto i = available; i < frames; ++i) {
+			std::memset(areas[0].ptr, 0, stream_->bytes_per_sample);
+			std::memset(areas[1].ptr, 0, stream_->bytes_per_sample);
+			areas[0].ptr += areas[0].step;
+			areas[1].ptr += areas[1].step;
+		}
+
+		remaining -= frames;
 		err = soundio_outstream_end_write(stream_);
 		if(err) {
 			if(err != SoundIoErrorUnderflow) {
@@ -345,12 +429,6 @@ void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max) {
 			return;
 		}
 	}
-}
-
-void AudioPlayer::error(struct SoundIoOutStream* stream) {
-	dlg_assert(stream == stream_);
-	dlg_error("critical audio error, trying to reinitialize in next frame");
-	error_.store(true);
 }
 
 // util

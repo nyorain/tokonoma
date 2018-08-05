@@ -19,49 +19,12 @@ struct SoundIoRingBuffer;
 namespace doi {
 
 class Audio;
-
-/// Mirror of SoundIoChannelArea, represents
-/// the raw data of one audio channel.
-struct ChannelBuffer {
-	std::byte* ptr; // beginning of the raw buffer
-	unsigned int step; // size in bytes between samples
-};
-
-/// The raw audio format of a ChannelBuffer.
-/// Audio implementations should support all of them.
-/// Formats always imply native endian representation.
-/// AudioPlayer will generally prefer the formats in the
-/// following order: f32 > f64 > s16 > s32
-enum class AudioFormat {
-	s16, // 16-bit signed int
-	s32, // 32-bit signed int
-	f32, // 32-bit float
-	f64 // 64-bit float (double)
-};
-
-/// Utility functions that converts a sample between the audio formats.
-/// \param from The buffer which holds 'count' audio samples in format 'fmtFrom'
-/// \param to The out buffer which holds space for 'count' audio samples
-///        in format 'fmtTo'
-/// \param count The number of audio samples to convert
-/// \param add Whether to add the values instead of overwriting them.
-void convert(const std::byte* from, AudioFormat fmtFrom, std::byte* to,
-	AudioFormat fmtTo, std::size_t count, bool add = true);
-
-// TODO: functionality to clear all buffered data. Automatically on add/remove?
-//  we can only clear data in own buffer though since soundio clear is broken
-//  (even when supported - we can't know back to which frame was cleared)
+enum class AudioFormat;
 
 /// Combines audio output.
 /// Add (and remove) Audio implementations to output them.
 /// Always uses 48 kHz sample rate.
 class AudioPlayer {
-public:
-	/// Called after the audio player was reinitialized.
-	/// Could e.g. be used to reload optimal formatted sound buffers if
-	/// the used format has changed.
-	nytl::Callback<void(AudioPlayer&, bool formatChanged)> onReinit;
-
 public:
 	/// Throws std::runtime_error if something could not be initialized.
 	/// Note that this might happen with unsupported hardware so
@@ -84,26 +47,19 @@ public:
 	/// this player.
 	void update();
 
-	/// Returns the used audio format. Could be useful to e.g.
-	/// store sound buffers already in the needed format.
-	/// Audio.render implementations are only ever called with this format.
-	/// This format might change when the AudioPlayer is reinitialized (
-	/// due to error or backend changes).
-	AudioFormat format() const { return format_; }
-
 	/// Returns the internal synchronization mutex.
 	/// Can be locked before accessing resources that might
 	/// be accessed from the audio thread.
 	/// Make sure that you never lock it for short time (otherwise
 	/// realtime audio might fail due to a buffer underflow) and
-	/// that you don't have it locked at a call to add/remove.
+	/// that you don't have it locked while calling a function of this object.
 	auto& mutex() { return mutex_; }
 
 protected:
 	static void cbWrite(struct SoundIoOutStream*, int, int);
 	static void cbUnderflow(struct SoundIoOutStream*);
 	static void cbError(struct SoundIoOutStream*, int);
-	static void cbBackendDisconnect(struct SoundIo*, int); // TODO
+	static void cbBackendDisconnect(struct SoundIo*, int);
 
 	// init and finish to allow easy reinitialization on error
 	void init();
@@ -111,7 +67,6 @@ protected:
 	void audioLoop(); // audio thread main function
 
 	void output(struct SoundIoOutStream*, int, int);
-	void error(struct SoundIoOutStream*);
 
 protected:
 	AudioFormat format_;
@@ -123,14 +78,12 @@ protected:
 	struct SoundIo* soundio_ {};
 	struct SoundIoDevice* device_ {};
 	struct SoundIoOutStream* stream_ {};
-	struct SoundIoRingBuffer* bufferLeft_ {};
-	struct SoundIoRingBuffer* bufferRight_ {};
+	struct SoundIoRingBuffer* buffer_ {};
 
-	// the preferred latency to use when rendering
-	float prefLatency_ {};
-
-	// used not allocate vector data every time
-	std::vector<ChannelBuffer> bufferCache_ {};
+	// TODO: should be related to software_latency (?) (and backend)
+	// how much to internally buffer ahead (in seconds).
+	// Should be at least 0.001 (1ms). Additional latency.
+	float bufferTime_ {0.005};
 };
 
 /// Interface for playing a sound.
@@ -149,25 +102,10 @@ public:
 	/// It might use the AudioPlayer.mutex() for this which is guaranteed
 	/// to be locked when render is called.
 	/// Expected to output with a sample rate of 48 khz.
-	/// \param buffers The channel buffers to write.
-	///   Each buffer represents one channel.
-	///   Must mix itself into the values already present (i.e. add).
-	/// \param format The format to write into the given buffers.
-	///   Can use kyo::client::convert (see above) to convert samples.
+	/// \param buffers Tightly packed interleaved stereo audio data.
+	///   References at least 2 * sizeof(float) * samples bytes.
 	/// \param samples The number of samples to write
-	virtual void render(nytl::Span<const ChannelBuffer> buffers,
-		AudioFormat format, unsigned int samples) = 0;
-};
-
-/// Interface that can be used to manipulate mixed sound.
-class AudioEffect {
-public:
-	virtual ~AudioEffect() = default;
-
-	/// Called after all audios have been rendered into the given
-	/// buffers, can freely manipulate their content.
-	virtual void process(nytl::Span<const ChannelBuffer> buffers,
-		AudioFormat format, unsigned int samples);
+	virtual void render(float& buffer, unsigned samples) = 0;
 };
 
 } // namespace doi

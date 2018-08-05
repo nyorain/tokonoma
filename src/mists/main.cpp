@@ -55,7 +55,9 @@ public:
 		pullPaint_ = rvg::colorPaint({255, 0, 255});
 
 		// player
-		player_.shape = {rvgContext(), {1.f, 1.f}, 0.2f, {true, 0.f}};
+		rvg::DrawMode dm {true, 0.f};
+		dm.aaFill = true;
+		player_.shape = {rvgContext(), {1.f, 1.f}, 0.2f, dm};
 		b2CircleShape playerShape;
 		playerShape.m_radius = 0.2f;
 		playerShape.m_p.SetZero();

@@ -65,6 +65,10 @@ executable('dpend',
 	'src/dpend/main.cpp',
 	dependencies: stage_dep)
 
+executable('audio',
+	'src/audio/main.cpp',
+	dependencies: stage_dep)
+
 # executable('pg',
 # 	'src/playground/main2.cpp',
 # 	dependencies: stage_dep)

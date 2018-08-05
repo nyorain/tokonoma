@@ -59,18 +59,18 @@ inline const Part& Entity::expectPart(PartType type) const {
 }
 
 template<typename T> T* Entity::part() {
-	return kyo::deriveCast<T*>(part({typeid(T)}), "Entity::part");
+	return doi::deriveCast<T*>(part({typeid(T)}), "Entity::part");
 }
 
 template<typename T> const T* Entity::part() const {
-	return kyo::deriveCast<const T*>(part({typeid(T)}), "Entity::part");
+	return doi::deriveCast<const T*>(part({typeid(T)}), "Entity::part");
 }
 
 template<typename T> T& Entity::expectPart() {
-	return kyo::deriveCast<T&>(part({typeid(T)}), "Entity::expectPart");
+	return doi::deriveCast<T&>(part({typeid(T)}), "Entity::expectPart");
 }
 
 template<typename T> const T& Entity::expectPart() const {
-	return kyo::deriveCast<const T&>(expectPart({typeid(T)}),
+	return doi::deriveCast<const T&>(expectPart({typeid(T)}),
 			"Entity::expectPart");
 }
