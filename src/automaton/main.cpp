@@ -3,6 +3,8 @@
 #include <stage/window.hpp>
 #include <stage/bits.hpp>
 
+#include <vui/dat.hpp>
+
 #include <vpp/pipeline.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/sharedBuffer.hpp>
@@ -13,12 +15,168 @@
 #include <nytl/matOps.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
+#include <nytl/stringParam.hpp>
 
 #include <shaders/predprey.comp.h>
 #include <shaders/hex.vert.h>
 #include <shaders/incolor.frag.h>
 
 #include <random>
+
+class Automaton {
+public:
+	enum class GridType {
+		quad,
+		hex,
+	};
+
+	enum class BufferType {
+		single,
+		doubled
+	};
+
+	enum class ResizeMode {
+		scaleLinear,
+		scaleNearest,
+		clear
+	};
+
+public:
+	virtual void click(nytl::Vec2ui pos);
+	virtual void settings(vui::dat::Folder&);
+
+	virtual void compute(vk::CommandBuffer);
+	virtual void resize(nytl::Vec2ui);
+	virtual std::pair<bool, vk::Semaphore> updateDevice(double);
+
+	const auto& size() const { return size_; }
+	const auto& img() const { return img_; }
+	GridType gridType() const { return gridType_; }
+
+protected:
+	Automaton() = default;
+	void init(vpp::Device& dev, nytl::StringParam computePath,
+		nytl::Vec2ui size, BufferType buffer, vk::Format,
+		std::optional<unsigned> count,
+		GridType grid = GridType::quad,
+		ResizeMode = ResizeMode::scaleNearest);
+
+	void rerecord() { rerecord_ = true; }
+	void gridType(GridType);
+	void resizeMode(ResizeMode);
+	void dispatchCount(std::optional<unsigned>);
+	void set(nytl::Vec2ui pos, std::vector<std::byte> data);
+
+	virtual void pipeLayout(std::vector<vk::DescriptorSetLayoutBinding>&);
+	virtual void dsLayout(
+		std::vector<vk::DescriptorSetLayout>&,
+		std::vector<vk::PushConstantRange>&);
+
+private:
+	vpp::ViewableImage img_; // compute shader writes this, rendering reads
+	vpp::ViewableImage imgBack_; // potentially unused back buffer
+	vpp::ViewableImage imgOld_; // for resizing, blitting
+
+	vpp::Pipeline compPipeline_;
+	vpp::PipelineLayout compPipelineLayout_;
+	vpp::TrDsLayout compDsLayout_;
+
+	vpp::TrDs compDs_;
+	bool rerecord_ {};
+
+	vk::Format format_;
+	GridType gridType_;
+	ResizeMode resizeMode_;
+	BufferType bufferType_;
+	std::optional<unsigned> dispatchCount_;
+
+	nytl::Vec2ui size_;
+	nytl::Vec2ui resize_;
+
+	struct Fill {
+		vk::Extent3D offset;
+		vk::Extent3D size;
+		std::vector<std::byte> data;
+	};
+
+	std::vector<Fill> fill_;
+};
+
+class PredPrey : public Automaton {
+public:
+	PredPrey(vpp::Device& dev);
+
+protected:
+	struct {
+		float preyBirth;
+		float preyDeathPerPred;
+		float predBirthPerPrey;
+		float predDeath;
+		float predWander;
+		float preyWander;
+	} params_;
+	vpp::SubBuffer ubo_;
+};
+
+class Ant : public Automaton {
+public:
+	Ant(vpp::Device& dev);
+
+protected:
+	struct {
+		unsigned count_;
+		std::vector<nytl::Vec4f> colors_;
+		std::vector<uint32_t> movement_;
+	} params_;
+	vpp::SubBuffer ubo_;
+};
+
+class GameOfLife : public Automaton {
+protected:
+	struct {
+		uint32_t neighbors; // 4, 6 (hex), 8, 12
+		uint32_t max; // death threshold
+		uint32_t min; // bearth threshold
+	} params_;
+};
+
+// Like game of life but each pixel has a scalar value.
+class ScalarGameOfLife : public Automaton {
+protected:
+	struct {
+		float fac;
+		float min;
+		float max;
+	} params_;
+};
+
+class AutomatonRenderer {
+public:
+	AutomatonRenderer() = default;
+	AutomatonRenderer(const Automaton&);
+
+	void render(vk::CommandBuffer);
+
+	void automaton(const Automaton&);
+	const Automaton& automaton() const { return *automaton_; }
+
+protected:
+	struct {
+		vpp::PipelineLayout hexLayout;
+		vpp::Pipeline hex;
+		vpp::PipelineLayout hexLinesLayout;
+		vpp::Pipeline hexLines;
+		vpp::PipelineLayout fullTexLayout;
+		vpp::Pipeline fullTex;
+	} pipes_;
+
+	vpp::Sampler linear_;
+	vpp::Sampler nearest_;
+	vpp::DescriptorSetLayout dsLayout_;
+
+	const Automaton* automaton_ {};
+	vpp::DescriptorSet ds_;
+};
 
 // frame concept (init values are in storageOld):
 // - compute: read from storageOld, write into storageNew

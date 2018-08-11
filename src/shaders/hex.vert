@@ -43,11 +43,12 @@ void main() {
 		center.x += cospi6 * radius;
 	}
 
+	// vec2 color = imageLoad(imgColor, ivec2(cx, cy)).xy;
 	vec2 offset = values[gl_VertexIndex % 6];
 
 	uv = offset;
-	// col = vec4(color, 0, 1);
+	col = vec4(color, 0, 1);
 	// col = vec4(0.2, 0.2, 0.2, 1);
-	col = vec4(0, 0, 0.5, 1) + color.y * vec4(1, 1, 1, 1);
+	// col = vec4(0, 0, 0.8, 1) + (1 - color.y) * vec4(1, 1, 1, 1);
 	gl_Position = ubo.transform * vec4(center + radius * offset, 0.0, 1.0);
 }
