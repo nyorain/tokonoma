@@ -228,7 +228,7 @@ public:
 		compPipeline_ = {dev, vkPipeline};
 
 		// storage buffer for data
-		auto mem = dev.memoryTypeBits(vk::MemoryPropertyBits::deviceLocal);
+		auto mem = dev.memoryTypeBits(vk::MemoryPropertyBits::hostVisible);
 		auto usage = vk::BufferUsageBits::storageBuffer |
 			vk::BufferUsageBits::vertexBuffer |
 			vk::BufferUsageBits::transferDst |

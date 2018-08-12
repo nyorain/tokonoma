@@ -39,7 +39,7 @@ void write(nytl::Span<std::byte>& span, T&& data) {
 // == FluidSystem ==
 class FluidSystem {
 public:
-	static constexpr auto pressureIterations = 30u;
+	static constexpr auto pressureIterations = 50u;
 	static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
@@ -515,7 +515,7 @@ public:
 
 		// system
 		// NOTE: MUST be multiple of 16 due to work group size
-		system_.emplace(vulkanDevice(), nytl::Vec2ui {400, 400});
+		system_.emplace(vulkanDevice(), nytl::Vec2ui {1024, 1024});
 
 		// ds
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
@@ -578,18 +578,18 @@ public:
 		App::mouseButton(ev);
 
 		auto kc = appContext().keyboardContext();
-		auto space = kc->pressed(ny::Keycode::space);
-		if(ev.button == ny::MouseButton::left && !space) {
+		auto mod = kc->modifiers() & ny::KeyboardModifier::shift;
+		if(ev.button == ny::MouseButton::left && !mod) {
 			system_->densityFac = ev.pressed * 0.5;
 			system_->velocityFac = ev.pressed;
-		} else if(ev.button == ny::MouseButton::right || space) {
+		} else if(ev.button == ny::MouseButton::right || mod) {
 			system_->velocityFac = ev.pressed * 150.f;
 		}
 	}
 
 	void mouseWheel(const ny::MouseWheelEvent& ev) override {
 		App::mouseWheel(ev);
-		system_->radius *= std::pow(1.01, ev.value.y);
+		system_->radius *= std::pow(1.05, ev.value.y);
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {

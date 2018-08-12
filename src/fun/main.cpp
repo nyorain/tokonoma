@@ -30,7 +30,7 @@ public:
 			return false;
 		}
 
-		rvgContext()._fringe = 0.015;
+		// rvgContext()._fringe = 0.015;
 		physics_.world.SetGravity({0.f, -9.f});
 
 		levelTransform_ = {rvgContext()};

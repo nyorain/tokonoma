@@ -9,6 +9,8 @@
 #include <vui/fwd.hpp>
 
 #include <memory>
+#include <variant>
+#include <string>
 
 // fwd
 class MainWindow;
@@ -81,11 +83,18 @@ protected:
 	bool resize_ {};
 	bool rerecord_ {};
 
+	enum class DevType {
+		igpu,
+		dgpu,
+		choose
+	};
+
 	struct {
 		bool vsync;
 		bool layers;
 		bool renderdoc;
 		unsigned samples;
+		std::variant<DevType, unsigned, const char*> phdev;
 	} args_;
 };
 

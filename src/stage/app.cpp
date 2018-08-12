@@ -186,7 +186,45 @@ bool App::init(const AppSettings& settings) {
 	float priorities[1] = {0.0};
 
 	auto phdevs = vk::enumeratePhysicalDevices(ini);
-	auto phdev = vpp::choose(phdevs, ini, vkSurf);
+	for(auto phdev : phdevs) {
+		dlg_debug("Found device: {}", vpp::description(phdev, "\n\t"));
+	}
+
+	vk::PhysicalDevice phdev;
+	using std::get;
+	if(args_.phdev.index() == 0 && get<0>(args_.phdev) == DevType::choose) {
+		phdev = vpp::choose(phdevs, ini, vkSurf);
+	} else {
+		auto i = args_.phdev.index();
+		vk::PhysicalDeviceType type;
+		if(i == 0) {
+			type = get<0>(args_.phdev) == DevType::igpu ?
+				vk::PhysicalDeviceType::integratedGpu :
+				vk::PhysicalDeviceType::discreteGpu;
+		}
+
+		for(auto& pd : phdevs) {
+			auto p = vk::getPhysicalDeviceProperties(pd);
+			if(i == 1 && p.deviceID == get<1>(args_.phdev)) {
+				phdev = pd;
+				break;
+			} else if(i == 0 && p.deviceType == type) {
+				phdev = pd;
+				break;
+			} else if(i == 2 && p.deviceName.data() == get<2>(args_.phdev)) {
+				phdev = pd;
+				break;
+			}
+		}
+	}
+
+	if(!phdev) {
+		dlg_error("Could not find physical device");
+		return false;
+	}
+
+	auto p = vk::getPhysicalDeviceProperties(phdev);
+	dlg_debug("Using device: {}", p.deviceName.data());
 
 	auto queueFlags = vk::QueueBits::compute | vk::QueueBits::graphics;
 	int queueFam = vpp::findQueueFamily(phdev, ini, vkSurf, queueFlags);
@@ -281,6 +319,11 @@ argagg::parser App::argParser() const {
 			"multisamples",
 			{"--multisamples", "-m"},
 			"Sets the samples to use", 1
+		}, {
+			"phdev",
+			{"--phdev"},
+			"Sets the physical device id to use."
+			"Can be id, name or {igpu, dgpu, auto}", 1
 		}
 	}};
 }
@@ -290,6 +333,25 @@ bool App::handleArgs(const argagg::parser_results& result) {
 	args_.vsync = !result["no-vsync"];
 	args_.renderdoc = result["renderdoc"];
 	args_.samples = result["multisamples"].as<unsigned>(1);
+
+	auto& phdev = result["phdev"];
+	args_.phdev = DevType::choose;
+	if(phdev.count() > 0) {
+		try {
+			args_.phdev = phdev.as<unsigned>(1);
+		} catch(const std::exception&) {
+			if(!strcmp(phdev[0].arg, "auto")) {
+				args_.phdev = DevType::choose;
+			} else if(!strcmp(phdev[0].arg, "igpu")) {
+				args_.phdev = DevType::igpu;
+			} else if(!strcmp(phdev[0].arg, "dgpu")) {
+				args_.phdev = DevType::dgpu;
+			} else {
+				args_.phdev = phdev[0].arg;
+			}
+		}
+	}
+
 	return true;
 }
 

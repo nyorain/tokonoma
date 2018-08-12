@@ -18,7 +18,7 @@ stage_src = [
 	'window.cpp',
 	'geometry.cpp',
 	'app.cpp',
-	# 'audio.cpp',
+	'audio.cpp',
 	'physics.cpp',
 ]
 
