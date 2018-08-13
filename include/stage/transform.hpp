@@ -12,10 +12,11 @@
 namespace doi {
 
 /// Returns a matix that scales by s.
-template<typename P = float>
-nytl::Mat4<P> scaleMat(const nytl::Vec<3, P>& s) {
-	auto mat = nytl::identity<4, float>();
-	for(std::size_t i(0); i < 3; ++i) {
+template<size_t D = 4, typename P = float, size_t R = D - 1>
+nytl::SquareMat<D, P> scaleMat(const nytl::Vec<R, P>& s) {
+	static_assert(R <= D);
+	auto mat = nytl::identity<D, float>();
+	for(std::size_t i(0); i < R; ++i) {
 		mat[i][i] *= s[i];
 	}
 
@@ -23,11 +24,12 @@ nytl::Mat4<P> scaleMat(const nytl::Vec<3, P>& s) {
 }
 
 /// Returns a matix that translates by t.
-template<typename P = float>
-nytl::Mat4<P> translateMat(const nytl::Vec<3, P>& t) {
-	auto mat = nytl::identity<4, float>();
-	for(std::size_t i(0); i < 3; ++i) {
-		mat[i][3] = t[i];
+template<size_t D = 4,typename P = float,  size_t R = D - 1>
+nytl::SquareMat<D, P> translateMat(const nytl::Vec<R, P>& t) {
+	static_assert(R <= D);
+	auto mat = nytl::identity<D, float>();
+	for(std::size_t i(0); i < R; ++i) {
+		mat[i][D - 1] = t[i];
 	}
 
 	return mat;
@@ -35,7 +37,8 @@ nytl::Mat4<P> translateMat(const nytl::Vec<3, P>& t) {
 
 /// Returns a matrix that rotates by rot (in 2 dimensions).
 template<size_t D = 4, typename P = float>
-nytl::SquareMat<D, P> rotate(P rot) {
+nytl::SquareMat<D, P> rotateMat(P rot) {
+	static_assert(D >= 2);
 	auto mat = nytl::identity<D, P>();
 
 	auto c = std::cos(rot);
@@ -52,7 +55,8 @@ nytl::SquareMat<D, P> rotate(P rot) {
 /// Returns a matrix that rotates by the given angle (in radians)
 /// around the given vector.
 template<size_t D = 4, typename P = float>
-nytl::SquareMat<D, P> rotate(const nytl::Vec3<P>& vec, P angle) {
+nytl::SquareMat<D, P> rotateMat(const nytl::Vec3<P>& vec, P angle) {
+	static_assert(D >= 3);
 	const P c = std::cos(angle);
 	const P s = std::sin(angle);
 
@@ -73,6 +77,26 @@ nytl::SquareMat<D, P> rotate(const nytl::Vec3<P>& vec, P angle) {
 	mat[2][2] = c + temp[2] * axis[2];
 
 	return mat;
+}
+
+template<size_t D, typename P>
+void rotate(nytl::SquareMat<D, P>& mat, P rot) {
+	mat = scaleMat<D, P>(rot) * mat;
+}
+
+template<size_t D, typename P>
+void rotate(nytl::SquareMat<D, P>& mat, const nytl::Vec3<P>& vec, P angle) {
+	mat = scaleMat<D, P>(vec, angle) * mat;
+}
+
+template<size_t D, typename P, size_t R>
+void translate(nytl::SquareMat<D, P>& mat, const nytl::Vec<R, P>& t) {
+	mat = translateMat<D, P>(t) * mat;
+}
+
+template<size_t D, typename P, size_t R>
+void scale(nytl::SquareMat<D, P>& mat, const nytl::Vec<R, P>& s) {
+	mat = scaleMat<D, P>(s) * mat;
 }
 
 template<typename P>

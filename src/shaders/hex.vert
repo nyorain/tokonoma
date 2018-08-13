@@ -1,19 +1,14 @@
 #version 450
 
-#extension GL_ARB_separate_shader_objects : enable
-#extension GL_ARB_shading_language_420pack : enable
+layout(location = 0) out vec4 out_color;
 
-layout(location = 0) in vec2 color;
-layout(location = 0) out vec4 col;
-layout(location = 1) out vec2 uv;
-
-layout(row_major, set = 0, binding = 0) uniform UBO {
+layout(row_major, binding = 0) uniform Transform {
 	mat4 transform;
-	uint perRow;
-} ubo;
+	uvec2 size;
+};
+layout(binding = 1) uniform sampler2D img;
 
 const float cospi6 = 0.86602540378; // cos(pi/6) or sqrt(3)/2
-const float radius = 1.f; // from center to top corner
 
 // the vertex values to use
 // they form a hexagon to be drawn
@@ -31,10 +26,11 @@ const vec2[] values = {
 };
 
 void main() {
-	uint cx = gl_InstanceIndex % ubo.perRow;
-	uint cy = gl_InstanceIndex / ubo.perRow;
+	float radius = 1.f / size.x;
 
-	// the first hexagon has its center at (0,0)
+	uint cx = gl_InstanceIndex % size.x;
+	uint cy = gl_InstanceIndex / size.x;
+
 	vec2 center;
 	center.x = 2 * cospi6 * radius * cx;
 	center.y = 1.5 * radius * cy;
@@ -43,12 +39,10 @@ void main() {
 		center.x += cospi6 * radius;
 	}
 
-	// vec2 color = imageLoad(imgColor, ivec2(cx, cy)).xy;
 	vec2 offset = values[gl_VertexIndex % 6];
 
-	uv = offset;
-	col = vec4(color, 0, 1);
-	// col = vec4(0.2, 0.2, 0.2, 1);
-	// col = vec4(0, 0, 0.8, 1) + (1 - color.y) * vec4(1, 1, 1, 1);
-	gl_Position = ubo.transform * vec4(center + radius * offset, 0.0, 1.0);
+	vec2 color = texture(img, (vec2(cx, cy) + 0.5) / size).xy;
+	out_color = vec4(color, 0, 1);
+	gl_Position = transform * vec4(center + radius * offset, 0, 1);
 }
+

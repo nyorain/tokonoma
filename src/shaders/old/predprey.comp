@@ -1,0 +1,106 @@
+#version 450
+
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+
+const int width = 512;
+const int height = 512;
+
+// TODO: delta time?
+
+layout(set = 0, binding = 0) buffer BufOld {
+	vec2 vals[];
+} old;
+
+layout(set = 0, binding = 1) buffer BufNew {
+	vec2 vals[];
+} new;
+
+// utility
+uint idx(uvec2 pos) {
+	// if(pos.x >= width || pos.y >= height) return -1;
+	return (pos.x % width) + (pos.y % height) * width;
+}
+
+uint idx(ivec2 pos) {
+	// if(pos.x >= width || pos.y >= height || pos.x < 0 || pos.y < 0) return -1;
+	if(pos.x < 0) pos.x = width - ((-pos.x) % width);
+	if(pos.y < 0) pos.y = height - ((-pos.y) % height);
+	return (pos.x % width) + (pos.y % height) * width;
+}
+
+/*
+// wander from i2 to i1 (i1 is the current cell with x,y old vals)
+void wander(uint i1, uint i2, float x, float y) {
+	if(i2 > width * height) return;
+
+	vec2 o2 = old.vals[i2];
+	// float dx = (o2.x * o2.y) - (x * y);
+	float dx = (o2.x) - (x);
+	// float dy = (o2.y * o2.x * (1 - o2.x)) - (y * x * (1-x));
+	float dy = (o2.y * (1 - o2.x)) - (y * (1 - x));
+
+	new.vals[i1].x += o2.y * 0.01 * dx;
+	new.vals[i1].y += o2.x * 0.001 * dy;
+}
+*/
+
+void wander(uint i1, uint i2, float x, float y) {
+	if(i2 > width * height) return;
+
+	vec2 o2 = old.vals[i2];
+	float dx = (o2.x * o2.y) - (x * y);
+	// float dx = (o2.x) - (x);
+	float dy = (o2.y * o2.x * (1 - o2.x)) - (y * x * (1-x));
+	// float dy = (o2.y * (1 - o2.x)) - (y * (1 - x));
+
+	new.vals[i1].x += (1 - o2.x) * 0.01 * dx;
+	new.vals[i1].y += (1 - o2.y) * 0.001 * dy;
+}
+
+// main
+void main() {
+
+	// update own values
+	uvec2 pos = gl_GlobalInvocationID.xy;
+	uint id = idx(pos);
+
+	vec2 o = old.vals[id];
+	float x = o.x;
+	float y = o.y;
+
+	/*
+	if(old.vals[id].x < 0.00001) {
+		new.vals[id].x += 0.01;
+	}
+
+	if(old.vals[id].y < 0.00001) {
+		new.vals[id].y += 0.01;
+	}
+	*/
+
+	new.vals[id].x += (0.1 - (0.2 * y)) * x * (1 - x);
+	new.vals[id].y += -(0.04 - (0.1 * x)) * y /** (1 - y)*/;
+
+	// new.vals[id].x += 2 * clamp(1 - o.x, 0, 1) * o.x - 0.1 * o.y;
+	// new.vals[id].y += 0.5 * o.y + 0.2 * o.x;
+
+	// new.vals[id].x = old.vals[id].x + 0.0001;
+	// new.vals[id].y = old.vals[id].x + 0.0001;
+
+	// simulate wandering to neighbor cells
+	float offx = 0;
+	if(pos.y % 2 == 1) {
+		offx = 1;
+	}
+
+	wander(id, idx(pos + ivec2(1, 0)), x, y);
+	wander(id, idx(pos + ivec2(0, 1)), x, y);
+
+	wander(id, idx(pos + ivec2(offx, -1)), x, y);
+	wander(id, idx(pos + ivec2(offx - 1, -1)), x, y);
+	wander(id, idx(pos + ivec2(offx, 1)), x, y);
+	wander(id, idx(pos + ivec2(offx - 1, 1)), x, y);
+
+	new.vals[id] = clamp(new.vals[id], 0, 1);
+}

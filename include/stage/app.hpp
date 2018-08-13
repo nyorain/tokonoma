@@ -63,7 +63,10 @@ protected:
 	// frame
 	virtual void update(double dt);
 	virtual void updateDevice();
+	virtual void frameFinished() {}
+
 	void rerecord() { rerecord_ = true; }
+	void addSemaphore(vk::Semaphore, vk::PipelineStageFlags waitDst);
 
 	// events
 	virtual void resize(const ny::SizeEvent&);

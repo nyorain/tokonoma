@@ -190,7 +190,7 @@ bool App::init(const AppSettings& settings) {
 		dlg_debug("Found device: {}", vpp::description(phdev, "\n\t"));
 	}
 
-	vk::PhysicalDevice phdev;
+	vk::PhysicalDevice phdev {};
 	using std::get;
 	if(args_.phdev.index() == 0 && get<0>(args_.phdev) == DevType::choose) {
 		phdev = vpp::choose(phdevs, ini, vkSurf);
@@ -203,7 +203,7 @@ bool App::init(const AppSettings& settings) {
 				vk::PhysicalDeviceType::discreteGpu;
 		}
 
-		for(auto& pd : phdevs) {
+		for(auto pd : phdevs) {
 			auto p = vk::getPhysicalDeviceProperties(pd);
 			if(i == 1 && p.deviceID == get<1>(args_.phdev)) {
 				phdev = pd;
@@ -335,16 +335,15 @@ bool App::handleArgs(const argagg::parser_results& result) {
 	args_.samples = result["multisamples"].as<unsigned>(1);
 
 	auto& phdev = result["phdev"];
-	args_.phdev = DevType::choose;
 	if(phdev.count() > 0) {
 		try {
-			args_.phdev = phdev.as<unsigned>(1);
+			args_.phdev = phdev.as<unsigned>();
 		} catch(const std::exception&) {
-			if(!strcmp(phdev[0].arg, "auto")) {
+			if(!std::strcmp(phdev[0].arg, "auto")) {
 				args_.phdev = DevType::choose;
-			} else if(!strcmp(phdev[0].arg, "igpu")) {
+			} else if(!std::strcmp(phdev[0].arg, "igpu")) {
 				args_.phdev = DevType::igpu;
-			} else if(!strcmp(phdev[0].arg, "dgpu")) {
+			} else if(!std::strcmp(phdev[0].arg, "dgpu")) {
 				args_.phdev = DevType::dgpu;
 			} else {
 				args_.phdev = phdev[0].arg;
@@ -455,9 +454,8 @@ void App::run() {
 		// since we don't want to destroy resources before
 		// rendering has finished
 		auto waiter = nytl::ScopeGuard {[&] {
-			if(submitID) {
-				vulkanDevice().queueSubmitter().wait(*submitID);
-			}
+			vulkanDevice().queueSubmitter().wait(*submitID);
+			frameFinished();
 		}};
 
 		// - update logcial state -
@@ -492,6 +490,10 @@ void App::updateDevice() {
 
 	rec |= gui().updateDevice();
 	rerecord_ |= rec;
+}
+
+void App::addSemaphore(vk::Semaphore seph, vk::PipelineStageFlags waitDst) {
+	impl_->nextFrameWait.push_back({seph, waitDst});
 }
 
 void App::resize(const ny::SizeEvent& ev) {

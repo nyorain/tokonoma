@@ -21,7 +21,7 @@
 #include <random>
 
 #include <shaders/fullscreen.vert.h>
-#include <shaders/texture.frag.h>
+#include <shaders/fluid_texture.frag.h>
 #include <shaders/advect.vel.comp.h>
 #include <shaders/advect.dens.comp.h>
 #include <shaders/divergence.comp.h>
@@ -502,7 +502,7 @@ public:
 		pipeLayout_ = {dev, {dsLayout_}, {{vk::ShaderStageBits::fragment, 0, 4u}}};
 
 		vpp::ShaderModule fullscreenShader(dev, fullscreen_vert_data);
-		vpp::ShaderModule textureShader(dev, texture_frag_data);
+		vpp::ShaderModule textureShader(dev, fluid_texture_frag_data);
 		auto rp = renderer().renderPass();
 
 		vpp::GraphicsPipelineInfo pipeInfo(rp, pipeLayout_, {{

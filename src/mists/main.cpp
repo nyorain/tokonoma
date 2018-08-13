@@ -182,7 +182,7 @@ public:
 			auto p = m.rigid.body->GetPosition();
 			auto r = m.rigid.body->GetAngle();
 
-			auto mat = doi::rotate(r);
+			auto mat = doi::rotateMat(r);
 			mat = doi::translateMat({p.x, p.y, 0.f}) * mat;
 			mat = levelTransform_.matrix() * mat;
 			m.transform.matrix(mat);
