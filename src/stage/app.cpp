@@ -81,6 +81,8 @@ struct App::Impl {
 
 	std::vector<vpp::StageSemaphore> nextFrameWait;
 	vk::SampleCountBits samples;
+
+	bool clipDistance_ {};
 };
 
 // App
@@ -238,10 +240,14 @@ bool App::init(const AppSettings& settings) {
 	devInfo.ppEnabledExtensionNames = exts.begin();
 	devInfo.enabledExtensionCount = 1u;
 
-	// TODO: enabled if supported
-	auto features = vk::PhysicalDeviceFeatures {};
-	features.shaderClipDistance = false;
-	devInfo.pEnabledFeatures = &features;
+	auto f = vk::PhysicalDeviceFeatures {};
+	vk::getPhysicalDeviceFeatures(phdev, f);
+	vk::PhysicalDeviceFeatures enable;
+	if(!features(enable, f)) {
+		return false;
+	}
+
+	devInfo.pEnabledFeatures = &enable;
 
 	impl_->device.emplace(ini, phdev, devInfo);
 	auto presentQueue = vulkanDevice().queue(queueFam);
@@ -278,6 +284,7 @@ bool App::init(const AppSettings& settings) {
 	// additional stuff
 	rvg::ContextSettings rvgcs {renderer().renderPass(), 0u};
 	rvgcs.samples = samples();
+	rvgcs.clipDistanceEnable = impl_->clipDistance_;
 
 	impl_->rvgContext.emplace(vulkanDevice(), rvgcs);
 	impl_->windowTransform = {rvgContext()};
@@ -349,6 +356,18 @@ bool App::handleArgs(const argagg::parser_results& result) {
 				args_.phdev = phdev[0].arg;
 			}
 		}
+	} else {
+		args_.phdev = DevType::choose;
+	}
+
+	return true;
+}
+
+bool App::features(vk::PhysicalDeviceFeatures& enable,
+		const vk::PhysicalDeviceFeatures& supported) {
+	if(supported.shaderClipDistance) {
+		enable.shaderClipDistance = true;
+		impl_->clipDistance_ = true;
 	}
 
 	return true;
@@ -363,13 +382,14 @@ void App::afterRender(vk::CommandBuffer) {
 
 void App::run() {
 	run_ = true;
-	rvgContext().rerecord(); // trigger initial record
+	rerecord_ = true; // for initial recording
 
 	using Clock = std::chrono::high_resolution_clock;
 	using Secf = std::chrono::duration<float, std::ratio<1, 1>>;
 	auto lastFrame = Clock::now();
 
 	std::optional<std::uint64_t> submitID {};
+	auto& submitter = vulkanDevice().queueSubmitter();
 
 	// initial event poll
 	if(!appContext().pollEvents()) {
@@ -400,6 +420,7 @@ void App::run() {
 		// we render and resize asynchronously<Paste>
 		auto i = 0u;
 		while(true) {
+
 			// when this sets submitID to a valid value, a commandbuffer
 			// was submitted. Presenting might still have failed but we
 			// have to treat this as a regular frame (will just be skipped
@@ -454,7 +475,7 @@ void App::run() {
 		// since we don't want to destroy resources before
 		// rendering has finished
 		auto waiter = nytl::ScopeGuard {[&] {
-			vulkanDevice().queueSubmitter().wait(*submitID);
+			submitter.wait(*submitID);
 			frameFinished();
 		}};
 
@@ -472,8 +493,12 @@ void App::run() {
 }
 
 void App::update(double dt) {
-	if(!appContext().pollEvents()) {
-		dlg_info("upate pollEvents returned false");
+	// TODO: still has some problems. We really need a way for components
+	// to tell if redraw is needed.
+	// auto wait = waitEvents_ && !vulkanDevice().queueSubmitter().pending();
+	auto wait = false;
+	if(wait ? !appContext().waitEvents() : !appContext().pollEvents()) {
+		dlg_info("update: events returned false");
 		run_ = false;
 		return;
 	}
@@ -528,25 +553,28 @@ void App::close(const ny::CloseEvent&) {
 	run_ = false;
 }
 
-void App::key(const ny::KeyEvent& ev) {
-	gui().key({(vui::Key) ev.keycode, ev.pressed});
+bool App::key(const ny::KeyEvent& ev) {
+	auto ret = false;
+	ret |= bool(gui().key({(vui::Key) ev.keycode, ev.pressed}));
 	if(ev.pressed && !ev.utf8.empty() && !ny::specialKey(ev.keycode)) {
-		gui().textInput({ev.utf8.c_str()});
+		ret |= bool(gui().textInput({ev.utf8.c_str()}));
 	}
+
+	return ret;
 }
 
-void App::mouseButton(const ny::MouseButtonEvent& ev) {
+bool App::mouseButton(const ny::MouseButtonEvent& ev) {
 	auto p = static_cast<nytl::Vec2f>(ev.position);
 	auto b = static_cast<vui::MouseButton>(ev.button);
-	gui().mouseButton({ev.pressed, b, p});
+	return gui().mouseButton({ev.pressed, b, p});
 }
 
 void App::mouseMove(const ny::MouseMoveEvent& ev) {
 	gui().mouseMove({static_cast<nytl::Vec2f>(ev.position)});
 }
 
-void App::mouseWheel(const ny::MouseWheelEvent& ev) {
-	gui().mouseWheel({ev.value.y});
+bool App::mouseWheel(const ny::MouseWheelEvent& ev) {
+	return gui().mouseWheel({ev.value.y});
 }
 
 void App::mouseCross(const ny::MouseCrossEvent& ev) {

@@ -13,12 +13,16 @@
 #include <nytl/vecOps.hpp>
 
 #include <shaders/hex.vert.h>
+#include <shaders/hex_line.vert.h>
 #include <shaders/fullscreen_transform.vert.h>
 #include <shaders/incolor.frag.h>
 #include <shaders/texture.frag.h>
 
-void Automaton::click(nytl::Vec2ui) {}
-void Automaton::settings(vui::dat::Folder&) {} // TODO: resize?
+constexpr float cospi6 = 0.86602540378; // cos(pi/6) or sqrt(3)/2
+
+void Automaton::click(std::optional<nytl::Vec2ui>) {}
+
+void Automaton::display(vui::dat::Folder&) {}
 
 void Automaton::render(vk::CommandBuffer cb) {
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfxPipe_);
@@ -27,6 +31,12 @@ void Automaton::render(vk::CommandBuffer cb) {
 
 	if(gridType_ == GridType::hex) {
 		vk::cmdDraw(cb, 6, size_.x * size_.y, 0, 0);
+
+		if(hex_.lines) {
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
+				gfxPipeLines_);
+			vk::cmdDraw(cb, 6, size_.x * size_.y, 0, 0);
+		}
 	} else if(gridType_ == GridType::quad) {
 		vk::cmdDraw(cb, 4, 1, 0, 0);
 	}
@@ -35,6 +45,30 @@ void Automaton::render(vk::CommandBuffer cb) {
 void Automaton::compute(vk::CommandBuffer cb) {
 	// do we need an init barrier? for copy from last frame?
 	// which had already the implicit renderpass barrier? probablby.
+
+	if(bufferMode_ == BufferMode::doubled) {
+		auto layout = vk::ImageLayout::general;
+		auto l = vk::ImageSubresourceLayers{vk::ImageAspectBits::color, 0, 0, 1};
+		vk::cmdCopyImage(cb, img_.image(), layout,
+			imgBack_.image(), layout, {{l, {}, l, {}, {size_.x, size_.y, 1}}});
+
+		auto subres = vk::ImageSubresourceRange {
+			vk::ImageAspectBits::color, 0, 1, 0, 1};
+		vk::ImageMemoryBarrier barrierBack(
+			vk::AccessBits::transferWrite,
+			vk::AccessBits::shaderRead,
+			layout, layout, {}, {}, imgBack_.image(), subres);
+
+		vk::ImageMemoryBarrier barrierNew(
+			vk::AccessBits::transferRead,
+			vk::AccessBits::shaderWrite,
+			layout, layout, {}, {}, img_.image(), subres);
+
+		vk::cmdPipelineBarrier(cb,
+			vk::PipelineStageBits::transfer,
+			vk::PipelineStageBits::computeShader,
+			{}, {}, {}, {barrierBack, barrierNew});
+	}
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, compPipeline_);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
@@ -46,29 +80,6 @@ void Automaton::compute(vk::CommandBuffer cb) {
 		vk::cmdDispatch(cb, size_.x, size_.y, 1);
 	}
 
-	if(bufferMode_ == BufferMode::doubled) {
-		auto layout = vk::ImageLayout::general;
-		auto subres = vk::ImageSubresourceRange {
-			vk::ImageAspectBits::color, 0, 1, 0, 1};
-		vk::ImageMemoryBarrier barrierOld(
-			vk::AccessBits::shaderRead,
-			vk::AccessBits::transferWrite,
-			layout, layout, {}, {}, imgBack_.image(), subres);
-
-		vk::ImageMemoryBarrier barrierNew(
-			vk::AccessBits::shaderWrite,
-			vk::AccessBits::transferRead,
-			layout, layout, {}, {}, img_.image(), subres);
-
-		vk::cmdPipelineBarrier(cb,
-			vk::PipelineStageBits::computeShader,
-			vk::PipelineStageBits::transfer,
-			{}, {}, {}, {barrierOld, barrierNew});
-
-		auto l = vk::ImageSubresourceLayers{vk::ImageAspectBits::color, 0, 0, 1};
-		vk::cmdCopyImage(cb, img_.image(), layout,
-			imgBack_.image(), layout, {{l, {}, l, {}, {size_.x, size_.y, 1}}});
-	}
 }
 
 void Automaton::initSampler() {
@@ -112,7 +123,6 @@ void Automaton::writeGfxData(nytl::Span<std::byte>& data) {
 		doi::write(data, std::uint32_t(size_.y));
 
 		// center hexagons
-		static const float cospi6 = 0.86602540378; // cos(pi/6) or sqrt(3)/2
 		auto radius = 1.f;
 		auto off = nytl::Vec {0.f, 0.f};
 		float width = radius * 2 * cospi6 * size().x;
@@ -125,12 +135,15 @@ void Automaton::writeGfxData(nytl::Span<std::byte>& data) {
 			off.x = -(radius * 2 * cospi6 * size().x - 2) / 2;
 		}
 
+		hex_.radius = radius;
+		hex_.off = off;
+
 		doi::write(data, off);
 		doi::write(data, radius);
 	}
 }
 
-std::pair<bool, vk::Semaphore> Automaton::updateDevice(double) {
+std::pair<bool, vk::Semaphore> Automaton::updateDevice() {
 	oldFill_.clear();
 	imgOld_ = {};
 
@@ -168,14 +181,25 @@ std::pair<bool, vk::Semaphore> Automaton::updateDevice(double) {
 	if(!fill_.empty()) {
 		auto cb = getRecording();
 		for(auto& f : fill_) {
-			f.stage = vpp::fillStaging(cb, imgBack_.image(),
+			f.stage = vpp::fillStaging(cb, img_.image(),
 				format_, vk::ImageLayout::general, f.size, f.data,
 				{vk::ImageAspectBits::color}, f.offset);
 			f.data = {};
-
 		}
 
 		oldFill_ = std::move(fill_);
+	}
+
+	if(!retrieve_.empty()) {
+		auto cb = getRecording();
+		for(auto& r : retrieve_) {
+			dlg_assert(r.dst);
+			*r.dst = vpp::retrieveStaging(cb, img_.image(),
+				format_, vk::ImageLayout::general, r.size,
+				{vk::ImageAspectBits::color}, r.offset);
+		}
+
+		retrieve_ = {};
 	}
 
 	vk::Semaphore sem {};
@@ -260,10 +284,26 @@ void Automaton::initGfxPipe(vk::RenderPass renderPass,
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment}}});
 
-	vk::Pipeline vkpipe;
-	vk::createGraphicsPipelines(device(), {}, 1, ginfo.info(),
-		nullptr, vkpipe);
-	gfxPipe_ = {device(), vkpipe};
+	std::vector<vk::GraphicsPipelineCreateInfo> infos = {ginfo.info()};
+
+	std::optional<vpp::GraphicsPipelineInfo> lineInfo;
+	vpp::ShaderModule lineVertShader;
+	if(gridType_ == GridType::hex) {
+		lineVertShader = {device(), hex_line_vert_data};
+		lineInfo = {renderPass,
+			gfxPipeLayout_, {{
+				{lineVertShader, vk::ShaderStageBits::vertex},
+				{fragShader, vk::ShaderStageBits::fragment}}}};
+		lineInfo->assembly.topology = vk::PrimitiveTopology::lineStrip;
+		infos.push_back(lineInfo->info());
+	}
+
+	auto pipes = vk::createGraphicsPipelines(device(), {}, infos);
+	gfxPipe_ = {device(), pipes[0]};
+
+	if(gridType_ == GridType::hex) {
+		gfxPipeLines_ = {device(), pipes[1]};
+	}
 }
 
 void Automaton::initLayouts() {
@@ -403,6 +443,15 @@ void Automaton::fill(Fill f) {
 	fill_.emplace_back(std::move(f));
 }
 
+void Automaton::retrieve(Retrieve r) {
+	retrieve_.emplace_back(std::move(r));
+}
+
+void Automaton::get(nytl::Vec2ui pos, vpp::SubBuffer* dst) {
+	auto ipos = nytl::Vec2i(pos);
+	retrieve({{ipos.x, ipos.y, 0}, {1, 1, 1}, dst});
+}
+
 void Automaton::compDsLayout(std::vector<vk::DescriptorSetLayoutBinding>& bs) {
 	bs.push_back(vpp::descriptorBinding(vk::DescriptorType::storageImage,
 		vk::ShaderStageBits::compute));
@@ -431,5 +480,30 @@ void Automaton::gfxPipeLayout(
 		std::vector<vk::DescriptorSetLayout>& ds,
 		std::vector<vk::PushConstantRange>&) {
 	ds.push_back(gfxDsLayout_);
+}
+
+void Automaton::hexLines(bool set) {
+	dlg_assert(gridType() == GridType::hex);
+	hex_.lines = set;
+}
+
+void Automaton::worldClick(std::optional<nytl::Vec2f> pos) {
+	if(!pos) {
+		click({});
+	}
+
+	auto p = nytl::Vec2f{*pos};
+	if(gridType_ == GridType::hex) {
+		p += nytl::Vec {1.f, 1.f} - hex_.off;
+		unsigned x = p.x / (hex_.radius * 2 * cospi6);
+		unsigned y = p.y / (hex_.radius * 1.5);
+		if(x >= size_.x || y >= size_.y) {
+			click({});
+		} else {
+			click({{x, y}});
+		}
+	} else {
+		dlg_fatal("unimplemented!");
+	}
 }
 

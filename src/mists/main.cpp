@@ -281,7 +281,11 @@ public:
 		player_.shape.change()->center = {p.x, p.y};
 	}
 
-	void key(const ny::KeyEvent& ev) override {
+	bool key(const ny::KeyEvent& ev) override {
+		if(App::key(ev)) {
+			return true;
+		}
+
 		std::unordered_map<ny::Keycode, unsigned> assoc = {
 			{ny::Keycode::h, 0},
 			{ny::Keycode::j, 1},
@@ -312,7 +316,7 @@ public:
 
 		if(auto it = assoc.find(ev.keycode); it != assoc.end() && !ev.repeat) {
 			if(it->second >= metals_.size()) {
-				return;
+				return false;
 			}
 
 			auto& metal = metals_[it->second];
@@ -331,7 +335,7 @@ public:
 
 			if(!ev.pressed) {
 				*metal.paint.change() = metalPaint_;
-				return;
+				return true;
 			}
 
 			b2MotorJointDef def;
@@ -353,7 +357,10 @@ public:
 			metal.push = push_;
 
 			active_.insert(&metal);
+			return true;
 		}
+
+		return false;
 	}
 
 	b2World& bworld() {

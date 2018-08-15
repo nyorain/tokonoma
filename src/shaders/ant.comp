@@ -1,0 +1,38 @@
+#version 450
+
+layout(binding = 0, r8ui) uniform uimage2D img;
+layout(set = 0, binding = 0) buffer Buf {
+	uvec2 pos;
+	uint rotation;
+	uint move[];
+} ant;
+
+void main() {
+	uint val = imageLoad(img, ivec2(ant.pos)).r;
+
+	uvec4 nval = uvec4((val + 1) % ant.move.length(), 0, 0, 0);
+	imageStore(img, ivec2(ant.pos), nval);
+
+	uint rot = ant.rotation + (ant.rotation + ant.move[val]) % 6;
+
+	// apply step
+	ivec2 pos = ivec2(ant.pos);
+	ivec2 npos = pos;
+	if(npos.y % 2 == 1) {
+		npos.x += 1;
+	}
+
+	switch(rot) {
+		case 0: npos.x = pos.x + 1; break;
+		case 1: npos.y -= 1; break;
+		case 2: npos.y -= 1; npos.x -= 1; break;
+		case 3: npos.x = pos.x - 1; break;
+		case 4: npos.y += 1; npos.x -= 1; break;
+		case 5: npos.y += 1; break;
+		default: npos = ivec2(0, 0); break;
+	}
+
+	uvec2 imgSize = imageSize(img);
+	ant.pos = uvec2(mod(npos, imgSize));
+	ant.rotation = rot;
+}

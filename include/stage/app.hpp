@@ -55,6 +55,9 @@ protected:
 	virtual argagg::parser argParser() const;
 	virtual bool handleArgs(const argagg::parser_results&);
 
+	virtual bool features(vk::PhysicalDeviceFeatures& enable,
+		const vk::PhysicalDeviceFeatures& supported);
+
 	// recording
 	virtual void render(vk::CommandBuffer);
 	virtual void beforeRender(vk::CommandBuffer);
@@ -70,10 +73,10 @@ protected:
 
 	// events
 	virtual void resize(const ny::SizeEvent&);
-	virtual void key(const ny::KeyEvent&);
-	virtual void mouseButton(const ny::MouseButtonEvent&);
+	virtual bool key(const ny::KeyEvent&);
+	virtual bool mouseButton(const ny::MouseButtonEvent&);
 	virtual void mouseMove(const ny::MouseMoveEvent&);
-	virtual void mouseWheel(const ny::MouseWheelEvent&);
+	virtual bool mouseWheel(const ny::MouseWheelEvent&);
 	virtual void mouseCross(const ny::MouseCrossEvent&);
 	virtual void focus(const ny::FocusEvent&);
 	virtual void close(const ny::CloseEvent&);
@@ -85,6 +88,7 @@ protected:
 	bool run_ {};
 	bool resize_ {};
 	bool rerecord_ {};
+	bool waitEvents_ {}; // TODO: currently not working, see update
 
 	enum class DevType {
 		igpu,

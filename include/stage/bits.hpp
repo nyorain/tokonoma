@@ -15,6 +15,26 @@ T read(const std::byte*& data) {
 	return ret;
 }
 
+// TODO: remove the non-const version.
+// Only needed due to missing Span 'nonconst -> const' constructor
+template<typename T>
+T read(nytl::Span<std::byte>& span) {
+	T ret;
+	dlg_assert(span.size() >= sizeof(ret));
+	std::memcpy(&ret, span.data(), sizeof(ret));
+	span = span.slice(sizeof(ret), span.size() - sizeof(ret));
+	return ret;
+}
+
+template<typename T>
+T read(nytl::Span<const std::byte>& span) {
+	T ret;
+	dlg_assert(span.size() >= sizeof(ret));
+	std::memcpy(&ret, span.data(), sizeof(ret));
+	span = span.slice(sizeof(ret), span.size() - sizeof(ret));
+	return ret;
+}
+
 template<typename T>
 void write(nytl::Span<std::byte>& span, T&& data) {
 	dlg_assert(span.size() >= sizeof(data));

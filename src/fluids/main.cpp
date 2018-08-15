@@ -526,10 +526,13 @@ public:
 		return true;
 	}
 
-	void key(const ny::KeyEvent& ev) override {
-		App::key(ev);
+	bool key(const ny::KeyEvent& ev) override {
+		if(App::key(ev)) {
+			return true;
+		}
+
 		if(!ev.pressed) {
-			return;
+			return false;
 		}
 
 		if(ev.keycode == ny::Keycode::d) {
@@ -547,7 +550,11 @@ public:
 		} else if(ev.keycode == ny::Keycode::p) {
 			changeView_ = system_->pressure().vkImageView();
 			viewType_ = 1;
+		} else {
+			return false;
 		}
+
+		return true;
 	}
 
 	void update(double dt) override {
@@ -574,8 +581,10 @@ public:
 		mpos_ = system_->size() * (nytl::Vec2f(ev.position) / window().size());
 	}
 
-	void mouseButton(const ny::MouseButtonEvent& ev) override {
-		App::mouseButton(ev);
+	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+		if(App::mouseButton(ev)) {
+			return true;
+		}
 
 		auto kc = appContext().keyboardContext();
 		auto mod = kc->modifiers() & ny::KeyboardModifier::shift;
@@ -584,12 +593,20 @@ public:
 			system_->velocityFac = ev.pressed;
 		} else if(ev.button == ny::MouseButton::right || mod) {
 			system_->velocityFac = ev.pressed * 150.f;
+		} else {
+			return false;
 		}
+
+		return true;
 	}
 
-	void mouseWheel(const ny::MouseWheelEvent& ev) override {
-		App::mouseWheel(ev);
+	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
+		if(App::mouseWheel(ev)) {
+			return true;
+		}
+
 		system_->radius *= std::pow(1.05, ev.value.y);
+		return true;
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {

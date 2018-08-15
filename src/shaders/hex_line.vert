@@ -11,14 +11,8 @@ layout(row_major, binding = 0) uniform Transform {
 	vec2 off;
 	float radius;
 };
-layout(binding = 1) uniform sampler2D img;
 
 void main() {
-	uint cx = gl_InstanceIndex % size.x;
-	uint cy = gl_InstanceIndex / size.x;
-	vec2 color = texture(img, (vec2(cx, cy) + 0.5) / size).xy;
-
-	out_color = vec4(color, 0, 1);
+	out_color = vec4(0, 0, 0, 1);
 	gl_Position = transform * vec4(instanceHexPoint(off, size.x, radius), 0, 1);
 }
-

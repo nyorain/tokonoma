@@ -1,7 +1,7 @@
 #version 450
 
-layout(binding = 0, rgba8) uniform writeonly image2D new;
-layout(binding = 1, rgba8) uniform readonly image2D old;
+layout(binding = 0, rg8) uniform writeonly image2D new;
+layout(binding = 1, rg8) uniform readonly image2D old;
 layout(binding = 2) uniform UBO {
 	float xbirth; // prey birth
 	float xdeath; // prey death per pred

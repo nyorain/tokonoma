@@ -29,15 +29,19 @@ public:
 public:
 	virtual ~Automaton() = default;
 
-	virtual void click(nytl::Vec2ui pos);
-	virtual void settings(vui::dat::Folder&);
+	virtual void worldClick(std::optional<nytl::Vec2f> pos);
+	virtual void click(std::optional<nytl::Vec2ui> pos);
+	virtual void display(vui::dat::Folder&);
 
 	virtual void compute(vk::CommandBuffer);
 	virtual void render(vk::CommandBuffer);
 	virtual void resize(nytl::Vec2ui);
 	virtual void transform(nytl::Mat4f t) { transform_ = t; }
-	virtual std::pair<bool, vk::Semaphore> updateDevice(double);
+	virtual void update(double) {}
+	virtual std::pair<bool, vk::Semaphore> updateDevice();
+	virtual void hexLines(bool);
 
+	auto hexLines() const { return hex_.lines; }
 	const auto& size() const { return size_; }
 	const auto& img() const { return img_; }
 	GridType gridType() const { return gridType_; }
@@ -51,6 +55,12 @@ protected:
 		vk::Extent3D size;
 		std::vector<std::byte> data;
 		vpp::SubBuffer stage {};
+	};
+
+	struct Retrieve {
+		vk::Offset3D offset;
+		vk::Extent3D size;
+		vpp::SubBuffer* dst;
 	};
 
 	Automaton() = default;
@@ -70,6 +80,9 @@ protected:
 	void set(nytl::Vec2ui pos, std::vector<std::byte> data);
 	void fill(Fill);
 	vk::CommandBuffer getRecording();
+
+	void retrieve(Retrieve);
+	void get(nytl::Vec2ui pos, vpp::SubBuffer* dst);
 
 	virtual void initCompPipe(nytl::Span<const std::uint32_t> shader);
 	virtual void initGfxPipe(vk::RenderPass,
@@ -120,6 +133,7 @@ private:
 
 	std::vector<Fill> fill_;
 	std::vector<Fill> oldFill_;
+	std::vector<Retrieve> retrieve_;
 
 	// render
 	vpp::SubBuffer gfxUbo_;
@@ -127,6 +141,13 @@ private:
 	vpp::TrDsLayout gfxDsLayout_;
 	vpp::PipelineLayout gfxPipeLayout_;
 	vpp::Pipeline gfxPipe_;
+	vpp::Pipeline gfxPipeLines_;
 	vpp::TrDs gfxDs_;
 	std::optional<nytl::Mat4f> transform_;
+
+	struct {
+		bool lines {};
+		float radius {};
+		nytl::Vec2f off {};
+	} hex_;
 };

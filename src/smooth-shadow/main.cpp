@@ -237,10 +237,6 @@ public:
 		}
 	}
 
-	void key(const ny::KeyEvent& ev) override {
-		App::key(ev);
-	}
-
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
 
@@ -270,8 +266,11 @@ public:
 		App::mouseMove(ev);
 	}
 
-	void mouseButton(const ny::MouseButtonEvent& ev) override {
-		App::mouseButton(ev);
+	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+		if(App::mouseButton(ev)) {
+			return true;
+		}
+
 		auto pos4 = nytl::Vec4f(ev.position);
 		pos4[3] = 1.f;
 
@@ -280,8 +279,11 @@ public:
 			if(contains(light, pos)) {
 				currentLight_ = &light;
 				rerecord();
+				return true;
 			}
 		}
+
+		return false;
 	}
 
 	bool contains(const Light& light, nytl::Vec2f pos) {

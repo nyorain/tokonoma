@@ -256,11 +256,17 @@ public:
 		system_->update(dt);
 	}
 
-	void key(const ny::KeyEvent& ev) override {
-		App::key(ev);
+	bool key(const ny::KeyEvent& ev) override {
+		if(App::key(ev)) {
+			return true;
+		}
+
 		if(ev.pressed && ev.keycode == ny::Keycode::n) {
 			frame_ = !frame_;
+			return true;
 		}
+
+		return false;
 	}
 
 	void render(vk::CommandBuffer cb) override {

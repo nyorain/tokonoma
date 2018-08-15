@@ -1,5 +1,6 @@
 # common/shader glsl files
 geom_glsl = files('geometry.glsl')
+hex_glsl = files('hex.glsl')
 
 # shader specifications
 # contains multiple shader groups, specified like this:
@@ -34,8 +35,10 @@ shaders_src = [
 		['fluid_texture.frag'],
 	]],
 	['automaton_shaders', [
-		['hex.vert'],
+		['hex.vert', hex_glsl],
+		['hex_line.vert', hex_glsl],
 		['predprey.comp'],
+		['ant.comp'],
 	]],
 
 ]

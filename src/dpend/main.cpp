@@ -292,8 +292,11 @@ public:
 	}
 
 	// NOTE: test messing with gui
-	void key(const ny::KeyEvent& ev) override {
-		App::key(ev);
+	bool key(const ny::KeyEvent& ev) override {
+		if(App::key(ev)) {
+			return true;
+		}
+
 		if(ev.pressed && ev.keycode == ny::Keycode::q) {
 			auto& f = panel_->create<vui::dat::Folder>("hidden");
 			f.create<vui::dat::Button>("Create a kitten");
@@ -305,7 +308,11 @@ public:
 				tmpWidgets_.pop_back();
 				panel_->remove(*w);
 			}
+		} else {
+			return false;
 		}
+
+		return true;
 	}
 
 protected:
