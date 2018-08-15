@@ -27,7 +27,7 @@ void main() {
 	vec2 o = imageLoad(old, pos).xy;
 	vec2 v = o;
 
-	v.x += o.x * (ubo.xbirth - ubo.xdeath * o.y);
+	v.x += o.x * (ubo.xbirth - ubo.xdeath * o.y) * (1 - o.x);
 	v.y += o.y * (ubo.ybirth * o.x - ubo.ydeath);
 
 	float offx = 0;

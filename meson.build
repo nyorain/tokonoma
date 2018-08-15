@@ -75,6 +75,7 @@ executable('dummy',
 
 executable('automaton', [
 	  'src/automaton/main.cpp',
+	  'src/automaton/automaton.cpp',
 	  automaton_shaders,
 	  common_shaders,
 	], dependencies: stage_dep)
