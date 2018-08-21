@@ -167,7 +167,15 @@ void MainWindow::focus(const ny::FocusEvent& ev) {
 	}
 }
 
+void MainWindow::draw(const ny::DrawEvent& ev) {
+	dlg_debug("redraw event by window backend");
+	if(onDraw) {
+		onDraw(ev);
+	}
+}
+
 void MainWindow::surfaceDestroyed(const ny::SurfaceDestroyedEvent&) {
+	dlg_debug("vulkan surface destroyed");
 	surface_ = {};
 	if(onSurfaceDestroyed) {
 		onSurfaceDestroyed();
@@ -175,6 +183,7 @@ void MainWindow::surfaceDestroyed(const ny::SurfaceDestroyedEvent&) {
 }
 
 void MainWindow::surfaceCreated(const ny::SurfaceCreatedEvent& ev) {
+	dlg_debug("vulkan surface created");
 	surface_ = reinterpret_cast<const vk::SurfaceKHR&>(ev.surface.vulkan);
 	if(onSurfaceCreated) {
 		onSurfaceCreated(surface_);

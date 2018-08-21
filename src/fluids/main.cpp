@@ -558,6 +558,7 @@ public:
 	}
 
 	void update(double dt) override {
+		App::redraw();
 		App::update(dt);
 		dt_ = dt;
 	}
