@@ -36,7 +36,7 @@ void main() {
 	}
 
 	wander(pos + ivec2(1, 0), o, v, size);
-	wander(pos + ivec2(0, 1), o, v, size);
+	wander(pos + ivec2(-1, 0), o, v, size);
 
 	wander(pos + ivec2(offx, -1), o, v, size);
 	wander(pos + ivec2(offx - 1, -1), o, v, size);

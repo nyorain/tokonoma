@@ -49,20 +49,36 @@ void Automaton::compute(vk::CommandBuffer cb) {
 	if(bufferMode_ == BufferMode::doubled) {
 		auto layout = vk::ImageLayout::general;
 		auto l = vk::ImageSubresourceLayers{vk::ImageAspectBits::color, 0, 0, 1};
-		vk::cmdCopyImage(cb, img_.image(), layout,
-			imgBack_.image(), layout, {{l, {}, l, {}, {size_.x, size_.y, 1}}});
+		vk::ImageSubresourceRange subres{vk::ImageAspectBits::color, 0, 1, 0, 1};
 
-		auto subres = vk::ImageSubresourceRange {
-			vk::ImageAspectBits::color, 0, 1, 0, 1};
+		vpp::changeLayout(cb, img_.image(),
+			vk::ImageLayout::general, vk::PipelineStageBits::allCommands,
+			vk::AccessBits::transferRead | vk::AccessBits::transferWrite,
+			vk::ImageLayout::transferSrcOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferRead, subres);
+		vpp::changeLayout(cb, imgBack_.image(),
+			vk::ImageLayout::general, vk::PipelineStageBits::computeShader,
+			vk::AccessBits::shaderRead,
+			vk::ImageLayout::transferDstOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferWrite, subres);
+
+		vk::cmdCopyImage(cb, img_.image(), vk::ImageLayout::transferSrcOptimal,
+			imgBack_.image(), vk::ImageLayout::transferDstOptimal,
+			{{l, {}, l, {}, {size_.x, size_.y, 1}}});
+
 		vk::ImageMemoryBarrier barrierBack(
 			vk::AccessBits::transferWrite,
 			vk::AccessBits::shaderRead,
-			layout, layout, {}, {}, imgBack_.image(), subres);
+			vk::ImageLayout::transferDstOptimal, layout, {}, {},
+			imgBack_.image(), subres);
 
 		vk::ImageMemoryBarrier barrierNew(
 			vk::AccessBits::transferRead,
 			vk::AccessBits::shaderWrite,
-			layout, layout, {}, {}, img_.image(), subres);
+			vk::ImageLayout::transferSrcOptimal, layout, {}, {},
+			img_.image(), subres);
 
 		vk::cmdPipelineBarrier(cb,
 			vk::PipelineStageBits::transfer,
@@ -178,28 +194,66 @@ std::pair<bool, vk::Semaphore> Automaton::updateDevice() {
 		writeGfxData(span);
 	}
 
+	// TODO: stage bits and access masks may not be complete
+	// first fill, then retrieve or retrieve potential old data?
+	auto layout = vk::ImageLayout::general;
+	vk::ImageSubresourceRange subres{vk::ImageAspectBits::color, 0, 1, 0, 1};
 	if(!fill_.empty()) {
 		auto cb = getRecording();
+		vpp::changeLayout(cb, img_.image(),
+			layout, vk::PipelineStageBits::allCommands,
+			vk::AccessBits::transferRead | vk::AccessBits::shaderWrite,
+			vk::ImageLayout::transferDstOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferWrite, subres);
+		layout = vk::ImageLayout::transferDstOptimal;
 		for(auto& f : fill_) {
 			f.stage = vpp::fillStaging(cb, img_.image(),
-				format_, vk::ImageLayout::general, f.size, f.data,
+				format_, layout, f.size, f.data,
 				{vk::ImageAspectBits::color}, f.offset);
 			f.data = {};
 		}
 
 		oldFill_ = std::move(fill_);
+
+		// TODO: only do this when there is no retrieve
+		vpp::changeLayout(cb, img_.image(),
+			layout, vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferWrite,
+			vk::ImageLayout::general,
+			vk::PipelineStageBits::allCommands,
+			vk::AccessBits::transferRead, // will be copied first
+			subres);
+		layout = vk::ImageLayout::general;
 	}
 
 	if(!retrieve_.empty()) {
 		auto cb = getRecording();
+		vpp::changeLayout(cb, img_.image(),
+			layout, vk::PipelineStageBits::allCommands,
+			vk::AccessBits::transferWrite | vk::AccessBits::shaderWrite,
+			vk::ImageLayout::transferSrcOptimal,
+			vk::PipelineStageBits::allCommands,
+			vk::AccessBits::transferRead, // will be copied first
+			subres);
+		layout = vk::ImageLayout::transferSrcOptimal;
+
 		for(auto& r : retrieve_) {
 			dlg_assert(r.dst);
 			*r.dst = vpp::retrieveStaging(cb, img_.image(),
-				format_, vk::ImageLayout::general, r.size,
+				format_, layout, r.size,
 				{vk::ImageAspectBits::color}, r.offset);
 		}
 
 		retrieve_ = {};
+		vpp::changeLayout(cb, img_.image(),
+			layout, vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferRead,
+			vk::ImageLayout::general,
+			vk::PipelineStageBits::allCommands,
+			vk::AccessBits::transferRead, // will be copied first
+			subres);
+		layout = vk::ImageLayout::general;
 	}
 
 	vk::Semaphore sem {};

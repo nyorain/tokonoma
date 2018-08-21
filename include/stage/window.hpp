@@ -21,6 +21,7 @@ public:
 	std::function<void(const ny::MouseCrossEvent&)> onMouseCross;
 	std::function<void(const ny::SizeEvent&)> onResize;
 	std::function<void(const ny::CloseEvent&)> onClose;
+	std::function<void(const ny::DrawEvent&)> onDraw;
 	std::function<void()> onSurfaceDestroyed;
 	std::function<void(vk::SurfaceKHR)> onSurfaceCreated;
 
@@ -45,6 +46,7 @@ protected:
 	void close(const ny::CloseEvent&) override;
 	void resize(const ny::SizeEvent&) override;
 	void focus(const ny::FocusEvent&) override;
+	void draw(const ny::DrawEvent&) override;
 	void surfaceDestroyed(const ny::SurfaceDestroyedEvent&) override;
 	void surfaceCreated(const ny::SurfaceCreatedEvent&) override;
 

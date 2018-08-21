@@ -11,6 +11,7 @@
 #include <vpp/instance.hpp>
 #include <vpp/debug.hpp>
 #include <ny/appContext.hpp>
+#include <ny/asyncRequest.hpp>
 #include <ny/backend.hpp>
 #include <ny/cursor.hpp>
 #include <ny/windowContext.hpp>
@@ -23,6 +24,7 @@
 
 #include <argagg.hpp>
 #include <optional>
+#include <thread>
 
 namespace doi {
 
@@ -48,17 +50,100 @@ void translate(nytl::Mat4<T>& mat, nytl::Vec3<T> move) {
 	}
 }
 
-// listener
-struct GuiListener : public vui::GuiListener {
-	App* app_;
-	void cursor(vui::Cursor cursor) override {
-		dlg_assert(app_);
-		auto c = static_cast<ny::CursorType>(cursor);
-		app_->window().windowContext().cursor({c});
+/// GuiListener
+class TextDataSource : public ny::DataSource {
+public:
+	std::vector<ny::DataFormat> formats() const override {
+		return {ny::DataFormat::text};
 	}
+
+	std::any data(const ny::DataFormat& format) const override {
+		if(format != ny::DataFormat::text) {
+			return {};
+		}
+
+		return {text};
+	}
+
+	std::string text;
+};
+
+class GuiListener : public vui::GuiListener {
+public:
+	void app(App& app) { app_ = &app; }
+	ny::AppContext& ac() { return app_->appContext(); }
+	ny::WindowContext& wc() { return app_->window().windowContext(); }
+
+	void copy(std::string_view view) override {
+		auto source = std::make_unique<TextDataSource>();
+		source->text = view;
+		ac().clipboard(std::move(source));
+	}
+
+	void cursor(vui::Cursor cursor) override {
+		if(cursor == currentCursor_) {
+			return;
+		}
+
+		currentCursor_ = cursor;
+		auto c = static_cast<ny::CursorType>(cursor);
+		wc().cursor({c});
+	}
+
+	bool pasteRequest(const vui::Widget& widget) override {
+		auto& gui = widget.gui();
+		auto offer = ac().clipboard();
+		if(!offer) { // nothing in clipboard
+			return false;
+		}
+
+		auto req = offer->data(ny::DataFormat::text);
+		if(req->ready()) {
+			std::any any = req.get();
+			auto* pstr = std::any_cast<std::string>(&any);
+			if(!pstr) {
+				return false;
+			}
+
+			gui.paste(widget, *pstr);
+			return true;
+		}
+
+		req->callback([this, &gui](auto& req){ dataHandler(gui, req); });
+		reqs_.push_back({std::move(req), &widget});
+		return true;
+	}
+
+	void dataHandler(vui::Gui& gui, ny::AsyncRequest<std::any>& req) {
+		auto it = std::find_if(reqs_.begin(), reqs_.end(),
+			[&](auto& r) { return r.request.get() == &req; });
+		if(it == reqs_.end()) {
+			dlg_error("dataHandler: invalid request");
+			return;
+		}
+
+		std::any any = req.get();
+		auto* pstr = std::any_cast<std::string>(&any);
+		auto str = pstr ? *pstr : "";
+		gui.paste(*it->widget, str);
+		reqs_.erase(it);
+	}
+
+protected:
+	struct Request {
+		ny::DataOffer::DataRequest request;
+		const vui::Widget* widget;
+	};
+
+	App* app_;
+	std::vector<Request> reqs_;
+	vui::Cursor currentCursor_ {};
 };
 
 } // anon namespace
+
+using Clock = std::chrono::high_resolution_clock;
+using Secf = std::chrono::duration<float, std::ratio<1, 1>>;
 
 // App::Impl
 struct App::Impl {
@@ -82,7 +167,8 @@ struct App::Impl {
 	std::vector<vpp::StageSemaphore> nextFrameWait;
 	vk::SampleCountBits samples;
 
-	bool clipDistance_ {};
+	bool clipDistance {};
+	Clock::time_point lastUpdate;
 };
 
 // App
@@ -182,6 +268,7 @@ bool App::init(const AppSettings& settings) {
 	window().onMouseCross = [&](const auto& ev) { mouseCross(ev); };
 	window().onFocus = [&](const auto& ev) { focus(ev); };
 	window().onClose = [&](const auto& ev) { close(ev); };
+	window().onDraw = [&](const auto&) { redraw_ = true; };
 
 	// create device
 	// enable some extra features
@@ -284,7 +371,7 @@ bool App::init(const AppSettings& settings) {
 	// additional stuff
 	rvg::ContextSettings rvgcs {renderer().renderPass(), 0u};
 	rvgcs.samples = samples();
-	rvgcs.clipDistanceEnable = impl_->clipDistance_;
+	rvgcs.clipDistanceEnable = impl_->clipDistance;
 
 	impl_->rvgContext.emplace(vulkanDevice(), rvgcs);
 	impl_->windowTransform = {rvgContext()};
@@ -298,7 +385,7 @@ bool App::init(const AppSettings& settings) {
 	impl_->fontAtlas->bake(rvgContext());
 
 	// gui
-	impl_->guiListener.app_ = this;
+	impl_->guiListener.app(*this);
 	impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
 
 	return true;
@@ -367,7 +454,7 @@ bool App::features(vk::PhysicalDeviceFeatures& enable,
 		const vk::PhysicalDeviceFeatures& supported) {
 	if(supported.shaderClipDistance) {
 		enable.shaderClipDistance = true;
-		impl_->clipDistance_ = true;
+		impl_->clipDistance = true;
 	}
 
 	return true;
@@ -383,10 +470,8 @@ void App::afterRender(vk::CommandBuffer) {
 void App::run() {
 	run_ = true;
 	rerecord_ = true; // for initial recording
-
-	using Clock = std::chrono::high_resolution_clock;
-	using Secf = std::chrono::duration<float, std::ratio<1, 1>>;
-	auto lastFrame = Clock::now();
+	redraw_ = true; // for initial drawing
+	impl_->lastUpdate = Clock::now();
 
 	std::optional<std::uint64_t> submitID {};
 	auto& submitter = vulkanDevice().queueSubmitter();
@@ -483,27 +568,49 @@ void App::run() {
 		// This must not touch device resources used for rendering in any way
 		// since during this time the device is probably busy rendering,
 		// it should be used to perform all heave host side computations
-		auto now = Clock::now();
-		auto diff = now - lastFrame;
-		auto dt = std::chrono::duration_cast<Secf>(diff).count();
-		lastFrame = now;
+		redraw_ = false;
+		callUpdate();
 
-		update(dt);
+		// check if we can skip the next frame since nothing changed
+		auto skipped = 0u;
+		while(!redraw_ && !rerecord_ && run_) {
+			// TODO: ideally, we could use waitEvents in update
+			// an only wake up if we need to. But that would need
+			// a (threaded!) waking up algorithm and also require all
+			// components to signal this correctly (e.g. gui textfield blink)
+			// which is (currently) not worth it/possible.
+			auto idleRate = 60.f;
+			std::this_thread::sleep_for(Secf(1 / idleRate));
+			callUpdate();
+			++skipped;
+		}
+
+		if(skipped > 0) {
+			dlg_debug("Skipped {} idle frames", skipped);
+		}
 	}
 }
 
+void App::callUpdate() {
+	auto now = Clock::now();
+	auto diff = now - impl_->lastUpdate;
+	auto dt = std::chrono::duration_cast<Secf>(diff).count();
+	impl_->lastUpdate = now;
+	update(dt);
+}
+
 void App::update(double dt) {
-	// TODO: still has some problems. We really need a way for components
-	// to tell if redraw is needed.
-	// auto wait = waitEvents_ && !vulkanDevice().queueSubmitter().pending();
-	auto wait = false;
-	if(wait ? !appContext().waitEvents() : !appContext().pollEvents()) {
+	// TODO: few things still missing
+	// no one supports it :(
+	// App::redraw();
+
+	if(!appContext().pollEvents()) {
 		dlg_info("update: events returned false");
 		run_ = false;
 		return;
 	}
 
-	gui().update(dt);
+	redraw_ |= gui().update(dt);
 }
 
 void App::updateDevice() {
@@ -555,8 +662,16 @@ void App::close(const ny::CloseEvent&) {
 
 bool App::key(const ny::KeyEvent& ev) {
 	auto ret = false;
-	ret |= bool(gui().key({(vui::Key) ev.keycode, ev.pressed}));
-	if(ev.pressed && !ev.utf8.empty() && !ny::specialKey(ev.keycode)) {
+	auto vev = vui::KeyEvent {};
+	vev.key = static_cast<vui::Key>(ev.keycode); // both modeled after linux
+	vev.modifiers = {static_cast<vui::KeyboardModifier>(ev.modifiers.value())};
+	vev.pressed = ev.pressed;
+	ret |= bool(gui().key(vev));
+
+	auto textable = ev.pressed && !ev.utf8.empty();
+	textable &= !ny::specialKey(ev.keycode);
+	textable &= !(ev.modifiers & ny::KeyboardModifier::ctrl);
+	if(textable) {
 		ret |= bool(gui().textInput({ev.utf8.c_str()}));
 	}
 
@@ -574,7 +689,7 @@ void App::mouseMove(const ny::MouseMoveEvent& ev) {
 }
 
 bool App::mouseWheel(const ny::MouseWheelEvent& ev) {
-	return gui().mouseWheel({ev.value.y});
+	return gui().mouseWheel({ev.value, nytl::Vec2f(ev.position)});
 }
 
 void App::mouseCross(const ny::MouseCrossEvent& ev) {

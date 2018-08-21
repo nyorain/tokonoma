@@ -73,6 +73,10 @@ executable('dummy',
 	'src/dummy/main.cpp',
 	dependencies: stage_dep)
 
+executable('guitest',
+	'src/guitest/main.cpp',
+	dependencies: stage_dep)
+
 executable('automaton', [
 	  'src/automaton/main.cpp',
 	  'src/automaton/automaton.cpp',

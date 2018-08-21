@@ -68,8 +68,11 @@ protected:
 	virtual void updateDevice();
 	virtual void frameFinished() {}
 
+	// better names would be scheduleRerecord, scheduleRedraw
 	void rerecord() { rerecord_ = true; }
+	void redraw() { redraw_ = true; }
 	void addSemaphore(vk::Semaphore, vk::PipelineStageFlags waitDst);
+	void callUpdate();
 
 	// events
 	virtual void resize(const ny::SizeEvent&);
@@ -88,7 +91,7 @@ protected:
 	bool run_ {};
 	bool resize_ {};
 	bool rerecord_ {};
-	bool waitEvents_ {}; // TODO: currently not working, see update
+	bool redraw_ {};
 
 	enum class DevType {
 		igpu,

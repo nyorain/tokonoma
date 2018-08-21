@@ -50,7 +50,7 @@ public:
 	void compDsLayout(std::vector<vk::DescriptorSetLayoutBinding>&) override;
 
 protected:
-	void reset();
+	void reset(bool clear);
 	void readSettings();
 
 protected:
@@ -86,19 +86,21 @@ void PredPrey::init(vpp::Device& dev, vk::RenderPass rp) {
 	Automaton::init(dev, rp, predprey_comp_data, size,
 		BufferMode::doubled, vk::Format::r8g8Unorm,
 		{}, {}, {}, GridType::hex);
-	reset();
+	reset(false);
 }
 
-void PredPrey::reset() {
-	std::vector<std::byte> data(sizeof(nytl::Vec2u8) * size().x * size().y);
+void PredPrey::reset(bool clear) {
+	std::vector<std::byte> data(sizeof(nytl::Vec2u8) * size().x * size().y, {});
 
-	std::mt19937 rgen;
-	rgen.seed(std::time(nullptr));
-	std::uniform_int_distribution<std::uint8_t> distr(0, 255);
+	if(!clear) {
+		std::mt19937 rgen;
+		rgen.seed(std::time(nullptr));
+		std::uniform_int_distribution<std::uint8_t> distr(0, 255);
 
-	auto* ptr = reinterpret_cast<nytl::Vec2u8*>(data.data());
-	for(auto i = 0u; i < size().x * size().y; ++i) {
-		ptr[i] = {distr(rgen), distr(rgen)};
+		auto* ptr = reinterpret_cast<nytl::Vec2u8*>(data.data());
+		for(auto i = 0u; i < size().x * size().y; ++i) {
+			ptr[i] = {distr(rgen), distr(rgen)};
+		}
 	}
 
 	fill({{0, 0, 0}, {size().x, size().y, 1}, data});
@@ -139,7 +141,12 @@ void PredPrey::display(vui::dat::Folder& folder) {
 	createParamField(folder, "preyWander", params_.preyWander);
 	folder.create<Button>("reset").onClick = [&]{
 		readSettings();
-		reset();
+		reset(false);
+	};
+
+	folder.create<Button>("clear").onClick = [&]{
+		readSettings();
+		reset(true);
 	};
 
 	folder.create<Textfield>("save").textfield().onSubmit = [&](auto& tf){
@@ -185,10 +192,10 @@ void PredPrey::display(vui::dat::Folder& folder) {
 		paramsChanged_ = true;
 	};
 
-	field_ = &folder.panel().create<Folder>("field");
+	field_ = &folder.create<Folder>("field");
 	preyField_ = &field_->create<Textfield>("prey");
 	predField_ = &field_->create<Textfield>("predators");
-	dlg_assert(field_->panel().disable(*field_));
+	// dlg_assert(field_->panel().disable(*field_));
 
 	auto f = [this](auto&) { uploadField_ = true; };
 	preyField_->textfield().onSubmit = f;
@@ -247,9 +254,9 @@ void PredPrey::compDsLayout(std::vector<vk::DescriptorSetLayoutBinding>& b) {
 
 void PredPrey::click(std::optional<nytl::Vec2ui> pos) {
 	if(!selected_ && pos) {
-		field_->panel().enable(*field_);
+		// field_->panel().enable(*field_);
 	} else if(selected_ && !pos) {
-		field_->panel().disable(*field_);
+		// field_->panel().disable(*field_);
 	}
 
 	selected_ = pos;
@@ -356,7 +363,7 @@ public:
 		automaton_.transform(mat_);
 
 		auto& panel = gui().create<vui::dat::Panel>(
-			nytl::Rect2f {50.f, 0.f, 250.f, vui::autoSize}, 27.f);
+			nytl::Vec2f {50.f, 0.f}, 300.f, 150.f);
 		auto& folder = panel.create<vui::dat::Folder>("Automaton");
 		automaton_.display(folder);
 
@@ -400,6 +407,11 @@ public:
 
 		App::update(delta);
 		automaton_.update(delta);
+
+		// TODO: we sometimes need this even when paused
+		if(!paused_) {
+			App::redraw();
+		}
 	}
 
 	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
@@ -418,6 +430,7 @@ public:
 		doi::translate(mat_, d);
 
 		automaton_.transform(mat_);
+		App::redraw();
 		return true;
 	}
 
@@ -454,6 +467,7 @@ public:
 				p = 2 * p - nytl::Vec2f {1.f, 1.f};
 				auto world = nytl::Vec2f(i * nytl::Vec4f{p.x, p.y, 0.f, 1.f});
 				automaton_.worldClick(world);
+				App::redraw();
 			}
 
 			dragged_ = {};
@@ -483,6 +497,7 @@ public:
 
 		doi::translate(mat_, normed);
 		automaton_.transform(mat_);
+		App::redraw();
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -501,7 +516,6 @@ public:
 
 		if(ev.pressed && ev.keycode == ny::Keycode::p) {
 			paused_ ^= true;
-			waitEvents_ ^= true;
 			rerecord();
 		} else if(paused_ && ev.pressed && ev.keycode == ny::Keycode::n) {
 			oneStep_ = true;
