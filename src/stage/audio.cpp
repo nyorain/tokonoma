@@ -246,7 +246,7 @@ void AudioPlayer::finish() {
 
 void AudioPlayer::audioLoop() {
 	using namespace std::literals::chrono_literals;
-	auto fillLimit = stream_->sample_rate * bufferTime_ * 2;
+	auto fillLimit = stream_->sample_rate * bufferTime_;
 	auto lastTime = std::chrono::high_resolution_clock::duration {};
 
 	while(true) {
@@ -268,7 +268,7 @@ void AudioPlayer::audioLoop() {
 		}
 
 		auto now = std::chrono::high_resolution_clock::now();
-		auto frames = std::max<unsigned>(fillLimit - count, 1024u);
+		auto frames = std::max<unsigned>(fillLimit - count, 128u);
 		dlg_info("filling {} frames", frames);
 		dlg_assert(int(frames) < soundio_ring_buffer_free_count(buffer_));
 
@@ -357,13 +357,25 @@ void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max) {
 		return;
 	}
 
-	auto prefSamples = int(bufferTime_ * stream_->sample_rate);
-	auto remaining = std::clamp(prefSamples, min, max);
+	auto avail = soundio_ring_buffer_fill_count(buffer_) / (2 * sizeof(float));
+	auto pref = std::min<unsigned>(avail, bufferTime_ * stream_->sample_rate);
+	auto remaining = std::clamp<unsigned>(pref, min, max);
 
+	dlg_info("{} {} {} {}", avail, pref, min, max);
+
+	if(remaining > avail) {
+		dlg_warn("AudioPlayer::output: not enough data available: "
+			"needed {}, available: {})", remaining, avail);
+		// TODO: we could set bufferTime here
+		// bufferTime_ = 2 * remaining / stream_->sample_rate;
+	}
+
+	dlg_info("writing {}", remaining);
 	while(remaining > 0) {
 		int frames = remaining;
 		struct SoundIoChannelArea* areas;
 		auto err = soundio_outstream_begin_write(stream_, &areas, &frames);
+		dlg_info("frames: {}", frames);
 		if(err) {
 			dlg_error("soundio_begin_write: {} ({})", soundio_strerror(err), err);
 			error_.store(true);
@@ -374,16 +386,8 @@ void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max) {
 			break;
 		}
 
-		// write from buffer
-		auto available = soundio_ring_buffer_fill_count(buffer_);
-		available /= 2 * sizeof(float);
-		if(available < frames) {
-			dlg_warn("AudioPlayer::output: not enough data available ({}, {})",
-				available, frames);
-		}
-
 		// we assume that the ring buffer is never cleared
-		available = std::min(available, frames);
+		auto available = std::min<int>(avail, frames);
 		auto readPtr = reinterpret_cast<const std::byte*>(
 			soundio_ring_buffer_read_ptr(buffer_));
 
@@ -411,6 +415,10 @@ void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max) {
 		soundio_ring_buffer_advance_read_ptr(buffer_, byteSize);
 
 		// fill rest with zeroes. Should not happend in normal case
+		if(frames > available) {
+			dlg_info("internal underflow");
+		}
+
 		for(auto i = available; i < frames; ++i) {
 			std::memset(areas[0].ptr, 0, stream_->bytes_per_sample);
 			std::memset(areas[1].ptr, 0, stream_->bytes_per_sample);
@@ -418,7 +426,9 @@ void AudioPlayer::output(struct SoundIoOutStream* stream, int min, int max) {
 			areas[1].ptr += areas[1].step;
 		}
 
+		avail -= frames;
 		remaining -= frames;
+
 		err = soundio_outstream_end_write(stream_);
 		if(err) {
 			if(err != SoundIoErrorUnderflow) {

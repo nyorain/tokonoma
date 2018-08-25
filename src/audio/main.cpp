@@ -15,7 +15,7 @@ public:
 
 		auto it = &buf;
 		for(auto i = 0u; i < samples; ++i) {
-			float val = 0.05 * std::sin((soffset + i * secondsPerFrame) * radsPerSec);
+			float val = std::sin((soffset + i * secondsPerFrame) * radsPerSec);
 			*(it++) += val;
 			*(it++) += val;
 		}

@@ -80,9 +80,10 @@ protected:
 	struct SoundIoOutStream* stream_ {};
 	struct SoundIoRingBuffer* buffer_ {};
 
-	// TODO: should be related to software_latency (?) (and backend)
-	// how much to internally buffer ahead (in seconds).
-	// Should be at least 0.001 (1ms). Additional latency.
+	/// The desired time to prebuffer audio in seconds.
+	/// Setting this to low might result in audio / glitches.
+	/// Setting this too high might result in audio delays (e.g. when
+	/// adding or removing an audio).
 	float bufferTime_ {0.005};
 };
 
