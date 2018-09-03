@@ -155,8 +155,7 @@ public:
 
 		// gui
 		using namespace vui::dat;
-		auto as = vui::autoSize;
-		panel_ = &gui().create<Panel>(nytl::Rect2f {50.f, 0.f, 250.f, as}, 27.f);
+		panel_ = &gui().create<Panel>(nytl::Vec2f{50.f, 0.f}, 300.f, 150.f);
 
 		auto createValueTextfield = [&](auto& at, auto name, float& value) {
 			auto start = std::to_string(value);
@@ -235,6 +234,8 @@ public:
 				currentLight_->position += nytl::Vec {0.f, -fac};
 			}
 		}
+
+		App::redraw();
 	}
 
 	void resize(const ny::SizeEvent& ev) override {

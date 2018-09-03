@@ -105,8 +105,7 @@ public:
 
 		// gui
 		using namespace vui::dat;
-		auto as = vui::autoSize;
-		panel_ = &gui().create<Panel>(nytl::Rect2f {50.f, 0.f, 250.f, as}, 27.f);
+		panel_ = &gui().create<Panel>(nytl::Vec2f {50.f, 0.f}, 250.f);
 
 		auto createValueTextfield = [&](auto& at, auto name, float& value) {
 			auto start = std::to_string(value);
@@ -181,6 +180,7 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
+		App::redraw();
 
 		// input
 		auto& kc = *appContext().keyboardContext();
@@ -278,7 +278,7 @@ protected:
 	vui::dat::Label* xvelLabel_ {};
 	vui::dat::Label* uLabel_ {};
 
-	bool manual_ {};
+	bool manual_ {true};
 
 	std::vector<vui::Widget*> tmpWidgets_ {};
 
