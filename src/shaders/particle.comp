@@ -1,0 +1,88 @@
+#version 450
+
+struct Particle {
+	vec2 pos;
+	vec2 vel;
+};
+
+const float attractionFactor = 5;
+const float frictionFactor = 0.7;
+
+layout(local_size_x = 16) in;
+layout(std430, set = 0, binding = 0) buffer Particles {
+	Particle particles[];
+};
+
+layout(set = 0, binding = 1) uniform UBO {
+	// vec4 for alignment
+	// xy is one attraction, zw is one
+	// so we really have 10 possible attractions
+	vec4 attract[5]; // attraction positions
+	float deltaT; // time delta in seconds
+	uint count; // number of attraction positions (<= 10)
+} ubo;
+
+vec2 attraction(vec2 pos, vec2 attractPos) {
+	vec2 delta = attractPos - pos;
+	float invDist = 1.0f / length(delta);
+	return delta * invDist;
+
+	// NOTE: can play around with above factors
+	// float dDampedDot = dot(delta, delta);
+	// float invDistCubed = invDist*invDist*invDist;
+}
+
+void topBorder(inout vec2 pos, inout vec2 vel) {
+
+}
+
+void bottomBorder(inout vec2 pos, inout vec2 vel) {
+
+}
+
+void rightBorder(inout vec2 pos, inout vec2 vel) {
+
+}
+
+void leftBorder(inout vec2 pos, inout vec2 vel) {
+
+}
+
+void main() {
+	// Current SSBO index
+	uint index = gl_GlobalInvocationID.x;
+
+	// Read position and velocity
+	vec2 pos = particles[index].pos;
+	vec2 vel = particles[index].vel;
+
+	// apply fraction
+	vel *= 1 - (0.7 * ubo.deltaT);
+
+	// Calculate new velocity depending on attraction point
+	float fac = 1.f / sqrt(ubo.count);
+	for(uint i = 0; i < ubo.count; ++i) {
+		vec2 a = mod(i, 2) == 0 ? ubo.attract[i / 2].xy : ubo.attract[i / 2].zw;
+		vel += fac * attractionFactor * ubo.deltaT * attraction(pos, a);
+	}
+
+	// Move by velocity
+	pos += vel * ubo.deltaT;
+
+	// border
+	if(pos.x < -1.0) {
+		leftBorder(pos, vel);
+	} else if(pos.x > 1.0) {
+		rightBorder(pos, vel);
+	}
+
+	if(pos.y < -1.0) {
+		topBorder(pos, vel);
+	} else if(pos.y > 1.0) {
+		bottomBorder(pos, vel);
+	}
+
+	// Write back
+	particles[index].pos = pos;
+	particles[index].vel = vel;
+}

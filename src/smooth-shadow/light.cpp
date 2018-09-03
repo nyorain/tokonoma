@@ -48,6 +48,8 @@ float lightCutoff(float r, float strength, float lightThresh) {
 }
 
 float lightBounds(float radius, float strength) {
+	return 5.f;
+
 	// if changed here, also change in geometry.glsl
 	constexpr auto lightThresh = 0.005;
 	return radius + lightCutoff(radius, strength, lightThresh);
@@ -307,7 +309,8 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		samplerInfo.addressModeU = vk::SamplerAddressMode::clampToBorder;
 		samplerInfo.addressModeV = vk::SamplerAddressMode::clampToBorder;
 		samplerInfo.addressModeW = vk::SamplerAddressMode::clampToBorder;
-		samplerInfo.borderColor = vk::BorderColor::intOpaqueWhite;
+		// samplerInfo.borderColor = vk::BorderColor::floatOpaqueWhite;
+		samplerInfo.borderColor = vk::BorderColor::intOpaqueBlack;
 		samplerInfo.mipLodBias = 0;
 		samplerInfo.anisotropyEnable = false;
 		samplerInfo.maxAnisotropy = 1.0;
@@ -315,7 +318,6 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		samplerInfo.compareOp = {};
 		samplerInfo.minLod = 0;
 		samplerInfo.maxLod = 0.25;
-		samplerInfo.borderColor = vk::BorderColor::intTransparentBlack;
 		samplerInfo.unnormalizedCoordinates = false;
 		sampler_ = {dev, samplerInfo};
 

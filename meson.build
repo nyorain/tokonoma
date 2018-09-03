@@ -77,6 +77,11 @@ executable('guitest',
 	'src/guitest/main.cpp',
 	dependencies: stage_dep)
 
+executable('particles', [
+		'src/particles/main.cpp',
+		particle_shaders,
+	], dependencies: stage_dep)
+
 executable('automaton', [
 	  'src/automaton/main.cpp',
 	  'src/automaton/automaton.cpp',

@@ -1,6 +1,9 @@
 #include "light.hpp"
 #include <stage/app.hpp>
 #include <stage/render.hpp>
+#include <stage/window.hpp>
+#include <stage/bits.hpp>
+#include <stage/transform.hpp>
 #include <vui/gui.hpp>
 #include <vui/dat.hpp>
 #include <nytl/mat.hpp>
@@ -18,29 +21,6 @@
 
 #include <shaders/fullscreen.vert.h>
 #include <shaders/light_pp.frag.h>
-
-template<typename T>
-void write(nytl::Span<std::byte>& span, T&& data) {
-	dlg_assert(span.size() >= sizeof(data));
-	std::memcpy(span.data(), &data, sizeof(data));
-	span = span.slice(sizeof(data), span.size() - sizeof(data));
-}
-
-// TODO: move somewhere else
-template<typename T>
-void scale(nytl::Mat4<T>& mat, nytl::Vec3<T> fac) {
-	for(auto i = 0; i < 3; ++i) {
-		mat[i][i] *= fac[i];
-	}
-}
-
-template<typename T>
-void translate(nytl::Mat4<T>& mat, nytl::Vec3<T> move) {
-	for(auto i = 0; i < 3; ++i) {
-		mat[i][3] += move[i];
-	}
-}
-
 
 class ShadowApp : public doi::App {
 public:
@@ -93,7 +73,7 @@ public:
 			light.color = static_cast<nytl::Vec4f>(blackbody(colDistr(rgen)));
 			light.color[3] = 1.f;
 			light.radius(radDistr(rgen));
-			light.strength(strengthDistr(rgen));
+			// light.strength(strengthDistr(rgen));
 		}
 
 		// post-process/combine
@@ -190,10 +170,10 @@ public:
 
 		auto map = pp_.ubo.memoryMap();
 		auto ptr = map.span();
-		write(ptr, windowToLevel_);
-		write(ptr, pp_.exposure);
-		write(ptr, pp_.gamma);
-		write(ptr, pp_.viewFac);
+		doi::write(ptr, windowToLevel_);
+		doi::write(ptr, pp_.exposure);
+		doi::write(ptr, pp_.gamma);
+		doi::write(ptr, pp_.viewFac);
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
@@ -223,44 +203,86 @@ public:
 			auto kc = appContext().keyboardContext();
 			if(kc->pressed(ny::Keycode::d)) {
 				currentLight_->position += nytl::Vec {fac, 0.f};
+				refreshMatrices();
 			}
 			if(kc->pressed(ny::Keycode::a)) {
 				currentLight_->position += nytl::Vec {-fac, 0.f};
+				refreshMatrices();
 			}
 			if(kc->pressed(ny::Keycode::w)) {
 				currentLight_->position += nytl::Vec {0.f, fac};
+				refreshMatrices();
 			}
 			if(kc->pressed(ny::Keycode::s)) {
 				currentLight_->position += nytl::Vec {0.f, -fac};
+				refreshMatrices();
 			}
 		}
 
 		App::redraw();
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
+	void refreshMatrices() {
+		nytl::Vec2ui size = App::window().size();
 
-		auto w = ev.size.x / float(ev.size.y);
-		auto h = 1.f;
-		auto fac = 10 / std::sqrt(w * w + h * h);
+		// the larger screen size is always maxSize
+		constexpr auto maxSize = 5.f;
+		float ratio = size.x / float(size.y);
+		nytl::Vec2f halfViewSize = {maxSize, maxSize};
 
-		auto s = nytl::Vec {
-			(2.f / (fac * w)),
-			(-2.f / (fac * h)), 1
-		};
+		if (ratio > 1.f) {
+			halfViewSize.y *= (1 / ratio);
+		} else {
+			halfViewSize.x *= ratio;
+		}
+
+		nytl::Vec2f scale;
+		scale.x = 1 / halfViewSize.x;
+		scale.y = -1 / halfViewSize.y;
 
 		viewTransform_ = nytl::identity<4, float>();
-		scale(viewTransform_, s);
-		translate(viewTransform_, {-1, 1, 0});
+		if (currentLight_) {
+			doi::translate(viewTransform_, -currentLight_->position);
+		}
 
+		doi::scale(viewTransform_, scale);
+
+		// inverse
 		using namespace nytl::vec::operators;
 		windowToLevel_ = nytl::identity<4, float>();
-		scale(windowToLevel_, nytl::Vec {
-			fac * w / ev.size.x, -fac * h / ev.size.y, 1.f});
-		translate(windowToLevel_, {0.f, fac * h, 0.f});
+		doi::scale(windowToLevel_, 2.f / size);
+		doi::translate(windowToLevel_, nytl::Vec2f {-1.f, -1.f});
+
+		doi::scale(windowToLevel_, 1.f / scale);
+		if (currentLight_) {
+			doi::translate(windowToLevel_, currentLight_->position);
+		}
 
 		updateView_ = true;
+	}
+
+	void resize(const ny::SizeEvent& ev) override {
+		App::resize(ev);
+		refreshMatrices();
+//
+// 		auto w = ev.size.x / float(ev.size.y);
+// 		auto h = 1.f;
+// 		auto fac = 10 / std::sqrt(w * w + h * h);
+//
+// 		auto s = nytl::Vec {
+// 			(2.f / (fac * w)),
+// 			(-2.f / (fac * h)), 1
+// 		};
+//
+// 		viewTransform_ = nytl::identity<4, float>();
+// 		scale(viewTransform_, s);
+// 		translate(viewTransform_, {-1, 1, 0});
+//
+// 		using namespace nytl::vec::operators;
+// 		windowToLevel_ = nytl::identity<4, float>();
+// 		scale(windowToLevel_, nytl::Vec {
+// 			fac * w / ev.size.x, -fac * h / ev.size.y, 1.f});
+// 		translate(windowToLevel_, {0.f, fac * h, 0.f});
 	}
 
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
@@ -280,6 +302,7 @@ public:
 			if(contains(light, pos)) {
 				currentLight_ = &light;
 				rerecord();
+				refreshMatrices();
 				return true;
 			}
 		}

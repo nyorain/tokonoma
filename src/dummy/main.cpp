@@ -23,7 +23,7 @@ public:
 
 int main(int argc, const char** argv) {
 	DummyApp app;
-	if(!app.init({"automaton", {*argv, std::size_t(argc)}})) {
+	if(!app.init({"dummy", {*argv, std::size_t(argc)}})) {
 		return EXIT_FAILURE;
 	}
 

@@ -37,18 +37,30 @@ void main() {
 	outColor.rgb = mapped;
 	outColor.a = 1.f;
 
+	// TODO: do we really have to do this for _every pixel_?
+	// probably possible to do this in vertex shader
 	// level position
 	vec2 pos = (ubo.windowToLevel * vec4(gl_FragCoord.xy, 0, 1)).xy;
 	vec2 uv = (1 / light.bounds) * (pos - light.position);
 	uv = 0.5 * (uv + vec2(1, 1));
 
-	float lightFac = (1 - texture(shadowTex, uv).r);
-	// lightFac *= (1 - (length(light.position - pos) / light.bounds));
+	// needed when not the whole screen is shadow mapped for pov
+	float lightFac = clamp(lightFalloff(light.position, pos, light.radius,
+		light.strength, vec3(1, 1, 1), 0.005, false), 0, 1);
+	// float lightFac = 1.f;
 
-	const vec3 p = ubo.viewFac * vec3(1, 0.5 / light.radius, 0.1 / (light.radius * light.radius));
-	lightFac *= clamp(lightFalloff(light.position, pos, light.radius,
-		0.8, p, 0, false), 0, 1);
-	outColor.rgb *= lightFac;
+	// float lightFac = 1 - (length(pos - light.position) / light.bounds);
+	// float lightFac = clamp(1 / (length(pos - light.position) / light.radius), 0, 1);
+	float shadowFac = texture(shadowTex, uv).r;
+	// outColor.rgb *= lightFac * (1 - shadowFac);
+	outColor.rgb = mix(outColor.rgb, lightFac * (1 - shadowFac) * outColor.rgb, ubo.viewFac);
+
+
+	// const vec3 p = ubo.viewFac * vec3(1, 0.5 / light.radius, 0.1 / (light.radius * light.radius));
+	// lightFac *= clamp(lightFalloff(light.position, pos, light.radius,
+	// 	0.8, p, 0, false), 0, 1);
+	// outColor.rgb *= lightFac;
+
 
 	/*
 	outColor.rgb *= pow(lightFac * (1 - shadowFac), ubo.viewFac);

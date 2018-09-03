@@ -63,8 +63,8 @@ protected:
 	LightSystem& system_;
 
 	bool recreate_ {};
-	float radius_;
-	float strength_;
+	float radius_ {0.1f};
+	float strength_ {1.f};
 	float bounds_;
 	unsigned bufSize_;
 

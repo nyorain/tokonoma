@@ -318,13 +318,11 @@ float shadowValue2(Circle light, vec2 point, vec2 segA, vec2 segB) {
 
 		// TODO: correct endpoint in all cases
 		// also in else if branch below
-		/*
 		if(!normed(maxFacs.x)) {
 			vec2 end = maxFacs.x > 1 ? segA : segB;
 		} else if(!normed(maxFacs.y)) {
 			vec2 end = maxFacs.x > minFacs.x ? segA : segB;
 		}
-		*/
 
 		Line pl = {end, end - point};
 		return intersectionFacs(pl, minMax).y;

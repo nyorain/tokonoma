@@ -40,6 +40,11 @@ shaders_src = [
 		['predprey.comp'],
 		['ant.comp'],
 	]],
+	['particle_shaders', [
+		['particle.vert'],
+		['particle.frag'],
+		['particle.comp'],
+	]],
 
 ]
 
