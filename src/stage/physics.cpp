@@ -5,7 +5,7 @@
 namespace doi {
 
 PhysicsSystem::PhysicsSystem() {
-	world.SetContactListener(&contactListener);
+	// world.SetContactListener(&contactListener);
 }
 
 void PhysicsSystem::ContactListener::BeginContact(b2Contact* pcontact) {

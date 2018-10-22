@@ -20,6 +20,7 @@ stage_src = [
 	'app.cpp',
 	'audio.cpp',
 	'physics.cpp',
+	'texture.cpp',
 ]
 
 stage_inc = [

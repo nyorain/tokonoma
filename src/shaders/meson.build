@@ -45,7 +45,9 @@ shaders_src = [
 		['particle.frag'],
 		['particle.comp'],
 	]],
-
+	['normals_shaders', [
+		['texn.frag'],
+	]],
 ]
 
 # build them

@@ -89,6 +89,12 @@ executable('automaton', [
 	  common_shaders,
 	], dependencies: stage_dep)
 
+executable('normals', [
+		'src/normals/main.cpp',
+		common_shaders,
+		normals_shaders,
+	], dependencies: stage_dep)
+
 # executable('pg',
 # 	'src/playground/main2.cpp',
 # 	dependencies: stage_dep)
