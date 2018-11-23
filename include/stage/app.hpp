@@ -100,12 +100,12 @@ protected:
 	};
 
 	struct {
-		bool vsync;
-		bool layers;
-		bool renderdoc;
-		unsigned samples;
-		std::variant<DevType, unsigned, const char*> phdev;
-	} args_;
+		bool vsync = true;
+		bool layers = true;
+		bool renderdoc = false;
+		unsigned samples = 1;
+		std::variant<DevType, unsigned, const char*> phdev = DevType::dgpu;
+	} args_ {};
 };
 
 } // namespace doi

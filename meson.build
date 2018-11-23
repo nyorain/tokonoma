@@ -95,6 +95,11 @@ executable('normals', [
 		normals_shaders,
 	], dependencies: stage_dep)
 
+executable('sviewer', [
+		'src/sviewer/main.cpp',
+		common_shaders,
+	], dependencies: stage_dep)
+
 # executable('pg',
 # 	'src/playground/main2.cpp',
 # 	dependencies: stage_dep)

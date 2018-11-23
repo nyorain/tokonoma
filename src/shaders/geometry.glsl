@@ -9,7 +9,7 @@ struct Circle {
 };
 
 struct LineCircleIntersection {
-	int num; // 0,1,2 
+	int num; // 0,1,2
 	vec2 a;
 	vec2 b;
 };

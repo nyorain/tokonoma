@@ -1,3 +1,6 @@
+# NOTE: the shaders in the sviewer/ subfolder are not compiled here,
+# but dynamically loaded (to allow reloading)
+
 # common/shader glsl files
 geom_glsl = files('geometry.glsl')
 hex_glsl = files('hex.glsl')
