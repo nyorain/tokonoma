@@ -27,34 +27,17 @@ struct b2MotorJointDef : public b2JointDef
 	b2MotorJointDef()
 	{
 		type = e_motorJoint;
-		linearOffset.SetZero();
-		angularOffset = 0.0f;
-		minForce = 0.0f;
-		maxForce = 1.0f;
-		maxTorque = 1.0f;
-		correctionFactor = 0.3f;
+		force = 1.0f;
 	}
 
 	/// Initialize the bodies and offsets using the current transforms.
 	void Initialize(b2Body* bodyA, b2Body* bodyB);
 
-	/// Position of bodyB minus the position of bodyA, in bodyA's frame, in meters.
-	b2Vec2 linearOffset;
-
-	/// The bodyB angle minus bodyA angle in radians.
-	float32 angularOffset;
-
-	/// The maximum motor force in N.
-	float32 maxForce;
-
-	/// The maximum motor force in N.
-	float32 minForce;
-
-	/// The maximum motor torque in N-m.
-	float32 maxTorque;
-
-	/// Position correction factor in the range [0,1].
-	float32 correctionFactor;
+	/// The motor force in N.
+	/// Can be negative to signal that the bodies should move away from
+	/// each other.
+	float32 force;
+	b2Vec2 direction;
 };
 
 /// A motor joint is used to control the relative motion
@@ -67,38 +50,23 @@ public:
 	b2Vec2 GetAnchorB() const override;
 
 	b2Vec2 GetReactionForce(float32 inv_dt) const override;
-	float32 GetReactionTorque(float32 inv_dt) const override;
+	float32 GetReactionTorque(float32) const override { return 0.f; }
 
 	/// Set/get the target linear offset, in frame A, in meters.
 	void SetLinearOffset(const b2Vec2& linearOffset);
 	const b2Vec2& GetLinearOffset() const;
 
-	/// Set/get the target angular offset, in radians.
-	void SetAngularOffset(float32 angularOffset);
-	float32 GetAngularOffset() const;
-
 	/// Set the maximum friction force in N.
-	void SetMaxForce(float32 force);
-	void SetMinForce(float32 force);
+	void SetForce(float32 force);
 
 	/// Get the maximum friction force in N.
-	float32 GetMaxForce() const;
-	float32 GetMinForce() const;
-
-	/// Set the maximum friction torque in N*m.
-	void SetMaxTorque(float32 torque);
-
-	/// Get the maximum friction torque in N*m.
-	float32 GetMaxTorque() const;
-
-	/// Set the position correction factor in the range [0,1].
-	void SetCorrectionFactor(float32 factor);
-
-	/// Get the position correction factor in the range [0,1].
-	float32 GetCorrectionFactor() const;
+	float32 GetForce() const;
 
 	/// Dump to b2Log
 	void Dump() override;
+
+	// TODO
+	b2Vec2 rejection;
 
 protected:
 
@@ -111,23 +79,19 @@ protected:
 	bool SolvePositionConstraints(const b2SolverData& data) override;
 
 	// Solver shared
-	b2Vec2 m_linearOffset;
-	float32 m_angularOffset;
+	b2Vec2 m_direction;
 	b2Vec2 m_linearImpulse;
-	float32 m_angularImpulse;
-	float32 m_maxForce;
-	float32 m_minForce;
-	float32 m_maxTorque;
-	float32 m_correctionFactor;
+	float32 m_force;
 
 	// Solver temp
+	b2Vec2 m_vA;
+	b2Vec2 m_vB;
 	int32 m_indexA;
 	int32 m_indexB;
 	b2Vec2 m_rA;
 	b2Vec2 m_rB;
 	b2Vec2 m_localCenterA;
 	b2Vec2 m_localCenterB;
-	b2Vec2 m_linearError;
 	float32 m_angularError;
 	float32 m_invMassA;
 	float32 m_invMassB;

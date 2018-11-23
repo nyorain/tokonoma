@@ -29,6 +29,8 @@ struct Metal {
 	b2MotorJoint* motor {};
 	bool push {};
 	rvg::Text label;
+
+	b2Vec2 goalVel {0.f, 0.f};
 };
 
 struct Player {
@@ -44,7 +46,7 @@ public:
 			return false;
 		}
 
-		// physics_.world.SetWarmStarting(false);
+		physics_.world.SetWarmStarting(false);
 
 		levelTransform_ = {rvgContext()};
 		labelPaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::red)};
@@ -56,7 +58,6 @@ public:
 
 		// player
 		rvg::DrawMode dm {true, 0.f};
-		dm.aaFill = true;
 		player_.shape = {rvgContext(), {1.f, 1.f}, 0.2f, dm};
 		b2CircleShape playerShape;
 		playerShape.m_radius = 0.2f;
@@ -82,9 +83,9 @@ public:
 			metals_.back().label = {rvgContext(), label, font, {}};
 		};
 
-		createMetal({2, 2}, {0.05, 0.05}, 2.f, "h");
-		createMetal({3, 2}, {0.05, 0.05}, 2.f, "j");
-		createMetal({2, 3}, {0.05, 0.05}, 2.f, "k");
+		createMetal({2, 2}, {0.05, 0.05}, 1.f, "h");
+		createMetal({3, 2}, {0.05, 0.05}, 1.f, "j");
+		createMetal({2, 1}, {0.05, 0.05}, 1.f, "k");
 		// createMetal({3, 3}, {1.f, 1.f}, 1.f);
 
 		// createMetal({3, 3}, {0.1, 0.1}, 0.8f);
@@ -146,6 +147,7 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
+		App::redraw();
 
 		// input
 		auto kc = appContext().keyboardContext();
@@ -197,6 +199,7 @@ public:
 			pp.x -= 20;
 			m.label.change()->position = pp;
 
+			/*
 			if(m.motor) {
 				// b2Vec2 bd = m.rigid.body->GetLinearVelocity() -
 					// player_.rigid.body->GetLinearVelocity();
@@ -208,72 +211,44 @@ public:
 
 				auto distance = m.rigid.body->GetPosition() - player_.rigid.body->GetPosition();
 				auto dn = distance;
-				dn.Normalize();
+				auto l = dn.Normalize();
 
-				// distance += m.rigid.body->GetLinearVelocity();
-				// distance -= player_.rigid.body->GetLinearVelocity();
-
-				auto fac = 1.f;
+				auto r = m.motor->rejection.Length();
+				fprintf(stderr, "rej: %f\n", r);
+				m.motor->SetForce(0.2 * r + 0.001 * std::exp(-0.5 * l));
 				if(m.push) {
-					m.motor->SetLinearOffset(distance + dn);
-					// m.motor->SetLinearOffset(distance);
+					m.motor->SetLinearOffset(distance);
 				} else {
-					m.motor->SetLinearOffset(distance - dn);
-					fac = -1.f;
-					// m.motor->SetLinearOffset(2 * distance);
+					m.motor->SetLinearOffset(-distance);
 				}
+			}
+			*/
 
-				auto d = distance.LengthSquared();
+			if (m.motor) {
+				auto vel = m.rigid.body->GetLinearVelocity();
+				auto diff = m.goalVel - vel;
+				(void) diff;
 
-				// inverse square would be like magnetic/gravitational force
-				// we use (1 / (dist + 1)) instead of (real) (1 / dist) since
-				// this will dampen the falloff. You can still push/pull
-				// things somewhat far away
+				auto distance = m.rigid.body->GetPosition() - player_.rigid.body->GetPosition();
+				auto dn = distance;
+				auto l = dn.Normalize();
 
-				// float force = 0.5 / (d + 1);
-				float force = 0.01 + 0.5 / (std::sqrt(d) + 0.25);
-				// float force = 0.01 + 0.1 / (std::pow(d, 0.25) + 0.5);
+				float fac = m.push ? 1.f : -1.f;
+				auto mass = m.rigid.body->GetMass();
+				auto im = m.rigid.body->GetType() == b2_dynamicBody ? (1 / mass) : 0.f;
+				auto force = std::exp(-0.02 * im) * std::exp(-0.1 * l);
 
+				// TODO: only do this when colliding
+				// or enable toi for small pushed/pulles metals?
+				force += 0.01 * diff.Length();
+				force = std::clamp(force, 0.0, 0.01);
 				auto f1 = -fac * force;
-				auto f2 = fac * force * player_.rigid.body->GetMass();
+				auto f2 = fac * force;
 
-				// alternative force ideas:
-				// 1) f1 = m1 * m2 * invDistance; f2 = -f1; -- gravity like
-				// 2) f1 = m2 * invDistance; f2 = m1 * invDistance
-				//    will make smaller objects even faster; larger ones even
-				//    slower. Looks somewhat nicer i think
-				// Currently the weight of the player is used as well
-				// but this probably conflicts with the original lore
+				player_.rigid.body->ApplyLinearImpulseToCenter(f1 * dn, true);
+				m.rigid.body->ApplyLinearImpulseToCenter(f2 * dn, true);
 
-				if(m.rigid.body->GetType() == b2_staticBody) {
-					// force *= std::sqrt(player_.rigid.body->GetMass());
-
-					// force *= player_.rigid.body->GetMass();
-				} else {
-					// force *= 10 * m.rigid.body->GetMass();
-					// force *= std::sqrt(player_.rigid.body->GetMass());
-					// force *= std::sqrt(m.rigid.body->GetMass());
-
-					// force *= player_.rigid.body->GetMass();
-					// force *= m.rigid.body->GetMass();
-
-					f1 *= m.rigid.body->GetMass();
-				}
-
-				// m.motor->SetMaxForce(force);
-				// m.motor->SetMinForce(force);
-				force = std::clamp(force, 0.f, 50.f);
-				dlg_debug(force);
-
-				// m.rigid.body->ApplyLinearImpulseToCenter(-fac * force * dn, true);
-				// player_.rigid.body->ApplyLinearImpulseToCenter(fac * force * dn, true);
-				// m.motor->SetCorrectionFactor(force);
-
-				// m.rigid.body->ApplyForceToCenter(-fac * force * dn, true);
-				// player_.rigid.body->ApplyForceToCenter(fac * force * dn, true);
-
-				player_.rigid.body->ApplyForceToCenter(f1 * dn, true);
-				m.rigid.body->ApplyForceToCenter(f2 * dn, true);
+				m.goalVel = m.rigid.body->GetLinearVelocity();
 			}
 		}
 
@@ -322,8 +297,8 @@ public:
 			auto& metal = metals_[it->second];
 
 			if(metal.motor) {
-				dlg_info("Destroyed joint");
-				bworld().DestroyJoint(metal.motor);
+				// dlg_info("Destroyed joint");
+				// bworld().DestroyJoint(metal.motor);
 				metal.motor = nullptr;
 
 				if(!ev.pressed) {
@@ -338,13 +313,16 @@ public:
 				return true;
 			}
 
-			b2MotorJointDef def;
-			def.Initialize(player_.rigid.body, metal.rigid.body);
-			def.maxTorque = 0.f;
-			def.correctionFactor = 0.f;
-			def.maxForce = 1.f;
-			// def.minForce = 0.1f;
-			def.collideConnected = false;
+			// b2MotorJointDef def;
+			// def.Initialize(player_.rigid.body, metal.rigid.body);
+			// // def.correctionFactor = 0.00001f;
+			// // def.maxTorque = 10.f;
+			// def.force = 0.f;
+			// // def.minForce = 0.1f;
+			// def.collideConnected = true;
+
+			metal.motor = (b2MotorJoint*) 1;
+			metal.goalVel = metal.rigid.body->GetLinearVelocity();
 
 			if(push_) {
 				*metal.paint.change() = pushPaint_;
@@ -353,7 +331,7 @@ public:
 			}
 
 			dlg_info("Created joint");
-			metal.motor = static_cast<b2MotorJoint*>(bworld().CreateJoint(&def));
+			// metal.motor = static_cast<b2MotorJoint*>(bworld().CreateJoint(&def));
 			metal.push = push_;
 
 			active_.insert(&metal);
