@@ -1,5 +1,6 @@
 #version 450
 
+// origin is top left
 layout(location = 0) out vec2 uv;
 
 // the vertex values to use

@@ -34,7 +34,7 @@ public:
 
 		auto& dev = vulkanDevice();
 		auto mem = dev.hostMemoryTypes();
-		ubo_ = {dev.bufferAllocator(), sizeof(float) * 3,
+		ubo_ = {dev.bufferAllocator(), sizeof(float) * 64, // should be 'nough
 			vk::BufferUsageBits::uniformBuffer, 0, mem};
 
 		auto renderBindings = {
@@ -84,13 +84,43 @@ public:
 		time_ += dt;
 		App::update(dt);
 		App::redraw(); // we always redraw; shaders are usually dynamic
+
+		auto kc = appContext().keyboardContext();
+		auto fac = dt;
+		if(kc->pressed(ny::Keycode::d)) {
+			camPos_ += nytl::Vec {fac, 0.f, 0.f};
+			App::redraw();
+		}
+		if(kc->pressed(ny::Keycode::a)) {
+			camPos_ += nytl::Vec {-fac, 0.f, 0.f};
+			App::redraw();
+		}
+		if(kc->pressed(ny::Keycode::w)) {
+			camPos_ += nytl::Vec {0.f, 0.f, -fac};
+			App::redraw();
+		}
+		if(kc->pressed(ny::Keycode::s)) {
+			camPos_ += nytl::Vec {0.f, 0.f, fac};
+			App::redraw();
+		}
+		if(kc->pressed(ny::Keycode::q)) { // up
+			camPos_ += nytl::Vec {0.f, fac, 0.f};
+			App::redraw();
+		}
+		if(kc->pressed(ny::Keycode::e)) { // down
+			camPos_ += nytl::Vec {0.f, -fac, 0.f};
+			App::redraw();
+		}
 	}
 
 	void updateDevice() override {
+		static constexpr auto align1 = 0.f;
 		auto map = ubo_.memoryMap();
 		auto span = map.span();
 		doi::write(span, mpos_);
 		doi::write(span, time_);
+		doi::write(span, align1);
+		doi::write(span, camPos_);
 
 		if(reload_) {
 			initPipe(glsl_);
@@ -166,6 +196,7 @@ protected:
 	nytl::Vec2f mpos_ {}; // normalized (0 to 1)
 	float time_ {}; // in seconds
 	bool reload_ {};
+	nytl::Vec3f camPos_ {};
 
 	vpp::ShaderModule vertShader_;
 	vpp::SubBuffer ubo_;
