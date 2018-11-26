@@ -1,9 +1,10 @@
 #version 450
 #extension GL_GOOGLE_include_directive : enable
 
-#include "geometry.glsl"
+#include "../geometry.glsl"
+#include "../noise.glsl"
 
-layout(location = 0) in vec2 uv;
+layout(location = 0) in vec2 inuv;
 layout(location = 0) out vec4 outcol;
 
 layout(set = 0, binding = 0) uniform UBO {
@@ -11,23 +12,22 @@ layout(set = 0, binding = 0) uniform UBO {
 	float time;
 } ubo;
 
-float curve(float val, float slope, vec2 uv) {
-	Line tangent = {vec2(uv.x, val), vec2(1, slope)};
-	Line normal = {uv, normalize(vec2(-slope, 1))};
-	float dst = intersectionFacs(tangent, normal).y;
-	return smoothstep(-0.1, 0, dst) - smoothstep(0, 0.1, dst);
+float pattern( in vec2 p, out vec2 q, out vec2 r) {
+	q.x = fbm(p + vec2(ubo.time,0.0));
+	q.y = fbm(p + vec2(5.2,1.3));
+
+	r.x = fbm(p + 4.0*q + vec2(1.7,9.2));
+	r.y = fbm(p + 4.0*q + vec2(8.3,2.8));
+
+	return fbm(p + 4.0 * r);
 }
 
 void main() {
-	// outcol = vec4(uv * ubo.mpos, 0.5 + 0.5 * sin(ubo.time), 1.0);
-	// outcol = vec4(1, 1, 1, 1);
-	// outcol *= smoothstep(0, 1, uv.x);
-	// outcol *= exp(-1 / uv.x);
-	// outcol *= sin(uv.x);
+	vec2 uv = 20 * inuv;
+	vec2 q, r;
+	float d = pattern(uv, q, r);
 
-	float x = 10 * uv.x;
-	float y = 3 * uv.y - 1.5;
-
-	outcol = vec4(curve(sin(x), cos(x), vec2(x, y)));
+	outcol = d * vec4(dot(q, q - r), dot(r, r), dot(q, q), 1.0);
+	outcol.rgb = pow(outcol.rgb, vec3(2.2));
 }
 
