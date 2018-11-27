@@ -19,9 +19,24 @@
 #include <nytl/vecOps.hpp>
 
 #include <cstdio>
+#include <cstdlib>
 #include <sys/wait.h>
 
 #include <shaders/fullscreen.vert.h>
+
+// Specification of the ubo in ./spec.md
+template<typename T>
+bool stoi(nytl::StringParam string, T& val, unsigned base = 10) {
+	char* end {};
+	auto str = string.c_str();
+	auto v = strtol(str, &end, base);
+	if(end == str) {
+		return false;
+	}
+
+	val = v;
+	return true;
+}
 
 class DummyApp : public doi::App {
 public:
@@ -67,12 +82,25 @@ public:
 			return true;
 		}
 
-		if(!ev.pressed) {
-			return false;
-		}
-
-		if(ev.keycode == ny::Keycode::r) {
-			reload_ = true;
+		if (ev.pressed) {
+			if(ev.utf8 == std::string("+\0")) {
+				++effect_;
+				dlg_info("Effect: {}", effect_);
+			} else if(effect_ && ev.utf8 == "-") {
+				--effect_;
+				dlg_info("Effect: {}", effect_);
+			} else if(ev.keycode == ny::Keycode::r) {
+				reload_ = true;
+			} else {
+				// check if its a number
+				unsigned num;
+				if (stoi(ev.utf8, num)) {
+					effect_ = num;
+					dlg_info("Effect: {}", effect_);
+				} else {
+					return false;
+				}
+			}
 		} else {
 			return false;
 		}
@@ -114,12 +142,12 @@ public:
 	}
 
 	void updateDevice() override {
-		static constexpr auto align1 = 0.f;
+		// static constexpr auto align = 0.f;
 		auto map = ubo_.memoryMap();
 		auto span = map.span();
 		doi::write(span, mpos_);
 		doi::write(span, time_);
-		doi::write(span, align1);
+		doi::write(span, effect_);
 		doi::write(span, camPos_);
 
 		if(reload_) {
@@ -193,9 +221,12 @@ public:
 
 protected:
 	const char* glsl_ = "svdummy";
+	bool reload_ {};
+
+	// glsl ubo vars
 	nytl::Vec2f mpos_ {}; // normalized (0 to 1)
 	float time_ {}; // in seconds
-	bool reload_ {};
+	std::uint32_t effect_ {};
 	nytl::Vec3f camPos_ {};
 
 	vpp::ShaderModule vertShader_;
