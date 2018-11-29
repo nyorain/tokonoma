@@ -100,6 +100,12 @@ executable('sviewer', [
 		common_shaders,
 	], dependencies: stage_dep)
 
+executable('ps', [
+		'src/ps/main.cpp',
+		ps_shaders,
+		common_shaders,
+	], dependencies: stage_dep)
+
 # executable('pg',
 # 	'src/playground/main2.cpp',
 # 	dependencies: stage_dep)

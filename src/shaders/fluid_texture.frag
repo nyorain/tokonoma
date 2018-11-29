@@ -27,32 +27,33 @@ void main() {
 	if(type.type == TypeForward) {
 		out_color.rgb = read.rgb;
 	} else if(type.type == TypeLightDensity) {
-		vec2 light = vec2(0.5, 0.5);
-		float radius = 0.1;
+		const float step = 0.001;
+		const float radius = 0.01;
+		const vec2 light = vec2(0.5, 0.5);
+		const float densityFac = 20.f;
+
+		// NOTE: alternative: ignore smoke over light
 		// vec2 diff = (in_uv - light) - radius;
-		vec2 diff = (in_uv - light);
-		// vec2 off = diff * radius / length(diff);
-		// diff -= off;
-		float l = max(length(diff), 0);
-		int samples = int(l * 250);
-		// int samples = 100;
-		// const float fac = 0.1;
-		// const float fac = 1 / samples;
-		const float fac = 0.5f;
+
+		vec2 diff = in_uv - light;
+		float l = length(diff);
+		diff /= l;
+		int samples = int(l / step);
+
 		float accum = 1.f;
-		// vec2 pos = light + off;
 		vec2 pos = light;
 		for(int i = 0; i < samples; ++i) {
-			// accum -= fac * pow(texture(tex, pos).r, 1.5);
-			accum -= fac * texture(tex, pos).r;
-			pos += diff / samples;
+			accum -= step * texture(tex, pos).r * densityFac;
+			pos += step * diff;
 		}
 
 		accum = clamp(accum, 0, 1);
-		float lightFac = lightFalloff(light, in_uv, radius, 1.0);
+		float lightFac = lightFalloff(light, in_uv, radius, 2.0,
+				vec3(0.1, 10, 20), 0.f, true);
 
-		out_color.rgb = vec3(texture(tex, in_uv).r);
-		out_color.rgb += vec3(1, 1, 0.5) * vec3(lightFac * accum);
+		// out_color.rgb = vec3(texture(tex, in_uv).r);
+		out_color.rgb = vec3(1, 0.9, 0.4) * vec3(lightFac * accum);
+		out_color.rgb = pow(out_color.rgb, vec3(2.2)); // gamma
 
 		// #2: to make smoke hide somke behind it
 		// out_color.rgb += vec3(lightFac);

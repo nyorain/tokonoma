@@ -56,7 +56,7 @@ void main() {
 	vec2 pos = particles[index].pos;
 	vec2 vel = particles[index].vel;
 
-	// apply fraction
+	// apply friction
 	vel *= 1 - (0.7 * ubo.deltaT);
 
 	// Calculate new velocity depending on attraction point

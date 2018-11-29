@@ -1,10 +1,10 @@
 #version 450
 #extension GL_GOOGLE_include_directive : enable
 
-#include "../math.glsl"
+#include "math.glsl"
 
-#include "../geometry.glsl"
-#include "../noise.glsl"
+#include "geometry.glsl"
+#include "noise.glsl"
 
 layout(location = 0) in vec2 inuv;
 layout(location = 0) out vec4 outcol;

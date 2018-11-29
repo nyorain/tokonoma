@@ -1,6 +1,6 @@
 // The random/noise/fbm functions return a number between 0 and 1
 float random(float v) {
-	return fract(sin(7.16294 * v) * 518412.142398574);
+	return fract(sin(7.16294 * v) * 51812.142574);
 }
 
 float random(vec2 v) {
@@ -49,6 +49,7 @@ float valueNoise(vec2 v) {
 	return mix(mix(a, c, u.y), mix(b, d, u.y), u.x);
 }
 
+// signed [-1, 1] gradient noise
 float sgradientNoise(vec2 v) {
 	vec2 i = floor(v);
 	vec2 f = fract(v);
@@ -63,6 +64,7 @@ float sgradientNoise(vec2 v) {
 	return mix(mix(a, c, u.y), mix(b, d, u.y), u.x);
 }
 
+// unsigned [0, 1] gradient noise
 float gradientNoise(vec2 v) {
 	// normalize it back to [0, 1]
 	return 0.5 + 0.5 * sgradientNoise(v);

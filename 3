@@ -1,0 +1,53 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "noise.glsl"
+
+// NOTE: care for alignment of struct.
+// even with std430 there may be a padding at the end of the struct (?)
+struct Particle {
+	vec2 pos;
+	vec2 vel;
+	float lifetime;
+	float age;
+};
+
+layout(local_size_x = 16) in;
+layout(std430, set = 0, binding = 0) buffer Particles {
+	Particle particles[];
+};
+
+layout(set = 0, binding = 1) uniform UBO {
+	float dt; // time delta in seconds
+	float time; // time in seconds
+} ubo;
+
+void main() {
+	// Current SSBO index; read particle
+	uint index = gl_GlobalInvocationID.x;
+	Particle p = particles[index];
+
+	// apply friction
+	// p.vel *= 1 - (0.7 * ubo.dt);
+
+	// p.pos += p.vel * ubo.dt;
+	p.lifetime -= ubo.dt;
+	p.age += ubo.dt;
+
+	if(p.lifetime < 0) {
+		// p.lifetime = 5 + 3 * random(1 + index + ubo.time + index * ubo.time);
+		p.lifetime = 5;
+		p.age = 0;
+		// p.pos.x = -1 + 2 * random(index + 52.43 + index * ubo.time);
+		// p.pos.y = -1 + 2 * random(index - 1.23 + index * ubo.time);
+		// p.vel = vec2(0);
+	}
+
+	// apply noised velocity
+	// p.vel.x += ubo.dt * sgradientNoise(32423 + 4325.23 * index * ubo.time * p.pos);
+	// p.vel.y += ubo.dt * sgradientNoise(65 + -2.34 * index * ubo.time * p.pos);
+
+	// Write back
+	particles[index] = p;
+}
+

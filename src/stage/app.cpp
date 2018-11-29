@@ -22,6 +22,9 @@
 #include <nytl/matOps.hpp>
 #include <nytl/scope.hpp>
 
+#include <dlg/dlg.hpp>
+#include <dlg/output.h>
+
 #include <argagg.hpp>
 #include <optional>
 #include <thread>
@@ -732,6 +735,50 @@ rvg::Transform& App::windowTransform() const {
 
 vk::SampleCountBits App::samples() const {
 	return impl_->samples;
+}
+
+// free util
+std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
+		std::string_view glslPath) {
+	static const auto spv = "live.frag.spv";
+	std::string cmd = "glslangValidator -V -o ";
+	cmd += spv;
+
+	// include dirs
+	cmd += " -I";
+	cmd += DOI_SHADER_SRC;
+
+	cmd += " -I";
+	cmd += DOI_SHADER_SRC;
+	cmd += "/include";
+
+	// input
+	cmd += " ";
+	cmd += DOI_SHADER_SRC;
+	cmd += "/";
+	cmd += glslPath;
+
+	dlg_debug(cmd);
+
+	// clearly mark glslang output
+	struct dlg_style style {};
+	style.style = dlg_text_style_bold;
+	style.fg = dlg_color_magenta;
+	style.bg = dlg_color_none;
+	dlg_styled_fprintf(stderr, style, ">>> Start glslang <<<%s\n",
+		dlg_reset_sequence);
+	int ret = std::system(cmd.c_str());
+	fflush(stdout);
+	fflush(stderr);
+	dlg_styled_fprintf(stderr, style, ">>> End glslang <<<%s\n",
+		dlg_reset_sequence);
+
+	if (WEXITSTATUS(ret) != 0) { // TODO: only working for posix
+		dlg_error("Failed to compile shader {}", glslPath);
+		return {};
+	}
+
+	return {{dev, spv}};
 }
 
 } // namespace doi

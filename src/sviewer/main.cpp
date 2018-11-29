@@ -2,6 +2,7 @@
 #include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/bits.hpp>
+#include <stage/util.hpp>
 #include <argagg.hpp>
 
 #include <vpp/device.hpp>
@@ -24,21 +25,9 @@
 
 #include <shaders/fullscreen.vert.h>
 
-// Specification of the ubo in ./spec.md
-template<typename T>
-bool stoi(nytl::StringParam string, T& val, unsigned base = 10) {
-	char* end {};
-	auto str = string.c_str();
-	auto v = strtol(str, &end, base);
-	if(end == str) {
-		return false;
-	}
+// Specification of the frag shader ubo in ./spec.md
 
-	val = v;
-	return true;
-}
-
-class DummyApp : public doi::App {
+class ViewerApp : public doi::App {
 public:
 	static constexpr auto cacheFile = "sviewer.cache";
 
@@ -73,8 +62,7 @@ public:
 			update.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 		}
 
-		initPipe(glsl_);
-		return true;
+		return initPipe(glsl_);
 	}
 
 	bool key(const ny::KeyEvent& ev) override {
@@ -94,7 +82,7 @@ public:
 			} else {
 				// check if its a number
 				unsigned num;
-				if (stoi(ev.utf8, num)) {
+				if (doi::stoi(ev.utf8, num)) {
 					effect_ = num;
 					dlg_info("Effect: {}", effect_);
 				} else {
@@ -170,24 +158,15 @@ public:
 		mpos_ = nytl::Vec2f(ev.position) / window().size();
 	}
 
-	void initPipe(std::string_view glslFile) {
-		// TODO: handle error (return bool?)
-		static const auto spv = "sviewer.frag.spv";
-		std::string cmd = "glslangValidator -V -o ";
-		cmd += spv;
-		cmd += " -I../src/shaders/ ../src/shaders/sviewer/";
-		cmd += glslFile;
-		cmd += ".frag";
-
-		std::fprintf(stderr, ">>> Beginning shader compilation\n");
-		int ret = std::system(cmd.c_str());
-		if (WEXITSTATUS(ret) != 0) {
-			dlg_error("Failed to compile shader");
-			return;
+	bool initPipe(std::string_view glslFile) {
+		auto name = "sviewer/" + std::string(glslFile);
+		name += ".frag";
+		if(auto mod = doi::loadShader(vulkanDevice(), name)) {
+			initPipe(std::move(*mod));
+			return true;
+		} else {
+			return false;
 		}
-		std::fprintf(stderr, ">>> Shader compilation successful\n");
-
-		initPipe({vulkanDevice(), spv});
 	}
 
 	void initPipe(vpp::ShaderModule frag) {
@@ -239,8 +218,8 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	DummyApp app;
-	if(!app.init({"dummy", {*argv, std::size_t(argc)}})) {
+	ViewerApp app;
+	if(!app.init({"shader-viewer", {*argv, std::size_t(argc)}})) {
 		return EXIT_FAILURE;
 	}
 

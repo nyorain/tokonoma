@@ -1,9 +1,17 @@
 # NOTE: the shaders in the sviewer/ subfolder are not compiled here,
 # but dynamically loaded (to allow reloading)
+add_project_arguments(
+	'-DDOI_SHADER_SRC="@0@"'.format(meson.current_source_dir()),
+	language: 'cpp')
 
 # common/shader glsl files
-geom_glsl = files('geometry.glsl')
-hex_glsl = files('hex.glsl')
+include_glsl = files(
+  'include/geometry.glsl',
+  'include/hex.glsl',
+  'include/math.glsl',
+  'include/color.glsl',
+  'include/noise.glsl',
+)
 
 # shader specifications
 # contains multiple shader groups, specified like this:
@@ -19,9 +27,9 @@ shaders_src = [
 	]],
 	['smooth_shadow_shaders', [
 		['light.vert'],
-		['light.frag', geom_glsl],
-		['shadow.vert', geom_glsl],
-		['shadow.frag', geom_glsl],
+		['light.frag', include_glsl],
+		['shadow.vert', include_glsl],
+		['shadow.frag', include_glsl],
 		['light_pp.frag'],
 	]],
 	['pursuers_shaders', [
@@ -38,8 +46,8 @@ shaders_src = [
 		['fluid_texture.frag'],
 	]],
 	['automaton_shaders', [
-		['hex.vert', hex_glsl],
-		['hex_line.vert', hex_glsl],
+		['hex.vert', include_glsl],
+		['hex_line.vert', include_glsl],
 		['predprey.comp'],
 		['ant.comp'],
 	]],
@@ -51,9 +59,15 @@ shaders_src = [
 	['normals_shaders', [
 		['texn.frag'],
 	]],
+	['ps_shaders', [
+		['ps.vert'],
+		['ps.frag'],
+		# ['ps.comp'], # always dynamically compiled
+	]],
 ]
 
 # build them
+shader_inc_dir = meson.current_source_dir() + '/include'
 glslang = find_program('glslangValidator')
 foreach shader_group : shaders_src
 	group_name = shader_group[0]
@@ -64,7 +78,10 @@ foreach shader_group : shaders_src
 		name = shader.get(2, file)
 
 		data_name = name.underscorify() + '_data'
-		args = [glslang, '-V', '@INPUT@', '-o', '@OUTPUT@', '--vn', data_name]
+		args = [glslang, '-V', '@INPUT@',
+			'-o', '@OUTPUT@',
+			'--vn', data_name,
+			'-I' + shader_inc_dir]
 		args += shader.get(3, [])
 
 		header = custom_target(
