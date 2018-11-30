@@ -37,11 +37,10 @@ public:
 		funPaint_= {rvgContext(), rvg::colorPaint(rvg::Color::white)};
 
 		auto dm = rvg::DrawMode {false, 0.05f};
-		dm.aaStroke = true;
 		funShape_ = {rvgContext(), {}, dm};
 
 		fun([&](auto x) {
-			return nytl::Vec2f {x, /*std::abs(*/x*std::sin(x) + 2 /*)*/};
+			return nytl::Vec2f {x, 5 * std::sin((x - 6.f)) / x};
 		});
 
 		player_.paint = {rvgContext(), rvg::colorPaint(rvg::Color::blue)};
@@ -79,6 +78,7 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
+		App::redraw();
 		physics_.update(dt);
 
 		auto& kc = *appContext().keyboardContext();

@@ -100,6 +100,10 @@ executable('sviewer', [
 		common_shaders,
 	], dependencies: stage_dep)
 
+executable('curves', [
+		'src/curves/main.cpp',
+	], dependencies: stage_dep)
+
 executable('ps', [
 		'src/ps/main.cpp',
 		ps_shaders,
