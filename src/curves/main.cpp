@@ -49,7 +49,10 @@ public:
 		App::redraw();
 
 		time_ += delta;
-		amp_ *= std::exp(-0.5f * delta);
+		// amp_ *= std::exp(-0.2 * delta);
+		amp_ += delta * ampVel_;
+		ampVel_ *= std::exp(-delta); // friction
+		ampVel_ += -2.f * delta * amp_; // try to bring amp_ down
 		updateCurve();
 	}
 
@@ -58,13 +61,14 @@ public:
 		using namespace nytl::vec::cw::operators;
 		auto normed = ev.position / nytl::Vec2f(window().size());
 		auto pos = 2 * normed - nytl::Vec{1.f, 1.f};
-		auto dir = b_.center() - a_.center();
-		auto normal = doi::rhs::rnormal(dir); // lhs::lnomal
+		auto dir = b_.center() - a_.center(); auto normal = doi::rhs::rnormal(dir); // lhs::lnomal
 		auto diff = a_.center() - pos;
 		a_.change()->center = pos;
 
 		auto dot = nytl::dot(diff, normal);
+		ampVel_ -= 0.5 * dot;
 		amp_ += 0.4 * dot;
+		amp_ = std::clamp(amp_, -1.5f, 1.5f);
 	}
 
 	template<typename F>
@@ -90,29 +94,40 @@ public:
 		using nytl::constants::pi;
 		auto dist = nytl::distance(a_.center(), b_.center());
 		// float freq = 2 + dist * (5 + std::sin(0.5 * time_));
-		float freq = (4 + dist * std::sin(0.5 * time_));
+		// float freq = (4 + amp_ * std::sin(0.5 * time_));
+		// float freq = -1.f * std::clamp(amp_, -1.f, 1.f);
+		float freq = -amp_ + 0.25 * std::sin(0.5 * time_);
 		// float freq = 4 * dist;
 		// auto amp = 0.1 + 0.2 * std::cos(time_);
 		// auto amp = 0.2;
-		auto amp = amp_;
+		// auto amp = amp_;
+		// auto amp = 1.f / (1.f + 3 * amp_);
+		float amp = 0.2f + 0.05 * std::cos(0.34 * time_);
 		auto f = [&](float x) -> float {
-			auto y = pi * (freq * x - 1);
-			return amp * std::sin(y) / y * std::pow(std::abs(x - 1), 0.7);
+			auto y = pi * (freq * x);
+			// return amp * (std::sin(y) / y) * std::pow((x - 1) * (x - 1), 0.3);
+			// return amp * (std::cos(y) / y - std::sin(y) / (y * y)) * std::pow((x - 1) * (x - 1), 0.3);
+			// return amp * (std::cos(y) / y - std::sin(y) / (y * y)) * (x - 1);
+			return amp * (std::sin(y)) * (x - 1);
 		};
 
-		auto fi = [&](float offset, float scale) {
+		// NOTE: scale their frequency with the distance, otherwise it
+		// makes them look elastic
+		auto fi = [&](float offset, float scaleFreq, float scaleAmp) {
 			return [=](float x) -> float {
-				float freq2 = 5 + 2 * std::cos(offset + scale * time_);
+				float freq2 = (12 + 4 * std::sin(offset + scaleFreq * time_)) * dist;
 				auto y = pi * (freq2 * x + 1);
-				float a = 0.5 * (1 + amp) * (0.5 + 0.1 * std::sin(time_));
-				return f(x) + a * (std::sin(y) / y) * std::abs(x - 1);
+				// float a = 0.1 + (0.1 + amp) * (0.5 + 0.1 * std::sin(0.3 * time_));
+				float a = 0.03 + 0.01 * std::cos(offset - 0.93 * scaleAmp * time_);
+				a *= 5.f;
+				return f(x) + a * (std::sin(y) / y) * std::pow(std::abs(x - 1), 0.1);
 			};
 		};
 
 		curve_.change()->points = discretize(f);
-		curve2_.change()->points = discretize(fi(0, 1), 0.05);
-		curve3_.change()->points = discretize(fi(1.2, 0.23), 0.05);
-		curve4_.change()->points = discretize(fi(-4.2, -1.32), 0.05);
+		curve2_.change()->points = discretize(fi(0, 0.19, 0.2), 0.01);
+		curve3_.change()->points = discretize(fi(0, -0.19, 0.1), 0.01);
+		curve4_.change()->points = discretize(fi(-4.2, -0.32, 0.06), 0.01);
 	}
 
 protected:
@@ -127,6 +142,7 @@ protected:
 
 	double time_ {};
 	float amp_ {};
+	float ampVel_ {};
 };
 
 int main(int argc, const char** argv) {
