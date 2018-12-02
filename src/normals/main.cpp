@@ -26,7 +26,7 @@ public:
 
 		auto& dev = vulkanDevice();
 		auto mem = dev.hostMemoryTypes();
-		ubo_ = {dev.bufferAllocator(), sizeof(float) * 3,
+		ubo_ = {dev.bufferAllocator(), sizeof(float) * 4,
 			vk::BufferUsageBits::uniformBuffer, 0, mem};
 
 		diffuse_ = doi::loadTexture(dev, "diffuse3.png");
@@ -94,6 +94,7 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
+		App::redraw();
 
 		auto fac = dt;
 		auto kc = appContext().keyboardContext();
@@ -123,15 +124,19 @@ public:
 			lightPos_ += nytl::Vec {0.f, 0.f, -fac};
 			App::redraw();
 		}
+
+		time_ += dt;
 	}
 
 	void updateDevice() override {
 		auto map = ubo_.memoryMap();
 		auto span = map.span();
 		doi::write(span, lightPos_);
+		doi::write(span, time_);
 	}
 
 protected:
+	float time_ {};
 	vpp::Sampler sampler_;
 	vpp::SubBuffer ubo_; // light position
 	vpp::ViewableImage diffuse_;
