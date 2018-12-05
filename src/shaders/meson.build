@@ -64,6 +64,10 @@ shaders_src = [
 		['ps.frag'],
 		# ['ps.comp'], # always dynamically compiled
 	]],
+	['sentient_shaders', [
+		['sentient.vert'],
+		['sentient.frag'],
+	]],
 ]
 
 # build them

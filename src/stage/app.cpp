@@ -634,16 +634,8 @@ void App::addSemaphore(vk::Semaphore seph, vk::PipelineStageFlags waitDst) {
 void App::resize(const ny::SizeEvent& ev) {
 	resize_ = true;
 
-	// non-window but scaled normal cords
-	// e.g. used for a level view
-	/*
-	auto w = ev.size.x / float(ev.size.y);
-	auto h = 1.f;
-	auto fac = 10 / std::sqrt(w * w + h * h);
-	auto s = nytl::Vec { (2.f / (fac * w)), (-2.f / (fac * h)), 1 };
-	*/
-
-	// TODO: currently top left (for mists)
+	// TODO: probably best to remove this completetly
+	// NOTE: currently top left (for mists)
 	// window-coords, origin bottom left
 	auto s = nytl::Vec{ 2.f / ev.size.x, 2.f / ev.size.y, 1};
 	auto transform = nytl::identity<4, float>();

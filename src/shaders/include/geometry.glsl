@@ -105,7 +105,7 @@ vec2 intersectionFacs(Line a, Line b) {
 // An opacity (first component) <0 means that it cannot be performed from the
 // vertex shader and should be computed in the fragment shader,
 // otherwise it can be used to interpolation.
-// The second component of it means irrelevance.
+// The second component of it is the irrelevance (used for 2point interpolation)
 struct ShadowVertex {
 	vec2 pos;
 	vec2 opacity;
@@ -130,6 +130,7 @@ ShadowVertex smoothShadowVertex(int vertexID, vec2 segA, vec2 segB,
 	const bool alwaysFullscreen = false; // debugging
 
 	// TODO: more efficient check (without normalize/sqrt)
+	// special case (?)
 	if(alwaysFullscreen || distance(light.center, line) < light.radius) {
 		// test if line intersects light
 		float pf = clamp(projectFac(light.center, line), 0, 1);

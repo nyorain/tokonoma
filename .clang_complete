@@ -15,6 +15,7 @@
 -I./build/src/
 -I./external/include
 -I./src
+-I./build/src/shaders/
 -Wextra
 -Wall
 -Wpedantic

@@ -170,7 +170,8 @@ public:
 
 		auto map = pp_.ubo.memoryMap();
 		auto ptr = map.span();
-		doi::write(ptr, windowToLevel_);
+		auto ws = App::window().size();
+		doi::write(ptr, doi::windowToLevelMatrix(ws, levelView_));
 		doi::write(ptr, pp_.exposure);
 		doi::write(ptr, pp_.gamma);
 		doi::write(ptr, pp_.viewFac);
@@ -223,40 +224,14 @@ public:
 	}
 
 	void refreshMatrices() {
-		nytl::Vec2ui size = App::window().size();
-
-		// the larger screen size is always maxSize
-		constexpr auto maxSize = 5.f;
-		float ratio = size.x / float(size.y);
-		nytl::Vec2f halfViewSize = {maxSize, maxSize};
-
-		if (ratio > 1.f) {
-			halfViewSize.y *= (1 / ratio);
-		} else {
-			halfViewSize.x *= ratio;
+		nytl::Vec2ui wsize = App::window().size();
+		levelView_.size = doi::levelViewSize(wsize.x / float(wsize.y), 5.f);
+		if(currentLight_) {
+			levelView_.center = currentLight_->position;
 		}
 
-		nytl::Vec2f scale;
-		scale.x = 1 / halfViewSize.x;
-		scale.y = -1 / halfViewSize.y;
-
-		viewTransform_ = nytl::identity<4, float>();
-		if (currentLight_) {
-			doi::translate(viewTransform_, -currentLight_->position);
-		}
-
-		doi::scale(viewTransform_, scale);
-
-		// inverse
-		using namespace nytl::vec::operators;
-		windowToLevel_ = nytl::identity<4, float>();
-		doi::scale(windowToLevel_, 2.f / size);
-		doi::translate(windowToLevel_, nytl::Vec2f {-1.f, -1.f});
-
-		doi::scale(windowToLevel_, 1.f / scale);
-		if (currentLight_) {
-			doi::translate(windowToLevel_, currentLight_->position);
-		}
+		viewTransform_ = doi::levelMatrix(levelView_);
+		dlg_info(viewTransform_);
 
 		updateView_ = true;
 	}
@@ -264,25 +239,6 @@ public:
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
 		refreshMatrices();
-//
-// 		auto w = ev.size.x / float(ev.size.y);
-// 		auto h = 1.f;
-// 		auto fac = 10 / std::sqrt(w * w + h * h);
-//
-// 		auto s = nytl::Vec {
-// 			(2.f / (fac * w)),
-// 			(-2.f / (fac * h)), 1
-// 		};
-//
-// 		viewTransform_ = nytl::identity<4, float>();
-// 		scale(viewTransform_, s);
-// 		translate(viewTransform_, {-1, 1, 0});
-//
-// 		using namespace nytl::vec::operators;
-// 		windowToLevel_ = nytl::identity<4, float>();
-// 		scale(windowToLevel_, nytl::Vec {
-// 			fac * w / ev.size.x, -fac * h / ev.size.y, 1.f});
-// 		translate(windowToLevel_, {0.f, fac * h, 0.f});
 	}
 
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
@@ -294,10 +250,8 @@ public:
 			return true;
 		}
 
-		auto pos4 = nytl::Vec4f(ev.position);
-		pos4[3] = 1.f;
-
-		auto pos = nytl::Vec2f(windowToLevel_ * pos4);
+		auto pos = doi::windowToLevel(App::window().size(),
+			levelView_, ev.position);
 		for(auto& light : lightSystem().lights()) {
 			if(contains(light, pos)) {
 				currentLight_ = &light;
@@ -325,8 +279,8 @@ protected:
 	vpp::TrDs viewDs_;
 	vpp::Sampler sampler_;
 
+	doi::LevelView levelView_ {};
 	nytl::Mat4f viewTransform_;
-	nytl::Mat4f windowToLevel_;
 
 	struct {
 		vpp::SubBuffer ubo;
