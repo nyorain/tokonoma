@@ -22,7 +22,7 @@
 #include <shaders/fullscreen.vert.h>
 #include <shaders/light_pp.frag.h>
 
-class ShadowApp : public doi::App {
+class SSSApp : public doi::App {
 public:
 	bool init(const doi::AppSettings& settings) override {
 		if(!App::init(settings)) {
@@ -55,7 +55,6 @@ public:
 		light.position = {4.f, 1.5f};
 		light.color = static_cast<nytl::Vec4f>(blackbody(3700));
 		light.color[3] = 1.f;
-		light.radius(0.25);
 		light.strength(1.f);
 		currentLight_ = &light;
 
@@ -72,8 +71,6 @@ public:
 			light.position = {posDistr(rgen), posDistr(rgen)};
 			light.color = static_cast<nytl::Vec4f>(blackbody(colDistr(rgen)));
 			light.color[3] = 1.f;
-			light.radius(radDistr(rgen));
-			dlg_info(light.position);
 			// light.strength(strengthDistr(rgen));
 		}
 
@@ -226,12 +223,13 @@ public:
 
 	void refreshMatrices() {
 		nytl::Vec2ui wsize = App::window().size();
-		levelView_.size = doi::levelViewSize(wsize.x / float(wsize.y), 10.f);
+		levelView_.size = doi::levelViewSize(wsize.x / float(wsize.y), 5.f);
 		if(currentLight_) {
 			levelView_.center = currentLight_->position;
 		}
 
 		viewTransform_ = doi::levelMatrix(levelView_);
+		dlg_info(viewTransform_);
 
 		updateView_ = true;
 	}
@@ -301,8 +299,8 @@ protected:
 
 // main
 int main(int argc, const char** argv) {
-	ShadowApp app;
-	if(!app.init({"smooth_shadow", {*argv, std::size_t(argc)}})) {
+	SSSApp app;
+	if(!app.init({"subsurface scattering", {*argv, std::size_t(argc)}})) {
 		return EXIT_FAILURE;
 	}
 

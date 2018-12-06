@@ -135,6 +135,7 @@ ShadowVertex smoothShadowVertex(int vertexID, vec2 segA, vec2 segB,
 		// test if line intersects light
 		float pf = clamp(projectFac(light.center, line), 0, 1);
 		vec2 diff2 = (line.point + pf * line.dir) - light.center;
+		// TODO: second condition (?)
 		if(alwaysFullscreen || dot(diff2, diff2) < light.radius * light.radius) {
 			// fullscreen... ?
 			const vec2[] values = {

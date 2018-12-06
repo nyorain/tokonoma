@@ -68,6 +68,10 @@ shaders_src = [
 		['sentient.vert'],
 		['sentient.frag'],
 	]],
+	['sss_shaders', [
+		['sss_shadow.vert'],
+		['sss_shadow.frag'],
+	]],
 ]
 
 # build them

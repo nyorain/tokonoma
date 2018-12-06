@@ -12,8 +12,8 @@
 #include <shaders/light.frag.h>
 #include <shaders/light.vert.h>
 
-#include <shaders/shadow.frag.h>
-#include <shaders/shadow.vert.h>
+#include <shaders/sss_shadow.frag.h>
+#include <shaders/sss_shadow.vert.h>
 
 constexpr auto lightUboSize = sizeof(float) * (4 + 2 + 1 + 1 + 1);
 
@@ -348,8 +348,8 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		lightPipeLayout_ = {dev, plInfo};
 
 		// pipeline
-		auto shadowVertex = vpp::ShaderModule(dev, shadow_vert_data);
-		auto shadowFragment = vpp::ShaderModule(dev, shadow_frag_data);
+		auto shadowVertex = vpp::ShaderModule(dev, sss_shadow_vert_data);
+		auto shadowFragment = vpp::ShaderModule(dev, sss_shadow_frag_data);
 
 		auto lightVertex = vpp::ShaderModule(dev, light_vert_data);
 		auto lightFragment = vpp::ShaderModule(dev, light_frag_data);

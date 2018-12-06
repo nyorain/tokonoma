@@ -19,7 +19,7 @@ layout(set = 1, binding = 0) uniform Light {
 	vec2 position;
 	float radius;
 	float _strength;
-	float bounds;
+	float bounds; // size of shadow map in world coords
 } light;
 
 Circle lightCircle() {

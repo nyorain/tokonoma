@@ -8,6 +8,7 @@ layout(location = 1) in vec2 inPointA;
 layout(location = 2) in vec2 inPointB;
 layout(location = 3) in float inOpacity;
 layout(location = 4) in vec2 inValue;
+
 layout(location = 0) out float outColor;
 
 layout(set = 1, binding = 0) uniform Light {

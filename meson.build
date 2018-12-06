@@ -56,6 +56,7 @@ subdir('src/fluids')
 subdir('src/mists')
 subdir('src/fun')
 subdir('src/sentient')
+subdir('src/sss')
 
 # inline (for small projects)
 executable('pendulum',

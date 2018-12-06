@@ -35,7 +35,7 @@ void circleTriStrip(nytl::Span<std::byte>& buf, float radius,
 
 class Bulb {
 public:
-	constexpr auto pointCount =
+	// constexpr auto pointCount =
 
 public:
 	void init(vpp::Device& dev, vk::RenderPass rp, vk::SampleCountBits samples) {
@@ -78,6 +78,7 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) {
+		(void) cb;
 	}
 
 	void update(double) {

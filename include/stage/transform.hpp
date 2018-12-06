@@ -197,8 +197,8 @@ nytl::Mat4f levelMatrix(const LevelView& view, bool yup = true) {
 	// normalized window coordinates ([-1, 1])
 	auto mat = nytl::identity<4, float>();
 	nytl::Vec2f scale = {
-		1.f / view.size.x,
-		(yup ? -1.f : 1.f) / view.size.y,
+		2.f / view.size.x,
+		(yup ? -2.f : 2.f) / view.size.y,
 	};
 
 	// scale
@@ -249,12 +249,11 @@ nytl::Mat4f windowToLevelMatrix(nytl::Vec2ui windowSize,
 	auto mat = nytl::identity<4, float>();
 	auto vs = nytl::Vec2f {view.size.x, yup ? -view.size.y : view.size.y};
 
-	mat[0][0] = 2.f * vs.x / windowSize.x;
-	mat[1][1] = 2.f * vs.y / windowSize.y;
+	mat[0][0] = vs.x / windowSize.x;
+	mat[1][1] = vs.y / windowSize.y;
 
-	// TODO
-	mat[0][3] = view.center.x - vs.x;
-	mat[1][3] = view.center.y - vs.y;
+	mat[0][3] = view.center.x - 0.5f * vs.x;
+	mat[1][3] = view.center.y - 0.5f * vs.y;
 
 	return mat;
 }
@@ -263,8 +262,8 @@ nytl::Vec2f windowToLevel(nytl::Vec2ui windowSize,
 		const LevelView& view, nytl::Vec2i input, bool yup = true) {
 	auto vs = nytl::Vec2f {view.size.x, yup ? -view.size.y : view.size.y};
 	return {
-		2.f * (input.x / float(windowSize.x) - 1.f) * vs.x + view.center.x,
-		2.f * (input.y / float(windowSize.y) - 1.f) * vs.y + view.center.y,
+		(input.x / float(windowSize.x) - 0.5f) * vs.x + view.center.x,
+		(input.y / float(windowSize.y) - 0.5f) * vs.y + view.center.y,
 	};
 }
 
