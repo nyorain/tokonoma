@@ -67,7 +67,7 @@ public:
 		std::uniform_real_distribution<float> radDistr(0.008f, 0.3f);
 		std::uniform_real_distribution<float> strengthDistr(0.2f, 1.5f);
 
-		for(auto i = 0u; i < 2u; ++i) {
+		for(auto i = 0u; i < 2u && false; ++i) {
 			auto& light = lightSystem().addLight();
 			light.position = {posDistr(rgen), posDistr(rgen)};
 			light.color = static_cast<nytl::Vec4f>(blackbody(colDistr(rgen)));

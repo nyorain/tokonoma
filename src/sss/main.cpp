@@ -223,7 +223,7 @@ public:
 
 	void refreshMatrices() {
 		nytl::Vec2ui wsize = App::window().size();
-		levelView_.size = doi::levelViewSize(wsize.x / float(wsize.y), 5.f);
+		levelView_.size = doi::levelViewSize(wsize.x / float(wsize.y), 10.f);
 		if(currentLight_) {
 			levelView_.center = currentLight_->position;
 		}

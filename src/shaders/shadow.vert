@@ -14,6 +14,9 @@ layout(location = 2) out vec2 outPointB;
 layout(location = 3) out float outOpacity;
 layout(location = 4) out vec2 outValue;
 
+// TODO
+layout(location = 5) out float outDistFac; // for sss
+
 layout(set = 1, binding = 0) uniform Light {
 	vec4 _color;
 	vec2 position;
@@ -40,6 +43,9 @@ void main() {
 	outOpacity = abs(inOpacity);
 	outPos = vert.pos;
 	outValue = vert.opacity;
+
+	// TODO: sss
+	outDistFac = swap ? 1.f : -1.f;
 
 	float scale = 1 / light.bounds;
 	gl_Position.xy = scale * (outPos - light.position);

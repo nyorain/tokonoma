@@ -25,13 +25,13 @@ void main() {
 	// pow(1/ 2) here has the opposite effect
 	// float shadowFac = pow(texture(shadowTex, inUV).r, 2.2);
 	// float shadowFac = pow(texture(shadowTex, inUV).r, 1 / 2.2);
-	float shadowFac = texture(shadowTex, inUV).r;
+	float shadowFac = clamp(texture(shadowTex, inUV).g, 0.0, 1.0);
 	outColor = light.color;
-	outColor.a *= lightFac;
+	outColor.rgb *= lightFac;
 
 	// - different segment types (effects can also be combined) -
 	// 1. normal opaque segment
-	outColor.a *= (1 - shadowFac);
+	outColor.rgb *= (1 - shadowFac);
 
 	// 2. glass/filter (could be in any color)
 	// outColor.rg *= (1 - shadowFac);
@@ -64,4 +64,11 @@ void main() {
 	// debug methods
 	/* outColor = clamp(outColor, 0.01, 1); */
 	// outColor = vec4(1, 1, 1, 1);
+	
+	// TODO: should not be here
+	// work on sss effect
+	float sssFac = clamp(texture(shadowTex, inUV).r, 0.0, 1.0);
+	vec3 ssColor = vec3(0.9, 0.2, 0.1);
+	outColor.rgb *= pow(ssColor, vec3(sssFac));
+	outColor.rgb += ssColor * sssFac;
 }

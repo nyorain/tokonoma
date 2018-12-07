@@ -1,4 +1,5 @@
 #include "light.hpp"
+#include <stage/bits.hpp>
 
 #include <vpp/formats.hpp>
 #include <vpp/pipelineInfo.hpp>
@@ -16,13 +17,7 @@
 #include <shaders/sss_shadow.vert.h>
 
 constexpr auto lightUboSize = sizeof(float) * (4 + 2 + 1 + 1 + 1);
-
-template<typename T>
-void write(nytl::Span<std::byte>& span, T&& data) {
-	dlg_assert(span.size() >= sizeof(data));
-	std::memcpy(span.data(), &data, sizeof(data));
-	span = span.slice(sizeof(data), span.size() - sizeof(data));
-}
+constexpr auto shadowFormat = vk::Format::r16Sfloat;
 
 uint32_t nextPowerOfTwo(uint32_t n) {
 	--n;
@@ -119,11 +114,11 @@ nytl::Vec3f blackbody(unsigned temp) {
 
 // Light
 void Light::writeUBO(nytl::Span<std::byte>& data) {
-	write(data, color);
-	write(data, position);
-	write(data, radius_);
-	write(data, strength_);
-	write(data, bounds_);
+	doi::write(data, color);
+	doi::write(data, position);
+	doi::write(data, radius_);
+	doi::write(data, strength_);
+	doi::write(data, bounds_);
 }
 
 Light::Light(LightSystem& system, nytl::Vec2f pos,
@@ -142,12 +137,12 @@ void Light::createBuf() {
 		vk::ImageUsageBits::sampled;
 
 	auto targetInfo = vpp::ViewableImageCreateInfo::general(dev,
-			{bufSize_, bufSize_, 1}, usage, {vk::Format::r8Unorm},
+			{bufSize_, bufSize_, 1}, usage, {shadowFormat},
 			vk::ImageAspectBits::color).value();
 	shadowTarget_ = {dev, targetInfo};
 
 	// framebuffer
-	auto imgView = shadowTarget_.vkImageView();;
+	auto imgView = shadowTarget_.vkImageView();
 	vk::FramebufferCreateInfo fbinfo;
 	fbinfo.attachmentCount = 1;
 	fbinfo.pAttachments = &imgView;
@@ -272,7 +267,7 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		lightPass_ = {dev, rpinfo};
 
 		// shadow pass
-		attachments[0].format = vk::Format::r8Unorm;
+		attachments[0].format = shadowFormat;
 		shadowPass_ = {dev, rpinfo};
 
 		// framebuffer
@@ -460,9 +455,9 @@ bool LightSystem::updateDevice() {
 		cmd.firstInstance = 0;
 		cmd.firstVertex = 0;
 		cmd.instanceCount = segments_.size();
-		cmd.vertexCount = 6;
+		cmd.vertexCount = 4;
 
-		write(span, cmd);
+		doi::write(span, cmd);
 		memcpy(span.data(), segments_.data(),
 				segments_.size() * sizeof(segments_[0]));
 	}
