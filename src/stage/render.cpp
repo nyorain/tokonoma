@@ -15,8 +15,10 @@
 
 #include <dlg/dlg.hpp> // dlg
 
+// TODO: support for reading depth target in shader
+
 vpp::RenderPass createRenderPass(const vpp::Device&, vk::Format,
-	vk::SampleCountBits);
+	vk::SampleCountBits, vk::Format depthFormat = vk::Format::undefined);
 
 Renderer::Renderer(const RendererCreateInfo& info) :
 	DefaultRenderer(info.present), sampleCount_(info.samples),
@@ -30,12 +32,51 @@ Renderer::Renderer(const RendererCreateInfo& info) :
 	scInfo_ = vpp::swapchainCreateInfo(info.dev, info.surface,
 		{info.size[0], info.size[1]}, prefs);
 
-	renderPass_ = createRenderPass(info.dev, scInfo_.imageFormat, samples());
+	depthFormat_ = vk::Format::undefined;
+	if(info.depth) {
+		// TODO: search for supported one
+		depthFormat_ = vk::Format::d32Sfloat;
+	}
+
+	renderPass_ = createRenderPass(info.dev, scInfo_.imageFormat, samples(),
+		depthFormat_);
 	vpp::DefaultRenderer::init(renderPass_, scInfo_);
 }
 
-void Renderer::createMultisampleTarget(const vk::Extent2D& size)
-{
+void Renderer::createDepthTarget(const vk::Extent2D& size) {
+	auto width = size.width;
+	auto height = size.height;
+
+	// img
+	vk::ImageCreateInfo img;
+	img.imageType = vk::ImageType::e2d;
+	img.format = depthFormat_;
+	img.extent.width = width;
+	img.extent.height = height;
+	img.extent.depth = 1;
+	img.mipLevels = 1;
+	img.arrayLayers = 1;
+	img.sharingMode = vk::SharingMode::exclusive;
+	img.tiling = vk::ImageTiling::optimal;
+	img.samples = vk::SampleCountBits::e1;
+	img.usage = vk::ImageUsageBits::depthStencilAttachment;
+	img.initialLayout = vk::ImageLayout::undefined;
+
+	// view
+	vk::ImageViewCreateInfo view;
+	view.viewType = vk::ImageViewType::e2d;
+	view.format = img.format;
+	view.components = {};
+	view.subresourceRange.aspectMask = vk::ImageAspectBits::depth;
+	view.subresourceRange.levelCount = 1;
+	view.subresourceRange.layerCount = 1;
+
+	// create the viewable image
+	// will set the created image in the view info for us
+	depthTarget_ = {device(), img, view};
+}
+
+void Renderer::createMultisampleTarget(const vk::Extent2D& size) {
 	auto width = size.width;
 	auto height = size.height;
 
@@ -71,13 +112,14 @@ void Renderer::createMultisampleTarget(const vk::Extent2D& size)
 	multisampleTarget_ = {device(), img, view};
 }
 
-void Renderer::record(const RenderBuffer& buf)
-{
+void Renderer::record(const RenderBuffer& buf) {
 	const auto width = scInfo_.imageExtent.width;
 	const auto height = scInfo_.imageExtent.height;
-	const auto clearValue = vk::ClearValue {{
-		clearColor_[0], clearColor_[1], clearColor_[2], clearColor_[3]
-	}};
+
+	const unsigned clearCount = 1 + (depthFormat_ != vk::Format::undefined);
+	vk::ClearValue clearValues[2] {};
+	clearValues[0].color.float32 = clearColor_;
+	clearValues[1].depthStencil = {1.f, 0u};
 
 	auto cmdBuf = buf.commandBuffer;
 	vk::beginCommandBuffer(cmdBuf, {});
@@ -90,8 +132,8 @@ void Renderer::record(const RenderBuffer& buf)
 		renderPass(),
 		buf.framebuffer,
 		{0u, 0u, width, height},
-		1,
-		&clearValue
+		clearCount,
+		clearValues
 	}, {});
 
 	vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
@@ -111,13 +153,11 @@ void Renderer::record(const RenderBuffer& buf)
 	vk::endCommandBuffer(cmdBuf);
 }
 
-void Renderer::resize(nytl::Vec2ui size)
-{
+void Renderer::resize(nytl::Vec2ui size) {
 	vpp::DefaultRenderer::recreate({size[0], size[1]}, scInfo_);
 }
 
-void Renderer::samples(vk::SampleCountBits samples)
-{
+void Renderer::samples(vk::SampleCountBits samples) {
 	sampleCount_ = samples;
 	if(sampleCount_ != vk::SampleCountBits::e1) {
 		createMultisampleTarget(scInfo_.imageExtent);
@@ -131,62 +171,98 @@ void Renderer::samples(vk::SampleCountBits samples)
 }
 
 void Renderer::initBuffers(const vk::Extent2D& size,
-	nytl::Span<RenderBuffer> bufs)
-{
+		nytl::Span<RenderBuffer> bufs) {
+	std::vector<vk::ImageView> views {vk::ImageView {}}; // swapchain image
 	if(sampleCount_ != vk::SampleCountBits::e1) {
 		createMultisampleTarget(scInfo_.imageExtent);
-		vpp::DefaultRenderer::initBuffers(size, bufs,
-			{multisampleTarget_.vkImageView()});
-	} else {
-		vpp::DefaultRenderer::initBuffers(size, bufs, {});
+		views.push_back(multisampleTarget_.vkImageView());
 	}
+
+	if(depthFormat_ != vk::Format::undefined) {
+		createDepthTarget(scInfo_.imageExtent);
+		views.push_back(depthTarget_.vkImageView());
+	}
+
+	vpp::DefaultRenderer::initBuffers(size, bufs, views);
 }
 
 // util
 vpp::RenderPass createRenderPass(const vpp::Device& dev,
-	vk::Format format, vk::SampleCountBits sampleCount)
-{
-	vk::AttachmentDescription attachments[2] {};
+		vk::Format format, vk::SampleCountBits sampleCount,
+		vk::Format depthFormat) {
+
+	vk::AttachmentDescription attachments[3] {};
 	auto msaa = sampleCount != vk::SampleCountBits::e1;
 
-	auto swapchainID = 0u;
+	auto aid = 0u;
+	auto depthid = 0u;
+	auto resolveid = 0u;
+	auto colorid = 0u;
 	if(msaa) {
 		// multisample color attachment
-		attachments[0].format = format;
-		attachments[0].samples = sampleCount;
-		attachments[0].loadOp = vk::AttachmentLoadOp::clear;
-		attachments[0].storeOp = vk::AttachmentStoreOp::dontCare;
-		attachments[0].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-		attachments[0].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-		attachments[0].initialLayout = vk::ImageLayout::undefined;
-		attachments[0].finalLayout = vk::ImageLayout::presentSrcKHR;
+		attachments[aid].format = format;
+		attachments[aid].samples = sampleCount;
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].initialLayout = vk::ImageLayout::undefined;
+		attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
 
-		swapchainID = 1u;
+		colorid = aid;
+		++aid;
 	}
 
 	// swapchain color attachments we want to resolve to
-	attachments[swapchainID].format = format;
-	attachments[swapchainID].samples = vk::SampleCountBits::e1;
-	if(msaa) attachments[swapchainID].loadOp = vk::AttachmentLoadOp::dontCare;
-	else attachments[swapchainID].loadOp = vk::AttachmentLoadOp::clear;
-	attachments[swapchainID].storeOp = vk::AttachmentStoreOp::store;
-	attachments[swapchainID].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-	attachments[swapchainID].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-	attachments[swapchainID].initialLayout = vk::ImageLayout::undefined;
-	attachments[swapchainID].finalLayout = vk::ImageLayout::presentSrcKHR;
+	attachments[aid].format = format;
+	attachments[aid].samples = vk::SampleCountBits::e1;
+	attachments[aid].storeOp = vk::AttachmentStoreOp::store;
+	attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+	attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+	attachments[aid].initialLayout = vk::ImageLayout::undefined;
+	attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
+	if(msaa) {
+		attachments[aid].loadOp = vk::AttachmentLoadOp::dontCare;
+		resolveid = aid;
+	} else {
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		colorid = aid;
+	}
+
+	++aid;
+
+	if(depthFormat != vk::Format::undefined) {
+		// depth attachment
+		attachments[aid].format = depthFormat;
+		attachments[aid].samples = vk::SampleCountBits::e1;
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].initialLayout = vk::ImageLayout::undefined;
+		attachments[aid].finalLayout = vk::ImageLayout::depthStencilAttachmentOptimal;
+
+		depthid = aid;
+		++aid;
+	}
 
 	// refs
 	vk::AttachmentReference colorReference;
-	colorReference.attachment = 0;
+	colorReference.attachment = colorid;
 	colorReference.layout = vk::ImageLayout::colorAttachmentOptimal;
 
 	vk::AttachmentReference resolveReference;
-	resolveReference.attachment = 1;
+	resolveReference.attachment = resolveid;
 	resolveReference.layout = vk::ImageLayout::colorAttachmentOptimal;
+
+	vk::AttachmentReference depthReference;
+	depthReference.attachment = depthid;
+	depthReference.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
 
 	// deps
 	std::vector<vk::SubpassDependency> dependencies;
 
+	// TODO: do we really need this? isn't this detected by default?
 	if(msaa) {
 		dependencies.resize(2);
 
@@ -201,7 +277,7 @@ vpp::RenderPass createRenderPass(const vpp::Device& dev,
 
 		dependencies[1].srcSubpass = 0;
 		dependencies[1].dstSubpass = vk::subpassExternal;
-		dependencies[1].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;;
+		dependencies[1].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
 		dependencies[1].dstStageMask = vk::PipelineStageBits::bottomOfPipe;
 		dependencies[1].srcAccessMask = vk::AccessBits::colorAttachmentRead |
 			vk::AccessBits::colorAttachmentWrite;
@@ -210,12 +286,17 @@ vpp::RenderPass createRenderPass(const vpp::Device& dev,
 	}
 
 	// only subpass
-	vk::SubpassDescription subpass;
+	vk::SubpassDescription subpass {};
 	subpass.pipelineBindPoint = vk::PipelineBindPoint::graphics;
 	subpass.colorAttachmentCount = 1;
 	subpass.pColorAttachments = &colorReference;
-	if(sampleCount != vk::SampleCountBits::e1)
+	if(depthFormat != vk::Format::undefined) {
+		subpass.pDepthStencilAttachment = &depthReference;
+	}
+
+	if(sampleCount != vk::SampleCountBits::e1) {
 		subpass.pResolveAttachments = &resolveReference;
+	}
 
 	// most general dependency
 	// should cover almost all cases of external access to data that
@@ -240,7 +321,7 @@ vpp::RenderPass createRenderPass(const vpp::Device& dev,
 	dependencies.push_back(dependency);
 
 	vk::RenderPassCreateInfo renderPassInfo;
-	renderPassInfo.attachmentCount = 1 + msaa;
+	renderPassInfo.attachmentCount = aid;
 	renderPassInfo.pAttachments = attachments;
 	renderPassInfo.subpassCount = 1;
 	renderPassInfo.pSubpasses = &subpass;

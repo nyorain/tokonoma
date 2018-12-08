@@ -128,7 +128,7 @@ public:
 			pp_.pipeLayout, vpp::ShaderProgram({
 				{combineVertex, vk::ShaderStageBits::vertex},
 				{combineFragment, vk::ShaderStageBits::fragment}
-		}));
+		}), 0, renderer().samples());
 
 		combinePipeInfo.assembly.topology = vk::PrimitiveTopology::triangleFan;
 

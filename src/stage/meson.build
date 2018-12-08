@@ -39,3 +39,12 @@ stage_dep = declare_dependency(
 	dependencies: stage_deps,
 	include_directories: stage_inc)
 
+# tinygltf
+gltf_lib = library('tinygltf',
+	sources: 'tinygltf.cpp',
+	include_directories: stage_inc)
+
+gltf_dep = declare_dependency(
+	link_with: gltf_lib,
+	include_directories: stage_inc)
+

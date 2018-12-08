@@ -35,11 +35,20 @@ T read(nytl::Span<const std::byte>& span) {
 	return ret;
 }
 
+void write(nytl::Span<std::byte>& span, const std::byte* ptr, std::size_t size) {
+	dlg_assert(span.size() >= size);
+	std::memcpy(span.data(), ptr, size);
+	span = span.slice(size, span.size() - size);
+}
+
 template<typename T>
 void write(nytl::Span<std::byte>& span, T&& data) {
-	dlg_assert(span.size() >= sizeof(data));
-	std::memcpy(span.data(), &data, sizeof(data));
-	span = span.slice(sizeof(data), span.size() - sizeof(data));
+	write(span, reinterpret_cast<const std::byte*>(&data), sizeof(data));
+}
+
+void skip(nytl::Span<std::byte>& span, std::size_t bytes) {
+	dlg_assert(span.size() >= bytes);
+	span = span.slice(bytes, span.size() - bytes);
 }
 
 template<typename T>

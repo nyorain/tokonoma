@@ -357,7 +357,7 @@ bool App::init(const AppSettings& settings) {
 
 	auto renderInfo = RendererCreateInfo {
 		vulkanDevice(), vkSurf, window().size(), *presentQueue,
-		impl_->samples, args_.vsync, clearColor
+		impl_->samples, args_.vsync, clearColor, needsDepth()
 	};
 
 	impl_->renderer.emplace(renderInfo);

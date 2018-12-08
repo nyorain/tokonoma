@@ -52,6 +52,11 @@ public:
 	vk::SampleCountBits samples() const;
 
 protected:
+	// info
+	// If overwritten by derived class to return true, will create default
+	// framebuffer and renderpass with a depth buffer as attachment 1
+	virtual bool needsDepth() const { return false; }
+
 	// argument parsing
 	virtual argagg::parser argParser() const;
 	virtual bool handleArgs(const argagg::parser_results&);

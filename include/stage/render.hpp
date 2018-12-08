@@ -25,6 +25,7 @@ struct RendererCreateInfo {
 	vk::SampleCountBits samples = vk::SampleCountBits::e1;
 	bool vsync = false;
 	std::array<float, 4> clearColor = {0.f, 0.f, 0.f, 1.f};
+	bool depth = false;
 };
 
 class Renderer : public vpp::DefaultRenderer {
@@ -42,16 +43,20 @@ public:
 
 	vk::RenderPass renderPass() const { return renderPass_; }
 	vk::SampleCountBits samples() const { return sampleCount_; }
+	vk::Format depthFormat() const { return depthFormat_; }
 
 protected:
 	void createMultisampleTarget(const vk::Extent2D& size);
+	void createDepthTarget(const vk::Extent2D& size);
 	void record(const RenderBuffer&) override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
 
 protected:
 	vpp::ViewableImage multisampleTarget_;
+	vpp::ViewableImage depthTarget_;
 	vpp::RenderPass renderPass_;
 	vk::SampleCountBits sampleCount_;
 	vk::SwapchainCreateInfoKHR scInfo_;
 	std::array<float, 4> clearColor_;
+	vk::Format depthFormat_;
 };

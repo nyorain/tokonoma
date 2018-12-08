@@ -72,6 +72,10 @@ shaders_src = [
 		['sss_shadow.vert'],
 		['sss_shadow.frag'],
 	]],
+	['ddd_shaders', [
+		['model.vert'],
+		['model.frag'],
+	]],
 ]
 
 # build them
