@@ -17,7 +17,7 @@
 #include <shaders/sss_shadow.vert.h>
 
 constexpr auto lightUboSize = sizeof(float) * (4 + 2 + 1 + 1 + 1);
-constexpr auto shadowFormat = vk::Format::r16Sfloat;
+constexpr auto shadowFormat = vk::Format::r16g16Sfloat;
 
 uint32_t nextPowerOfTwo(uint32_t n) {
 	--n;
@@ -33,7 +33,7 @@ uint32_t nextPowerOfTwo(uint32_t n) {
 // Tweak this function for better/more performant shadows
 unsigned shadowBufSize(float bounds) {
 	// for a light with bounds radius of 1 we use this size
-	constexpr auto normSize = 192;
+	constexpr auto normSize = 286;
 	auto next = nextPowerOfTwo(normSize * bounds);
 	return std::clamp(next, 32u, 2048u);
 }
@@ -389,7 +389,11 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		shadowBlendAttachment.colorBlendOp = vk::BlendOp::add;
 		shadowBlendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
 		shadowBlendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
-		shadowBlendAttachment.colorWriteMask = vk::ColorComponentBits::r;
+		shadowBlendAttachment.colorWriteMask =
+			vk::ColorComponentBits::r |
+			vk::ColorComponentBits::g |
+			vk::ColorComponentBits::b |
+			vk::ColorComponentBits::a;
 		shadowInfo.blend.attachmentCount = 1;
 		shadowInfo.blend.pAttachments = &shadowBlendAttachment;
 

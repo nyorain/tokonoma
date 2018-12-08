@@ -30,7 +30,7 @@ void main() {
 	// NOTE: approximate points in infinity
 	// we do this to rely on the pipelines clipping instead of dealing
 	// with that complexity ourselves. Shouldn't hurt performance.
-	const float proj = 1e3;
+	const float proj = 10.f;
 	vec2 p = vec2(-10, -10);
 	switch(gl_VertexIndex % 4) {
 	case 0:
@@ -58,8 +58,8 @@ void main() {
 		break;
 	}
 
-	// TODO
-	outDistance = dfac;
+	// TODO: apparently we can't interpolate distance?
+	// outDistance = dfac;
 	outPos = p;
 
 	float scale = 1 / light.bounds;

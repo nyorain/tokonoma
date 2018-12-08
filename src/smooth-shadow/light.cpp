@@ -17,7 +17,7 @@
 #include <shaders/shadow.vert.h>
 
 constexpr auto lightUboSize = sizeof(float) * (4 + 2 + 1 + 1 + 1);
-constexpr auto shadowFormat = vk::Format::r16g16Sfloat;
+constexpr auto shadowFormat = vk::Format::r8Unorm;
 
 uint32_t nextPowerOfTwo(uint32_t n) {
 	--n;

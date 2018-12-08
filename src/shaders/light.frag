@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "geometry.glsl"
+#include "color.glsl"
 
 layout(set = 1, binding = 0) uniform UBO {
 	vec4 color;
@@ -25,13 +26,13 @@ void main() {
 	// pow(1/ 2) here has the opposite effect
 	// float shadowFac = pow(texture(shadowTex, inUV).r, 2.2);
 	// float shadowFac = pow(texture(shadowTex, inUV).r, 1 / 2.2);
-	float shadowFac = clamp(texture(shadowTex, inUV).g, 0.0, 1.0);
+	float shadowFac = clamp(texture(shadowTex, inUV).r, 0.0, 1.0);
 	outColor = light.color;
-	outColor.rgb *= lightFac;
+	outColor.a *= lightFac;
 
 	// - different segment types (effects can also be combined) -
 	// 1. normal opaque segment
-	outColor.rgb *= (1 - shadowFac);
+	outColor.a *= (1 - shadowFac);
 
 	// 2. glass/filter (could be in any color)
 	// outColor.rg *= (1 - shadowFac);
@@ -67,8 +68,18 @@ void main() {
 	
 	// TODO: should not be here
 	// work on sss effect
-	float sssFac = clamp(texture(shadowTex, inUV).r, 0.0, 1.0);
+	// float sssFac = texture(shadowTex, inUV).r - texture(shadowTex, inUV).g;
+	const float fac = 1.f;
+	float sssFac = fac * texture(shadowTex, inUV).r;
+	sssFac = clamp(sssFac, 0.0, 1.0);
+	// sssFac = pow(sssFac, 1 /.f);
 	vec3 ssColor = vec3(0.9, 0.2, 0.1);
-	outColor.rgb *= pow(ssColor, vec3(sssFac));
-	outColor.rgb += ssColor * sssFac;
+	outColor.rgb = light.color.rgb * lightFac * (1 - sssFac) * pow(ssColor, vec3(sssFac));
+	// outColor.rgb = light.color.rgb * lightFac * (1 - sssFac) * pal(sssFac, 
+	// 		vec3(0.5, 0.5, 0.5),
+	// 		vec3(0.5, 0.5, 0.5),
+	// 		vec3(0.3, 0.3, 0.3),
+	// 		vec3(0, 0.25, 0.5));
+	// outColor.rgb = light.color.rgb * lightFac * ssColor;
+	outColor.a = 1.f;
 }

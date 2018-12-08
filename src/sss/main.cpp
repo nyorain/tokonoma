@@ -51,6 +51,29 @@ public:
 		lightSystem().addSegment({{{1.f, 3.f}, {1.f, 1.f}}, -1.f});
 		lightSystem().addSegment({{{4.f, 1.f}, {6.f, 1.f}}, -1.f});
 
+		std::mt19937 rgen;
+		rgen.seed(std::time(nullptr));
+
+		// small triangles
+		using nytl::constants::pi;
+		auto triRad = 0.1f;
+		std::uniform_real_distribution<float> triDistr(0.f, 5.f);
+		std::uniform_real_distribution<float> aDistr(0.f, 2 * pi); // angle
+		for(auto i = 0u; i < 20; ++i) {
+			// counter clockwise?
+			auto pos = nytl::Vec2f{triDistr(rgen), triDistr(rgen)};
+			auto a = aDistr(rgen);
+			auto p1 = pos + triRad * nytl::Vec2f{std::cos(a), std::sin(a)};
+			a += 2/3.f * pi;
+			auto p2 = pos + triRad * nytl::Vec2f{std::cos(a), std::sin(a)};
+			a += 2/3.f * pi;
+			auto p3 = pos + triRad * nytl::Vec2f{std::cos(a), std::sin(a)};
+
+			lightSystem().addSegment({{p1, p2}, -1.f});
+			lightSystem().addSegment({{p2, p3}, -1.f});
+			lightSystem().addSegment({{p3, p1}, -1.f});
+		}
+
 		auto& light = lightSystem().addLight();
 		light.position = {4.f, 1.5f};
 		light.color = static_cast<nytl::Vec4f>(blackbody(3700));
@@ -58,15 +81,12 @@ public:
 		light.strength(1.f);
 		currentLight_ = &light;
 
-		std::mt19937 rgen;
-		rgen.seed(std::time(nullptr));
-
 		std::uniform_real_distribution<float> posDistr(0.f, 5.f);
 		std::uniform_int_distribution<unsigned> colDistr(2000u, 10000u);
 		std::uniform_real_distribution<float> radDistr(0.008f, 0.3f);
 		std::uniform_real_distribution<float> strengthDistr(0.2f, 1.5f);
 
-		for(auto i = 0u; i < 2u; ++i) {
+		for(auto i = 0u; i < 2u && false; ++i) {
 			auto& light = lightSystem().addLight();
 			light.position = {posDistr(rgen), posDistr(rgen)};
 			light.color = static_cast<nytl::Vec4f>(blackbody(colDistr(rgen)));

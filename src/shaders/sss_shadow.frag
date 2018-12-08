@@ -8,7 +8,7 @@ layout(location = 1) in vec2 inPointA;
 layout(location = 2) in vec2 inPointB;
 layout(location = 3) in vec2 inPos;
 
-layout(location = 0) out float outShadow;
+layout(location = 0) out vec2 outShadow;
 
 layout(set = 1, binding = 0) uniform Light {
 	vec4 _color;
@@ -19,12 +19,23 @@ layout(set = 1, binding = 0) uniform Light {
 } light;
 
 void main() {
-	const float fac = 1.f;
 	vec2 lightDir = inPos - light.pos;
 
 	Line seg = {inPointA, inPointB - inPointA};
 	Line ray = {inPos, -lightDir}; // from pixel to light
 
 	vec2 f = intersectionFacs(seg, ray);
-	outShadow = fac * inDistance * length(f.y * lightDir);
+
+	// TODO
+	if(inDistance > 0.f) {
+		// 0.1: offset
+		outShadow.r = 0.1 + length(f.y * lightDir);
+		// outShadow.g = 0.f;
+	} else {
+		// outShadow.g = fac * length(f.y * lightDir);
+		outShadow.r = -0.1 - length(f.y * lightDir);
+		// outShadow.r = 0.f;
+	}
+
+	// outShadow = fac * inDistance;
 }
