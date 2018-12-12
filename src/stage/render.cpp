@@ -58,7 +58,7 @@ void Renderer::createDepthTarget(const vk::Extent2D& size) {
 	img.arrayLayers = 1;
 	img.sharingMode = vk::SharingMode::exclusive;
 	img.tiling = vk::ImageTiling::optimal;
-	img.samples = vk::SampleCountBits::e1;
+	img.samples = sampleCount_;
 	img.usage = vk::ImageUsageBits::depthStencilAttachment;
 	img.initialLayout = vk::ImageLayout::undefined;
 
@@ -116,10 +116,18 @@ void Renderer::record(const RenderBuffer& buf) {
 	const auto width = scInfo_.imageExtent.width;
 	const auto height = scInfo_.imageExtent.height;
 
-	const unsigned clearCount = 1 + (depthFormat_ != vk::Format::undefined);
-	vk::ClearValue clearValues[2] {};
+	auto clearCount = 1u;
+	vk::ClearValue clearValues[3] {};
 	clearValues[0].color.float32 = clearColor_;
-	clearValues[1].depthStencil = {1.f, 0u};
+	if(sampleCount_ != vk::SampleCountBits::e1) { // msaa attachment
+		clearValues[clearCount].color.float32 = clearColor_;
+		++clearCount;
+	}
+
+	if(depthFormat_ != vk::Format::undefined) {
+		clearValues[clearCount].depthStencil = {1.f, 0u};
+		++clearCount;
+	}
 
 	auto cmdBuf = buf.commandBuffer;
 	vk::beginCommandBuffer(cmdBuf, {});
@@ -198,6 +206,27 @@ vpp::RenderPass createRenderPass(const vpp::Device& dev,
 	auto depthid = 0u;
 	auto resolveid = 0u;
 	auto colorid = 0u;
+
+	// swapchain color attachments
+	// msaa: we resolve to this
+	// otherwise this is directly rendered
+	attachments[aid].format = format;
+	attachments[aid].samples = vk::SampleCountBits::e1;
+	attachments[aid].storeOp = vk::AttachmentStoreOp::store;
+	attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+	attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+	attachments[aid].initialLayout = vk::ImageLayout::undefined;
+	attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
+	if(msaa) {
+		attachments[aid].loadOp = vk::AttachmentLoadOp::dontCare;
+		resolveid = aid;
+	} else {
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		colorid = aid;
+	}
+	++aid;
+
+	// optiontal multisampled render target
 	if(msaa) {
 		// multisample color attachment
 		attachments[aid].format = format;
@@ -213,28 +242,11 @@ vpp::RenderPass createRenderPass(const vpp::Device& dev,
 		++aid;
 	}
 
-	// swapchain color attachments we want to resolve to
-	attachments[aid].format = format;
-	attachments[aid].samples = vk::SampleCountBits::e1;
-	attachments[aid].storeOp = vk::AttachmentStoreOp::store;
-	attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-	attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-	attachments[aid].initialLayout = vk::ImageLayout::undefined;
-	attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
-	if(msaa) {
-		attachments[aid].loadOp = vk::AttachmentLoadOp::dontCare;
-		resolveid = aid;
-	} else {
-		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
-		colorid = aid;
-	}
-
-	++aid;
-
+	// optional depth target
 	if(depthFormat != vk::Format::undefined) {
 		// depth attachment
 		attachments[aid].format = depthFormat;
-		attachments[aid].samples = vk::SampleCountBits::e1;
+		attachments[aid].samples = sampleCount;
 		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
 		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
 		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::clear;

@@ -19,6 +19,19 @@
 #include <shaders/model.vert.h>
 #include <shaders/model.frag.h>
 
+// Matches glsl struct
+struct Light {
+	enum Type : std::uint32_t {
+		point = 1,
+		dir = 2,
+	};
+
+	nytl::Vec3f pd; // position/direction
+	Type type;
+	nytl::Vec3f color;
+	float strength;
+};
+
 class ViewApp : public doi::App {
 public:
 	bool init(const doi::AppSettings& settings) override {
@@ -228,18 +241,6 @@ public:
 		dsupdate.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 		vpp::apply({dsupdate});
 
-		// write ubo
-		{
-			// auto mat = doi::frustum3Sym(0.1f, 0.1f, 0.1f, 100.f);
-			// auto mat = doi::ortho3Sym(0.1f, 0.1f, 0.1f, 1000.f);
-			using nytl::constants::pi;
-			auto aspect = 1.f; // TODO
-			auto mat = doi::perspective3<float>(pi / 2, aspect, 0.01f, 100.f);
-			auto map = ubo_.memoryMap();
-			auto span = map.span();
-			doi::write(span, mat);
-		}
-
 		return true;
 	}
 
@@ -264,12 +265,27 @@ public:
 	void updateDevice() override {
 		auto map = ubo_.memoryMap();
 		auto span = map.span();
-		doi::skip(span, sizeof(nytl::Mat4f));
+
+		if(projection_.update) {
+			projection_.update = false;
+
+			auto& p = projection_;
+			auto mat = doi::perspective3<float>(p.fov, p.aspect, p.near, p.far);
+			doi::write(span, mat);
+		} else {
+			doi::skip(span, sizeof(nytl::Mat4f));
+		}
 
 		auto mat = doi::rotateMat<4, float>({1.f, -1.f, 0.2f}, time_);
 		// translate into screen
 		mat[2][3] = 5.f;
 		doi::write(span, mat);
+	}
+
+	void resize(const ny::SizeEvent& ev) override {
+		App::resize(ev);
+		projection_.aspect = float(ev.size.x) / ev.size.y;
+		projection_.update = true;
 	}
 
 	bool needsDepth() const override {
@@ -288,6 +304,16 @@ protected:
 
 	unsigned drawCount_;
 	float time_;
+
+	std::vector<Light> lights_;
+
+	struct {
+		float fov = 0.5 * nytl::constants::pi;
+		float aspect = 1.f;
+		float near = 0.01f;
+		float far = 100.f;
+		bool update = true;
+	} projection_;
 };
 
 int main(int argc, const char** argv) {
