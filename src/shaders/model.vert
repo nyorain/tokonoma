@@ -7,6 +7,7 @@ layout(location = 0) out vec3 outPos;
 layout(location = 1) out vec3 outNormal;
 
 layout(set = 0, binding = 0, row_major) uniform Matrices {
+// layout(set = 0, binding = 0) uniform Matrices {
 	mat4 proj;
 	mat4 model;
 } ubo;
@@ -26,4 +27,5 @@ void main() {
 	vec4 model = ubo.model * vec4(inPos, 1.0);
 	outPos = model.xyz;
 	gl_Position = ubo.proj * model;
+	gl_Position.y = -gl_Position.y;
 }

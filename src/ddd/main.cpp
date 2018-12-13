@@ -24,6 +24,10 @@
 #include <shaders/model.vert.h>
 #include <shaders/model.frag.h>
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 // Matches glsl struct
 struct Light {
 	enum class Type : std::uint32_t {
@@ -39,28 +43,53 @@ struct Light {
 
 struct Camera {
 	bool update = true;
-	nytl::Vec3f pos {0.f, 0.f, -5.f};
-	nytl::Vec3f dir {0.f, 0.f, 1.f};
-	nytl::Vec3f up {0.f, -1.f, 0.f};
+	nytl::Vec3f pos {0.f, 0.f, 3.f};
+	nytl::Vec3f dir {0.f, 0.f, -1.f};
+	nytl::Vec3f up {0.f, 1.f, 0.f};
 
 	struct {
 		float fov = 0.35 * nytl::constants::pi;
 		float aspect = 1.f;
-		float near = 0.01f;
+		float near = 0.1f;
 		float far = 100.f;
 	} perspective;
 };
 
-nytl::Mat4f matrix(Camera& c) {
+auto matrix(Camera& c) {
 	// TODO
 	// auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
 	// auto right = nytl::normalized(nytl::cross(c.dir, yUp));
 	// c.up = nytl::normalized(nytl::cross(c.dir, right));
+	// dlg_info("dir: {}", c.dir);
+	// dlg_info("right: {}", right);
 
-	dlg_info(doi::lookAt(c.pos, c.pos + c.dir, c.up));
 	auto& p = c.perspective;
-	auto mat = doi::perspective3<float>(p.fov, p.aspect, p.near, p.far);
-	return mat * doi::lookAt(c.pos, c.pos + c.dir, c.up);
+
+	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
+	return mat * doi::lookAtRH(c.pos, c.pos + c.dir, c.up);
+
+	/*
+	// glm
+	glm::vec3 pos {c.pos.x, c.pos.y, c.pos.z};
+	glm::vec3 dir {c.dir.x, c.dir.y, c.dir.z};
+	glm::vec3 up {0.f, 1.f, 0.f};
+
+	auto glookat = glm::lookAtLH(pos, pos + dir, up);
+	auto mat = glm::perspectiveLH_ZO(p.fov, p.aspect, p.near, p.far) * glookat;
+
+	nytl::Mat4f lookat;
+	for(auto r = 0u; r < 4; ++r) {
+		for(auto c = 0u; c < 4; ++c) {
+			lookat[r][c] = glookat[c][r];
+		}
+	}
+
+	dlg_info(lookat);
+	dlg_info(doi::lookAtLH(c.pos, c.pos + c.dir, c.up));
+	dlg_info("==================================");
+
+	return mat;
+	*/
 }
 
 class ViewApp : public doi::App {
@@ -369,10 +398,11 @@ public:
 			pitch_ += 0.01 * ev.delta.y;
 			pitch_ = std::clamp<float>(pitch_, -pi / 2 + 0.1, pi / 2 - 0.1);
 
-			camera_.dir.x = std::cos(yaw_) * std::cos(pitch_);
+			camera_.dir.x = std::sin(yaw_) * std::cos(pitch_);
 			camera_.dir.y = -std::sin(pitch_);
-			camera_.dir.z = std::sin(yaw_) * std::cos(pitch_);
+			camera_.dir.z = -std::cos(yaw_) * std::cos(pitch_);
 			nytl::normalize(camera_.dir);
+			dlg_info(camera_.dir);
 			camera_.update = true;
 		}
 	}
@@ -414,13 +444,16 @@ public:
 
 		if(camera_.update) {
 			camera_.update = false;
-			doi::write(span, matrix(camera_));
+			auto mat = matrix(camera_);
+			auto ptr = (const std::byte*) &mat[0][0];
+			doi::write(span, ptr, sizeof(float) * 16);
 		} else {
 			doi::skip(span, sizeof(nytl::Mat4f));
 		}
 
 		// model matrix
-		auto mat = doi::rotateMat<4, float>({1.f, -1.f, 0.2f}, 0.f * time_);
+		// auto mat = doi::rotateMat<4, float>({1.f, -1.f, 0.2f}, 0.f * time_);
+		auto mat = nytl::identity<4, float>();
 		doi::write(span, mat);
 
 		// lights
@@ -464,7 +497,7 @@ protected:
 	bool updateLights_ {true};
 
 	Camera camera_ {};
-	float yaw_ {0.5 * nytl::constants::pi}; // rotation around y (upwards) axis
+	float yaw_ {0.f};
 	float pitch_ {0.f}; // rotation around x (left/right) axis
 };
 

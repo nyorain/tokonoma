@@ -128,10 +128,10 @@ nytl::SquareMat<4, P> frustum3Sym(P width, P height, P pnear, P pfar) {
 
 // lhs, zo
 template<typename P>
-nytl::SquareMat<4, P> perspective3(P fov, P aspect, P pnear, P pfar) {
+nytl::SquareMat<4, P> perspective3LH(P fov, P aspect, P pnear, P pfar) {
 	P const f = P(1) / std::tan(fov / P(2));
 
-	auto ret = nytl::identity<4, P>();
+	auto ret = nytl::Mat4f {};
 	ret[0][0] = f / aspect;
 	ret[1][1] = f;
 
@@ -142,19 +142,35 @@ nytl::SquareMat<4, P> perspective3(P fov, P aspect, P pnear, P pfar) {
 	return ret;
 }
 
+// rhs, zo
+template<typename P>
+nytl::SquareMat<4, P> perspective3RH(P fov, P aspect, P pnear, P pfar) {
+	P const f = P(1) / std::tan(fov / P(2));
 
+	auto ret = nytl::Mat4f {};
+	ret[0][0] = f / aspect;
+	ret[1][1] = f;
+
+	ret[2][2] = pfar / (pnear - pfar);
+	ret[3][2] = -P(1);
+
+	ret[2][3] = (pfar * pnear) / (pnear - pfar);
+	return ret;
+}
+
+
+// lh_zo
 template<typename P>
 nytl::SquareMat<4, P> ortho3(P left, P right, P top, P bottom, P pnear, P far) {
 	auto ret = nytl::identity<4, P>();
 
 	ret[0][0] = P(2) / (right - left);
 	ret[1][1] = P(2) / (top - bottom);
-	ret[2][2] = P(2) / (far - pnear);
+	ret[2][2] = P(1) / (far - pnear);
 
-	ret[0][3] = - ((right + left) / (right - left));
-	ret[1][3] = - ((top + bottom) / (top - bottom));
-	ret[2][3] = - ((far + pnear) / (far - pnear));
-	ret[3][3] = 1;
+	ret[0][3] = -((right + left) / (right - left));
+	ret[1][3] = -((top + bottom) / (top - bottom));
+	ret[2][3] = -(far / (far - pnear));
 	return ret;
 }
 
@@ -166,7 +182,7 @@ nytl::SquareMat<4, P> ortho3Sym(P width, P height, P pnear, P pfar) {
 
 // for a left handed coordinate system
 template<typename P>
-nytl::SquareMat<4, P> lookAt(const nytl::Vec3<P>& eye,
+nytl::SquareMat<4, P> lookAtLH(const nytl::Vec3<P>& eye,
 		const nytl::Vec3<P>& center, const nytl::Vec3<P>& up) {
 
 	const auto z = normalized(center - eye);
@@ -179,11 +195,9 @@ nytl::SquareMat<4, P> lookAt(const nytl::Vec3<P>& eye,
 	ret[1] = nytl::Vec4f(y);
 	ret[2] = nytl::Vec4f(z);
 
-	// TODO: glm uses dot(..., eye) here but this is correct for me
-	// why?
-	ret[0][3] = -dot(x, center);
-	ret[1][3] = -dot(y, center);
-	ret[2][3] = -dot(z, center);
+	ret[0][3] = -dot(x, eye);
+	ret[1][3] = -dot(y, eye);
+	ret[2][3] = -dot(z, eye);
 
 	return ret;
 }
