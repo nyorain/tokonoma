@@ -9,7 +9,8 @@
 // NOTE: move to nytl when somewhat tested
 // codes comes originally from older nytl versions
 
-// TODO: except perspective3, all projection matrices are not
+// TODO: consistent naming and lhs/rhs; zo/no conventions
+// maybe use own namespaces that can just be used?
 // made for vulkan. Update them!
 
 namespace doi {
@@ -159,7 +160,7 @@ nytl::SquareMat<4, P> perspective3RH(P fov, P aspect, P pnear, P pfar) {
 }
 
 
-// lh_zo
+// rh_zo
 template<typename P>
 nytl::SquareMat<4, P> ortho3(P left, P right, P top, P bottom, P pnear, P far) {
 	auto ret = nytl::identity<4, P>();
@@ -168,9 +169,9 @@ nytl::SquareMat<4, P> ortho3(P left, P right, P top, P bottom, P pnear, P far) {
 	ret[1][1] = P(2) / (top - bottom);
 	ret[2][2] = P(1) / (far - pnear);
 
-	ret[0][3] = -((right + left) / (right - left));
-	ret[1][3] = -((top + bottom) / (top - bottom));
-	ret[2][3] = -(far / (far - pnear));
+	ret[0][3] = (right + left) / (left - right);
+	ret[1][3] = (top + bottom) / (bottom - top);
+	ret[2][3] = pnear / (pnear - far);
 	return ret;
 }
 

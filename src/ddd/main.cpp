@@ -24,10 +24,6 @@
 #include <shaders/model.vert.h>
 #include <shaders/model.frag.h>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
 // Matches glsl struct
 struct Light {
 	enum class Type : std::uint32_t {
@@ -56,40 +52,10 @@ struct Camera {
 };
 
 auto matrix(Camera& c) {
-	// TODO
-	// auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-	// auto right = nytl::normalized(nytl::cross(c.dir, yUp));
-	// c.up = nytl::normalized(nytl::cross(c.dir, right));
-	// dlg_info("dir: {}", c.dir);
-	// dlg_info("right: {}", right);
-
 	auto& p = c.perspective;
 
 	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
 	return mat * doi::lookAtRH(c.pos, c.pos + c.dir, c.up);
-
-	/*
-	// glm
-	glm::vec3 pos {c.pos.x, c.pos.y, c.pos.z};
-	glm::vec3 dir {c.dir.x, c.dir.y, c.dir.z};
-	glm::vec3 up {0.f, 1.f, 0.f};
-
-	auto glookat = glm::lookAtLH(pos, pos + dir, up);
-	auto mat = glm::perspectiveLH_ZO(p.fov, p.aspect, p.near, p.far) * glookat;
-
-	nytl::Mat4f lookat;
-	for(auto r = 0u; r < 4; ++r) {
-		for(auto c = 0u; c < 4; ++c) {
-			lookat[r][c] = glookat[c][r];
-		}
-	}
-
-	dlg_info(lookat);
-	dlg_info(doi::lookAtLH(c.pos, c.pos + c.dir, c.up));
-	dlg_info("==================================");
-
-	return mat;
-	*/
 }
 
 class ViewApp : public doi::App {
@@ -452,8 +418,7 @@ public:
 		}
 
 		// model matrix
-		// auto mat = doi::rotateMat<4, float>({1.f, -1.f, 0.2f}, 0.f * time_);
-		auto mat = nytl::identity<4, float>();
+		auto mat = doi::rotateMat<4, float>({1.f, -1.f, 0.2f}, time_);
 		doi::write(span, mat);
 
 		// lights
@@ -499,6 +464,22 @@ protected:
 	Camera camera_ {};
 	float yaw_ {0.f};
 	float pitch_ {0.f}; // rotation around x (left/right) axis
+
+	// shadow
+	struct {
+		// static
+		vpp::RenderPass rp;
+		vpp::Sampler sampler; // with compareOp (?) glsl: sampler2DShadow
+		vpp::DescriptorSetLayout dsLayout;
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipeline;
+
+		// per light
+		vpp::ViewableImage target;
+		vpp::Framebuffer fb;
+		vpp::DescriptorSet ds;
+		vpp::SubBuffer ubo; // holding the light view matrix
+	} shadow_;
 };
 
 int main(int argc, const char** argv) {
