@@ -5,19 +5,19 @@ layout(location = 1) in vec3 inNormal;
 
 layout(location = 0) out vec4 outCol;
 
-const uint pointLight = 1u;
-const uint dirLight = 2u;
+const uint pointLight = 1;
+const uint dirLight = 2;
 
 struct Light {
 	vec3 pd; // position for point light, direction of dir light
-	uint type;
+	uint type; // point or dir
 	vec3 color;
 	float _; // padding
 };
 
-layout(constant_id = 0) const uint maxLightSize;
+layout(constant_id = 0) const uint maxLightSize = 8;
 
-layout(set = 0, binding = 0, row_major) uniform {
+layout(set = 0, binding = 0, row_major) uniform Lights {
 	mat4 _proj;
 	mat4 _model;
 
@@ -27,33 +27,30 @@ layout(set = 0, binding = 0, row_major) uniform {
 } lights;
 
 void main() {
-	vec4 objectColor = vec4(1, 1, 1, 1);
+	vec3 normal = normalize(inNormal);
+	vec3 objectColor = vec3(1, 1, 1);
 	float ambientFac = 0.1f;
 	float diffuseFac = 0.5f;
 	float specularFac = 0.5f;
-	float shininess = 16.f;
+	float shininess = 64.f;
 
-	vec3 col = vec3(0, 0, 0);
+	vec3 col = vec3(0.1, 0.1, 0.1);
 	for(uint i = 0; i < lights.numLights; ++i) {
 		Light light = lights.lights[i];
-		vec2 ldir = (light.type == pointLight) ? 
-			light.pd - inPos :
+		vec3 ldir = (light.type == pointLight) ?
+			inPos - light.pd :
 			light.pd;
+		ldir = normalize(ldir);
 
-		float lfac = 0.f;
+		float lfac = ambientFac; // ambient
+		lfac += diffuseFac * max(dot(normal, -ldir), 0.0); // diffuse
 
-		// ambient
-		lfac += ambientFac;
-
-		// diffuse
-		lfac += diffuseFac * max(dot(inNormal, -ldir), 0.0);
-		
 		// TODO: blinn
 		// specular; currently just phong
-		vec3 refl = reflect(-ldir, inNormal);
-		vec3 vdir = normalize(inPos - light.viewPos);
+		vec3 refl = reflect(ldir, normal);
+		vec3 vdir = normalize(inPos - lights.viewPos);
 		lfac += specularFac * pow(max(dot(-vdir, refl), 0.0), shininess);
-		
+
 		// combine
 		col += lfac * light.color * objectColor;
 	}

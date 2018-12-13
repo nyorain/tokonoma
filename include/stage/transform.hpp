@@ -164,19 +164,44 @@ nytl::SquareMat<4, P> ortho3Sym(P width, P height, P pnear, P pfar) {
 		-height / P(2), pnear, pfar);
 }
 
+// for a left handed coordinate system
 template<typename P>
 nytl::SquareMat<4, P> lookAt(const nytl::Vec3<P>& eye,
 		const nytl::Vec3<P>& center, const nytl::Vec3<P>& up) {
 
-	const auto z = normalized(center - eye); //z
-	const auto x = normalized(cross(z, up)); //x
-	const auto y = cross(x, z); //y
+	const auto z = normalized(center - eye);
+	const auto x = normalized(cross(up, z));
+	const auto y = cross(z, x);
 
 	auto ret = nytl::identity<4, P>();
 
-	ret.row(0) = x;
-	ret.row(1) = y;
-	ret.row(2) = -z;
+	ret[0] = nytl::Vec4f(x);
+	ret[1] = nytl::Vec4f(y);
+	ret[2] = nytl::Vec4f(z);
+
+	// TODO: glm uses dot(..., eye) here but this is correct for me
+	// why?
+	ret[0][3] = -dot(x, center);
+	ret[1][3] = -dot(y, center);
+	ret[2][3] = -dot(z, center);
+
+	return ret;
+}
+
+// NOTE: remove?
+template<typename P>
+nytl::SquareMat<4, P> lookAtRH(const nytl::Vec3<P>& eye,
+		const nytl::Vec3<P>& center, const nytl::Vec3<P>& up) {
+
+	const auto z = normalized(center - eye);
+	const auto x = normalized(cross(z, up));
+	const auto y = cross(x, z);
+
+	auto ret = nytl::identity<4, P>();
+
+	ret[0] = nytl::Vec4f(x);
+	ret[1] = nytl::Vec4f(y);
+	ret[2] = -nytl::Vec4f(z);
 
 	ret[0][3] = -dot(x, eye);
 	ret[1][3] = -dot(y, eye);

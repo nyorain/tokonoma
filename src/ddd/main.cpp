@@ -4,6 +4,11 @@
 #include <stage/transform.hpp>
 #include <stage/bits.hpp>
 
+#include <ny/key.hpp>
+#include <ny/keyboardContext.hpp>
+#include <ny/appContext.hpp>
+#include <ny/mouseButton.hpp>
+
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/formats.hpp>
@@ -21,18 +26,47 @@
 
 // Matches glsl struct
 struct Light {
-	enum Type : std::uint32_t {
-		point = 1,
-		dir = 2,
+	enum class Type : std::uint32_t {
+		point = 1u,
+		dir = 2u,
 	};
 
 	nytl::Vec3f pd; // position/direction
 	Type type;
 	nytl::Vec3f color;
-	float strength;
+	float _; // padding to match glsl
 };
 
+struct Camera {
+	bool update = true;
+	nytl::Vec3f pos {0.f, 0.f, -5.f};
+	nytl::Vec3f dir {0.f, 0.f, 1.f};
+	nytl::Vec3f up {0.f, -1.f, 0.f};
+
+	struct {
+		float fov = 0.35 * nytl::constants::pi;
+		float aspect = 1.f;
+		float near = 0.01f;
+		float far = 100.f;
+	} perspective;
+};
+
+nytl::Mat4f matrix(Camera& c) {
+	// TODO
+	// auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+	// auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+	// c.up = nytl::normalized(nytl::cross(c.dir, right));
+
+	dlg_info(doi::lookAt(c.pos, c.pos + c.dir, c.up));
+	auto& p = c.perspective;
+	auto mat = doi::perspective3<float>(p.fov, p.aspect, p.near, p.far);
+	return mat * doi::lookAt(c.pos, c.pos + c.dir, c.up);
+}
+
 class ViewApp : public doi::App {
+public:
+	static constexpr auto maxLightSize = 8u;
+
 public:
 	bool init(const doi::AppSettings& settings) override {
 		if(!doi::App::init(settings)) {
@@ -189,11 +223,20 @@ public:
 		dsLayout_ = {dev, gfxBindings};
 		pipeLayout_ = {dev, {dsLayout_}, {}};
 
+		vk::SpecializationMapEntry maxLightsEntry;
+		maxLightsEntry.size = sizeof(std::uint32_t);
+
+		vk::SpecializationInfo fragSpec;
+		fragSpec.dataSize = sizeof(std::uint32_t);
+		fragSpec.pData = &maxLightSize;
+		fragSpec.mapEntryCount = 1;
+		fragSpec.pMapEntries = &maxLightsEntry;
+
 		vpp::ShaderModule vertShader(dev, model_vert_data);
 		vpp::ShaderModule fragShader(dev, model_frag_data);
 		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), pipeLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
-			{fragShader, vk::ShaderStageBits::fragment},
+			{fragShader, vk::ShaderStageBits::fragment, &fragSpec},
 		}}, 0, renderer().samples()};
 
 		struct Vertex {
@@ -232,7 +275,10 @@ public:
 		pipe_ = {dev, vkpipe};
 
 		// == ubo and stuff ==
-		auto uboSize = 2 * sizeof(nytl::Mat4f) + sizeof(nytl::Vec3f) * 3;
+		auto uboSize = 2 * sizeof(nytl::Mat4f) // proj, model matrix
+			+ maxLightSize * sizeof(Light) // lights
+			+ sizeof(nytl::Vec3f) // viewPos
+			+ sizeof(std::uint32_t); // numLights
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
 		ubo_ = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
@@ -240,6 +286,27 @@ public:
 		vpp::DescriptorSetUpdate dsupdate(ds_);
 		dsupdate.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 		vpp::apply({dsupdate});
+
+		// == example light ==
+		lights_.emplace_back();
+		lights_.back().color = {1.f, 0.f, 1.f};
+		lights_.back().pd = {2.f, -3.0f, -3.2f};
+		lights_.back().type = Light::Type::point;
+
+		lights_.emplace_back();
+		lights_.back().color = {0.f, 1.f, 1.f};
+		lights_.back().pd = {2.f, -3.0f, 3.2f};
+		lights_.back().type = Light::Type::point;
+
+		lights_.emplace_back();
+		lights_.back().color = {1.f, 1.f, 0.f};
+		lights_.back().pd = {-2.2f, -3.0f, 3.2f};
+		lights_.back().type = Light::Type::point;
+
+		lights_.emplace_back();
+		lights_.back().color = {0.f, 1.f, 1.f};
+		lights_.back().pd = {2.2f, 3.0f, 3.2f};
+		lights_.back().type = Light::Type::point;
 
 		return true;
 	}
@@ -256,36 +323,123 @@ public:
 		vk::cmdDrawIndexed(cb, drawCount_, 1, 0, 0, 0);
 	}
 
-	void update(double delta) override {
-		App::update(delta);
+	void update(double dt) override {
+		App::update(dt);
 		App::redraw();
-		time_ += delta;
+		time_ += dt;
+
+		// movement
+		auto kc = appContext().keyboardContext();
+		auto fac = dt;
+
+		auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+		auto right = nytl::normalized(nytl::cross(camera_.dir, yUp));
+		auto up = nytl::normalized(nytl::cross(camera_.dir, right));
+		if(kc->pressed(ny::Keycode::d)) { // right
+			camera_.pos += fac * right;
+			camera_.update = true;
+		}
+		if(kc->pressed(ny::Keycode::a)) { // left
+			camera_.pos += -fac * right;
+			camera_.update = true;
+		}
+		if(kc->pressed(ny::Keycode::w)) {
+			camera_.pos += fac * camera_.dir;
+			camera_.update = true;
+		}
+		if(kc->pressed(ny::Keycode::s)) {
+			camera_.pos += -fac * camera_.dir;
+			camera_.update = true;
+		}
+		if(kc->pressed(ny::Keycode::q)) { // up
+			camera_.pos += -fac * up;
+			camera_.update = true;
+		}
+		if(kc->pressed(ny::Keycode::e)) { // down
+			camera_.pos += fac * up;
+			camera_.update = true;
+		}
+	}
+
+	void mouseMove(const ny::MouseMoveEvent& ev) override {
+		App::mouseMove(ev);
+		if(rotateView_) {
+			using nytl::constants::pi;
+			yaw_ += 0.01 * ev.delta.x;
+			pitch_ += 0.01 * ev.delta.y;
+			pitch_ = std::clamp<float>(pitch_, -pi / 2 + 0.1, pi / 2 - 0.1);
+
+			camera_.dir.x = std::cos(yaw_) * std::cos(pitch_);
+			camera_.dir.y = -std::sin(pitch_);
+			camera_.dir.z = std::sin(yaw_) * std::cos(pitch_);
+			nytl::normalize(camera_.dir);
+			camera_.update = true;
+		}
+	}
+
+	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+		if(App::mouseButton(ev)) {
+			return true;
+		}
+
+		if(ev.button == ny::MouseButton::left) {
+			rotateView_ = ev.pressed;
+			return true;
+		}
+
+		return false;
+	}
+
+	bool key(const ny::KeyEvent& ev) override {
+		if(App::key(ev)) {
+			return true;
+		}
+
+		if(ev.pressed && ev.keycode == ny::Keycode::x) {
+			camera_.dir.x *= -1.f;
+			camera_.update = true;
+		}
+
+		if(ev.pressed && ev.keycode == ny::Keycode::z) {
+			camera_.dir.z *= -1.f;
+			camera_.update = true;
+		}
+
+		return false;
 	}
 
 	void updateDevice() override {
 		auto map = ubo_.memoryMap();
 		auto span = map.span();
 
-		if(projection_.update) {
-			projection_.update = false;
-
-			auto& p = projection_;
-			auto mat = doi::perspective3<float>(p.fov, p.aspect, p.near, p.far);
-			doi::write(span, mat);
+		if(camera_.update) {
+			camera_.update = false;
+			doi::write(span, matrix(camera_));
 		} else {
 			doi::skip(span, sizeof(nytl::Mat4f));
 		}
 
-		auto mat = doi::rotateMat<4, float>({1.f, -1.f, 0.2f}, time_);
-		// translate into screen
-		mat[2][3] = 5.f;
+		// model matrix
+		auto mat = doi::rotateMat<4, float>({1.f, -1.f, 0.2f}, 0.f * time_);
 		doi::write(span, mat);
+
+		// lights
+		if(updateLights_) {
+			auto lspan = span;
+			for(auto& l : lights_) {
+				doi::write(lspan, l);
+			}
+		}
+
+		doi::skip(span, sizeof(Light) * maxLightSize);
+		doi::write(span, camera_.pos);
+		doi::write(span, std::uint32_t(lights_.size()));
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
-		projection_.aspect = float(ev.size.x) / ev.size.y;
-		projection_.update = true;
+		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+		camera_.update = true;
 	}
 
 	bool needsDepth() const override {
@@ -303,17 +457,15 @@ protected:
 	vpp::Pipeline pipe_;
 
 	unsigned drawCount_;
-	float time_;
+	float time_ {};
+	bool rotateView_ {false};
 
 	std::vector<Light> lights_;
+	bool updateLights_ {true};
 
-	struct {
-		float fov = 0.5 * nytl::constants::pi;
-		float aspect = 1.f;
-		float near = 0.01f;
-		float far = 100.f;
-		bool update = true;
-	} projection_;
+	Camera camera_ {};
+	float yaw_ {0.5 * nytl::constants::pi}; // rotation around y (upwards) axis
+	float pitch_ {0.f}; // rotation around x (left/right) axis
 };
 
 int main(int argc, const char** argv) {
