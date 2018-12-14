@@ -75,6 +75,7 @@ shaders_src = [
 	['ddd_shaders', [
 		['model.vert'],
 		['model.frag'],
+		['shadowmap.vert'],
 	]],
 ]
 

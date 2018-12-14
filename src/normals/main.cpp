@@ -29,8 +29,8 @@ public:
 		ubo_ = {dev.bufferAllocator(), sizeof(float) * 4,
 			vk::BufferUsageBits::uniformBuffer, 0, mem};
 
-		diffuse_ = doi::loadTexture(dev, "diffuse3.png");
-		normal_ = doi::loadTexture(dev, "normals3.png");
+		diffuse_ = doi::loadTexture(dev, "../assets/gravel_color.png");
+		normal_ = doi::loadTexture(dev, "../assets/gravel_normal.png");
 
 		// pipe
 		auto info = vk::SamplerCreateInfo {};
