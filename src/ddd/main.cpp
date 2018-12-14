@@ -39,15 +39,15 @@ struct Light {
 
 struct Camera {
 	bool update = true;
-	nytl::Vec3f pos {0.f, 0.f, 3.f};
-	nytl::Vec3f dir {0.f, 0.f, -1.f};
+	nytl::Vec3f pos {0.f, 0.f, -3.f};
+	nytl::Vec3f dir {0.f, 0.f, 1.f};
 	nytl::Vec3f up {0.f, 1.f, 0.f};
 
 	struct {
-		float fov = 0.35 * nytl::constants::pi;
+		float fov = 0.48 * nytl::constants::pi;
 		float aspect = 1.f;
-		float near = 0.1f;
-		float far = 100.f;
+		float near = 0.01f;
+		float far = 10.f;
 	} perspective;
 };
 
@@ -70,7 +70,7 @@ public:
 
 		// Load Model
 		namespace gltf = tinygltf;
-		const auto filename = "../assets/gltf/test.gltf";
+		const auto filename = "../assets/gltf/katana/scene.gltf";
 		dlg_info(">> Loading model...");
 
 		gltf::TinyGLTF loader;
@@ -360,8 +360,8 @@ public:
 		App::mouseMove(ev);
 		if(rotateView_) {
 			using nytl::constants::pi;
-			yaw_ += 0.01 * ev.delta.x;
-			pitch_ += 0.01 * ev.delta.y;
+			yaw_ += 0.005 * ev.delta.x;
+			pitch_ += 0.005 * ev.delta.y;
 			pitch_ = std::clamp<float>(pitch_, -pi / 2 + 0.1, pi / 2 - 0.1);
 
 			camera_.dir.x = std::sin(yaw_) * std::cos(pitch_);
@@ -418,7 +418,8 @@ public:
 		}
 
 		// model matrix
-		auto mat = doi::rotateMat<4, float>({1.f, -1.f, 0.2f}, time_);
+		// auto mat = doi::rotateMat<4, float>({1.f, -1.f, 0.2f}, time_);
+		auto mat = nytl::identity<4, float>();
 		doi::write(span, mat);
 
 		// lights
