@@ -3,6 +3,8 @@
 #include <stage/window.hpp>
 #include <stage/transform.hpp>
 #include <stage/bits.hpp>
+#include <stage/gltf.hpp>
+#include <stage/quaternion.hpp>
 
 #include <ny/key.hpp>
 #include <ny/keyboardContext.hpp>
@@ -36,7 +38,7 @@ struct Light {
 	nytl::Vec3f pd; // position/direction
 	Type type;
 	nytl::Vec3f color;
-	float _; // padding to match glsl
+	std::uint32_t pcf {0};
 };
 
 struct Camera {
@@ -49,181 +51,157 @@ struct Camera {
 		float fov = 0.48 * nytl::constants::pi;
 		float aspect = 1.f;
 		float near = 0.01f;
-		float far = 10.f;
+		float far = 30.f;
 	} perspective;
 };
 
 auto matrix(Camera& c) {
-	auto& p = c.perspective;
+	// auto mat = doi::ortho3Sym<float>(4.f, 4.f, 0.1f, 10.f);
 
-	// auto mat = doi::ortho3Sym<float>(10.f, 10.f, 0.1f, 10.f);
+	auto& p = c.perspective;
 	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
 	return mat * doi::lookAtRH(c.pos, c.pos + c.dir, c.up);
 }
 
-/// Throws std::runtime_error if componentType is not a valid gltf component type
-/// Does not check for bounds of address
-double read(const tinygltf::Buffer& buf, unsigned address, unsigned componentType) {
-	double v;
-	auto t = componentType;
-	if(t == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
-		v = *reinterpret_cast<const std::uint8_t*>(&buf.data[address]);
-	} else if(t == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) {
-		v = *reinterpret_cast<const std::uint32_t*>(&buf.data[address]);
-	} else if(t == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
-		v = *reinterpret_cast<const std::uint16_t*>(&buf.data[address]);
-	} else if(t == TINYGLTF_COMPONENT_TYPE_SHORT) {
-		v = *reinterpret_cast<const std::int16_t*>(&buf.data[address]);
-	} else if(t == TINYGLTF_COMPONENT_TYPE_BYTE) {
-		v = *reinterpret_cast<const std::int8_t*>(&buf.data[address]);
-	} else if(t == TINYGLTF_COMPONENT_TYPE_INT) {
-		v = *reinterpret_cast<const std::int32_t*>(&buf.data[address]);
-	} else if(t == TINYGLTF_COMPONENT_TYPE_FLOAT) {
-		v = *reinterpret_cast<const float*>(&buf.data[address]);
-	} else if(t == TINYGLTF_COMPONENT_TYPE_DOUBLE) {
-		v = *reinterpret_cast<const double*>(&buf.data[address]);
-	} else {
-		throw std::runtime_error("Invalid gltf component type");
-	}
+struct Mesh {
+	static constexpr auto uboSize = 2 * sizeof(nytl::Mat4f);
 
-	return v;
+	struct Vertex {
+		nytl::Vec3f pos;
+		nytl::Vec3f normal;
+	};
+
+	unsigned indexCount {};
+	unsigned vertexCount {};
+	vpp::SubBuffer vertices; // also indices, ubo
+	vpp::TrDs ds;
+	nytl::Mat4f matrix = nytl::identity<4, float>();
+};
+
+vpp::BufferSpan ubo(const Mesh& mesh) {
+	auto uboOffset = mesh.vertices.offset();
+	auto& buf = static_cast<const vpp::Buffer&>(mesh.vertices.buffer());
+	return {buf, mesh.uboSize, uboOffset};
 }
 
-// Reads as array
-template<std::size_t N, typename T = float>
-auto read(const tinygltf::Buffer& buf, unsigned address, unsigned type,
-		unsigned componentType, T fill = T(0)) {
-	std::array<T, N> vals;
+std::optional<Mesh> loadMesh(const vpp::Device& dev,
+		const tinygltf::Model& model, const tinygltf::Mesh& mesh,
+		const vpp::TrDsLayout& dsLayout) {
+	auto ret = Mesh {};
 
-	// NOTE: not really bytes though
-	unsigned components = tinygltf::GetTypeSizeInBytes(type);
-	unsigned valSize = tinygltf::GetComponentSizeInBytes(componentType);
-	for(auto i = 0u; i < components; ++i) {
-		if(i < components) {
-			vals[i] = read(buf, address, componentType);
-			address += valSize;
-		} else {
-			vals[i] = fill;
+	if(mesh.primitives.empty()) {
+		dlg_fatal("No primitive to render");
+		return {};
+	}
+
+	auto& primitive = mesh.primitives[0];
+	auto ip = primitive.attributes.find("POSITION");
+	auto in = primitive.attributes.find("NORMAL");
+	if(ip == primitive.attributes.end() || in == primitive.attributes.end()) {
+		dlg_fatal("primitve doesn't have POSITION or NORMAL");
+		return {};
+	}
+
+	auto& pa = model.accessors[ip->second];
+	auto& na = model.accessors[in->second];
+	auto& ia = model.accessors[primitive.indices];
+
+	// compute total buffer size
+	auto size = 0u;
+	size += Mesh::uboSize; // ubo
+	size += ia.count * sizeof(uint32_t); // indices
+	size += na.count * sizeof(nytl::Vec3f); // normals
+	size += pa.count * sizeof(nytl::Vec3f); // positions
+
+	auto devMem = dev.deviceMemoryTypes();
+	auto hostMem = dev.hostMemoryTypes();
+	auto usage = vk::BufferUsageBits::vertexBuffer |
+		vk::BufferUsageBits::uniformBuffer |
+		vk::BufferUsageBits::indexBuffer |
+		vk::BufferUsageBits::transferDst;
+
+	dlg_assert(na.count == pa.count);
+	ret.vertices = {dev.bufferAllocator(), size, usage, 0u, devMem};
+	ret.indexCount = ia.count;
+	ret.vertexCount = na.count;
+
+	// fill it
+	{
+		auto stage = vpp::SubBuffer{dev.bufferAllocator(), size,
+			vk::BufferUsageBits::transferSrc, 0u, hostMem};
+		auto map = stage.memoryMap();
+		auto span = map.span();
+
+		// write ubo
+		doi::write(span, nytl::identity<4, float>()); // model matrix
+		doi::write(span, nytl::identity<4, float>()); // normal matrix
+
+		// write indices
+		for(auto idx : doi::range<1, std::uint32_t>(model, ia)) {
+			doi::write(span, idx);
 		}
+
+		// write vertices and normals
+		auto pr = doi::range<3, float>(model, pa);
+		auto nr = doi::range<3, float>(model, na);
+		for(auto pit = pr.begin(), nit = nr.begin();
+				pit != pr.end() && nit != nr.end();
+				++nit, ++pit) {
+			doi::write(span, *pit);
+			doi::write(span, *nit);
+		}
+
+		// upload
+		auto& qs = dev.queueSubmitter();
+		auto cb = qs.device().commandAllocator().get(qs.queue().family());
+		vk::beginCommandBuffer(cb, {});
+		vk::BufferCopy region;
+		region.dstOffset = ret.vertices.offset();
+		region.srcOffset = stage.offset();
+		region.size = size;
+		vk::cmdCopyBuffer(cb, stage.buffer(), ret.vertices.buffer(), {region});
+		vk::endCommandBuffer(cb);
+
+		// execute
+		// TODO: could be batched with other work; we wait here
+		vk::SubmitInfo submission;
+		submission.commandBufferCount = 1;
+		submission.pCommandBuffers = &cb.vkHandle();
+		qs.wait(qs.add(submission));
 	}
 
-	return vals;
+	// descriptor
+	ret.ds = {dev.descriptorAllocator(), dsLayout};
+	auto mubo = ubo(ret);
+	vpp::DescriptorSetUpdate odsu(ret.ds);
+	odsu.uniform({{mubo.buffer(), mubo.offset(), mubo.size()}});
+	vpp::apply({odsu});
+
+	return ret;
 }
 
-template<std::size_t N, typename T>
-struct AccessorIterator {
-	static_assert(N > 0);
-	using Value = std::conditional_t<N == 1, T, nytl::Vec<N, T>>;
-
-	const tinygltf::Buffer* buffer {};
-	std::size_t address {};
-	std::size_t stride {};
-	unsigned type {};
-	unsigned componentType {};
-
-	AccessorIterator(const tinygltf::Model& model,
-			const tinygltf::Accessor& accessor) {
-		auto& bv = model.bufferViews[accessor.bufferView];
-		buffer = &model.buffers[bv.buffer];
-		address = accessor.byteOffset + bv.byteOffset;
-		stride = accessor.ByteStride(bv);
-		type = accessor.type;
-		componentType = accessor.componentType;
-	}
-
-	AccessorIterator operator+(int value) const {
-		auto cpy = *this;
-		cpy.address += value * stride;
-		return cpy;
-	}
-
-	AccessorIterator& operator+=(int value) {
-		address += value * stride;
-		return *this;
-	}
-
-	AccessorIterator operator-(int value) const {
-		auto cpy = *this;
-		cpy.address -= value * stride;
-		return cpy;
-	}
-
-	AccessorIterator& operator-=(int value) {
-		address -= value * stride;
-		return *this;
-	}
-
-	AccessorIterator& operator++() {
-		address += stride;
-		return *this;
-	}
-
-	AccessorIterator operator++(int) {
-		auto copy = *this;
-		address += stride;
-		return copy;
-	}
-
-	AccessorIterator& operator--() {
-		address -= stride;
-	}
-
-	AccessorIterator operator--(int) {
-		auto copy = *this;
-		address -= stride;
-		return copy;
-	}
-
-	Value operator*() const {
-		return convert(read<N, T>(*buffer, address, type, componentType));
-	}
-
-	Value convert(const std::array<T, N>& val) const {
-		Value ret;
-		std::memcpy(&ret, val.data(), val.size() * sizeof(T));
-		return ret;
-	}
-};
-
-template<std::size_t N, typename T>
-struct AccessorRange {
-	using Iterator = AccessorIterator<N, T>;
-	const tinygltf::Model& model;
-	const tinygltf::Accessor& accessor;
-
-	Iterator begin() const {
-		return {model, accessor};
-	}
-
-	Iterator end() const {
-		return begin() + accessor.count;
-	}
-};
-
-template<std::size_t N, typename T>
-AccessorRange<N, T> range(const tinygltf::Model& model,
-		const tinygltf::Accessor& accessor) {
-	return {model, accessor};
+void draw(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout, const Mesh& mesh) {
+	auto iOffset = mesh.vertices.offset() + mesh.uboSize;
+	auto vOffset = iOffset + mesh.indexCount * sizeof(std::uint32_t);
+	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+		pipeLayout, 1, {mesh.ds}, {});
+	vk::cmdBindVertexBuffers(cb, 0, 1, {mesh.vertices.buffer()}, {vOffset});
+	vk::cmdBindIndexBuffer(cb, mesh.vertices.buffer(), iOffset, vk::IndexType::uint32);
+	vk::cmdDrawIndexed(cb, mesh.indexCount, 1, 0, 0, 0);
 }
 
-// TODO: just use <=> in C++20
-template<std::size_t N, typename T>
-bool operator==(const AccessorIterator<N, T>& a, const AccessorIterator<N, T>& b) {
-	return a.buffer == b.buffer && a.address == b.address && a.stride == b.stride;
-}
-
-template<std::size_t N, typename T>
-bool operator!=(const AccessorIterator<N, T>& a, const AccessorIterator<N, T>& b) {
-	return a.buffer != b.buffer || a.address != b.address || a.stride != b.stride;
+void updateDevice(Mesh& mesh) {
+	auto map = ubo(mesh).memoryMap();
+	auto span = map.span();
+	doi::write(span, mesh.matrix);
+	auto normalMatrix = nytl::Mat4f(transpose(inverse(mesh.matrix)));
+	doi::write(span, normalMatrix);
 }
 
 class ViewApp : public doi::App {
 public:
 	static constexpr auto maxLightSize = 8u;
-	struct Vertex {
-		nytl::Vec3f pos;
-		nytl::Vec3f normal;
-	};
+	using Vertex = Mesh::Vertex;
 
 public:
 	bool init(const doi::AppSettings& settings) override {
@@ -231,16 +209,10 @@ public:
 			return false;
 		}
 
-		// Load Model
-		const auto filename = "../assets/gltf/test2.gltf";
-		if (!loadModel(filename)) {
-			return false;
-		}
-
 		// == example light ==
 		lights_.emplace_back();
 		lights_.back().color = {1.f, 1.f, 1.f};
-		lights_.back().pd = {1.8f, 2.3f, 2.f};
+		lights_.back().pd = {5.8f, 4.0f, 4.f};
 		lights_.back().type = Light::Type::point;
 
 		// === Init pipeline ===
@@ -332,6 +304,12 @@ public:
 
 		pipe_ = {dev, vkpipe};
 
+		// Load Model
+		const auto filename = "../assets/gltf/test3.gltf";
+		if (!loadModel(filename)) {
+			return false;
+		}
+
 		// == ubo and stuff ==
 		auto sceneUboSize = 2 * sizeof(nytl::Mat4f) // light; proj matrix
 			+ maxLightSize * sizeof(Light) // lights
@@ -341,12 +319,6 @@ public:
 		sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
-		// object; XXX: perform per mesh (/node (?))
-		auto objectUboSize = 2 * sizeof(nytl::Mat4f); // model, normal matrix
-		objectDs_ = {dev.descriptorAllocator(), objectDsLayout_};
-		objectUbo_ = {dev.bufferAllocator(), objectUboSize,
-			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
-
 		initShadowPipe();
 
 		// descriptors
@@ -354,10 +326,7 @@ public:
 		sdsu.uniform({{sceneUbo_.buffer(), sceneUbo_.offset(), sceneUbo_.size()}});
 		sdsu.imageSampler({{shadow_.sampler, shadow_.target.vkImageView(),
 			vk::ImageLayout::depthStencilReadOnlyOptimal}});
-
-		vpp::DescriptorSetUpdate odsu(objectDs_);
-		odsu.uniform({{objectUbo_.buffer(), objectUbo_.offset(), objectUbo_.size()}});
-		vpp::apply({sdsu, odsu});
+		vpp::apply({sdsu});
 
 		return true;
 	}
@@ -392,88 +361,96 @@ public:
 		}
 
 		dlg_info(">> Loading Succesful...");
-		// load model onto gpu
-		if(model.meshes.empty()) {
-			dlg_fatal("No mesh to render");
-			return false;
+
+		// if(model.meshes.empty()) {
+		// 	dlg_fatal("No mesh to render");
+		// 	return false;
+		// }
+		//
+		// dlg_info("Found {} meshes", model.meshes.size());
+		// simple mesh loading/rendering
+		// for(auto& mesh : model.meshes) {
+		// 	auto m = loadMesh(vulkanDevice(), model, mesh, objectDsLayout_);
+		// 	if(!m) {
+		// 		return false;
+		// 	}
+		// 	meshes_.push_back(std::move(*m));
+		// }
+
+		// traverse nodes
+		dlg_info("Found {} scenes", model.scenes.size());
+		auto& scene = model.scenes[model.defaultScene];
+
+		auto mat = nytl::identity<4, float>();
+		for(auto nodeid : scene.nodes) {
+			auto& node = model.nodes[nodeid];
+			loadNode(model, node, mat);
 		}
 
-		auto& mesh = model.meshes[0];
-		if(mesh.primitives.empty()) {
-			dlg_fatal("No primitive to render");
-			return false;
-		}
-
-		auto& primitive = mesh.primitives[0];
-		auto ip = primitive.attributes.find("POSITION");
-		auto in = primitive.attributes.find("NORMAL");
-		if(ip == primitive.attributes.end() || in == primitive.attributes.end()) {
-			dlg_fatal("primitve doesn't have POSITION or NORMAL");
-			return false;
-		}
-
-		auto& pa = model.accessors[ip->second];
-		auto& na = model.accessors[in->second];
-		auto& ia = model.accessors[primitive.indices];
-
-		// compute total buffer size
-		auto size = 0u;
-		size += ia.count * sizeof(uint32_t); // indices
-		size += na.count * sizeof(nytl::Vec3f); // normals
-		size += pa.count * sizeof(nytl::Vec3f); // positions
-
-		auto& dev = vulkanDevice();
-		auto devMem = dev.deviceMemoryTypes();
-		auto hostMem = dev.hostMemoryTypes();
-		auto usage = vk::BufferUsageBits::vertexBuffer |
-			vk::BufferUsageBits::indexBuffer |
-			vk::BufferUsageBits::transferDst;
-		vertices_ = {dev.bufferAllocator(), size, usage, 0u, devMem};
-
-		// fill it
-		{
-			auto stage = vpp::SubBuffer{dev.bufferAllocator(), size,
-				vk::BufferUsageBits::transferSrc, 0u, hostMem};
-			auto map = stage.memoryMap();
-			auto span = map.span();
-
-			// write indices
-			for(auto idx : range<1, std::uint32_t>(model, ia)) {
-				doi::write(span, idx);
-			}
-
-			// write vertices and normals
-			dlg_assert(na.count == pa.count);
-			auto pr = range<3, float>(model, pa);
-			auto nr = range<3, float>(model, na);
-			for(auto pit = pr.begin(), nit = nr.begin();
-					pit != pr.end() && nit != nr.end();
-					++nit, ++pit) {
-				doi::write(span, *pit);
-				doi::write(span, *nit);
-			}
-
-			// upload
-			auto& qs = dev.queueSubmitter();
-			auto cb = qs.device().commandAllocator().get(qs.queue().family());
-			vk::beginCommandBuffer(cb, {});
-			vk::BufferCopy region;
-			region.dstOffset = vertices_.offset();
-			region.srcOffset = stage.offset();
-			region.size = size;
-			vk::cmdCopyBuffer(cb, stage.buffer(), vertices_.buffer(), {region});
-			vk::endCommandBuffer(cb);
-
-			// execute
-			// TODO: could be batched with other work; we wait here
-			vk::SubmitInfo submission;
-			submission.commandBufferCount = 1;
-			submission.pCommandBuffers = &cb.vkHandle();
-			qs.wait(qs.add(submission));
-		}
-
-		drawCount_ = ia.count;
 		return true;
+	}
+
+	void loadNode(const tinygltf::Model& model,
+			const tinygltf::Node& node,
+			nytl::Mat4f matrix) {
+		if(!node.matrix.empty()) {
+			nytl::Mat4f mat;
+			for(auto r = 0u; r < 4; ++r) {
+				for(auto c = 0u; c < 4; ++c) {
+					// they are column major
+					mat[r][c] = node.matrix[c * 4 + r];
+				}
+			}
+
+			dlg_info(mat);
+			matrix = matrix * mat;
+		} else if(!node.scale.empty() || !node.translation.empty() || !node.rotation.empty()) {
+			// gltf: matrix computed as T * R * S
+			auto mat = nytl::identity<4, float>();
+			if(!node.scale.empty()) {
+				mat[0][0] = node.scale[0];
+				mat[1][1] = node.scale[1];
+				mat[2][2] = node.scale[2];
+			}
+
+			if(!node.rotation.empty()) {
+				doi::Quaternion q;
+				q.x = node.rotation[0];
+				q.y = node.rotation[1];
+				q.z = node.rotation[2];
+				q.w = node.rotation[3];
+
+				mat = doi::toMat<4>(q) * mat;
+			}
+
+			if(!node.translation.empty()) {
+				nytl::Vec3f t;
+				t.x = node.translation[0];
+				t.y = node.translation[1];
+				t.z = node.translation[2];
+				mat = doi::translateMat(t) * mat;
+			}
+
+			dlg_info(mat);
+			matrix = matrix * mat;
+		}
+
+		for(auto nodeid : node.children) {
+			auto& child = model.nodes[nodeid];
+			loadNode(model, child, matrix);
+		}
+
+		if(node.mesh != -1) {
+			auto& mesh = model.meshes[node.mesh];
+			auto m = loadMesh(vulkanDevice(), model, mesh, objectDsLayout_);
+			if(!m) {
+				dlg_error("could not load mesh");
+				return;
+			}
+
+			meshes_.push_back(std::move(*m));
+			meshes_.back().matrix = matrix;
+		}
 	}
 
 	void initShadowPipe() {
@@ -603,7 +580,7 @@ public:
 
 	nytl::Mat4f lightMatrix() {
 		auto& light = lights_[0];
-		auto mat = doi::ortho3Sym(5.f, 5.f, 0.5f, 10.f);
+		auto mat = doi::ortho3Sym(10.f, 10.f, 0.5f, 20.f);
 		// auto mat = doi::perspective3RH<float>(0.25 * nytl::constants::pi, 1.f, 0.1, 5.f);
 		mat = mat * doi::lookAtRH(light.pd,
 			{0.f, 0.f, 0.f}, // always looks at center
@@ -635,13 +612,11 @@ public:
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, shadow_.pipeline);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {shadow_.ds, objectDs_}, {});
-		auto vOffset = drawCount_ * sizeof(uint32_t);
-		vk::cmdBindVertexBuffers(cb, 0, 1, {vertices_.buffer()},
-			{vertices_.offset() + vOffset});
-		vk::cmdBindIndexBuffer(cb, vertices_.buffer(), vertices_.offset(),
-			vk::IndexType::uint32);
-		vk::cmdDrawIndexed(cb, drawCount_, 1, 0, 0, 0);
+			pipeLayout_, 0, {shadow_.ds}, {});
+
+		for(auto& mesh : meshes_) {
+			draw(cb, pipeLayout_, mesh);
+		}
 
 		vk::cmdEndRenderPass(cb);
 	}
@@ -649,14 +624,11 @@ public:
 	void render(vk::CommandBuffer cb) override {
 		// draw
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		vk::cmdBindIndexBuffer(cb, vertices_.buffer(), vertices_.offset(),
-			vk::IndexType::uint32);
-		auto vOffset = drawCount_ * sizeof(uint32_t);
-		vk::cmdBindVertexBuffers(cb, 0, 1, {vertices_.buffer()},
-			{vertices_.offset() + vOffset});
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {sceneDs_, objectDs_}, {});
-		vk::cmdDrawIndexed(cb, drawCount_, 1, 0, 0, 0);
+			pipeLayout_, 0, {sceneDs_}, {});
+		for(auto& mesh : meshes_) {
+			draw(cb, pipeLayout_, mesh);
+		}
 	}
 
 	void update(double dt) override {
@@ -697,8 +669,8 @@ public:
 		}
 
 		if(moveLight_) {
-			lights_[0].pd.x = 2.0 * std::cos(time_);
-			lights_[0].pd.z = 2.0 * std::sin(time_);
+			lights_[0].pd.x = 5.0 * std::cos(time_);
+			lights_[0].pd.z = 5.0 * std::sin(time_);
 			updateLights_ = true;
 		}
 	}
@@ -715,6 +687,10 @@ public:
 		switch(ev.keycode) {
 			case ny::Keycode::l:
 				moveLight_ ^= true;
+				return true;
+			case ny::Keycode::p:
+				lights_[0].pcf = 1 - lights_[0].pcf;
+				updateLights_ = true;
 				return true;
 			default:
 				break;
@@ -756,6 +732,7 @@ public:
 		// update scene ubo
 		if(camera_.update || updateLights_) {
 			camera_.update = false;
+			// updateLights_ set to false below
 
 			auto map = sceneUbo_.memoryMap();
 			auto span = map.span();
@@ -775,22 +752,16 @@ public:
 			doi::write(span, std::uint32_t(lights_.size()));
 		}
 
-		// update model matrix
-		auto map = objectUbo_.memoryMap();
-		auto span = map.span();
-
-		// model matrix
-		auto mat = nytl::identity<4, float>();
-		doi::write(span, mat);
-		auto normalMatrix = nytl::Mat4f(transpose(inverse(mat)));
-		doi::write(span, normalMatrix);
-
-		// write shadow ubo
 		if(updateLights_) {
 			updateLights_ = false;
 			auto map = shadow_.ubo.memoryMap();
 			auto span = map.span();
 			doi::write(span, lightMatrix());
+		}
+
+		// update model matrix
+		for(auto& m : meshes_) {
+			::updateDevice(m);
 		}
 	}
 
@@ -805,28 +776,25 @@ public:
 	}
 
 protected:
-	vpp::SubBuffer vertices_;
 	vpp::SubBuffer sceneUbo_;
-	vpp::SubBuffer objectUbo_; // per object
-
 	vpp::TrDsLayout sceneDsLayout_;
 	vpp::TrDsLayout objectDsLayout_;
 	vpp::TrDs sceneDs_;
-	vpp::TrDs objectDs_; // per object
 
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
 
 	bool moveLight_ {false};
 
-	unsigned drawCount_;
 	float time_ {};
-	bool rotateView_ {false};
+	bool rotateView_ {false}; // mouseLeft down
 
+	std::vector<Mesh> meshes_;
 	std::vector<Light> lights_;
 	bool updateLights_ {true};
 
 	Camera camera_ {};
+	// XXX: integrate into camera class
 	float yaw_ {0.f};
 	float pitch_ {0.f}; // rotation around x (left/right) axis
 
@@ -841,7 +809,7 @@ protected:
 		vpp::Pipeline pipeline;
 		vk::Format format = vk::Format::d32Sfloat; // TODO
 
-		vk::Extent3D extent {1024u, 1024u, 1u};
+		vk::Extent3D extent {2048u, 2048u, 1u};
 
 		// per light
 		vpp::ViewableImage target;

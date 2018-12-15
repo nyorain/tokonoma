@@ -13,7 +13,7 @@ struct Light {
 	vec3 pd; // position for point light, direction of dir light
 	uint type; // point or dir
 	vec3 color;
-	float _; // padding
+	uint pcf; // padding
 };
 
 layout(constant_id = 0) const uint maxLightSize = 8;
@@ -27,6 +27,27 @@ layout(set = 0, binding = 0, row_major) uniform Lights {
 } lights;
 
 layout(set = 0, binding = 1) uniform sampler2DShadow shadowTex;
+
+// samples the shadow texture multiple times to get smoother shadow
+// returns (1 - shadow), i.e. the light factor
+float shadowpcf(vec3 pos) {
+	if(pos.z > 1.0) {
+		return 0.0;
+	}
+
+	vec2 texelSize = 1.f / textureSize(shadowTex, 0);
+	float sum = 0.f;
+	int range = int(lights.lights[0].pcf);
+	for(int x = -range; x <= range; ++x) {
+		for(int y = -range; y <= range; ++y) {
+			vec3 off = vec3(texelSize * vec2(x, y),  0);
+			sum += texture(shadowTex, inLightPos + off).r;
+		}
+	}
+
+	float total = ((2 * range + 1) * (2 * range + 1));
+	return sum / total;
+}
 
 void main() {
 	vec3 normal = normalize(inNormal);
@@ -48,17 +69,19 @@ void main() {
 
 		float lfac = diffuseFac * max(dot(normal, -ldir), 0.0); // diffuse
 
-		// TODO: blinn
-		// specular; currently just phong
-		vec3 refl = reflect(ldir, normal);
+		// specular
 		vec3 vdir = normalize(inPos - lights.viewPos);
-		lfac += specularFac * pow(max(dot(-vdir, refl), 0.0), shininess);
+
+		// phong
+		// vec3 refl = reflect(ldir, normal);
+		// lfac += specularFac * pow(max(dot(-vdir, refl), 0.0), shininess);
+
+		// blinn-phong
+		vec3 halfway = normalize(-ldir - vdir);
+		lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
 
 		// shadow
-		float currentDepth = inLightPos.z;
-		float shadowDepth = texture(shadowTex, inLightPos.xyz).r;
-		// lfac *= (currentDepth > shadowDepth) ? 0.f : 1.f;
-		lfac *= shadowDepth;
+		lfac *= shadowpcf(inLightPos);
 
 		// ambient, always added, even in shadow
 		lfac += ambientFac;
