@@ -2,6 +2,7 @@
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec3 inLightPos;
 
 layout(location = 0) out vec4 outCol;
 
@@ -19,10 +20,13 @@ layout(constant_id = 0) const uint maxLightSize = 8;
 
 layout(set = 0, binding = 0, row_major) uniform Lights {
 	mat4 _proj;
+	mat4 _light;
 	Light lights[maxLightSize];
 	vec3 viewPos; // camera position. For specular light
 	uint numLights; // <= maxLightSize
 } lights;
+
+layout(set = 0, binding = 1) uniform sampler2DShadow shadowTex;
 
 void main() {
 	vec3 normal = normalize(inNormal);
@@ -32,6 +36,8 @@ void main() {
 	float specularFac = 0.5f;
 	float shininess = 64.f;
 
+	// TODO: shadow coords only for first light supported
+
 	vec3 col = vec3(0.1, 0.1, 0.1);
 	for(uint i = 0; i < lights.numLights; ++i) {
 		Light light = lights.lights[i];
@@ -40,14 +46,22 @@ void main() {
 			light.pd;
 		ldir = normalize(ldir);
 
-		float lfac = ambientFac; // ambient
-		lfac += diffuseFac * max(dot(normal, -ldir), 0.0); // diffuse
+		float lfac = diffuseFac * max(dot(normal, -ldir), 0.0); // diffuse
 
 		// TODO: blinn
 		// specular; currently just phong
 		vec3 refl = reflect(ldir, normal);
 		vec3 vdir = normalize(inPos - lights.viewPos);
 		lfac += specularFac * pow(max(dot(-vdir, refl), 0.0), shininess);
+
+		// shadow
+		float currentDepth = inLightPos.z;
+		float shadowDepth = texture(shadowTex, inLightPos.xyz).r;
+		// lfac *= (currentDepth > shadowDepth) ? 0.f : 1.f;
+		lfac *= shadowDepth;
+
+		// ambient, always added, even in shadow
+		lfac += ambientFac;
 
 		// combine
 		col += lfac * light.color * objectColor;

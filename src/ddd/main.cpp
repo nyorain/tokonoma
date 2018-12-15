@@ -56,6 +56,7 @@ struct Camera {
 auto matrix(Camera& c) {
 	auto& p = c.perspective;
 
+	// auto mat = doi::ortho3Sym<float>(10.f, 10.f, 0.1f, 10.f);
 	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
 	return mat * doi::lookAtRH(c.pos, c.pos + c.dir, c.up);
 }
@@ -236,15 +237,39 @@ public:
 			return false;
 		}
 
+		// == example light ==
+		lights_.emplace_back();
+		lights_.back().color = {1.f, 1.f, 1.f};
+		lights_.back().pd = {1.8f, 2.3f, 2.f};
+		lights_.back().type = Light::Type::point;
+
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
 		auto hostMem = dev.hostMemoryTypes();
+
+		// shadow sampler
+		vk::SamplerCreateInfo sci {};
+		sci.addressModeU = vk::SamplerAddressMode::clampToBorder;
+		sci.addressModeV = vk::SamplerAddressMode::clampToBorder;
+		sci.addressModeW = vk::SamplerAddressMode::clampToBorder;
+		sci.borderColor = vk::BorderColor::floatOpaqueWhite;
+		sci.magFilter = vk::Filter::linear;
+		sci.minFilter = vk::Filter::linear;
+		sci.minLod = 0.0;
+		sci.maxLod = 0.25;
+		sci.mipmapMode = vk::SamplerMipmapMode::nearest;
+		sci.compareEnable = true;
+		sci.compareOp = vk::CompareOp::lessOrEqual;
+		shadow_.sampler = vpp::Sampler(dev, sci);
 
 		// per scense; view + projection matrix, lights
 		auto sceneBindings = {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
+			vpp::descriptorBinding(
+				vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment),
 		};
 
 		sceneDsLayout_ = {dev, sceneBindings};
@@ -298,7 +323,7 @@ public:
 		gpi.depthStencil.depthWriteEnable = true;
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 
-		gpi.rasterization.cullMode = vk::CullModeBits::none;
+		gpi.rasterization.cullMode = vk::CullModeBits::back;
 		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 		vk::Pipeline vkpipe;
@@ -308,7 +333,7 @@ public:
 		pipe_ = {dev, vkpipe};
 
 		// == ubo and stuff ==
-		auto sceneUboSize = sizeof(nytl::Mat4f) // proj, model matrix
+		auto sceneUboSize = 2 * sizeof(nytl::Mat4f) // light; proj matrix
 			+ maxLightSize * sizeof(Light) // lights
 			+ sizeof(nytl::Vec3f) // viewPos
 			+ sizeof(std::uint32_t); // numLights
@@ -316,27 +341,24 @@ public:
 		sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
-		vpp::DescriptorSetUpdate sdsu(sceneDs_);
-		sdsu.uniform({{sceneUbo_.buffer(), sceneUbo_.offset(), sceneUbo_.size()}});
-
 		// object; XXX: perform per mesh (/node (?))
 		auto objectUboSize = 2 * sizeof(nytl::Mat4f); // model, normal matrix
 		objectDs_ = {dev.descriptorAllocator(), objectDsLayout_};
 		objectUbo_ = {dev.bufferAllocator(), objectUboSize,
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
+		initShadowPipe();
+
+		// descriptors
+		vpp::DescriptorSetUpdate sdsu(sceneDs_);
+		sdsu.uniform({{sceneUbo_.buffer(), sceneUbo_.offset(), sceneUbo_.size()}});
+		sdsu.imageSampler({{shadow_.sampler, shadow_.target.vkImageView(),
+			vk::ImageLayout::depthStencilReadOnlyOptimal}});
+
 		vpp::DescriptorSetUpdate odsu(objectDs_);
 		odsu.uniform({{objectUbo_.buffer(), objectUbo_.offset(), objectUbo_.size()}});
-
 		vpp::apply({sdsu, odsu});
 
-		// == example light ==
-		lights_.emplace_back();
-		lights_.back().color = {1.f, 0.f, 1.f};
-		lights_.back().pd = {2.f, 3.0f, 3.2f};
-		lights_.back().type = Light::Type::point;
-
-		initShadowPipe();
 		return true;
 	}
 
@@ -533,11 +555,15 @@ public:
 		gpi.vertex.vertexAttributeDescriptionCount = 1u;
 		gpi.vertex.pVertexBindingDescriptions = &bufferBinding;
 		gpi.vertex.vertexBindingDescriptionCount = 1u;
+
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 		gpi.depthStencil.depthTestEnable = true;
 		gpi.depthStencil.depthWriteEnable = true;
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+
+		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+		gpi.rasterization.cullMode = vk::CullModeBits::back;
 		gpi.rasterization.depthBiasEnable = true;
 
 		auto dynamicStates = {
@@ -571,23 +597,53 @@ public:
 		{
 			auto map = shadow_.ubo.memoryMap();
 			auto span = map.span();
-
-			// auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
-			auto& light = lights_[0];
-			auto mat = doi::ortho3Sym(10.f, 10.f, 0.1f, 10.f);
-			mat = mat * doi::lookAtRH(light.pd, {-1.f, -1.f, -1.f}, {0.f, 1.f, 0.f});
-
-			doi::write(span, mat);
+			doi::write(span, lightMatrix());
 		}
+	}
+
+	nytl::Mat4f lightMatrix() {
+		auto& light = lights_[0];
+		auto mat = doi::ortho3Sym(5.f, 5.f, 0.5f, 10.f);
+		// auto mat = doi::perspective3RH<float>(0.25 * nytl::constants::pi, 1.f, 0.1, 5.f);
+		mat = mat * doi::lookAtRH(light.pd,
+			{0.f, 0.f, 0.f}, // always looks at center
+			{0.f, 1.f, 0.f});
+		return mat;
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
 		App::beforeRender(cb);
 
-		vk::RenderPassBeginInfo rpb; // TODO
-		vk::cmdBeginRenderPass(cb, rpb, vk::SubpassContents::eInline);
+		auto width = shadow_.extent.width;
+		auto height = shadow_.extent.height;
+		vk::ClearValue clearValue {};
+		clearValue.depthStencil = {1.f, 0u};
 
-		// TODO
+		vk::RenderPassBeginInfo rpb; // TODO
+		vk::cmdBeginRenderPass(cb, {
+			shadow_.rp,
+			shadow_.fb,
+			{0u, 0u, width, height},
+			1,
+			&clearValue
+		}, {});
+
+		vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
+		vk::cmdSetViewport(cb, 0, 1, vp);
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
+		vk::cmdSetDepthBias(cb, 1.25, 0.f, 1.75);
+
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, shadow_.pipeline);
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+			pipeLayout_, 0, {shadow_.ds, objectDs_}, {});
+		auto vOffset = drawCount_ * sizeof(uint32_t);
+		vk::cmdBindVertexBuffers(cb, 0, 1, {vertices_.buffer()},
+			{vertices_.offset() + vOffset});
+		vk::cmdBindIndexBuffer(cb, vertices_.buffer(), vertices_.offset(),
+			vk::IndexType::uint32);
+		vk::cmdDrawIndexed(cb, drawCount_, 1, 0, 0, 0);
+
+		vk::cmdEndRenderPass(cb);
 	}
 
 	void render(vk::CommandBuffer cb) override {
@@ -639,6 +695,32 @@ public:
 			camera_.pos += fac * up;
 			camera_.update = true;
 		}
+
+		if(moveLight_) {
+			lights_[0].pd.x = 2.0 * std::cos(time_);
+			lights_[0].pd.z = 2.0 * std::sin(time_);
+			updateLights_ = true;
+		}
+	}
+
+	bool key(const ny::KeyEvent& ev) override {
+		if(App::key(ev)) {
+			return true;
+		}
+
+		if(!ev.pressed) {
+			return false;
+		}
+
+		switch(ev.keycode) {
+			case ny::Keycode::l:
+				moveLight_ ^= true;
+				return true;
+			default:
+				break;
+		}
+
+		return false;
 	}
 
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
@@ -670,34 +752,16 @@ public:
 		return false;
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
-			return true;
-		}
-
-		if(ev.pressed && ev.keycode == ny::Keycode::x) {
-			camera_.dir.x *= -1.f;
-			camera_.update = true;
-		}
-
-		if(ev.pressed && ev.keycode == ny::Keycode::z) {
-			camera_.dir.z *= -1.f;
-			camera_.update = true;
-		}
-
-		return false;
-	}
-
 	void updateDevice() override {
 		// update scene ubo
 		if(camera_.update || updateLights_) {
 			camera_.update = false;
-			updateLights_ = false;
 
 			auto map = sceneUbo_.memoryMap();
 			auto span = map.span();
 
 			doi::write(span, matrix(camera_));
+			doi::write(span, lightMatrix());
 
 			{ // lights
 				auto lspan = span;
@@ -720,6 +784,14 @@ public:
 		doi::write(span, mat);
 		auto normalMatrix = nytl::Mat4f(transpose(inverse(mat)));
 		doi::write(span, normalMatrix);
+
+		// write shadow ubo
+		if(updateLights_) {
+			updateLights_ = false;
+			auto map = shadow_.ubo.memoryMap();
+			auto span = map.span();
+			doi::write(span, lightMatrix());
+		}
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -744,6 +816,8 @@ protected:
 
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
+
+	bool moveLight_ {false};
 
 	unsigned drawCount_;
 	float time_ {};

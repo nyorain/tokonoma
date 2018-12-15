@@ -167,7 +167,7 @@ nytl::SquareMat<4, P> ortho3(P left, P right, P top, P bottom, P pnear, P far) {
 
 	ret[0][0] = P(2) / (right - left);
 	ret[1][1] = P(2) / (top - bottom);
-	ret[2][2] = P(1) / (far - pnear);
+	ret[2][2] = P(1) / (pnear - far);
 
 	ret[0][3] = (right + left) / (left - right);
 	ret[1][3] = (top + bottom) / (bottom - top);
