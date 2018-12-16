@@ -84,20 +84,22 @@ PredPrey::PredPrey(vpp::Device& dev, vk::RenderPass rp) {
 void PredPrey::init(vpp::Device& dev, vk::RenderPass rp) {
 	auto size = nytl::Vec2ui {256, 256};
 	Automaton::init(dev, rp, predprey_comp_data, size,
-		BufferMode::doubled, vk::Format::r8g8Unorm,
+		BufferMode::doubled, vk::Format::r32g32Sfloat,
 		{}, {}, {}, GridType::hex);
 	reset(false);
 }
 
 void PredPrey::reset(bool clear) {
-	std::vector<std::byte> data(sizeof(nytl::Vec2u8) * size().x * size().y, {});
+	// std::vector<std::byte> data(sizeof(nytl::Vec2u8) * size().x * size().y, {});
+	std::vector<std::byte> data(sizeof(nytl::Vec2f) * size().x * size().y, {});
 
 	if(!clear) {
 		std::mt19937 rgen;
 		rgen.seed(std::time(nullptr));
-		std::uniform_int_distribution<std::uint8_t> distr(0, 255);
+		// std::uniform_int_distribution<std::uint8_t> distr(0, 255);
+		std::uniform_real_distribution<float> distr(0, 1.f);
 
-		auto* ptr = reinterpret_cast<nytl::Vec2u8*>(data.data());
+		auto* ptr = reinterpret_cast<nytl::Vec2f*>(data.data());
 		for(auto i = 0u; i < size().x * size().y; ++i) {
 			ptr[i] = {distr(rgen), distr(rgen)};
 		}
@@ -223,8 +225,10 @@ std::pair<bool, vk::Semaphore> PredPrey::updateDevice() {
 	if(read_.size() && selected_) {
 		auto map = read_.memoryMap();
 		auto span = map.span();
-		auto x = doi::read<std::uint8_t>(span);
-		auto y = doi::read<std::uint8_t>(span);
+		// auto x = doi::read<std::uint8_t>(span);
+		// auto y = doi::read<std::uint8_t>(span);
+		auto x = doi::read<float>(span);
+		auto y = doi::read<float>(span);
 		if(x != oldPrey_ || y != oldPred_) {
 			preyField_->textfield().utf8(std::to_string(x));
 			predField_->textfield().utf8(std::to_string(y));
@@ -310,6 +314,8 @@ void Ant::init(vpp::Device& dev, vk::RenderPass rp) {
 	auto size = nytl::Vec2ui {256, 256};
 	Automaton::init(dev, rp, ant_comp_data, size, BufferMode::single,
 		vk::Format::r8Uint, {}, {}, {1}, GridType::hex);
+
+	// TODO
 }
 
 void Ant::display(vui::dat::Folder&) {
@@ -535,7 +541,8 @@ protected:
 	bool paused_ {};
 	bool oneStep_ {};
 	nytl::Mat4f mat_;
-	PredPrey automaton_;
+	// PredPrey automaton_;
+	Ant automaton_;
 
 	bool mouseDown_ {};
 	nytl::Vec2f dragged_ {};

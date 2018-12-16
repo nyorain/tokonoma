@@ -32,7 +32,7 @@ layout(set = 0, binding = 1) uniform sampler2DShadow shadowTex;
 // returns (1 - shadow), i.e. the light factor
 float shadowpcf(vec3 pos) {
 	if(pos.z > 1.0) {
-		return 0.0;
+		return 1.0;
 	}
 
 	vec2 texelSize = 1.f / textureSize(shadowTex, 0);

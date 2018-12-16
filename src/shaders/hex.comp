@@ -1,0 +1,81 @@
+#version 450
+
+// symbolic constant for Field::next when there is no neighbor
+// at that position
+const uint nextNone = 0xFFFFFFFF;
+
+// the amount of diffuse per difference in every step
+// if one cell has strength 1 and its neighbor 0, so much will float
+// into the neighbor.
+// must be in range [0, 1/6]
+const float diffuse = 0.01;
+
+// the amount of strength send to attack an enemy neighbor
+// must be in range [0, 1/6]
+const float attack = 0.05;
+
+// TODO: not used, just a concept atm. Work out clash model further
+// by how much if matters in a fight which side has more forces.
+// must be in range [1, inf)
+// if this is 1, the result of a fight will only be the net difference
+// of fighting forces in both cells. If this goes against infinity,
+// the stronger side will have less losses and the stronger side more.
+const float advantageInfluence = 2;
+
+struct Field {
+	int player;
+	float strength; // for now in [0, 1]
+	uint next[6]; // direct neighbors
+};
+
+layout(set = 0, binding = 0) buffer Fields {
+	Field[] fields;
+} old;
+
+layout(set = 0, binding = 1) buffer Fields {
+	Field[] fields;
+} new;
+
+void main() {
+	uint id = gl_GlobalInvocationID.x;
+	Field field = old.fields[id];
+	int player = field.player;
+
+	// diffuse
+	for(uint i = 0; i < 6; ++i) {
+		if(field.next[i] != nextNone) {
+			Field next = old.fields[field.next[i]];
+			float diff = next.strength - field.strength;
+			if(next.player == player) { // diffuse: next <-> field (total net)
+				// does not add or remove strength in total
+				// TODO: only in [0, 1] range
+				field.strength += diffuse * diff;
+			} else { // fight: next <-> field (total net)
+
+				// ====
+				// the higher the advantage of a fighting field,
+				// the less it will lose
+				float advantage = pow(advantageInfluence, diff);
+				field.strength -= advantage * attack * next.strength;
+				if(field.strength <= 0) {
+					field.strength *= -1.f;
+					field.player = next.player;
+				}
+
+				// army clash model ====
+				float armyf = attack * field.strength;
+				float armyn = attack * next.strength;
+				float narmyf = max(armyf - armyn, 0.0);
+				float narmyn = max(armyn - armyf, 0.0);
+
+				// storming the other field
+				field.strength -= narmyn;
+
+
+				// sneak model ====
+				field.strength -= attack * field.strength; // send own army
+				field.strength -= attack * next.strength; // defend against enemy army
+			}
+		}
+	}
+}

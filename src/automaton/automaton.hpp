@@ -8,6 +8,10 @@
 #include <vui/dat.hpp>
 #include <nytl/mat.hpp>
 
+// General cellular automaton abstraction
+// NOTE: in retrospection it's probably a bad idea trying to abstract
+// something like this since its lot of work an still not as general
+// as needed in most cases.
 class Automaton {
 public:
 	enum class GridType {

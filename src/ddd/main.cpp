@@ -209,6 +209,7 @@ public:
 			return false;
 		}
 
+		// TODO: getting position right is hard
 		// == example light ==
 		lights_.emplace_back();
 		lights_.back().color = {1.f, 1.f, 1.f};
@@ -580,7 +581,7 @@ public:
 
 	nytl::Mat4f lightMatrix() {
 		auto& light = lights_[0];
-		auto mat = doi::ortho3Sym(10.f, 10.f, 0.5f, 20.f);
+		auto mat = doi::ortho3Sym(20.f, 20.f, 0.5f, 20.f);
 		// auto mat = doi::perspective3RH<float>(0.25 * nytl::constants::pi, 1.f, 0.1, 5.f);
 		mat = mat * doi::lookAtRH(light.pd,
 			{0.f, 0.f, 0.f}, // always looks at center
@@ -669,8 +670,8 @@ public:
 		}
 
 		if(moveLight_) {
-			lights_[0].pd.x = 5.0 * std::cos(time_);
-			lights_[0].pd.z = 5.0 * std::sin(time_);
+			lights_[0].pd.x = 10.0 * std::cos(0.2 * time_);
+			lights_[0].pd.z = 10.0 * std::sin(0.2 * time_);
 			updateLights_ = true;
 		}
 	}
