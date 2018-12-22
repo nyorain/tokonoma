@@ -28,6 +28,31 @@
 #include <shaders/model.frag.h>
 #include <shaders/shadowmap.vert.h>
 
+class Skybox {
+public:
+	Skybox(vpp::Device& dev, vk::RenderPass rp,
+		vk::SampleCountBits samples);
+
+	void render(vk::CommandBuffer cb);
+
+protected:
+	vpp::Device* dev_;
+	vpp::ViewableImage cubemap_;
+	vk::Sampler sampler_;
+
+	vpp::TrDs ds_;
+	vpp::TrDsLayout dsLayout_;
+	vpp::PipelineLayout pipeLayout_;
+	vpp::Pipeline pipe_;
+};
+
+Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
+		vk::SampleCountBits samples) {
+	// https://stackoverflow.com/questions/29678510/convert-21-equirectangular-panorama-to-cube-map
+	// auto format = vpp::ViewableImageCreateInfo::color(
+	// 	dev,
+}
+
 // Matches glsl struct
 struct Light {
 	enum class Type : std::uint32_t {

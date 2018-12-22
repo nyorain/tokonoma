@@ -1,20 +1,28 @@
 #version 450
 
-// symbolic constant for Field::next when there is no neighbor
-// at that position
+// invariants (before/after every exeuction):
+// - fields.player == playerNone <=>
+// 		(field.type == FieldEmpty && field.strength = 0.f);
+// - fields.player != playerNone => (field.player < playerCount);
+
+const uint playerCount = 2u; // TODO: only 2 works atm, see below
+
+// symbolic special constants
 const uint nextNone = 0xFFFFFFFF;
+const uint playerNone = 0xFFFFFFF;
 
 // the amount of diffuse per difference in every step
 // if one cell has strength 1 and its neighbor 0, so much will float
-// into the neighbor.
+// into the neighbor. If two neighbor cells don't have the same
+// player, the stronger one will gain the cell
 // must be in range [0, 1/6]
 const float diffuse = 0.01;
 
-// the amount of strength send to attack an enemy neighbor
-// must be in range [0, 1/6]
-const float attack = 0.05;
-
 // TODO: not used, just a concept atm. Work out clash model further
+// we probably first want to track how many fighters from each player
+// are there (from *all* neighbors) and then evaulate the fight and losses
+// using this factor
+//
 // by how much if matters in a fight which side has more forces.
 // must be in range [1, inf)
 // if this is 1, the result of a fight will only be the net difference
@@ -22,17 +30,42 @@ const float attack = 0.05;
 // the stronger side will have less losses and the stronger side more.
 const float advantageInfluence = 2;
 
+// constant tower damage per tick
+const float towerDamage = 0.01;
+
+// constant strength spawned by building
+const float spawn = 0.01;
+
+// buildings
+const uint FieldEmpty = 0u; // empty field
+const uint FieldResource = 1u; // resource harvester
+const uint FieldSpawn = 2u; // spawns strength
+const uint FieldTower = 3u; // damages nearby enemies
+
+bool isBuilding(uint fieldType) {
+	return fieldType != FieldEmpty;
+}
+
+// A Field in our grid
 struct Field {
 	int player;
-	float strength; // for now in [0, 1]
+	float strength; // in [0, 1] for empty cells (?)
+	uint type;
 	uint next[6]; // direct neighbors
 };
 
-layout(set = 0, binding = 0) buffer Fields {
+// the old buffer. All reads must be performed from this since the other
+// buffer may be written by another execution. Holds that was written
+// the last step
+layout(set = 0, binding = 0) readonly buffer Fields {
+	uint _; // not used
 	Field[] fields;
 } old;
 
+// must only be written since it values are otherwise undefined.
+// the final state should be written into this
 layout(set = 0, binding = 1) buffer Fields {
+	uint resources;
 	Field[] fields;
 } new;
 
@@ -42,40 +75,75 @@ void main() {
 	int player = field.player;
 
 	// diffuse
+	// 1: depart/general
+	float strength = field.strength;
 	for(uint i = 0; i < 6; ++i) {
-		if(field.next[i] != nextNone) {
-			Field next = old.fields[field.next[i]];
-			float diff = next.strength - field.strength;
-			if(next.player == player) { // diffuse: next <-> field (total net)
-				// does not add or remove strength in total
-				// TODO: only in [0, 1] range
-				field.strength += diffuse * diff;
-			} else { // fight: next <-> field (total net)
+		if(field.next[i] == nextNone) {
+			continue;
+		}
 
-				// ====
-				// the higher the advantage of a fighting field,
-				// the less it will lose
-				float advantage = pow(advantageInfluence, diff);
-				field.strength -= advantage * attack * next.strength;
-				if(field.strength <= 0) {
-					field.strength *= -1.f;
-					field.player = next.player;
-				}
-
-				// army clash model ====
-				float armyf = attack * field.strength;
-				float armyn = attack * next.strength;
-				float narmyf = max(armyf - armyn, 0.0);
-				float narmyn = max(armyn - armyf, 0.0);
-
-				// storming the other field
-				field.strength -= narmyn;
-
-
-				// sneak model ====
-				field.strength -= attack * field.strength; // send own army
-				field.strength -= attack * next.strength; // defend against enemy army
+		Field next = old.fields[field.next[i]];
+		if(next.type == FieldEmpty) {
+			if(field.type == FieldResource && next.player == field.player) {
+				// TODO: shift that to cpu
+				atomicAdd(new.resources, 1u);
+			} else if(field.type == FieldEmpty) {
+				// attack/diffuse: field -> next
+				field.strength -= diffuse * strength;
 			}
 		}
 	}
+
+	// 2: receive
+	float strengths[playerCount] {0.0, 0.0}; // player strengths in this field
+	for(uint i = 0; i < 6; ++i) {
+		if(field.next[i] == nextNone) {
+			continue;
+		}
+
+		Field next = old.fields[field.next[i]];
+		if(next.type == FieldEmpty) {
+			if(next.player != field.player && next.player != playerNone) {
+				strengths[next.player] += diffuse * next.strength;
+			} else if(field.type == FieldEmpty) {
+				// friendly diffuse: next -> field
+				field.strength += diffuse * next.strength;
+			}
+		} else if(next.type == FieldTower && next.player != field.player) {
+			field.strength -= towerDamage;
+		} else if(next.type == FieldSpawn && next.player == field.player) {
+			field.strength += spawnStrength;
+		}
+	}
+
+	if(field.strength <= 0.0) {
+		field.strength = 0.0;
+		field.type = FieldEmpty; // destroy building
+		field.player = 0;
+	}
+
+	if(field.player != playerNone) {
+		strengths[field.player] = field.strength;
+	}
+
+	// 3: fight
+	uint bestPlayer = playerNone;
+	float highestStrength = 0.0;
+	float sum = 0.0; // TODO: simple sum doesn't work for playerCount > 2
+	for(uint i = 0; i < playerCount; ++i) {
+		sum += strengths[i];
+		if(strengths[i] > highestStrength) {
+			bestPlayer = i;
+			highestStrength = strengths[i];
+		}
+	}
+
+	if(bestPlayer != playerNone) {
+		field.strength = 2 * highestStrength - sum;
+		field.type = FieldEmpty; // destroy building if one is left
+		field.player = bestPlayer;
+	}
+
+	// write back
+	new.fields[id] = field;
 }
