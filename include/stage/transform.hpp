@@ -311,4 +311,11 @@ nytl::Vec2f windowToLevel(nytl::Vec2ui windowSize,
 	};
 }
 
+// TODO: implement
+// void scaleAroundWindow(LevelView& view, nytl::Vec2ui windowPos);
+// void scaleAroundLevel(LevelView& view, nytl::Vec2f levelPos);
+//
+// // View coordinates relative inside the view, in range [-1, 1]
+// void scaleAroundView(LevelView& view, nytl::Vec2f viewPos);
+
 } // namespace doi

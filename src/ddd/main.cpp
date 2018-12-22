@@ -98,16 +98,11 @@ struct Mesh {
 
 	unsigned indexCount {};
 	unsigned vertexCount {};
-	vpp::SubBuffer vertices; // also indices, ubo
+	vpp::SubBuffer vertices; // indices + vertices
+	vpp::SubBuffer ubo; // different buffer since on mappable mem
 	vpp::TrDs ds;
 	nytl::Mat4f matrix = nytl::identity<4, float>();
 };
-
-vpp::BufferSpan ubo(const Mesh& mesh) {
-	auto uboOffset = mesh.vertices.offset();
-	auto& buf = static_cast<const vpp::Buffer&>(mesh.vertices.buffer());
-	return {buf, mesh.uboSize, uboOffset};
-}
 
 std::optional<Mesh> loadMesh(const vpp::Device& dev,
 		const tinygltf::Model& model, const tinygltf::Mesh& mesh,
@@ -133,7 +128,6 @@ std::optional<Mesh> loadMesh(const vpp::Device& dev,
 
 	// compute total buffer size
 	auto size = 0u;
-	size += Mesh::uboSize; // ubo
 	size += ia.count * sizeof(uint32_t); // indices
 	size += na.count * sizeof(nytl::Vec3f); // normals
 	size += pa.count * sizeof(nytl::Vec3f); // positions
@@ -141,7 +135,6 @@ std::optional<Mesh> loadMesh(const vpp::Device& dev,
 	auto devMem = dev.deviceMemoryTypes();
 	auto hostMem = dev.hostMemoryTypes();
 	auto usage = vk::BufferUsageBits::vertexBuffer |
-		vk::BufferUsageBits::uniformBuffer |
 		vk::BufferUsageBits::indexBuffer |
 		vk::BufferUsageBits::transferDst;
 
@@ -156,10 +149,6 @@ std::optional<Mesh> loadMesh(const vpp::Device& dev,
 			vk::BufferUsageBits::transferSrc, 0u, hostMem};
 		auto map = stage.memoryMap();
 		auto span = map.span();
-
-		// write ubo
-		doi::write(span, nytl::identity<4, float>()); // model matrix
-		doi::write(span, nytl::identity<4, float>()); // normal matrix
 
 		// write indices
 		for(auto idx : doi::range<1, std::uint32_t>(model, ia)) {
@@ -195,9 +184,23 @@ std::optional<Mesh> loadMesh(const vpp::Device& dev,
 		qs.wait(qs.add(submission));
 	}
 
+	// ubo
+	size = Mesh::uboSize; // ubo
+	usage = vk::BufferUsageBits::uniformBuffer;
+	ret.ubo = {dev.bufferAllocator(), size, usage, 0u, hostMem};
+
+	{
+		auto map = ret.ubo.memoryMap();
+		auto span = map.span();
+
+		// write ubo
+		doi::write(span, nytl::identity<4, float>()); // model matrix
+		doi::write(span, nytl::identity<4, float>()); // normal matrix
+	}
+
 	// descriptor
 	ret.ds = {dev.descriptorAllocator(), dsLayout};
-	auto mubo = ubo(ret);
+	auto& mubo = ret.ubo;
 	vpp::DescriptorSetUpdate odsu(ret.ds);
 	odsu.uniform({{mubo.buffer(), mubo.offset(), mubo.size()}});
 	vpp::apply({odsu});
@@ -206,7 +209,7 @@ std::optional<Mesh> loadMesh(const vpp::Device& dev,
 }
 
 void draw(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout, const Mesh& mesh) {
-	auto iOffset = mesh.vertices.offset() + mesh.uboSize;
+	auto iOffset = mesh.vertices.offset();
 	auto vOffset = iOffset + mesh.indexCount * sizeof(std::uint32_t);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 		pipeLayout, 1, {mesh.ds}, {});
@@ -216,7 +219,7 @@ void draw(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout, const Mesh& mesh)
 }
 
 void updateDevice(Mesh& mesh) {
-	auto map = ubo(mesh).memoryMap();
+	auto map = mesh.ubo.memoryMap();
 	auto span = map.span();
 	doi::write(span, mesh.matrix);
 	auto normalMatrix = nytl::Mat4f(transpose(inverse(mesh.matrix)));

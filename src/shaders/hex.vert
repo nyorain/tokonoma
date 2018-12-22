@@ -19,6 +19,6 @@ void main() {
 	vec2 color = texture(img, (vec2(cx, cy) + 0.5) / size).xy;
 
 	out_color = vec4(color, 0, 1);
-	gl_Position = transform * vec4(instanceHexPoint(off, size.x, radius), 0, 1);
+	gl_Position = transform * vec4(instanceHexGridPoint(off, size.x, radius), 0, 1);
 }
 

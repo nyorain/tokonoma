@@ -9,14 +9,14 @@ const uint playerCount = 2u; // TODO: only 2 works atm, see below
 
 // symbolic special constants
 const uint nextNone = 0xFFFFFFFF;
-const uint playerNone = 0xFFFFFFF;
+const uint playerNone = 0xFFFFFFFF;
 
 // the amount of diffuse per difference in every step
 // if one cell has strength 1 and its neighbor 0, so much will float
 // into the neighbor. If two neighbor cells don't have the same
 // player, the stronger one will gain the cell
 // must be in range [0, 1/6]
-const float diffuse = 0.01;
+const float diffuse = 0.1;
 
 // TODO: not used, just a concept atm. Work out clash model further
 // we probably first want to track how many fighters from each player
@@ -34,7 +34,7 @@ const float advantageInfluence = 2;
 const float towerDamage = 0.01;
 
 // constant strength spawned by building
-const float spawn = 0.01;
+const float spawnStrength = 0.01;
 
 // buildings
 const uint FieldEmpty = 0u; // empty field
@@ -48,31 +48,35 @@ bool isBuilding(uint fieldType) {
 
 // A Field in our grid
 struct Field {
-	int player;
-	float strength; // in [0, 1] for empty cells (?)
+	float _x; // packed pos, ignored
+	float _y; // packed pos, ignored
+	uint player;
 	uint type;
+	float strength; // in [0, 1] for empty cells (?)
 	uint next[6]; // direct neighbors
 };
+
+// TODO: test different settings for performance
+layout(local_size_x = 1) in;
 
 // the old buffer. All reads must be performed from this since the other
 // buffer may be written by another execution. Holds that was written
 // the last step
-layout(set = 0, binding = 0) readonly buffer Fields {
-	uint _; // not used
+layout(set = 0, binding = 0) readonly buffer OldFields {
 	Field[] fields;
 } old;
 
 // must only be written since it values are otherwise undefined.
 // the final state should be written into this
-layout(set = 0, binding = 1) buffer Fields {
-	uint resources;
+layout(set = 0, binding = 1) writeonly buffer NewFields {
 	Field[] fields;
 } new;
 
 void main() {
 	uint id = gl_GlobalInvocationID.x;
 	Field field = old.fields[id];
-	int player = field.player;
+
+	uint player = field.player;
 
 	// diffuse
 	// 1: depart/general
@@ -82,12 +86,9 @@ void main() {
 			continue;
 		}
 
-		Field next = old.fields[field.next[i]];
+		const Field next = old.fields[field.next[i]];
 		if(next.type == FieldEmpty) {
-			if(field.type == FieldResource && next.player == field.player) {
-				// TODO: shift that to cpu
-				atomicAdd(new.resources, 1u);
-			} else if(field.type == FieldEmpty) {
+			if(field.type == FieldEmpty) {
 				// attack/diffuse: field -> next
 				field.strength -= diffuse * strength;
 			}
@@ -95,35 +96,26 @@ void main() {
 	}
 
 	// 2: receive
-	float strengths[playerCount] {0.0, 0.0}; // player strengths in this field
+	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
 	for(uint i = 0; i < 6; ++i) {
 		if(field.next[i] == nextNone) {
 			continue;
 		}
 
-		Field next = old.fields[field.next[i]];
+		const Field next = old.fields[field.next[i]];
 		if(next.type == FieldEmpty) {
-			if(next.player != field.player && next.player != playerNone) {
-				strengths[next.player] += diffuse * next.strength;
-			} else if(field.type == FieldEmpty) {
-				// friendly diffuse: next -> field
-				field.strength += diffuse * next.strength;
-			}
+			// diffuse (friendly or attack): next -> field
+			strengths[next.player] += diffuse * next.strength;
 		} else if(next.type == FieldTower && next.player != field.player) {
 			field.strength -= towerDamage;
-		} else if(next.type == FieldSpawn && next.player == field.player) {
-			field.strength += spawnStrength;
+		} else if(next.type == FieldSpawn) {
+			strengths[next.player] += spawnStrength;
 		}
 	}
 
-	if(field.strength <= 0.0) {
-		field.strength = 0.0;
-		field.type = FieldEmpty; // destroy building
-		field.player = 0;
-	}
-
+	field.strength = max(0.0, field.strength);
 	if(field.player != playerNone) {
-		strengths[field.player] = field.strength;
+		strengths[field.player] += field.strength;
 	}
 
 	// 3: fight
@@ -138,10 +130,11 @@ void main() {
 		}
 	}
 
-	if(bestPlayer != playerNone) {
-		field.strength = 2 * highestStrength - sum;
+	// change field ownership/destroy building
+	field.strength = 2 * highestStrength - sum; // remainder
+	field.player = bestPlayer;
+	if(bestPlayer != field.player) {
 		field.type = FieldEmpty; // destroy building if one is left
-		field.player = bestPlayer;
 	}
 
 	// write back

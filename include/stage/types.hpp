@@ -1,8 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <nytl/vec.hpp>
 
-namespace doi {
+namespace doi::types {
 
 using i8 = std::int8_t;
 using i16 = std::int16_t;
@@ -17,4 +18,16 @@ using u64 = std::uint64_t;
 using f32 = float;
 using f64 = double;
 
-} // namespace doi
+using nytl::Vec2f;
+using nytl::Vec3f;
+using nytl::Vec4f;
+
+using nytl::Vec2i;
+using nytl::Vec3i;
+using nytl::Vec4i;
+
+using nytl::Vec2ui;
+using nytl::Vec3ui;
+using nytl::Vec4ui;
+
+} // namespace doi::types

@@ -77,6 +77,11 @@ shaders_src = [
 		['model.frag'],
 		['shadowmap.vert'],
 	]],
+	['iro_shaders', [
+		['iro.vert', include_glsl],
+		['iro.frag'],
+		['iro.comp', include_glsl],
+	]],
 ]
 
 # build them
