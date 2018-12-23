@@ -76,6 +76,8 @@ shaders_src = [
 		['model.vert'],
 		['model.frag'],
 		['shadowmap.vert'],
+		['skybox.vert'],
+		['skybox.frag'],
 	]],
 	['iro_shaders', [
 		['iro.vert', include_glsl],

@@ -31,7 +31,6 @@ vpp::ViewableImage loadTexture(vpp::Device& dev, nytl::StringParam filename) {
 	}
 
 	dlg_assert(width > 0 && height > 0);
-	std::vector<std::byte> alphaData;
 	auto ptr = reinterpret_cast<const std::byte*>(data);
 	size_t dataSize = width * height * 4u;
 
