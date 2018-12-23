@@ -83,6 +83,8 @@ shaders_src = [
 		['iro.vert', include_glsl],
 		['iro.frag'],
 		['iro.comp', include_glsl],
+		['iro_outline.vert', include_glsl],
+		['iro_outline.frag', include_glsl],
 	]],
 ]
 
