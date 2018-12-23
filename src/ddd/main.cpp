@@ -38,26 +38,43 @@
 #include "stb_image.h"
 #pragma GCC diagnostic pop
 
+// TODO: clean this mess up
+// - seperate skybox file
+// - seperate mesh file (make it a class)
+// - seperate light file (make it a class, implement shadow there as well)
+// - seperate camera file (make it a class)
+// - don't create a pipeline for every object but instead e.g. have
+//   a static method that initializes the pipeline
+
 class Skybox {
 public:
-	Skybox(vpp::Device& dev, vk::RenderPass rp,
+	void init(vpp::Device& dev, vk::RenderPass rp,
 		vk::SampleCountBits samples);
-
+	void updateDevice(const nytl::Mat4f& viewProj);
 	void render(vk::CommandBuffer cb);
 
 protected:
 	vpp::Device* dev_;
 	vpp::ViewableImage cubemap_;
-	vk::Sampler sampler_;
+	vpp::Sampler sampler_;
 	vpp::SubBuffer indices_;
+	vpp::SubBuffer ubo_;
 
-	vpp::TrDs ds_;
 	vpp::TrDsLayout dsLayout_;
+	vpp::TrDs ds_;
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
 };
 
-Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
+// TODO: allow loading panorama data
+// https://stackoverflow.com/questions/29678510/convert-21-equirectangular-panorama-to-cube-map
+// load cubemap
+
+// XXX: the way vulkan handles cubemap samplers and image coorindates,
+// top and bottom usually have to be rotated 180 degrees (or at least
+// from the skybox set i tested with, see /assets/skyboxset1, those
+// were rotated manually to fit)
+void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 		vk::SampleCountBits samples) {
 	// ds layout
 	auto bindings = {
@@ -72,16 +89,17 @@ Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
 	dsLayout_ = {dev, bindings};
 	pipeLayout_ = {dev, {dsLayout_}, {}};
 
-	vpp::ShaderModule vertShader(dev, model_vert_data);
-	vpp::ShaderModule fragShader(dev, model_frag_data);
+	vpp::ShaderModule vertShader(dev, skybox_vert_data);
+	vpp::ShaderModule fragShader(dev, skybox_frag_data);
 	vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
 	}}, 0, samples};
 
 	// depth test disabled by default
-	gpi.rasterization.cullMode = vk::CullModeBits::back;
-	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+	// gpi.rasterization.cullMode = vk::CullModeBits::back;
+	// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 	vk::Pipeline vkpipe;
 	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), NULL, vkpipe);
@@ -101,9 +119,6 @@ Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
 	};
 	vpp::writeStaging430(indices_, vpp::raw(*indices.data(), 36u));
 
-	// TODO: allow loading panorama data
-	// https://stackoverflow.com/questions/29678510/convert-21-equirectangular-panorama-to-cube-map
-	// load cubemap
 	auto base = std::string("../assets/skyboxset1/SunSet/SunSet");
 	// https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
 	const char* names[] = {
@@ -125,7 +140,7 @@ Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
 		auto filename = base + names[i] + suffix;
 		int iwidth, iheight, channels;
 		unsigned char* data = stbi_load(filename.c_str(), &iwidth, &iheight,
-			&channels, 3);
+			&channels, 4);
 		if(!data) {
 			dlg_warn("Failed to open texture file {}", filename);
 
@@ -136,20 +151,22 @@ Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
 			throw std::runtime_error(err);
 		}
 
+		dlg_assert(iwidth > 0 && iheight > 0);
 		if(width == 0 || height == 0) {
 			width = iwidth;
 			height = iheight;
+			dlg_info("skybox: {} {}", width, height);
 		} else {
 			dlg_assert(int(width) == iwidth);
 			dlg_assert(int(height) == iheight);
 		}
 
-		dlg_assert(width > 0 && height > 0);
 		faceData[i] = reinterpret_cast<const std::byte*>(data);
+		dlg_info("{}: {} ({})", i, (int*) faceData[i], (int) faceData[i][0]);
 	}
 
 	// free data
-	nytl::ScopeGuard([&]{
+	nytl::ScopeGuard guard([&]{
 		for(auto i = 0u; i < 6u; ++i) {
 			std::free(const_cast<std::byte*>(faceData[i]));
 		}
@@ -163,7 +180,8 @@ Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
 	cubemap_ = {dev, imgi};
 
 	// buffer
-	auto totalSize = 6u * width * height * 3u;
+	// XXX: this might get large
+	auto totalSize = 6u * width * height * 4u;
 	auto stage = vpp::SubBuffer(dev.bufferAllocator(), totalSize,
 		vk::BufferUsageBits::transferSrc, 0u, dev.hostMemoryTypes());
 
@@ -180,8 +198,8 @@ Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
 		copies[i].imageSubresource.baseArrayLayer = i;
 		copies[i].imageSubresource.layerCount = 1u;
 		copies[i].imageSubresource.mipLevel = 0u;
-		offset += width * height * 3u;
-		doi::write(span, faceData[i], width * height * 3u);
+		offset += width * height * 4u;
+		doi::write(span, faceData[i], width * height * 4u);
 	}
 
 	map = {};
@@ -190,7 +208,7 @@ Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
 	auto cb = dev.commandAllocator().get(qs.queue().family());
 	vk::beginCommandBuffer(cb, {});
 	vpp::changeLayout(cb, cubemap_.image(), vk::ImageLayout::undefined,
-		{}, {}, vk::ImageLayout::transferDstOptimal,
+		vk::PipelineStageBits::topOfPipe, {}, vk::ImageLayout::transferDstOptimal,
 		vk::PipelineStageBits::transfer, vk::AccessBits::transferWrite,
 		{vk::ImageAspectBits::color, 0, 1, 0, 6u});
 	vk::cmdCopyBufferToImage(cb, stage.buffer(), cubemap_.image(),
@@ -207,6 +225,43 @@ Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
 	si.commandBufferCount = 1u;
 	si.pCommandBuffers = &cb.vkHandle();
 	qs.wait(qs.add(si));
+
+	// ubo
+	auto uboSize = sizeof(nytl::Mat4f);
+	ubo_ = {dev.bufferAllocator(), uboSize, vk::BufferUsageBits::uniformBuffer,
+		0u, dev.hostMemoryTypes()};
+
+	// sampler
+	vk::SamplerCreateInfo sci {};
+	sci.magFilter = vk::Filter::linear;
+	sci.minFilter = vk::Filter::linear;
+	sci.minLod = 0.0;
+	sci.maxLod = 0.25;
+	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
+	sampler_ = {dev, sci};
+
+	// ds
+	ds_ = {dev.descriptorAllocator(), dsLayout_};
+	vpp::DescriptorSetUpdate dsu(ds_);
+	dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+	dsu.imageSampler({{sampler_, cubemap_.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.apply();
+}
+
+void Skybox::render(vk::CommandBuffer cb) {
+	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+		pipeLayout_, 0, {ds_}, {});
+	vk::cmdBindIndexBuffer(cb, indices_.buffer(),
+		indices_.offset(), vk::IndexType::uint16);
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
+	vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
+}
+
+void Skybox::updateDevice(const nytl::Mat4f& viewProj) {
+	auto map = ubo_.memoryMap();
+	auto span = map.span();
+	doi::write(span, viewProj);
 }
 
 // Matches glsl struct
@@ -235,6 +290,13 @@ struct Camera {
 		float far = 30.f;
 	} perspective;
 };
+
+// camera matrix that does take movement into account
+auto fixedMatrix(Camera& c) {
+	auto& p = c.perspective;
+	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
+	return mat * doi::lookAtRH({}, c.dir, c.up);
+}
 
 auto matrix(Camera& c) {
 	// auto mat = doi::ortho3Sym<float>(4.f, 4.f, 0.1f, 10.f);
@@ -400,9 +462,11 @@ public:
 		lights_.back().pd = {5.8f, 4.0f, 4.f};
 		lights_.back().type = Light::Type::point;
 
+
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
 		auto hostMem = dev.hostMemoryTypes();
+		skybox_.init(dev, renderer().renderPass(), renderer().samples());
 
 		// shadow sampler
 		vk::SamplerCreateInfo sci {};
@@ -807,7 +871,7 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		// draw
+		skybox_.render(cb);
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {sceneDs_}, {});
@@ -935,6 +999,8 @@ public:
 			doi::skip(span, sizeof(Light) * maxLightSize);
 			doi::write(span, camera_.pos);
 			doi::write(span, std::uint32_t(lights_.size()));
+
+			skybox_.updateDevice(fixedMatrix(camera_));
 		}
 
 		if(updateLights_) {
@@ -1002,6 +1068,8 @@ protected:
 		vpp::TrDs ds;
 		vpp::SubBuffer ubo; // holding the light view matrix
 	} shadow_;
+
+	Skybox skybox_;
 };
 
 int main(int argc, const char** argv) {
