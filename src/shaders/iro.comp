@@ -42,6 +42,28 @@ const uint FieldResource = 1u; // resource harvester
 const uint FieldSpawn = 2u; // spawns strength
 const uint FieldTower = 3u; // damages nearby enemies
 
+// sides, order of Field.next
+const uint SideRight = 0u;
+const uint SideTopRight = 1u;
+const uint SideTopLeft = 2u;
+const uint SideLeft = 3u;
+const uint SideBotLeft = 4u;
+const uint SideBotRight = 5u;
+
+const vec2 sideDirections[6] = {
+	vec2(1, 0), // right
+	vec2(1, 1), // topRight
+	vec2(-1, 1), // topLeft
+	vec2(-1, 0), // left
+	vec2(-1, -1), // botLeft
+	vec2(1, -1), // botRight
+};
+
+// Returns the logical direction of a SideXXX value
+vec2 direction(uint side) {
+	return sideDirections[side];
+}
+
 bool isBuilding(uint fieldType) {
 	return fieldType != FieldEmpty;
 }
@@ -54,6 +76,9 @@ struct Field {
 	uint type;
 	float strength; // in [0, 1] for empty cells (?)
 	uint next[6]; // direct neighbors
+
+	// TODO: experimental
+	// vec2 velocity;
 };
 
 // TODO: test different settings for performance
@@ -86,6 +111,7 @@ void main() {
 			continue;
 		}
 
+		// float fac = dot(field.velocity, direction(i));
 		const Field next = old.fields[field.next[i]];
 		if(next.type == FieldEmpty) {
 			if(field.type == FieldEmpty) {

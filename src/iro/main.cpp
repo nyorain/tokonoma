@@ -25,6 +25,8 @@
 
 #include <shaders/iro.vert.h>
 #include <shaders/iro.frag.h>
+#include <shaders/iro_outline.vert.h>
+#include <shaders/iro_outline.frag.h>
 #include <shaders/iro.comp.h>
 
 using namespace doi::types;
@@ -419,6 +421,14 @@ protected:
 	vpp::PipelineLayout compPipeLayout_;
 	vpp::Pipeline compPipe_;
 	vpp::TrDs compDs_;
+
+	vpp::PipelineLayout linePipeLayout_;
+	vpp::Pipeline linePipe_;
+
+	vpp::Buffer stage_; // used for syncing when needed
+	std::vector<Field> fields_; // not synced to gpu
+	u32 selected_ {0};
+	vpp::SubBuffer selectedIndirect_; // indirect draw command for selected field
 
 	// render
 	vpp::SubBuffer gfxUbo_;
