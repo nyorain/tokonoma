@@ -14,5 +14,5 @@ layout(row_major, binding = 0) uniform Transform {
 
 void main() {
 	out_color = vec4(0, 0, 0, 1);
-	gl_Position = transform * vec4(instanceGridHexPoint(off, size.x, radius), 0, 1);
+	gl_Position = transform * vec4(instanceHexGridPoint(off, size.x, radius), 0, 1);
 }
