@@ -17,6 +17,7 @@
 #include <vpp/pipelineInfo.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/bufferOps.hpp>
+#include <vpp/imageOps.hpp>
 
 #include <dlg/dlg.hpp>
 #include <nytl/mat.hpp>
@@ -27,6 +28,15 @@
 #include <shaders/model.vert.h>
 #include <shaders/model.frag.h>
 #include <shaders/shadowmap.vert.h>
+#include <shaders/skybox.vert.h>
+#include <shaders/skybox.frag.h>
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#pragma GCC diagnostic pop
 
 class Skybox {
 public:
@@ -39,6 +49,7 @@ protected:
 	vpp::Device* dev_;
 	vpp::ViewableImage cubemap_;
 	vk::Sampler sampler_;
+	vpp::SubBuffer indices_;
 
 	vpp::TrDs ds_;
 	vpp::TrDsLayout dsLayout_;
@@ -48,9 +59,154 @@ protected:
 
 Skybox::Skybox(vpp::Device& dev, vk::RenderPass rp,
 		vk::SampleCountBits samples) {
+	// ds layout
+	auto bindings = {
+		vpp::descriptorBinding(
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::vertex),
+		vpp::descriptorBinding(
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment),
+	};
+
+	dsLayout_ = {dev, bindings};
+	pipeLayout_ = {dev, {dsLayout_}, {}};
+
+	vpp::ShaderModule vertShader(dev, model_vert_data);
+	vpp::ShaderModule fragShader(dev, model_frag_data);
+	vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{
+		{vertShader, vk::ShaderStageBits::vertex},
+		{fragShader, vk::ShaderStageBits::fragment},
+	}}, 0, samples};
+
+	// depth test disabled by default
+	gpi.rasterization.cullMode = vk::CullModeBits::back;
+	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+
+	vk::Pipeline vkpipe;
+	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), NULL, vkpipe);
+	pipe_ = {dev, vkpipe};
+
+	// indices
+	indices_ = {dev.bufferAllocator(), 36u * sizeof(std::uint16_t),
+		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
+		0, dev.hostMemoryTypes()};
+	std::array<std::uint16_t, 36> indices = {
+		0, 1, 2,  2, 1, 3, // front
+		1, 5, 3,  3, 5, 7, // right
+		2, 3, 6,  6, 3, 7, // top
+		4, 0, 6,  6, 0, 2, // left
+		4, 5, 0,  0, 5, 1, // bottom
+		5, 4, 7,  7, 4, 6, // back
+	};
+	vpp::writeStaging430(indices_, vpp::raw(*indices.data(), 36u));
+
+	// TODO: allow loading panorama data
 	// https://stackoverflow.com/questions/29678510/convert-21-equirectangular-panorama-to-cube-map
-	// auto format = vpp::ViewableImageCreateInfo::color(
-	// 	dev,
+	// load cubemap
+	auto base = std::string("../assets/skyboxset1/SunSet/SunSet");
+	// https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
+	const char* names[] = {
+		"Right",
+		"Left",
+		"Up",
+		"Down",
+		"Back",
+		"Front",
+	};
+	auto suffix = "2048.png";
+
+	auto width = 0u;
+	auto height = 0u;
+
+	std::array<const std::byte*, 6> faceData {};
+
+	for(auto i = 0u; i < 6u; ++i) {
+		auto filename = base + names[i] + suffix;
+		int iwidth, iheight, channels;
+		unsigned char* data = stbi_load(filename.c_str(), &iwidth, &iheight,
+			&channels, 3);
+		if(!data) {
+			dlg_warn("Failed to open texture file {}", filename);
+
+			std::string err = "Could not load image from ";
+			err += filename;
+			err += ": ";
+			err += stbi_failure_reason();
+			throw std::runtime_error(err);
+		}
+
+		if(width == 0 || height == 0) {
+			width = iwidth;
+			height = iheight;
+		} else {
+			dlg_assert(int(width) == iwidth);
+			dlg_assert(int(height) == iheight);
+		}
+
+		dlg_assert(width > 0 && height > 0);
+		faceData[i] = reinterpret_cast<const std::byte*>(data);
+	}
+
+	// free data
+	nytl::ScopeGuard([&]{
+		for(auto i = 0u; i < 6u; ++i) {
+			std::free(const_cast<std::byte*>(faceData[i]));
+		}
+	});
+
+	auto imgi = vpp::ViewableImageCreateInfo::color(
+		dev, vk::Extent3D {width, height, 1u}).value();
+	imgi.img.arrayLayers = 6u;
+	imgi.img.flags = vk::ImageCreateBits::cubeCompatible;
+	imgi.view.viewType = vk::ImageViewType::cube;
+	cubemap_ = {dev, imgi};
+
+	// buffer
+	auto totalSize = 6u * width * height * 3u;
+	auto stage = vpp::SubBuffer(dev.bufferAllocator(), totalSize,
+		vk::BufferUsageBits::transferSrc, 0u, dev.hostMemoryTypes());
+
+	auto map = stage.memoryMap();
+	auto span = map.span();
+	auto offset = stage.offset();
+	std::array<vk::BufferImageCopy, 6u> copies {};
+	for(auto i = 0u; i < 6u; ++i) {
+		copies[i] = {};
+		copies[i].bufferOffset = offset;
+		copies[i].imageExtent = {width, height, 1u};
+		copies[i].imageOffset = {};
+		copies[i].imageSubresource.aspectMask = vk::ImageAspectBits::color;
+		copies[i].imageSubresource.baseArrayLayer = i;
+		copies[i].imageSubresource.layerCount = 1u;
+		copies[i].imageSubresource.mipLevel = 0u;
+		offset += width * height * 3u;
+		doi::write(span, faceData[i], width * height * 3u);
+	}
+
+	map = {};
+
+	auto& qs = dev.queueSubmitter();
+	auto cb = dev.commandAllocator().get(qs.queue().family());
+	vk::beginCommandBuffer(cb, {});
+	vpp::changeLayout(cb, cubemap_.image(), vk::ImageLayout::undefined,
+		{}, {}, vk::ImageLayout::transferDstOptimal,
+		vk::PipelineStageBits::transfer, vk::AccessBits::transferWrite,
+		{vk::ImageAspectBits::color, 0, 1, 0, 6u});
+	vk::cmdCopyBufferToImage(cb, stage.buffer(), cubemap_.image(),
+		vk::ImageLayout::transferDstOptimal, copies);
+	vpp::changeLayout(cb, cubemap_.image(), vk::ImageLayout::transferDstOptimal,
+		vk::PipelineStageBits::transfer, vk::AccessBits::transferWrite,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::fragmentShader,
+		vk::AccessBits::shaderRead,
+		{vk::ImageAspectBits::color, 0, 1, 0, 6u});
+	vk::endCommandBuffer(cb);
+
+	vk::SubmitInfo si {};
+	si.commandBufferCount = 1u;
+	si.pCommandBuffers = &cb.vkHandle();
+	qs.wait(qs.add(si));
 }
 
 // Matches glsl struct
