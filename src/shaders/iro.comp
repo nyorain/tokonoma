@@ -16,7 +16,8 @@ const uint playerNone = 0xFFFFFFFF;
 // into the neighbor. If two neighbor cells don't have the same
 // player, the stronger one will gain the cell
 // must be in range [0, 1/6]
-const float diffuse = 0.1;
+const float diffuse = 0.01;
+const float diffuseVel = 0.01;
 
 // TODO: not used, just a concept atm. Work out clash model further
 // we probably first want to track how many fighters from each player
@@ -36,11 +37,15 @@ const float towerDamage = 0.01;
 // constant strength spawned by building
 const float spawnStrength = 0.01;
 
+// influence factor of accelerator field
+const float accelInfluence = 0.01;
+
 // buildings
 const uint FieldEmpty = 0u; // empty field
 const uint FieldResource = 1u; // resource harvester
 const uint FieldSpawn = 2u; // spawns strength
 const uint FieldTower = 3u; // damages nearby enemies
+const uint FieldAccel = 4u; // accelerates
 
 // sides, order of Field.next
 const uint SideRight = 0u;
@@ -50,13 +55,15 @@ const uint SideLeft = 3u;
 const uint SideBotLeft = 4u;
 const uint SideBotRight = 5u;
 
+const float sqrt2 = 1.41421356237;
+const float isqrt2 = 0.70710678118;
 const vec2 sideDirections[6] = {
 	vec2(1, 0), // right
-	vec2(1, 1), // topRight
-	vec2(-1, 1), // topLeft
+	vec2(isqrt2, isqrt2), // topRight
+	vec2(-isqrt2, isqrt2), // topLeft
 	vec2(-1, 0), // left
-	vec2(-1, -1), // botLeft
-	vec2(1, -1), // botRight
+	vec2(-isqrt2, -isqrt2), // botLeft
+	vec2(isqrt2, -isqrt2), // botRight
 };
 
 // Returns the logical direction of a SideXXX value
@@ -70,15 +77,13 @@ bool isBuilding(uint fieldType) {
 
 // A Field in our grid
 struct Field {
-	float _x; // packed pos, ignored
-	float _y; // packed pos, ignored
-	uint player;
+	vec2 _pos;
 	uint type;
 	float strength; // in [0, 1] for empty cells (?)
+	vec2 velocity;
+	uint player;
 	uint next[6]; // direct neighbors
-
-	// TODO: experimental
-	// vec2 velocity;
+	float _;
 };
 
 // TODO: test different settings for performance
@@ -87,13 +92,13 @@ layout(local_size_x = 1) in;
 // the old buffer. All reads must be performed from this since the other
 // buffer may be written by another execution. Holds that was written
 // the last step
-layout(set = 0, binding = 0) readonly buffer OldFields {
+layout(set = 0, binding = 0, std430) readonly buffer OldFields {
 	Field[] fields;
 } old;
 
 // must only be written since it values are otherwise undefined.
 // the final state should be written into this
-layout(set = 0, binding = 1) writeonly buffer NewFields {
+layout(set = 0, binding = 1, std430) writeonly buffer NewFields {
 	Field[] fields;
 } new;
 
@@ -106,6 +111,8 @@ void main() {
 	// diffuse
 	// 1: depart/general
 	float strength = field.strength;
+	vec2 vel = field.velocity;
+	float l = length(vel);
 	for(uint i = 0; i < 6; ++i) {
 		if(field.next[i] == nextNone) {
 			continue;
@@ -113,37 +120,49 @@ void main() {
 
 		// float fac = dot(field.velocity, direction(i));
 		const Field next = old.fields[field.next[i]];
+		float fac = max(mix(1, 10 * dot(direction(i), vel), tanh(l)), 0.2);
 		if(next.type == FieldEmpty) {
 			if(field.type == FieldEmpty) {
 				// attack/diffuse: field -> next
-				field.strength -= diffuse * strength;
+				field.strength -= fac * diffuse * strength;
+				field.velocity -= fac * diffuseVel * vel;
 			}
 		}
 	}
 
+	// slow down over time
+	field.velocity *= 0.99999;
+
 	// 2: receive
 	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
+	vec2 wVels[playerCount] = {{0, 0}, {0, 0}};
 	for(uint i = 0; i < 6; ++i) {
 		if(field.next[i] == nextNone) {
 			continue;
 		}
 
 		const Field next = old.fields[field.next[i]];
+		float l = length(next.velocity);
+		float fac = max(mix(1, 10 * dot(direction(i), next.velocity), tanh(l)), 0.2);
 
 		// can't move into friendly building, only to attack
 		if(next.type == FieldEmpty && (field.type == FieldEmpty || next.player != field.player)) {
 			// diffuse (friendly or attack): next -> field
-			strengths[next.player] += diffuse * next.strength;
+			strengths[next.player] += fac * diffuse * next.strength;
+			wVels[next.player] += fac * diffuseVel * next.velocity;
 		} else if(next.type == FieldTower && next.player != field.player) {
 			field.strength -= towerDamage;
 		} else if(next.type == FieldSpawn) {
 			strengths[next.player] += spawnStrength;
+		} else if(next.type == FieldAccel && next.player == field.player) {
+			field.velocity += accelInfluence * next.velocity; // accelerate
 		}
 	}
 
 	field.strength = max(0.0, field.strength);
 	if(field.player != playerNone) {
 		strengths[field.player] += field.strength;
+		wVels[field.player] += field.velocity;
 	}
 
 	// 3: fight
@@ -159,11 +178,15 @@ void main() {
 	}
 
 	// change field ownership/destroy building
-	field.strength = 2 * highestStrength - sum; // remainder
 	if(bestPlayer != field.player) {
 		field.type = FieldEmpty; // destroy building if one is left
 	}
+
+	field.strength = 2 * highestStrength - sum; // remainder
 	field.player = bestPlayer;
+	if(bestPlayer != playerNone) {
+		field.velocity = wVels[bestPlayer];
+	}
 
 	// write back
 	new.fields[id] = field;
