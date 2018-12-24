@@ -129,7 +129,9 @@ void main() {
 		}
 
 		const Field next = old.fields[field.next[i]];
-		if(next.type == FieldEmpty) {
+
+		// can't move into friendly building, only to attack
+		if(next.type == FieldEmpty && (field.type == FieldEmpty || next.player != field.player)) {
 			// diffuse (friendly or attack): next -> field
 			strengths[next.player] += diffuse * next.strength;
 		} else if(next.type == FieldTower && next.player != field.player) {
@@ -158,10 +160,10 @@ void main() {
 
 	// change field ownership/destroy building
 	field.strength = 2 * highestStrength - sum; // remainder
-	field.player = bestPlayer;
 	if(bestPlayer != field.player) {
 		field.type = FieldEmpty; // destroy building if one is left
 	}
+	field.player = bestPlayer;
 
 	// write back
 	new.fields[id] = field;
