@@ -25,8 +25,8 @@
 
 #include <shaders/iro.vert.h>
 #include <shaders/iro.frag.h>
-#include <shaders/iro_outline.vert.h>
-#include <shaders/iro_outline.frag.h>
+// #include <shaders/iro_outline.vert.h>
+// #include <shaders/iro_outline.frag.h>
 #include <shaders/iro.comp.h>
 
 using namespace doi::types;
@@ -47,8 +47,8 @@ struct Field {
 		topRight = 1u,
 		topLeft = 2u,
 		left = 3u,
-		bottomLeft = 4u,
-		bottomRight = 5u,
+		botLeft = 4u,
+		botRight = 5u,
 	};
 
 	static constexpr u32 playerNone = 0xFFFFFFFF;
@@ -70,14 +70,17 @@ Vec2i neighborPos(Vec2i pos, Field::Side side) {
 		case Field::Side::left: return {pos.x - 1, pos.y};
 		case Field::Side::right: return {pos.x + 1, pos.y};
 		case Field::Side::topLeft: return {pos.x + pos.y % 2 - 1, pos.y + 1};
-		case Field::Side::bottomLeft: return {pos.x + pos.y % 2 - 1, pos.y - 1};
+		case Field::Side::botLeft: return {pos.x + pos.y % 2 - 1, pos.y - 1};
 		case Field::Side::topRight: return {pos.x + pos.y % 2, pos.y + 1};
-		case Field::Side::bottomRight: return {pos.x + pos.y % 2, pos.y - 1};
+		case Field::Side::botRight: return {pos.x + pos.y % 2, pos.y - 1};
 		default: return {-1, -1};
 	}
 }
 
 class HexApp : public doi::App {
+public:
+	static constexpr auto size = 100u;
+
 public:
 	bool init(const doi::AppSettings& settings) override {
 		if(!doi::App::init(settings)) {
@@ -86,7 +89,7 @@ public:
 
 		// logical
 		view_.center = {0.f, 0.f};
-		view_.size = {10.f, 10.f};
+		view_.size = {size, size};
 
 		// layouts
 		auto& dev = vulkanDevice();
@@ -115,7 +118,8 @@ public:
 		};
 
 		gfxDsLayout_ = {dev, gfxDsBindings};
-		gfxPipeLayout_ = {dev, {gfxDsLayout_}, {}};
+		gfxPipeLayout_ = {dev, {gfxDsLayout_},
+			{{vk::ShaderStageBits::fragment, 0u, sizeof(nytl::Vec3f)}}};
 
 		// pipes
 		if(!initCompPipe(false)) {
@@ -136,14 +140,14 @@ public:
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
 		// init fields, storage
-		auto fields = initFields();
-		fieldCount_ = fields.size();
+		fields_ = initFields();
+		fieldCount_ = fields_.size();
 
 		auto usage = vk::BufferUsageFlags(vk::BufferUsageBits::storageBuffer);
-		auto storageSize = fields.size() * sizeof(fields[0]);
+		auto storageSize = fields_.size() * sizeof(fields_[0]);
 		storageOld_ = {dev.bufferAllocator(), storageSize,
 			usage | vk::BufferUsageBits::transferDst, 0, devMem};
-		vpp::writeStaging430(storageOld_, vpp::raw(*fields.data(), fields.size()));
+		vpp::writeStaging430(storageOld_, vpp::raw(*fields_.data(), fields_.size()));
 
 		usage |= vk::BufferUsageBits::transferSrc |
 			vk::BufferUsageBits::vertexBuffer;
@@ -165,6 +169,22 @@ public:
 
 		vpp::apply({compDsUpdate, gfxDsUpdate});
 
+		// indirect selected buffer
+		selectedIndirect_ = {dev.bufferAllocator(),
+			sizeof(vk::DrawIndirectCommand),
+			vk::BufferUsageBits::indirectBuffer, 0, hostMem};
+
+		// upload buffer
+		// XXX: start size? implement dynamic resizing!
+		stage_ = {dev.bufferAllocator(), 64u, vk::BufferUsageBits::transferSrc,
+			0, hostMem};
+		stageView_ = stage_.memoryMap();
+		uploadPtr_ = stageView_.ptr();
+		uploadSemaphore_ = {dev};
+		uploadCb_ = dev.commandAllocator().get(
+			dev.queueSubmitter().queue().family(),
+			vk::CommandPoolCreateBits::resetCommandBuffer);
+
 		return true;
 	}
 
@@ -174,8 +194,8 @@ public:
 		constexpr float rowHeight = 1.5 * radius;
 		constexpr float colWidth = 2 * cospi6 * radius;
 
-		constexpr auto height = 10u;
-		constexpr auto width = 10u;
+		constexpr auto height = size;
+		constexpr auto width = size;
 
 		auto id = [&](Vec2i c){
 			if(c.x >= int(width) || c.y >= int(height) || c.x < 0 || c.y < 0) {
@@ -223,7 +243,17 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfxPipe_);
 		vk::cmdBindVertexBuffers(cb, 0, {storageNew_.buffer()},
 			{storageNew_.offset()});
-		vk::cmdDraw(cb, 6, fieldCount_, 0, 0);
+
+		const nytl::Vec3f black = {0.f, 0.f, 0.f};
+		vk::cmdPushConstants(cb, gfxPipeLayout_, vk::ShaderStageBits::fragment,
+			0u, sizeof(nytl::Vec3f), &black);
+		vk::cmdDraw(cb, 8, fieldCount_, 0, 0);
+
+		const nytl::Vec3f red = {1.f, 0.f, 0.f};
+		vk::cmdPushConstants(cb, gfxPipeLayout_, vk::ShaderStageBits::fragment,
+			0u, sizeof(nytl::Vec3f), &red);
+		vk::cmdDrawIndirect(cb, selectedIndirect_.buffer(),
+			selectedIndirect_.offset(), 1, 0);
 	}
 
 	void update(double delta) override {
@@ -261,6 +291,37 @@ public:
 			initGfxPipe(true);
 			initCompPipe(true);
 			rerecord();
+		}
+
+		if(updateSelected_) {
+			auto map = selectedIndirect_.memoryMap();
+			auto span = map.span();
+			vk::DrawIndirectCommand cmd;
+			cmd.firstInstance = selected_;
+			cmd.firstVertex = 0u;
+			cmd.instanceCount = 1u;
+			cmd.vertexCount = 8u;
+			doi::write(span, cmd);
+		}
+
+		if(!uploadRegions_.empty()) {
+			stageView_.flush();
+
+			vk::beginCommandBuffer(uploadCb_, {});
+			vk::cmdCopyBuffer(uploadCb_, stage_.buffer(), storageOld_.buffer(),
+				{uploadRegions_});
+			vk::endCommandBuffer(uploadCb_);
+
+			vk::SubmitInfo si {};
+			si.commandBufferCount = 1u;
+			si.pCommandBuffers = &uploadCb_.vkHandle();
+			si.signalSemaphoreCount = 1u;
+			si.pSignalSemaphores = &uploadSemaphore_.vkHandle();
+			vulkanDevice().queueSubmitter().add(si);
+			App::addSemaphore(uploadSemaphore_, vk::PipelineStageBits::computeShader);
+
+			uploadRegions_.clear();
+			uploadPtr_ = stageView_.ptr();
 		}
 	}
 
@@ -310,13 +371,63 @@ public:
 		}
 
 		if(ev.pressed) {
+			std::optional<Field::Side> side;
+			std::optional<Field::Type> type;
 			switch(ev.keycode) {
 				case ny::Keycode::r:
 					reloadPipes_ = true;
 					return true;
+				// movement scheme 1
+				case ny::Keycode::w: side = Field::Side::topLeft; break;
+				case ny::Keycode::e: side = Field::Side::topRight; break;
+				case ny::Keycode::a: side = Field::Side::left; break;
+				case ny::Keycode::d: side = Field::Side::right; break;
+				case ny::Keycode::z: side = Field::Side::botLeft; break;
+				case ny::Keycode::x: side = Field::Side::botRight; break;
+				// vim like movement scheme 2
+				// TODO: works only for current grid
+				// pos should probably be position on grid/pos on grid
+				// should be stored somewhere
+				case ny::Keycode::j:
+					side = ((selected_ / size) % 2 == 1) ?
+						Field::Side::botLeft : Field::Side::botRight;
+					break;
+				case ny::Keycode::k:
+					side = ((selected_ / size) % 2 == 1) ?
+						Field::Side::topLeft : Field::Side::topRight;
+					break;
+				case ny::Keycode::h: side = Field::Side::left; break;
+				case ny::Keycode::l: side = Field::Side::right; break;
+				// actions
+				case ny::Keycode::s: type = Field::Type::spawn; break;
+				case ny::Keycode::t: type = Field::Type::tower; break;
 				default: break;
 			}
 
+			if(side) {
+				auto next = fields_[selected_].next[*side];
+				if(next != Field::nextNone) {
+					selected_ = next;
+					updateSelected_ = true;
+				}
+			}
+
+			if(type) {
+				// TODO: resize upload buffer if needed?
+				auto offset = uploadPtr_ - stageView_.ptr();
+				auto size = sizeof(u32) + sizeof(f32);
+				dlg_assert(offset + size < stage_.size());
+
+				doi::write(uploadPtr_, *type);
+				doi::write(uploadPtr_, 10.f); // strength
+
+				vk::BufferCopy copy;
+				copy.dstOffset = storageNew_.offset() +
+					sizeof(Field) * selected_ + offsetof(Field, type);
+				copy.srcOffset = stage_.offset() + offset;
+				copy.size = size;
+				uploadRegions_.push_back(copy);
+			}
 		}
 
 		return false;
@@ -359,7 +470,7 @@ public:
 			0, fieldStride, vk::VertexInputRate::instance
 		};
 
-		vk::VertexInputAttributeDescription attributes[3];
+		vk::VertexInputAttributeDescription attributes[4];
 		attributes[0].format = vk::Format::r32g32b32Sfloat; // pos
 		attributes[0].offset = offsetof(Field, pos);
 		attributes[0].location = 0;
@@ -372,8 +483,12 @@ public:
 		attributes[2].offset = offsetof(Field, strength);
 		attributes[2].location = 2;
 
+		attributes[3].format = vk::Format::r32Uint; // type
+		attributes[3].offset = offsetof(Field, type);
+		attributes[3].location = 3;
+
 		gpi.vertex.pVertexAttributeDescriptions = attributes;
-		gpi.vertex.vertexAttributeDescriptionCount = 3u;
+		gpi.vertex.vertexAttributeDescriptionCount = 4u;
 		gpi.vertex.pVertexBindingDescriptions = &bufferBinding;
 		gpi.vertex.vertexBindingDescriptionCount = 1u;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
@@ -425,8 +540,16 @@ protected:
 	vpp::PipelineLayout linePipeLayout_;
 	vpp::Pipeline linePipe_;
 
-	vpp::Buffer stage_; // used for syncing when needed
+	vpp::SubBuffer stage_; // used for syncing when needed
+	vpp::MemoryMapView stageView_;
+	std::byte* uploadPtr_;
+	std::vector<vk::BufferCopy> uploadRegions_;
+	vpp::CommandBuffer uploadCb_;
+	vpp::Semaphore uploadSemaphore_;
+
 	std::vector<Field> fields_; // not synced to gpu
+
+	bool updateSelected_ {true};
 	u32 selected_ {0};
 	vpp::SubBuffer selectedIndirect_; // indirect draw command for selected field
 
