@@ -38,6 +38,7 @@ struct Field {
 		resource = 1u,
 		spawn = 2u,
 		tower = 3u,
+		accel = 4u,
 	};
 
 	// weakly typed to allow array indexing
@@ -55,11 +56,13 @@ struct Field {
 	static constexpr u32 nextNone = 0xFFFFFFFF;
 
 	Vec2f pos;
-	u32 player {playerNone};
 	Type type {Type::empty};
 	f32 strength {};
+	nytl::Vec2f vel {};
+	u32 player {playerNone};
 	std::array<u32, 6> next {nextNone, nextNone, nextNone,
 		nextNone, nextNone, nextNone};
+	float _; // padding
 };
 
 // Assumption: y=1 has a positive x-offset relative to y=0
@@ -373,17 +376,20 @@ public:
 		if(ev.pressed) {
 			std::optional<Field::Side> side;
 			std::optional<Field::Type> type;
+			std::optional<nytl::Vec2f> vel;
+
 			switch(ev.keycode) {
 				case ny::Keycode::r:
 					reloadPipes_ = true;
 					return true;
 				// movement scheme 1
-				case ny::Keycode::w: side = Field::Side::topLeft; break;
-				case ny::Keycode::e: side = Field::Side::topRight; break;
-				case ny::Keycode::a: side = Field::Side::left; break;
-				case ny::Keycode::d: side = Field::Side::right; break;
-				case ny::Keycode::z: side = Field::Side::botLeft; break;
-				case ny::Keycode::x: side = Field::Side::botRight; break;
+				// case ny::Keycode::w: side = Field::Side::topLeft; break;
+				// case ny::Keycode::e: side = Field::Side::topRight; break;
+				// case ny::Keycode::a: side = Field::Side::left; break;
+				// case ny::Keycode::d: side = Field::Side::right; break;
+				// case ny::Keycode::z: side = Field::Side::botLeft; break;
+				// case ny::Keycode::x: side = Field::Side::botRight; break;
+
 				// vim like movement scheme 2
 				// TODO: works only for current grid
 				// pos should probably be position on grid/pos on grid
@@ -401,6 +407,14 @@ public:
 				// actions
 				case ny::Keycode::s: type = Field::Type::spawn; break;
 				case ny::Keycode::t: type = Field::Type::tower; break;
+				case ny::Keycode::v: type = Field::Type::accel; break;
+				// change velocity
+				case ny::Keycode::w: vel = {-1, 1}; break;
+				case ny::Keycode::e: vel = {1, 1}; break;
+				case ny::Keycode::a: vel = {-1, 0}; break;
+				case ny::Keycode::d: vel = {1, 0}; break;
+				case ny::Keycode::z: vel = {-1, -1}; break;
+				case ny::Keycode::x: vel = {1, -1}; break;
 				default: break;
 			}
 
@@ -412,18 +426,30 @@ public:
 				}
 			}
 
-			if(type) {
+			if(type || vel) {
 				// TODO: resize upload buffer if needed?
 				auto offset = uploadPtr_ - stageView_.ptr();
-				auto size = sizeof(u32) + sizeof(f32);
+				auto size = 0ul;
+				if(type) {
+					size += sizeof(u32) + sizeof(f32);
+				}
+				if(vel) {
+					size += sizeof(nytl::Vec2f);
+				}
 				dlg_assert(offset + size < stage_.size());
 
-				doi::write(uploadPtr_, *type);
-				doi::write(uploadPtr_, 10.f); // strength
+				if(type) {
+					doi::write(uploadPtr_, *type);
+					doi::write(uploadPtr_, 10.f); // strength
+				}
+				if(vel) {
+					doi::write(uploadPtr_, *vel);
+				}
 
+				auto off = type ? offsetof(Field, type) : offsetof(Field, vel);
 				vk::BufferCopy copy;
 				copy.dstOffset = storageNew_.offset() +
-					sizeof(Field) * selected_ + offsetof(Field, type);
+					sizeof(Field) * selected_ + off;
 				copy.srcOffset = stage_.offset() + offset;
 				copy.size = size;
 				uploadRegions_.push_back(copy);
