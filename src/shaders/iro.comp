@@ -35,7 +35,7 @@ const float advantageInfluence = 2;
 const float towerDamage = 0.01;
 
 // constant strength spawned by building
-const float spawnStrength = 0.01;
+const float spawnStrength = 0.001;
 
 // influence factor of accelerator field
 const float accelInfluence = 0.01;
@@ -125,17 +125,17 @@ void main() {
 			if(field.type == FieldEmpty) {
 				// attack/diffuse: field -> next
 				field.strength -= fac * diffuse * strength;
-				field.velocity -= fac * diffuseVel * vel;
+				// field.velocity -= fac * diffuseVel * vel;
 			}
 		}
 	}
 
 	// slow down over time
-	field.velocity *= 0.99999;
+	// field.velocity *= 0.99999;
 
 	// 2: receive
 	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
-	vec2 wVels[playerCount] = {{0, 0}, {0, 0}};
+	vec2 velSum = vec2(0.0, 0.0); // weighted total velocity sum
 	for(uint i = 0; i < 6; ++i) {
 		if(field.next[i] == nextNone) {
 			continue;
@@ -145,14 +145,16 @@ void main() {
 		float l = length(next.velocity);
 		float fac = max(mix(1, 10 * dot(direction(i), next.velocity), tanh(l)), 0.2);
 
+		// TODO: strength cannot be greater than 1? normalize somehow everywhere!
 		// can't move into friendly building, only to attack
 		if(next.type == FieldEmpty && (field.type == FieldEmpty || next.player != field.player)) {
 			// diffuse (friendly or attack): next -> field
 			strengths[next.player] += fac * diffuse * next.strength;
-			wVels[next.player] += fac * diffuseVel * next.velocity;
+			velSum += fac * diffuseVel * next.strength * next.velocity;
 		} else if(next.type == FieldTower && next.player != field.player) {
 			field.strength -= towerDamage;
-		} else if(next.type == FieldSpawn) {
+		} else if(next.type == FieldSpawn && strengths[next.player] < 1.f) {
+			// spawn without any velocity
 			strengths[next.player] += spawnStrength;
 		} else if(next.type == FieldAccel && next.player == field.player) {
 			field.velocity += accelInfluence * next.velocity; // accelerate
@@ -162,7 +164,7 @@ void main() {
 	field.strength = max(0.0, field.strength);
 	if(field.player != playerNone) {
 		strengths[field.player] += field.strength;
-		wVels[field.player] += field.velocity;
+		velSum += field.strength * field.velocity;
 	}
 
 	// 3: fight
@@ -185,7 +187,7 @@ void main() {
 	field.strength = 2 * highestStrength - sum; // remainder
 	field.player = bestPlayer;
 	if(bestPlayer != playerNone) {
-		field.velocity = wVels[bestPlayer];
+		field.velocity = velSum / sum;
 	}
 
 	// write back
