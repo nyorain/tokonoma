@@ -57,8 +57,8 @@ struct Field {
 
 	Vec2f pos;
 	Type type {Type::empty};
-	f32 strength {};
-	nytl::Vec2f vel {};
+	f32 strength {0.f};
+	nytl::Vec2f vel {0.f, 0.f};
 	u32 player {playerNone};
 	std::array<u32, 6> next {nextNone, nextNone, nextNone,
 		nextNone, nextNone, nextNone};
