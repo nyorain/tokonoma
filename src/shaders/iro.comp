@@ -120,18 +120,18 @@ void main() {
 
 		// float fac = dot(field.velocity, direction(i));
 		const Field next = old.fields[field.next[i]];
-		float fac = max(mix(1, 10 * dot(direction(i), vel), tanh(l)), 0.2);
+		float fac = clamp(mix(1, 10 * dot(direction(i), vel), tanh(l)), 0.0, 1.0);
 		if(next.type == FieldEmpty) {
 			if(field.type == FieldEmpty) {
 				// attack/diffuse: field -> next
 				field.strength -= fac * diffuse * strength;
-				// field.velocity -= fac * diffuseVel * vel;
+				// field.velocity -= fac * diffuseVel * strength * vel;
 			}
 		}
 	}
 
 	// slow down over time
-	// field.velocity *= 0.99999;
+	// field.velocity *= 0.999;
 
 	// 2: receive
 	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
@@ -143,7 +143,7 @@ void main() {
 
 		const Field next = old.fields[field.next[i]];
 		float l = length(next.velocity);
-		float fac = max(mix(1, 10 * dot(direction(i), next.velocity), tanh(l)), 0.2);
+		float fac = clamp(mix(1, 10 * dot(-direction(i), next.velocity), tanh(l)), 0.0, 1.0);
 
 		// TODO: strength cannot be greater than 1? normalize somehow everywhere!
 		// can't move into friendly building, only to attack
@@ -157,7 +157,7 @@ void main() {
 			// spawn without any velocity
 			strengths[next.player] += spawnStrength;
 		} else if(next.type == FieldAccel && next.player == field.player) {
-			field.velocity += accelInfluence * next.velocity; // accelerate
+			velSum += field.strength * accelInfluence * next.velocity; // accelerate
 		}
 	}
 
@@ -182,12 +182,13 @@ void main() {
 	// change field ownership/destroy building
 	if(bestPlayer != field.player) {
 		field.type = FieldEmpty; // destroy building if one is left
+		// velSum = vec2(0.0, 0.0); // no velocity after invasion
 	}
 
 	field.strength = 2 * highestStrength - sum; // remainder
 	field.player = bestPlayer;
 	if(bestPlayer != playerNone) {
-		field.velocity = velSum / sum;
+		field.velocity = velSum;
 	}
 
 	// write back
