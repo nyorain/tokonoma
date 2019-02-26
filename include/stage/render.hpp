@@ -40,6 +40,7 @@ public:
 
 	void resize(nytl::Vec2ui size);
 	void samples(vk::SampleCountBits);
+	void clearColor(std::array<float, 4> newColor) { clearColor_ = newColor; }
 
 	vk::RenderPass renderPass() const { return renderPass_; }
 	vk::SampleCountBits samples() const { return sampleCount_; }
