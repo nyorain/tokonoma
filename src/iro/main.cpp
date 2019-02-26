@@ -93,7 +93,7 @@ public:
 			return false;
 		}
 
-		renderer().clearColor({1.f, 1.f, 1.f, 1.f});
+		// renderer().clearColor({1.f, 1.f, 1.f, 1.f});
 
 		// logical
 		view_.center = {0.f, 0.f};
@@ -197,6 +197,11 @@ public:
 		// resources
 		textures_.resource = doi::loadTexture(dev, "../assets/hex_test2.png");
 		vk::SamplerCreateInfo samplerInfo {};
+		samplerInfo.minFilter = vk::Filter::linear;
+		samplerInfo.magFilter = vk::Filter::linear;
+		samplerInfo.minLod = 0;
+		samplerInfo.maxLod = 0.25;
+		samplerInfo.mipmapMode = vk::SamplerMipmapMode::nearest;
 		sampler_ = {dev, samplerInfo};
 
 		auto texDsBindings = {
