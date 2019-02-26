@@ -24,6 +24,7 @@ shaders_src = [
 		['fullscreen_transform.vert'],
 		['incolor.frag'],
 		['texture.frag'],
+		['simple.vert'],
 	]],
 	['smooth_shadow_shaders', [
 		['light.vert'],

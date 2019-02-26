@@ -10,6 +10,7 @@ const uint playerCount = 2u; // TODO: only 2 works atm, see below
 // symbolic special constants
 const uint nextNone = 0xFFFFFFFF;
 const uint playerNone = 0xFFFFFFFF;
+const float oneSixth = 0.166;
 
 // the amount of diffuse per difference in every step
 // if one cell has strength 1 and its neighbor 0, so much will float
@@ -17,7 +18,7 @@ const uint playerNone = 0xFFFFFFFF;
 // player, the stronger one will gain the cell
 // must be in range [0, 1/6]
 const float diffuse = 0.01;
-const float diffuseVel = 0.01;
+const float diffuseVel = 0.05;
 
 // TODO: not used, just a concept atm. Work out clash model further
 // we probably first want to track how many fighters from each player
@@ -108,6 +109,12 @@ void main() {
 
 	uint player = field.player;
 
+	// NOTE: something like pressure?
+	// fields that have more strength should (not just proportionally)
+	// diffuse "stronger"
+
+	// NOTE: fix nan velocities
+
 	// diffuse
 	// 1: depart/general
 	float strength = field.strength;
@@ -115,23 +122,32 @@ void main() {
 	float l = length(vel);
 	for(uint i = 0; i < 6; ++i) {
 		if(field.next[i] == nextNone) {
+			if(field.type == FieldEmpty) {
+				field.velocity -= 0.5 * dot(field.velocity, direction(i)) * direction(i);
+			}
+
 			continue;
 		}
 
-		// float fac = dot(field.velocity, direction(i));
 		const Field next = old.fields[field.next[i]];
-		float fac = clamp(mix(1, 10 * dot(direction(i), vel), tanh(l)), 0.0, 1.0);
+		float fac = clamp(mix(oneSixth, 10 * dot(direction(i), vel), tanh(20 * l)), 0.0, 1.0);
+		// float fac = clamp(10 * dot(direction(i), next.velocity), 0.0, 1.0);
 		if(next.type == FieldEmpty) {
 			if(field.type == FieldEmpty) {
+				if(strength > 1.0) {
+					field.velocity += 0.05 * direction(i) * (strength - next.strength);
+				}
+				// field.velocity += 0.01 * direction(i) * (strength - next.strength);
+
 				// attack/diffuse: field -> next
 				field.strength -= fac * diffuse * strength;
-				// field.velocity -= fac * diffuseVel * strength * vel;
+				field.velocity -= fac * diffuseVel * strength * vel;
 			}
 		}
 	}
 
 	// slow down over time
-	// field.velocity *= 0.999;
+	field.velocity *= 0.999;
 
 	// 2: receive
 	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
@@ -143,7 +159,8 @@ void main() {
 
 		const Field next = old.fields[field.next[i]];
 		float l = length(next.velocity);
-		float fac = clamp(mix(1, 10 * dot(-direction(i), next.velocity), tanh(l)), 0.0, 1.0);
+		float fac = clamp(mix(oneSixth, 10 * dot(-direction(i), next.velocity), tanh(20 * l)), 0.0, 1.0);
+		// float fac = clamp(10 * dot(-direction(i), next.velocity), 0.0, 1.0);
 
 		// TODO: strength cannot be greater than 1? normalize somehow everywhere!
 		// can't move into friendly building, only to attack
@@ -164,7 +181,7 @@ void main() {
 	field.strength = max(0.0, field.strength);
 	if(field.player != playerNone) {
 		strengths[field.player] += field.strength;
-		velSum += field.strength * field.velocity;
+		velSum += field.velocity;
 	}
 
 	// 3: fight

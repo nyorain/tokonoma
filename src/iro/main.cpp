@@ -5,6 +5,7 @@
 #include <stage/window.hpp>
 #include <stage/types.hpp>
 #include <stage/bits.hpp>
+#include <stage/texture.hpp>
 
 #include <vpp/fwd.hpp>
 #include <vpp/trackedDescriptor.hpp>
@@ -25,6 +26,8 @@
 
 #include <shaders/iro.vert.h>
 #include <shaders/iro.frag.h>
+#include <shaders/simple.vert.h>
+#include <shaders/texture.frag.h>
 // #include <shaders/iro_outline.vert.h>
 // #include <shaders/iro_outline.frag.h>
 #include <shaders/iro.comp.h>
@@ -82,13 +85,15 @@ Vec2i neighborPos(Vec2i pos, Field::Side side) {
 
 class HexApp : public doi::App {
 public:
-	static constexpr auto size = 100u;
+	static constexpr auto size = 20u;
 
 public:
 	bool init(const doi::AppSettings& settings) override {
 		if(!doi::App::init(settings)) {
 			return false;
 		}
+
+		renderer().clearColor({1.f, 1.f, 1.f, 1.f});
 
 		// logical
 		view_.center = {0.f, 0.f};
@@ -135,7 +140,7 @@ public:
 
 		// buffer
 		auto hostMem = dev.hostMemoryTypes();
-		auto devMem = dev.deviceMemoryTypes();
+		// auto devMem = dev.deviceMemoryTypes();
 
 		// ubo
 		auto uboSize = sizeof(nytl::Mat4f);
@@ -146,15 +151,16 @@ public:
 		fields_ = initFields();
 		fieldCount_ = fields_.size();
 
+		// TODO: host/dev memory?
 		auto usage = vk::BufferUsageFlags(vk::BufferUsageBits::storageBuffer);
 		auto storageSize = fields_.size() * sizeof(fields_[0]);
 		storageOld_ = {dev.bufferAllocator(), storageSize,
-			usage | vk::BufferUsageBits::transferDst, 0, devMem};
+			usage | vk::BufferUsageBits::transferDst, 0, hostMem};
 		vpp::writeStaging430(storageOld_, vpp::raw(*fields_.data(), fields_.size()));
 
 		usage |= vk::BufferUsageBits::transferSrc |
 			vk::BufferUsageBits::vertexBuffer;
-		storageNew_ = {dev.bufferAllocator(), storageSize, usage, 0, devMem};
+		storageNew_ = {dev.bufferAllocator(), storageSize, usage, 0, hostMem};
 
 		// descriptors
 		compDs_ = {dev.descriptorAllocator(), compDsLayout_};
@@ -187,6 +193,71 @@ public:
 		uploadCb_ = dev.commandAllocator().get(
 			dev.queueSubmitter().queue().family(),
 			vk::CommandPoolCreateBits::resetCommandBuffer);
+
+		// resources
+		textures_.resource = doi::loadTexture(dev, "../assets/hex_test2.png");
+		vk::SamplerCreateInfo samplerInfo {};
+		sampler_ = {dev, samplerInfo};
+
+		auto texDsBindings = {
+			vpp::descriptorBinding(
+				vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, -1, 1,
+				&sampler_.vkHandle()),
+		};
+
+		texDsLayout_ = {dev, texDsBindings};
+		texPipeLayout_ = {dev, {texDsLayout_}, {}};
+
+		vpp::ShaderModule simpleVert(dev, simple_vert_data);
+		vpp::ShaderModule textureFrag(dev, texture_frag_data);
+		vpp::GraphicsPipelineInfo texPipeInfo(renderer().renderPass(),
+			texPipeLayout_, {{
+				{simpleVert, vk::ShaderStageBits::vertex},
+				{textureFrag, vk::ShaderStageBits::fragment}
+			}}, 0, renderer().samples());
+
+		vk::VertexInputAttributeDescription attribs[2];
+		attribs[0].format = vk::Format::r32g32Sfloat;
+
+		attribs[1].location = 1;
+		attribs[1].offset = sizeof(float) * 2;
+		attribs[1].format = vk::Format::r32g32Sfloat;
+
+		texPipeInfo.vertex.vertexAttributeDescriptionCount = 2;
+		texPipeInfo.vertex.pVertexAttributeDescriptions = attribs;
+
+		vk::VertexInputBindingDescription binding;
+		binding.inputRate = vk::VertexInputRate::vertex;
+		binding.stride = sizeof(float) * 4;
+
+		texPipeInfo.vertex.vertexBindingDescriptionCount = 1;
+		texPipeInfo.vertex.pVertexBindingDescriptions = &binding;
+		texPipeInfo.assembly.topology = vk::PrimitiveTopology::triangleFan;
+
+		vk::Pipeline vkpipe;
+		vk::createGraphicsPipelines(dev, {}, 1, texPipeInfo.info(), nullptr,
+			vkpipe);
+		texPipe_ = {dev, vkpipe};
+
+		// ds
+		texDs_ = {dev.descriptorAllocator(), texDsLayout_};
+		vpp::DescriptorSetUpdate texdsupdate(texDs_);
+		texdsupdate.imageSampler({{{}, textures_.resource.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+
+		// buffer
+		texBuf_ = {dev.bufferAllocator(), sizeof(float) * 4 * 4,
+			vk::BufferUsageBits::vertexBuffer | vk::BufferUsageBits::transferDst,
+			0, dev.deviceMemoryTypes()};
+		float values[] = {
+			// position, uv
+			-0.9, -0.9,  0.0, 0.0,
+			-0.85, -0.9,  1.0, 0.0,
+			-0.85, -0.8,  1.0, 1.0,
+			-0.9, -0.8,  0.0, 1.0,
+		};
+		vpp::writeStaging140(texBuf_, vpp::raw(*values, 16));
 
 		return true;
 	}
@@ -257,6 +328,14 @@ public:
 			0u, sizeof(nytl::Vec3f), &red);
 		vk::cmdDrawIndirect(cb, selectedIndirect_.buffer(),
 			selectedIndirect_.offset(), 1, 0);
+
+		// image
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+			texPipeLayout_, 0, {texDs_}, {});
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, texPipe_);
+		vk::cmdBindVertexBuffers(cb, 0, {texBuf_.buffer()},
+			{texBuf_.offset()});
+		vk::cmdDraw(cb, 4, 1, 0, 0);
 	}
 
 	void update(double delta) override {
@@ -600,6 +679,20 @@ protected:
 		float radius {};
 		nytl::Vec2f off {};
 	} hex_;
+
+	struct {
+		vpp::ViewableImage resource;
+		vpp::ViewableImage spawner;
+		vpp::ViewableImage tower;
+		vpp::ViewableImage velocity;
+	} textures_;
+
+	vpp::TrDsLayout texDsLayout_;
+	vpp::TrDs texDs_;
+	vpp::PipelineLayout texPipeLayout_;
+	vpp::Pipeline texPipe_;
+	vpp::SubBuffer texBuf_;
+	vpp::Sampler sampler_;
 };
 
 int main(int argc, const char** argv) {
