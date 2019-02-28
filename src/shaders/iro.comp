@@ -87,6 +87,12 @@ struct Field {
 	float _;
 };
 
+// Information about a player
+struct Player {
+	uint resources; // should only be atomically accessed
+	float _1, _2, _3; // padding
+};
+
 // TODO: test different settings for performance
 layout(local_size_x = 1) in;
 
@@ -103,6 +109,11 @@ layout(set = 0, binding = 1, std430) writeonly buffer NewFields {
 	Field[] fields;
 } new;
 
+// common data about the players
+layout(set = 0, binding = 2, std430) buffer Players {
+	Player[playerCount] players;
+} players;
+
 void main() {
 	uint id = gl_GlobalInvocationID.x;
 	Field field = old.fields[id];
@@ -114,14 +125,16 @@ void main() {
 	// diffuse "stronger"
 
 	// NOTE: fix nan velocities
-
+	
 	// diffuse
 	// 1: depart/general
 	float strength = field.strength;
 	vec2 vel = field.velocity;
 	float l = length(vel);
+	uint freeOwn = 0;
 	for(uint i = 0; i < 6; ++i) {
 		if(field.next[i] == nextNone) {
+			// edge condition
 			if(field.type == FieldEmpty) {
 				field.velocity -= 0.5 * dot(field.velocity, direction(i)) * direction(i);
 			}
@@ -129,10 +142,15 @@ void main() {
 			continue;
 		}
 
+
 		const Field next = old.fields[field.next[i]];
 		float fac = clamp(mix(oneSixth, 10 * dot(direction(i), vel), tanh(20 * l)), 0.0, 1.0);
 		// float fac = clamp(10 * dot(direction(i), next.velocity), 0.0, 1.0);
 		if(next.type == FieldEmpty) {
+			if(next.player == field.player) {
+				++freeOwn;
+			}
+
 			if(field.type == FieldEmpty) {
 				if(strength > 1.0) {
 					field.velocity += 0.05 * direction(i) * (strength - next.strength);
@@ -144,6 +162,11 @@ void main() {
 				field.velocity -= fac * diffuseVel * strength * vel;
 			}
 		}
+	}
+
+	// resources
+	if(field.type == FieldResource) {
+		atomicAdd(players.players[field.player].resources, freeOwn);
 	}
 
 	// slow down over time

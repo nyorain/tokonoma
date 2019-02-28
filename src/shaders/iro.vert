@@ -5,6 +5,8 @@ const float cospi6 = 0.86602540378; // cos(pi/6) or sqrt(3)/2
 
 // total height: 2 * radius (height per row due to shift only 1.5 * radius)
 // total width: cospi6 * 2 * radius
+// we start in the center so we can pass the "outRad" (normalized distance
+// to center) to the fragment shader.
 const vec3[] hexPoints = {
 	{0.f, 0.f, 0.f},
 	{cospi6, .5f, 1.f},
@@ -41,6 +43,6 @@ void main() {
 	outColor = s * mix(colors[0], colors[1], float(inPlayer));
 	outRad = hp.z;
 
-	// NOTE: all buildings have 10 hp atm
+	// NOTE: all buildings have max 10 hp atm
 	outFull = (inType == 0) ? 0.f : s;
 }
