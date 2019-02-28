@@ -26,13 +26,21 @@
 
 #include <shaders/iro.vert.h>
 #include <shaders/iro.frag.h>
-#include <shaders/simple.vert.h>
-#include <shaders/texture.frag.h>
+#include <shaders/iro_building.vert.h>
+#include <shaders/iro_texture.frag.h>
+// #include <shaders/simple.vert.h>
+// #include <shaders/texture.frag.h>
 // #include <shaders/iro_outline.vert.h>
 // #include <shaders/iro_outline.frag.h>
 #include <shaders/iro.comp.h>
 
 using namespace doi::types;
+
+// mirrors glsl layout
+struct Player {
+	u32 resources;
+	float padding[3];
+};
 
 // mirrors glsl layout
 struct Field {
@@ -104,15 +112,22 @@ public:
 
 		// compute
 		auto compDsBindings = {
+			// old fields
 			vpp::descriptorBinding(
 				vk::DescriptorType::storageBuffer,
 				vk::ShaderStageBits::compute),
+			// new fields
 			vpp::descriptorBinding(
 				vk::DescriptorType::storageBuffer,
 				vk::ShaderStageBits::compute),
+			// players
+			vpp::descriptorBinding(
+				vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::compute),
+			// NOTE: not used atm
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::compute) // NOTE: not used atm
+				vk::ShaderStageBits::compute)
 		};
 
 		compDsLayout_ = {dev, compDsBindings};
@@ -140,7 +155,7 @@ public:
 
 		// buffer
 		auto hostMem = dev.hostMemoryTypes();
-		// auto devMem = dev.deviceMemoryTypes();
+		auto devMem = dev.deviceMemoryTypes();
 
 		// ubo
 		auto uboSize = sizeof(nytl::Mat4f);
@@ -155,12 +170,26 @@ public:
 		auto usage = vk::BufferUsageFlags(vk::BufferUsageBits::storageBuffer);
 		auto storageSize = fields_.size() * sizeof(fields_[0]);
 		storageOld_ = {dev.bufferAllocator(), storageSize,
-			usage | vk::BufferUsageBits::transferDst, 0, hostMem};
+			usage | vk::BufferUsageBits::transferDst, 0, devMem};
 		vpp::writeStaging430(storageOld_, vpp::raw(*fields_.data(), fields_.size()));
 
 		usage |= vk::BufferUsageBits::transferSrc |
 			vk::BufferUsageBits::vertexBuffer;
-		storageNew_ = {dev.bufferAllocator(), storageSize, usage, 0, hostMem};
+		storageNew_ = {dev.bufferAllocator(), storageSize, usage, 0, devMem};
+
+		// player buf
+		usage = vk::BufferUsageBits::storageBuffer;
+		auto playerSize = sizeof(Player) * 2;
+		playerBuffer_ = {dev.bufferAllocator(), playerSize, usage, 0, hostMem};
+
+		{
+			Player init;
+			init.resources = 0u;
+			auto map = playerBuffer_.memoryMap();
+			auto span = map.span();
+			doi::write(span, init);
+			doi::write(span, init);
+		}
 
 		// descriptors
 		compDs_ = {dev.descriptorAllocator(), compDsLayout_};
@@ -171,6 +200,8 @@ public:
 			storageOld_.offset(), storageOld_.size()}});
 		compDsUpdate.storage({{storageNew_.buffer(),
 			storageNew_.offset(), storageNew_.size()}});
+		compDsUpdate.storage({{playerBuffer_.buffer(),
+			playerBuffer_.offset(), playerBuffer_.size()}});
 
 		vpp::DescriptorSetUpdate gfxDsUpdate(gfxDs_);
 		gfxDsUpdate.uniform({{gfxUbo_.buffer(),
@@ -195,7 +226,7 @@ public:
 			vk::CommandPoolCreateBits::resetCommandBuffer);
 
 		// resources
-		textures_.resource = doi::loadTexture(dev, "../assets/hex_test2.png");
+		textures_.resource = doi::loadTexture(dev, "../assets/iro/spawner.png");
 		vk::SamplerCreateInfo samplerInfo {};
 		samplerInfo.minFilter = vk::Filter::linear;
 		samplerInfo.magFilter = vk::Filter::linear;
@@ -212,29 +243,25 @@ public:
 		};
 
 		texDsLayout_ = {dev, texDsBindings};
-		texPipeLayout_ = {dev, {texDsLayout_}, {}};
+		texPipeLayout_ = {dev, {gfxDsLayout_, texDsLayout_}, {}};
 
-		vpp::ShaderModule simpleVert(dev, simple_vert_data);
-		vpp::ShaderModule textureFrag(dev, texture_frag_data);
+		vpp::ShaderModule simpleVert(dev, iro_building_vert_data);
+		vpp::ShaderModule textureFrag(dev, iro_texture_frag_data);
 		vpp::GraphicsPipelineInfo texPipeInfo(renderer().renderPass(),
 			texPipeLayout_, {{
 				{simpleVert, vk::ShaderStageBits::vertex},
 				{textureFrag, vk::ShaderStageBits::fragment}
 			}}, 0, renderer().samples());
 
-		vk::VertexInputAttributeDescription attribs[2];
+		vk::VertexInputAttributeDescription attribs[1];
 		attribs[0].format = vk::Format::r32g32Sfloat;
 
-		attribs[1].location = 1;
-		attribs[1].offset = sizeof(float) * 2;
-		attribs[1].format = vk::Format::r32g32Sfloat;
-
-		texPipeInfo.vertex.vertexAttributeDescriptionCount = 2;
+		texPipeInfo.vertex.vertexAttributeDescriptionCount = 1;
 		texPipeInfo.vertex.pVertexAttributeDescriptions = attribs;
 
 		vk::VertexInputBindingDescription binding;
-		binding.inputRate = vk::VertexInputRate::vertex;
-		binding.stride = sizeof(float) * 4;
+		binding.inputRate = vk::VertexInputRate::instance;
+		binding.stride = sizeof(float) * 2;
 
 		texPipeInfo.vertex.vertexBindingDescriptionCount = 1;
 		texPipeInfo.vertex.pVertexBindingDescriptions = &binding;
@@ -252,17 +279,12 @@ public:
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 
 		// buffer
-		texBuf_ = {dev.bufferAllocator(), sizeof(float) * 4 * 4,
-			vk::BufferUsageBits::vertexBuffer | vk::BufferUsageBits::transferDst,
-			0, dev.deviceMemoryTypes()};
-		float values[] = {
-			// position, uv
-			-0.9, -0.9,  0.0, 0.0,
-			-0.85, -0.9,  1.0, 0.0,
-			-0.85, -0.8,  1.0, 1.0,
-			-0.9, -0.8,  0.0, 1.0,
-		};
-		vpp::writeStaging140(texBuf_, vpp::raw(*values, 16));
+		// we start with enough space for 32 fields, might get resized
+		// TODO: make device local?
+		texBuf_ = {dev.bufferAllocator(),
+			sizeof(vk::DrawIndirectCommand) + sizeof(float) * 2 * 32,
+			vk::BufferUsageBits::vertexBuffer,
+			0, dev.hostMemoryTypes()};
 
 		return true;
 	}
@@ -334,13 +356,16 @@ public:
 		vk::cmdDrawIndirect(cb, selectedIndirect_.buffer(),
 			selectedIndirect_.offset(), 1, 0);
 
-		// image
+		// textures
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			texPipeLayout_, 0, {texDs_}, {});
+			texPipeLayout_, 0, {gfxDs_}, {});
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+			texPipeLayout_, 1, {texDs_}, {});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, texPipe_);
 		vk::cmdBindVertexBuffers(cb, 0, {texBuf_.buffer()},
-			{texBuf_.offset()});
-		vk::cmdDraw(cb, 4, 1, 0, 0);
+			{texBuf_.offset() + sizeof(vk::DrawIndirectCommand)});
+		vk::cmdDrawIndirect(cb, texBuf_.buffer(),
+			texBuf_.offset(), 1, 0);
 	}
 
 	void update(double delta) override {
@@ -409,6 +434,40 @@ public:
 
 			uploadRegions_.clear();
 			uploadPtr_ = stageView_.ptr();
+		}
+
+		if(updateSpawnFieldsBuffer_) {
+			updateSpawnFieldsBuffer_ = false;
+			auto neededSize = sizeof(vk::DrawIndirectCommand) +
+				spawnFields_.size() * sizeof(float) * 2;
+			if(neededSize > texBuf_.size()) {
+				neededSize *= 2;
+				texBuf_ = {vulkanDevice().bufferAllocator(), neededSize,
+					vk::BufferUsageBits::vertexBuffer,
+					0, vulkanDevice().hostMemoryTypes()};
+				App::rerecord();
+			}
+
+			vk::DrawIndirectCommand cmd;
+			cmd.firstInstance = 0u;
+			cmd.firstVertex = 0u;
+			cmd.instanceCount = spawnFields_.size();
+			cmd.vertexCount = 4u;
+
+			auto map = texBuf_.memoryMap();
+			auto span = map.span();
+			doi::write(span, cmd);
+			for(auto& fieldid : spawnFields_) {
+				doi::write(span, fields_[fieldid].pos);
+			}
+		}
+
+		// sync players
+		{
+			auto map = playerBuffer_.memoryMap();
+			auto span = map.span();
+			players_ = doi::read<std::array<Player, 2>>(span);
+			dlg_debug(players_[0].resources);
 		}
 	}
 
@@ -488,10 +547,13 @@ public:
 					break;
 				case ny::Keycode::h: side = Field::Side::left; break;
 				case ny::Keycode::l: side = Field::Side::right; break;
+
 				// actions
 				case ny::Keycode::s: type = Field::Type::spawn; break;
 				case ny::Keycode::t: type = Field::Type::tower; break;
 				case ny::Keycode::v: type = Field::Type::accel; break;
+				case ny::Keycode::g: type = Field::Type::resource; break;
+
 				// change velocity
 				case ny::Keycode::w: vel = {-1, 1}; break;
 				case ny::Keycode::e: vel = {1, 1}; break;
@@ -523,6 +585,14 @@ public:
 				dlg_assert(offset + size < stage_.size());
 
 				if(type) {
+					if(type == Field::Type::spawn) {
+						// TODO: remove if destructed or something!
+						// needs checking after every step...?
+						// or push events from gpu to cpu?
+						// or add data hostVisible structure for that?
+						spawnFields_.push_back(selected_);
+						updateSpawnFieldsBuffer_ = true;
+					}
 					doi::write(uploadPtr_, *type);
 					doi::write(uploadPtr_, 10.f); // strength
 				}
@@ -641,6 +711,10 @@ public:
 protected:
 	vpp::SubBuffer storageOld_;
 	vpp::SubBuffer storageNew_;
+	vpp::SubBuffer playerBuffer_;
+
+	// synced from gpu from last step
+	std::array<Player, 2> players_;
 
 	vpp::TrDsLayout compDsLayout_;
 	vpp::PipelineLayout compPipeLayout_;
@@ -691,6 +765,10 @@ protected:
 		vpp::ViewableImage tower;
 		vpp::ViewableImage velocity;
 	} textures_;
+
+	// spawn field ids, keeping track to draw spawn images
+	std::vector<unsigned> spawnFields_;
+	bool updateSpawnFieldsBuffer_ {false};
 
 	vpp::TrDsLayout texDsLayout_;
 	vpp::TrDs texDs_;
