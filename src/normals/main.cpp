@@ -89,7 +89,7 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipeline_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {ds_.vkHandle()}, {});
-		vk::cmdDraw(cb, 6, 1, 0, 0);
+		vk::cmdDraw(cb, 4, 1, 0, 0);
 	}
 
 	void update(double dt) override {

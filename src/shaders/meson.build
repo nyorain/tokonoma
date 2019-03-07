@@ -89,6 +89,9 @@ shaders_src = [
 		['iro_outline.vert', include_glsl],
 		['iro_outline.frag', include_glsl],
 	]],
+	['sen_shaders', [
+	  ['sen.frag'],
+	]]
 ]
 
 # build them

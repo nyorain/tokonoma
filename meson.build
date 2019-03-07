@@ -113,6 +113,12 @@ executable('ps', [
 		common_shaders,
 	], dependencies: stage_dep)
 
+executable('sen', [
+		'src/sen/main.cpp',
+		sen_shaders,
+		common_shaders,
+	], dependencies: stage_dep)
+
 executable('ddd', [
 		'src/ddd/main.cpp',
 		ddd_shaders,
