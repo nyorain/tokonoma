@@ -297,7 +297,7 @@ float shadowValue2(Circle light, vec2 point, vec2 segA, vec2 segB) {
 		if(normed(maxFacs)) {
 			// in this case the line segments intersect the light cone twice.
 			// this means no light gets to the point
-			
+
 			// TODO: performance, some redundant checks
 			// special case: segment intersects light
 			float pf = clamp(projectFac(light.center, seg), 0, 1);

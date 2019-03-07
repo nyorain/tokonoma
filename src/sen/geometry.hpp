@@ -70,30 +70,12 @@ float intersect(const Ray& r, const Box& b) {
 	// might result in +/- infinity in an dimension
 	auto ad = abs(1.f / dir);
 
-	// XXX
-	// if(std::isnan(d.x)) { d.x = 0.f; }
-	// if(std::isinf(d.x)) { ... }
-
 	// ts needed for first/second xi = 1 intersections (following ray in its dir)
 	// oi + di * t1i = sign(di)
 	// oi + di * t2i = -sign(di)
 	// again: might be infinity. Well defined though:
 	auto t1 = d - ad;
 	auto t2 = d + ad;
-
-	// XXX
-	// if(std::isnan(t1.x) && std::isnan(t2.x)) { // always in: o.x, d.x both 0
-	// 	t1.x = -INFINITY;
-	// 	t2.x = INFINITY;
-	// } else if(std::isnan(t1.x) != std::isnan(t2.x)) {
-	// 	if(o.x >= -1.f && o.x < 1.f) {
-	// 		t1.x = -INFINITY;
-	// 		t2.x = INFINITY;
-	// 	} else {
-	// 		t1.x = INFINITY;
-	// 		t2.x = -INFINITY;
-	// 	}
-	// }
 
 	using std::max, std::min;
 
@@ -117,28 +99,10 @@ float intersect(const Ray& r, const Box& b) {
 		return -1.f;
 	}
 
+    // vec3 normal = -sign(r.dir)* step(t1.yzx,t1.xyz)*step(t1.zxy,t1.xyz);
+
 	// If the origin of the ray is *in* the box, then this
 	// returns a negative value: the first intersection of the ray
 	// behind the origin.
 	return tn;
-
-	// // vec3 m {1.f / dir.x, 1.f / dir.y, 1.f / dir.z};
-	// // TODO: some way to do this more elegantly?
-	// vec3 m {
-	// 	dir.x == 0.f ? 99999.f : 1.f / dir.x,
-	// 	dir.y == 0.f ? 99999.f : 1.f / dir.y,
-	// 	dir.z == 0.f ? 99999.f : 1.f / dir.z};
-    // vec3 n = m * o;
-    // vec3 k = abs(m);
-//
-    // vec3 t1 = -n - k;
-    // vec3 t2 = -n + k;
-//
-	// using std::max, std::min;
-    // float tN = max(max(t1.x, t1.y), t1.z);
-    // float tF = min(min(t2.x, t2.y), t2.z);
-//
-    // if( tN > tF || tF < 0.0) return -1.f;
-    // // outNormal = -sign(rdd)*step(t1.yzx,t1.xyz)*step(t1.zxy,t1.xyz);
-    // return tN;
 }
