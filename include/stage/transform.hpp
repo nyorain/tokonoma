@@ -161,6 +161,7 @@ nytl::SquareMat<4, P> perspective3RH(P fov, P aspect, P pnear, P pfar) {
 
 
 // rh_zo
+// near and far both positive
 template<typename P>
 nytl::SquareMat<4, P> ortho3(P left, P right, P top, P bottom, P pnear, P far) {
 	auto ret = nytl::identity<4, P>();

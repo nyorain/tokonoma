@@ -1,3 +1,5 @@
+#pragma once
+
 #include <nytl/mat.hpp>
 #include <nytl/matOps.hpp>
 #include <nytl/vecOps.hpp>
@@ -5,6 +7,11 @@
 struct Ray {
 	nytl::Vec3f origin;
 	nytl::Vec3f dir;
+};
+
+struct Sphere {
+	nytl::Vec3f center;
+	float radius;
 };
 
 // Box defined by a transform/3D affine coordinate system.
@@ -21,6 +28,8 @@ struct Box {
 			nytl::Vec3f x = {1.f, 0.f, 0.f},
 			nytl::Vec3f y = {0.f, 1.f, 0.f},
 			nytl::Vec3f z = {0.f, 0.f, 1.f}) {
+
+		// transform (for ray tracing)
 		transform[0] = {x.x, x.y, x.z, -dot(x, center)};
 		transform[1] = {y.x, y.y, y.z, -dot(y, center)};
 		transform[2] = {z.x, z.y, z.z, -dot(z, center)};
@@ -31,11 +40,20 @@ struct Box {
 		if(xx > 0.f) { transform[0] *= 1 / xx; }
 		if(yy > 0.f) { transform[1] *= 1 / yy; }
 		if(zz > 0.f) { transform[2] *= 1 / zz; }
+
+		// inv (for rasterization)
+		col(inv, 0, static_cast<nytl::Vec4f>(x));
+		col(inv, 1, static_cast<nytl::Vec4f>(y));
+		col(inv, 2, static_cast<nytl::Vec4f>(z));
+		col(inv, 3, static_cast<nytl::Vec4f>(center));
+		inv[3][3] = 1.f;
 	}
 
 	nytl::Mat4f transform = nytl::identity<4, float>();
+	nytl::Mat4f inv = nytl::identity<4, float>();
 };
 
+/// TODO: should not be here; mainly playing around
 using vec3 = nytl::Vec3f;
 using namespace nytl::vec::cw::operators;
 using namespace nytl::vec::cw;
