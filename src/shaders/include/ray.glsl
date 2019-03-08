@@ -7,20 +7,37 @@ struct Ray {
 // transform * box = unit cube
 struct Box {
 	mat4 transform;
+	vec4 color;
 };
 
-Box box() {
-	return Box(mat4(1));
+struct Sphere {
+	vec4 geom;
+	vec4 color;
+};
+
+vec3 pos(Sphere s) {
+	return s.geom.xyz;
 }
 
-Box box(vec3 center) {
+float radius(Sphere s) {
+	return s.geom.w;
+}
+
+Box box() {
+	return Box(mat4(1), vec4(1.0));
+}
+
+Box box(vec3 center, vec3 color) {
 	Box b = box();
 	b.transform[3].xyz = center;
+	b.color = vec4(color, 1.0);
 	return b;
 }
 
 Box box(vec3 center, vec3 x, vec3 y, vec3 z) {
-	return Box(mat4(vec4(x, 0), vec4(y, 0), vec4(z, 0), vec4(center, 1)));
+	return Box(
+		mat4(vec4(x, 0), vec4(y, 0), vec4(z, 0), vec4(center, 1)),
+		vec4(1.0));
 }
 
 vec3 multDir(mat4 transform, vec3 dir) {

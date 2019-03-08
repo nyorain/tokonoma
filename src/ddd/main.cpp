@@ -108,7 +108,7 @@ void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 	// indices
 	indices_ = {dev.bufferAllocator(), 36u * sizeof(std::uint16_t),
 		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-		0, dev.hostMemoryTypes()};
+		0, dev.deviceMemoryTypes()};
 	std::array<std::uint16_t, 36> indices = {
 		0, 1, 2,  2, 1, 3, // front
 		1, 5, 3,  3, 5, 7, // right
@@ -845,6 +845,7 @@ public:
 		vk::ClearValue clearValue {};
 		clearValue.depthStencil = {1.f, 0u};
 
+		// draw shadow map!
 		vk::RenderPassBeginInfo rpb; // TODO
 		vk::cmdBeginRenderPass(cb, {
 			shadow_.rp,
