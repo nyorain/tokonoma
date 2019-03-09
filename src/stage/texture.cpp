@@ -89,7 +89,7 @@ vpp::ViewableImage loadTexture(vpp::Device& dev, nytl::StringParam filename) {
 }
 
 vpp::ViewableImage loadTextureArray(vpp::Device& dev,
-		nytl::Span<nytl::StringParam> files) {
+		nytl::Span<const nytl::StringParam> files) {
 
 	uint32_t layerCount = files.size();
 	dlg_assert(layerCount != 0);
@@ -100,6 +100,7 @@ vpp::ViewableImage loadTextureArray(vpp::Device& dev,
 
 	auto cmdBuf = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
 	vk::beginCommandBuffer(cmdBuf, {});
+	std::vector<vpp::SubBuffer> stages;
 
 	for(auto file : files) {
 		auto [data, iextent] = loadImage(file);
@@ -123,8 +124,17 @@ vpp::ViewableImage loadTextureArray(vpp::Device& dev,
 				{vk::ImageAspectBits::color, 0, 1, 0, layerCount});
 		} else {
 			if(iextent.width != extent.width || iextent.height != extent.height) {
-				throw std::runtime_error("Images for image array have "
-					"different sizes");
+				std::string msg = "Images for image array have different sizes:";
+				msg += "\n\tFirst image had size (";
+				msg += std::to_string(extent.width);
+				msg += ",";
+				msg += std::to_string(extent.height);
+				msg += "), while '" + std::string(file) + "' has size (";
+				msg += std::to_string(iextent.width);
+				msg += ",";
+				msg += std::to_string(iextent.height);
+				msg += ").";
+				throw std::runtime_error(msg);
 			}
 		}
 
@@ -132,9 +142,9 @@ vpp::ViewableImage loadTextureArray(vpp::Device& dev,
 		auto format = vk::Format::r8g8b8a8Unorm;
 		auto dataSize = extent.width * extent.height * 4;
 		auto dspan = nytl::Span<const std::byte>(data, dataSize);
-		auto stage = vpp::fillStaging(cmdBuf, image.image(), format,
+		stages.push_back(vpp::fillStaging(cmdBuf, image.image(), format,
 			vk::ImageLayout::transferDstOptimal, extent, dspan,
-			{vk::ImageAspectBits::color, 0, layer});
+			{vk::ImageAspectBits::color, 0, layer}));
 
 		free(const_cast<std::byte*>(data));
 		++layer;
