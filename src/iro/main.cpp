@@ -110,6 +110,20 @@ public:
 		// layouts
 		auto& dev = vulkanDevice();
 
+		// resources
+		textures_ = doi::loadTextureArray(dev, {
+			"../assets/iro/test.png",
+			"../assets/iro/spawner.png",
+			"../assets/iro/ample.png",
+			"../assets/iro/velocity.png"});
+
+		vk::SamplerCreateInfo samplerInfo {};
+		samplerInfo.minFilter = vk::Filter::linear;
+		samplerInfo.magFilter = vk::Filter::linear;
+		samplerInfo.minLod = 0;
+		samplerInfo.maxLod = 0.25;
+		sampler_ = {dev, samplerInfo};
+
 		// compute
 		auto compDsBindings = {
 			// old fields
@@ -135,9 +149,15 @@ public:
 
 		// graphics
 		auto gfxDsBindings = {
+			// transform (view) matrix
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex),
+			// texture array
+			vpp::descriptorBinding(
+				vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment,
+				-1, 1, &sampler_.vkHandle()),
 		};
 
 		gfxDsLayout_ = {dev, gfxDsBindings};
@@ -206,7 +226,8 @@ public:
 		vpp::DescriptorSetUpdate gfxDsUpdate(gfxDs_);
 		gfxDsUpdate.uniform({{gfxUbo_.buffer(),
 			gfxUbo_.offset(), gfxUbo_.size()}});
-
+		gfxDsUpdate.imageSampler({{{}, textures_.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
 		vpp::apply({compDsUpdate, gfxDsUpdate});
 
 		// indirect selected buffer
@@ -225,16 +246,7 @@ public:
 			dev.queueSubmitter().queue().family(),
 			vk::CommandPoolCreateBits::resetCommandBuffer);
 
-		// resources
-		textures_.resource = doi::loadTexture(dev, "../assets/iro/spawner.png");
-		vk::SamplerCreateInfo samplerInfo {};
-		samplerInfo.minFilter = vk::Filter::linear;
-		samplerInfo.magFilter = vk::Filter::linear;
-		samplerInfo.minLod = 0;
-		samplerInfo.maxLod = 0.25;
-		samplerInfo.mipmapMode = vk::SamplerMipmapMode::nearest;
-		sampler_ = {dev, samplerInfo};
-
+		/*
 		auto texDsBindings = {
 			vpp::descriptorBinding(
 				vk::DescriptorType::combinedImageSampler,
@@ -285,6 +297,7 @@ public:
 			sizeof(vk::DrawIndirectCommand) + sizeof(float) * 2 * 32,
 			vk::BufferUsageBits::vertexBuffer,
 			0, dev.hostMemoryTypes()};
+		*/
 
 		return true;
 	}
@@ -357,15 +370,15 @@ public:
 			selectedIndirect_.offset(), 1, 0);
 
 		// textures
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			texPipeLayout_, 0, {gfxDs_}, {});
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			texPipeLayout_, 1, {texDs_}, {});
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, texPipe_);
-		vk::cmdBindVertexBuffers(cb, 0, {texBuf_.buffer()},
-			{texBuf_.offset() + sizeof(vk::DrawIndirectCommand)});
-		vk::cmdDrawIndirect(cb, texBuf_.buffer(),
-			texBuf_.offset(), 1, 0);
+		// vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+		// 	texPipeLayout_, 0, {gfxDs_}, {});
+		// vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+		// 	texPipeLayout_, 1, {texDs_}, {});
+		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, texPipe_);
+		// vk::cmdBindVertexBuffers(cb, 0, {texBuf_.buffer()},
+		// 	{texBuf_.offset() + sizeof(vk::DrawIndirectCommand)});
+		// vk::cmdDrawIndirect(cb, texBuf_.buffer(),
+		// 	texBuf_.offset(), 1, 0);
 	}
 
 	void update(double delta) override {
@@ -436,6 +449,7 @@ public:
 			uploadPtr_ = stageView_.ptr();
 		}
 
+		/*
 		if(updateSpawnFieldsBuffer_) {
 			updateSpawnFieldsBuffer_ = false;
 			auto neededSize = sizeof(vk::DrawIndirectCommand) +
@@ -461,6 +475,7 @@ public:
 				doi::write(span, fields_[fieldid].pos);
 			}
 		}
+		*/
 
 		// sync players
 		{
@@ -521,6 +536,8 @@ public:
 			std::optional<Field::Type> type;
 			std::optional<nytl::Vec2f> vel;
 
+			const float cospi3 = 0.5;
+			const float sinpi3 = 0.86602540378; // cos(pi/6) or sqrt(3)/2;
 			switch(ev.keycode) {
 				case ny::Keycode::r:
 					reloadPipes_ = true;
@@ -555,12 +572,12 @@ public:
 				case ny::Keycode::g: type = Field::Type::resource; break;
 
 				// change velocity
-				case ny::Keycode::w: vel = {-1, 1}; break;
-				case ny::Keycode::e: vel = {1, 1}; break;
+				case ny::Keycode::w: vel = {-cospi3, sinpi3}; break;
+				case ny::Keycode::e: vel = {cospi3, sinpi3}; break;
 				case ny::Keycode::a: vel = {-1, 0}; break;
 				case ny::Keycode::d: vel = {1, 0}; break;
-				case ny::Keycode::z: vel = {-1, -1}; break;
-				case ny::Keycode::x: vel = {1, -1}; break;
+				case ny::Keycode::z: vel = {-cospi3, -sinpi3}; break;
+				case ny::Keycode::x: vel = {cospi3, -sinpi3}; break;
 				default: break;
 			}
 
@@ -585,6 +602,7 @@ public:
 				dlg_assert(offset + size < stage_.size());
 
 				if(type) {
+					/*
 					if(type == Field::Type::spawn) {
 						// TODO: remove if destructed or something!
 						// needs checking after every step...?
@@ -593,6 +611,7 @@ public:
 						spawnFields_.push_back(selected_);
 						updateSpawnFieldsBuffer_ = true;
 					}
+					*/
 					doi::write(uploadPtr_, *type);
 					doi::write(uploadPtr_, 10.f); // strength
 				}
@@ -650,7 +669,7 @@ public:
 			0, fieldStride, vk::VertexInputRate::instance
 		};
 
-		vk::VertexInputAttributeDescription attributes[4];
+		vk::VertexInputAttributeDescription attributes[5];
 		attributes[0].format = vk::Format::r32g32b32Sfloat; // pos
 		attributes[0].offset = offsetof(Field, pos);
 		attributes[0].location = 0;
@@ -667,8 +686,12 @@ public:
 		attributes[3].offset = offsetof(Field, type);
 		attributes[3].location = 3;
 
+		attributes[4].format = vk::Format::r32g32Sfloat; // velocity
+		attributes[4].offset = offsetof(Field, vel);
+		attributes[4].location = 4;
+
 		gpi.vertex.pVertexAttributeDescriptions = attributes;
-		gpi.vertex.vertexAttributeDescriptionCount = 4u;
+		gpi.vertex.vertexAttributeDescriptionCount = 5u;
 		gpi.vertex.pVertexBindingDescriptions = &bufferBinding;
 		gpi.vertex.vertexBindingDescriptionCount = 1u;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
@@ -759,22 +782,17 @@ protected:
 		nytl::Vec2f off {};
 	} hex_;
 
-	struct {
-		vpp::ViewableImage resource;
-		vpp::ViewableImage spawner;
-		vpp::ViewableImage tower;
-		vpp::ViewableImage velocity;
-	} textures_;
+	vpp::ViewableImage textures_; // texture array
 
 	// spawn field ids, keeping track to draw spawn images
-	std::vector<unsigned> spawnFields_;
-	bool updateSpawnFieldsBuffer_ {false};
+	// std::vector<unsigned> spawnFields_;
+	// bool updateSpawnFieldsBuffer_ {false};
 
-	vpp::TrDsLayout texDsLayout_;
-	vpp::TrDs texDs_;
-	vpp::PipelineLayout texPipeLayout_;
-	vpp::Pipeline texPipe_;
-	vpp::SubBuffer texBuf_;
+	// vpp::TrDsLayout texDsLayout_;
+	// vpp::TrDs texDs_;
+	// vpp::PipelineLayout texPipeLayout_;
+	// vpp::Pipeline texPipe_;
+	// vpp::SubBuffer texBuf_;
 	vpp::Sampler sampler_;
 };
 

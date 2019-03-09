@@ -39,7 +39,7 @@ const float towerDamage = 0.01;
 const float spawnStrength = 0.001;
 
 // influence factor of accelerator field
-const float accelInfluence = 0.01;
+const float accelInfluence = 0.05;
 
 // buildings
 const uint FieldEmpty = 0u; // empty field
@@ -170,7 +170,7 @@ void main() {
 	}
 
 	// slow down over time
-	field.velocity *= 0.999;
+	field.velocity *= 0.99999;
 
 	// 2: receive
 	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
