@@ -177,6 +177,7 @@ void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 	imgi.img.arrayLayers = 6u;
 	imgi.img.flags = vk::ImageCreateBits::cubeCompatible;
 	imgi.view.viewType = vk::ImageViewType::cube;
+	imgi.view.subresourceRange.layerCount = 6u;
 	cubemap_ = {dev, imgi};
 
 	// buffer

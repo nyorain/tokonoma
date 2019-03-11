@@ -1,3 +1,5 @@
+#define EXACT
+
 struct Ray {
 	vec3 origin;
 	vec3 dir;
@@ -7,6 +9,7 @@ struct Ray {
 // transform * box = unit cube
 struct Box {
 	mat4 transform;
+	// mat4 normal;
 	vec4 color;
 };
 
@@ -23,8 +26,9 @@ float radius(Sphere s) {
 	return s.geom.w;
 }
 
+/*
 Box box() {
-	return Box(mat4(1), vec4(1.0));
+	return Box(mat4(1), vec4(1.0), mat4(1));
 }
 
 Box box(vec3 center, vec3 color) {
@@ -39,6 +43,7 @@ Box box(vec3 center, vec3 x, vec3 y, vec3 z) {
 		mat4(vec4(x, 0), vec4(y, 0), vec4(z, 0), vec4(center, 1)),
 		vec4(1.0));
 }
+*/
 
 vec3 multDir(mat4 transform, vec3 dir) {
 	return mat3(transform) * dir;
@@ -117,10 +122,43 @@ float intersect(Ray r, Box b, out vec3 normal) {
 		return -1.f;
 	}
 
-    normal = -sign(r.dir)* step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
+    normal = -sign(r.dir) * step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
 
 	// If the origin of the ray is *in* the box, then this
 	// returns a negative value: the first intersection of the ray
 	// behind the origin.
+	return tn;
+}
+
+// also returns the position on the unit cube in bpos
+float intersect(Ray r, Box b, out vec3 normal, out vec3 bpos) {
+	vec3 dir = multDir(b.transform, r.dir);
+	vec3 o = multPos(b.transform, r.origin);
+
+#ifdef EXACT
+	if(dir.x == 0.f) { dir.x += 0.00001; }
+	if(dir.y == 0.f) { dir.y += 0.00001; }
+	if(dir.z == 0.f) { dir.z += 0.00001; }
+#endif
+
+	vec3 d = -o / dir;
+	vec3 ad = abs(1.f / dir);
+
+	vec3 t1 = d - ad;
+	vec3 t2 = d + ad;
+
+	float tn = max(max(t1.x, t1.y), t1.z);
+	float tf = min(min(t2.x, t2.y), t2.z);
+
+	if(tn > tf || tf < 0.0) {
+		return -1.f;
+	}
+
+	// TODO: doesn't work that well with many transform matrices...
+	// fix that
+    normal = -sign(r.dir) * step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
+	// normal = normalize(multDir(b.normal, normal));
+	bpos = o + tn * dir;
+
 	return tn;
 }

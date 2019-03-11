@@ -1,0 +1,25 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+
+#include "ray.glsl"
+
+layout(set = 0, binding = 0) uniform UBO {
+	vec4 pos;
+	vec4 dir;
+	float fov; // on y coord
+	float aspect; // aspect ratio: x / y
+	vec2 res; // resolution
+} ubo;
+
+layout(row_major, set = 0, binding = 1) readonly buffer Objects {
+	Box boxes[];
+};
+
+layout(set = 0, binding = 2, rgba8) uniform imageCube textures[12];
+
+void main() {
+	// always just follow one ray
+	// but store it in every texture on the way
+	// problem: with what weight?
+}

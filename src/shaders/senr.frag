@@ -2,6 +2,7 @@
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec3 inPosm;
 
 layout(location = 0) out vec4 outCol;
 
@@ -16,10 +17,13 @@ layout(set = 1, binding = 0, row_major) uniform Model {
 	vec4 color;
 } model;
 
+layout(set = 1, binding = 1) uniform samplerCube light;
+
 // TODO: as ubo
 const vec3 lightPos = vec3(0, 0, 0);
 
 void main() {
+	/*
 	vec3 normal = normalize(inNormal);
 	vec3 objectColor = model.color.rgb;
 	float ambientFac = 0.1f;
@@ -40,4 +44,6 @@ void main() {
 	col += specularFac * objectColor * pow(max(dot(normal, h), 0.0), shininess);
 
 	outCol = vec4(col, 1.0);
+	*/
+	outCol = vec4(texture(light, inPosm).rgb, 1.0);
 }

@@ -11,6 +11,7 @@ include_glsl = files(
   'include/math.glsl',
   'include/color.glsl',
   'include/noise.glsl',
+  'include/ray.glsl',
 )
 
 # shader specifications
@@ -93,6 +94,7 @@ shaders_src = [
 	  ['sen.frag', include_glsl],
 	  ['senr.vert'],
 	  ['senr.frag'],
+	  ['senpt.frag', include_glsl],
 	]]
 ]
 

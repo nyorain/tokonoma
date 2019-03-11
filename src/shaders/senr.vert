@@ -5,6 +5,7 @@ layout(location = 1) in vec3 inNormal;
 
 layout(location = 0) out vec3 outPos;
 layout(location = 1) out vec3 outNormal;
+layout(location = 2) out vec3 outPosm;
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj; // view and pojection
@@ -19,6 +20,8 @@ void main() {
 	outNormal = mat3(model.normal) * inNormal;
 	vec4 m = model.matrix * vec4(inPos, 1.0);
 	outPos = m.xyz;
+	outPosm = inPos;
+	outPosm.y = -outPosm.y;
 
 	gl_Position = scene.proj * m;
 	gl_Position.y = -gl_Position.y;
