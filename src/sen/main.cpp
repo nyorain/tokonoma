@@ -9,6 +9,9 @@
 #include <vpp/pipeline.hpp>
 #include <vpp/pipelineInfo.hpp>
 #include <vpp/bufferOps.hpp>
+#include <vpp/formats.hpp>
+#include <vpp/image.hpp>
+#include <vpp/imageOps.hpp>
 
 #include <nytl/mat.hpp>
 #include <ny/mouseButton.hpp>
@@ -16,8 +19,11 @@
 #include <ny/keyboardContext.hpp>
 #include <ny/appContext.hpp>
 
+// TODO: handle case where fragmentStoresAndAtomics isn't available
+// by using compute shader to write global light textures
 #include <shaders/fullscreen.vert.h>
-#include <shaders/sen.frag.h> // XXX: make compute shader; write textures
+#include <shaders/sen.frag.h>
+#include <shaders/senpt.frag.h>
 #include <shaders/senr.vert.h>
 #include <shaders/senr.frag.h>
 
@@ -32,9 +38,115 @@ public:
 
 		initBoxes();
 		initRaytracePipe();
+		initPathtracePipe();
 		initRasterPipe();
 
 		return true;
+	}
+
+	bool features(vk::PhysicalDeviceFeatures& enable,
+			const vk::PhysicalDeviceFeatures& supported) override {
+		if(!supported.fragmentStoresAndAtomics) {
+			return false;
+		}
+
+		enable.fragmentStoresAndAtomics = true;
+		return true;
+	}
+
+	void initPathtracePipe() {
+		auto& dev = vulkanDevice();
+
+		auto dsBindings = {
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::fragment),
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::fragment),
+			vpp::descriptorBinding(vk::DescriptorType::storageImage,
+				vk::ShaderStageBits::fragment, -1, 6),
+		};
+
+		pt_.dsLayout = {dev, dsBindings};
+		pt_.pipeLayout = {dev, {pt_.dsLayout}, {}};
+
+		vpp::ShaderModule fullscreenShader(dev, fullscreen_vert_data);
+		vpp::ShaderModule textureShader(dev, senpt_frag_data);
+		auto rp = renderer().renderPass();
+		vpp::GraphicsPipelineInfo pipeInfo(rp, pt_.pipeLayout, {{
+			{fullscreenShader, vk::ShaderStageBits::vertex},
+			{textureShader, vk::ShaderStageBits::fragment}
+		}}, 0, renderer().samples());
+
+		vk::Pipeline vkpipe;
+		vk::createGraphicsPipelines(dev, {},  1, pipeInfo.info(),
+			nullptr, vkpipe);
+		pt_.pipe = {dev, vkpipe};
+
+		// box images
+		constexpr auto width = 1024u;
+		constexpr auto height = 1024u;
+		auto imgi = vpp::ViewableImageCreateInfo::color(
+			dev, vk::Extent3D {width, height, 1u}).value();
+		imgi.img.arrayLayers = 6u;
+		imgi.img.flags = vk::ImageCreateBits::cubeCompatible;
+		imgi.view.viewType = vk::ImageViewType::cube;
+		imgi.view.subresourceRange.layerCount = 6u;
+		imgi.img.usage = vk::ImageUsageBits::transferDst |
+			vk::ImageUsageBits::storage |
+			vk::ImageUsageBits::sampled;
+
+		// TODO: meeemmmooooory
+		// imgi.img.format = vk::Format::r32g32b32a32Sfloat;
+		// imgi.view.format = vk::Format::r32g32b32a32Sfloat;
+		imgi.img.format = vk::Format::r8g8b8a8Unorm;
+		imgi.view.format = vk::Format::r8g8b8a8Unorm;
+
+		std::vector<vk::DescriptorImageInfo> views;
+
+		auto& qs = dev.queueSubmitter();
+		auto cb = dev.commandAllocator().get(qs.queue().family());
+		vk::beginCommandBuffer(cb, {});
+		for(auto& box : boxes_) {
+			// create global light image
+			box.global = {dev, imgi};
+			auto& img = box.global;
+			vpp::changeLayout(cb, img.image(), vk::ImageLayout::undefined,
+				vk::PipelineStageBits::topOfPipe, {}, vk::ImageLayout::general,
+				vk::PipelineStageBits::transfer,
+				vk::AccessBits::memoryWrite, // not sure what clear image is
+				{vk::ImageAspectBits::color, 0, 1, 0, 6u});
+
+			auto clearValue = vk::ClearColorValue{{0.0, 0.0, 0.0, 0.0}};
+			auto range = vk::ImageSubresourceRange {};
+			range.aspectMask = vk::ImageAspectBits::color;
+			range.baseArrayLayer = 0;
+			range.layerCount = 6u;
+			range.levelCount = 1;
+			vk::cmdClearColorImage(cb, img.image(), vk::ImageLayout::general,
+				clearValue, {range});
+
+			// add to ds update info
+			views.push_back({{}, box.global.vkImageView(),
+				vk::ImageLayout::general});
+		}
+
+		dlg_assert(boxes_.size() == 6);
+		dlg_assert(views.size() == 6);
+
+		vk::endCommandBuffer(cb);
+
+		vk::SubmitInfo si {};
+		si.commandBufferCount = 1u;
+		si.pCommandBuffers = &cb.vkHandle();
+		qs.wait(qs.add(si));
+
+		// ds
+		pt_.ds = {dev.descriptorAllocator(), pt_.dsLayout};
+		vpp::DescriptorSetUpdate dsu(pt_.ds);
+		dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+		dsu.storage({{boxesBuf_.buffer(), boxesBuf_.offset(), boxesBuf_.size()}});
+		dsu.storage(views);
+		dsu.apply();
 	}
 
 	void initRaytracePipe() {
@@ -74,6 +186,7 @@ public:
 		pipe_ = {dev, vkpipe};
 
 		// boxes
+		// auto sizePerBox = 2 * sizeof(nytl::Mat4f) + sizeof(nytl::Vec4f);
 		auto sizePerBox = sizeof(nytl::Mat4f) + sizeof(nytl::Vec4f);
 		auto size = boxes_.size() * sizePerBox;
 		boxesBuf_ = {dev.bufferAllocator(), size,
@@ -83,6 +196,10 @@ public:
 		auto span = map.span();
 		for(auto& b : boxes_) {
 			doi::write(span, b.box.transform);
+
+			// TODO: don't we already have the inverse onf the gpu?
+			// shouldn't it be enough to transpose? test!
+			// doi::write(span, nytl::Mat4f(transpose(inverse(b.box.inv))));
 			doi::write(span, b.color);
 
 			auto off = span.begin() - map.span().begin();
@@ -101,6 +218,14 @@ public:
 		auto& dev = vulkanDevice();
 		auto rp = renderer().renderPass();
 
+		vk::SamplerCreateInfo sci {};
+		sci.magFilter = vk::Filter::linear;
+		sci.minFilter = vk::Filter::linear;
+		sci.minLod = 0.0;
+		sci.maxLod = 0.25;
+		sci.mipmapMode = vk::SamplerMipmapMode::nearest;
+		sampler_ = {dev, sci};
+
 		// ds layout
 		auto sceneBindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
@@ -111,6 +236,9 @@ public:
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
+			vpp::descriptorBinding(
+				vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 		};
 
 		rasterSceneDsLayout_ = {dev, sceneBindings};
@@ -259,10 +387,12 @@ public:
 				doi::write(span, b.color);
 			}
 
-			b.ds = {dev.descriptorAllocator(), rasterSceneDsLayout_};
+			b.ds = {dev.descriptorAllocator(), rasterObjectDsLayout_};
 			vpp::DescriptorSetUpdate update(b.ds);
 			update.uniform({{b.rasterdata.buffer(),
 				b.rasterdata.offset(), b.rasterdata.size()}});
+			update.imageSampler({{{}, b.global.vkImageView(),
+				vk::ImageLayout::general}});
 		}
 	}
 
@@ -281,7 +411,7 @@ public:
 			{0.f, 4.f, 0.f},
 			{0.f, 0.f, 4.f},
 		};
-		boxes_.back().color = {1.f, 0.f, 0.f};
+		boxes_.back().color = {1.f, 0.2f, 0.2f};
 
 		boxes_.emplace_back(); // right
 		boxes_.back().box = Box {{4.f, 0.f, 0.f},
@@ -289,7 +419,7 @@ public:
 			{0.f, 4.f, 0.f},
 			{0.f, 0.f, 4.f},
 		};
-		boxes_.back().color = {0.f, 1.f, 0.f};
+		boxes_.back().color = {0.2f, 1.f, 0.2f};
 
 		boxes_.emplace_back(); // bot
 		boxes_.back().box = Box {{0.f, -4.1f, 0.f},
@@ -306,6 +436,14 @@ public:
 			{0.f, 0.f, 4.0f},
 		};
 		boxes_.back().color = {1.f, 1.f, 1.f};
+
+		boxes_.emplace_back(); // inside
+		boxes_.back().box = Box {{2.f, -3.f, 0.f}
+			// {1.f, 0.0f, 0.5f},
+			// {0.f, 1.f, 0.f},
+			// {-0.5f, 0.f, 1.f},
+		};
+		boxes_.back().color = {0.2f, 0.2f, 1.f};
 	}
 
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
@@ -338,7 +476,7 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		if(rasterize_) {
+		if(renderMode_ == 0) {
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, rasterPipe_);
 			vk::cmdBindIndexBuffer(cb, boxModel_.buffer(),
 				boxModel_.offset(), vk::IndexType::uint32);
@@ -352,10 +490,15 @@ public:
 					rasterPipeLayout_, 1, {b.ds}, {});
 				vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
 			}
-		} else {
+		} else if(renderMode_ == 1) {
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 				pipeLayout_, 0, {ds_.vkHandle()}, {});
+			vk::cmdDraw(cb, 4, 1, 0, 0);
+		} else if(renderMode_ == 2) {
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pt_.pipe);
+			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+				pt_.pipeLayout, 0, {pt_.ds.vkHandle()}, {});
 			vk::cmdDraw(cb, 4, 1, 0, 0);
 		}
 	}
@@ -370,7 +513,7 @@ public:
 		}
 
 		if(ev.keycode == ny::Keycode::r) {
-			rasterize_ = !rasterize_;
+			renderMode_ = (renderMode_ + 1) % 3;
 			rerecord();
 			return true;
 		}
@@ -381,6 +524,7 @@ public:
 	void update(double delta) override {
 		App::update(delta);
 		App::redraw(); // TODO: can be optimized
+		time_ += delta;
 
 		// movement
 		auto kc = appContext().keyboardContext();
@@ -416,24 +560,23 @@ public:
 	}
 
 	void updateDevice() override {
+		// raytracing
+		auto rmap = ubo_.memoryMap();
+		auto rspan = rmap.span();
+
+		doi::write(rspan, camera_.pos);
+		doi::write(rspan, 0.f); // padding
+		doi::write(rspan, camera_.dir);
+		doi::write(rspan, 0.f); // padding
+		doi::write(rspan, fov_);
+		doi::write(rspan, aspect_);
+		doi::write(rspan, float(window().size().x));
+		doi::write(rspan, float(window().size().y));
+		doi::write(rspan, float(time_));
+
 		// update scene ubo
 		if(camera_.update) {
 			camera_.update = false;
-
-			// raytracing
-			{
-				auto map = ubo_.memoryMap();
-				auto span = map.span();
-
-				doi::write(span, camera_.pos);
-				doi::write(span, 0.f); // padding
-				doi::write(span, camera_.dir);
-				doi::write(span, 0.f); // padding
-				doi::write(span, fov_);
-				doi::write(span, aspect_);
-				doi::write(span, float(window().size().x));
-				doi::write(span, float(window().size().y));
-			}
 
 			// raster
 			{
@@ -477,6 +620,16 @@ private:
 	vpp::TrDs rasterSceneDs_;
 	vpp::SubBuffer boxModel_;
 	vpp::SubBuffer rasterSceneUbo_;
+	vpp::Sampler sampler_;
+
+	// path trace
+	struct {
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+	} pt_;
 
 	struct {
 		nytl::Vec3f pos {0.f, 0.f, 0.f};
@@ -494,8 +647,9 @@ private:
 	float far_ {100.f};
 	float pitch_ {};
 	float yaw_ {};
+	float time_ {};
 
-	bool rasterize_ {true};
+	int renderMode_ {0};
 };
 
 int main(int argc, const char** argv) {
