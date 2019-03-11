@@ -83,23 +83,27 @@ public:
 		pt_.pipe = {dev, vkpipe};
 
 		// box images
-		constexpr auto width = 1024u;
-		constexpr auto height = 1024u;
+		constexpr auto width = 1024;
+		constexpr auto height = 1024;
 		auto imgi = vpp::ViewableImageCreateInfo::color(
 			dev, vk::Extent3D {width, height, 1u}).value();
 		imgi.img.arrayLayers = 6u;
-		imgi.img.flags = vk::ImageCreateBits::cubeCompatible;
+		imgi.img.flags = vk::ImageCreateBits::cubeCompatible |
+			vk::ImageCreateBits::mutableFormat;
 		imgi.view.viewType = vk::ImageViewType::cube;
 		imgi.view.subresourceRange.layerCount = 6u;
 		imgi.img.usage = vk::ImageUsageBits::transferDst |
 			vk::ImageUsageBits::storage |
 			vk::ImageUsageBits::sampled;
 
-		// TODO: meeemmmooooory
 		// imgi.img.format = vk::Format::r32g32b32a32Sfloat;
 		// imgi.view.format = vk::Format::r32g32b32a32Sfloat;
-		imgi.img.format = vk::Format::r8g8b8a8Unorm;
-		imgi.view.format = vk::Format::r8g8b8a8Unorm;
+		imgi.img.format = vk::Format::r32Uint;
+		imgi.view.format = vk::Format::r32Uint;
+
+		// TODO: we could create second view with r8g8b8a8 format
+		// and then use linear interpolation in sampler
+		// mutable format already set
 
 		std::vector<vk::DescriptorImageInfo> views;
 
@@ -116,7 +120,9 @@ public:
 				vk::AccessBits::memoryWrite, // not sure what clear image is
 				{vk::ImageAspectBits::color, 0, 1, 0, 6u});
 
-			auto clearValue = vk::ClearColorValue{{0.0, 0.0, 0.0, 0.0}};
+			auto clearValue = vk::ClearColorValue{};
+			// clearValue.uint32 = {0xCCCCCCCCu, 0u, 0u, 0u};
+			clearValue.uint32 = {0x11111111u, 0u, 0u, 0u};
 			auto range = vk::ImageSubresourceRange {};
 			range.aspectMask = vk::ImageAspectBits::color;
 			range.baseArrayLayer = 0;
@@ -219,8 +225,8 @@ public:
 		auto rp = renderer().renderPass();
 
 		vk::SamplerCreateInfo sci {};
-		sci.magFilter = vk::Filter::linear;
-		sci.minFilter = vk::Filter::linear;
+		sci.magFilter = vk::Filter::nearest;
+		sci.minFilter = vk::Filter::nearest;
 		sci.minLod = 0.0;
 		sci.maxLod = 0.25;
 		sci.mipmapMode = vk::SamplerMipmapMode::nearest;
@@ -362,7 +368,8 @@ public:
 
 		// ubo
 		auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
-			+ sizeof(nytl::Vec3f); // viewPos
+			+ sizeof(nytl::Vec3f) // viewPos
+			+ sizeof(float); // show light tex
 		rasterSceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
 			vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
 
@@ -516,6 +523,10 @@ public:
 			renderMode_ = (renderMode_ + 1) % 3;
 			rerecord();
 			return true;
+		} else if(ev.keycode == ny::Keycode::l) {
+			camera_.update = true; // updates ubo
+			showLightTex_ = (showLightTex_ + 1) % 3;
+			return true;
 		}
 
 		return false;
@@ -589,6 +600,7 @@ public:
 					camera_.pos + camera_.dir, up);
 				doi::write(span, mat);
 				doi::write(span, camera_.pos);
+				doi::write(span, showLightTex_);
 			}
 		}
 	}
@@ -648,6 +660,7 @@ private:
 	float pitch_ {};
 	float yaw_ {};
 	float time_ {};
+	std::uint32_t showLightTex_ {0};
 
 	int renderMode_ {0};
 };
