@@ -9,6 +9,7 @@ layout(location = 0) out vec4 outCol;
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 _proj;
 	vec3 viewPos;
+	uint showLightTex;
 } scene;
 
 layout(set = 1, binding = 0, row_major) uniform Model {
@@ -17,33 +18,55 @@ layout(set = 1, binding = 0, row_major) uniform Model {
 	vec4 color;
 } model;
 
-layout(set = 1, binding = 1) uniform samplerCube light;
+layout(set = 1, binding = 1) uniform usamplerCube light;
 
 // TODO: as ubo
 const vec3 lightPos = vec3(0, 0, 0);
 
 void main() {
-	/*
-	vec3 normal = normalize(inNormal);
-	vec3 objectColor = model.color.rgb;
-	float ambientFac = 0.1f;
-	float diffuseFac = 0.4f;
-	float specularFac = 0.4f;
-	float shininess = 32.f;
+	if(scene.showLightTex == 1) {
+		uint ulight = texture(light, inPosm).r;
+		vec4 light = 1/255.f * vec4(
+			((ulight >> 24) & 0xFF),
+			((ulight >> 16) & 0xFF),
+			((ulight >> 8) & 0xFF),
+			255);
+		// outCol = vec4(vec3(ulight / float(0xFFFFFFFFu)), 1.0);
+		outCol = vec4(light);
+	} else {
+		vec3 normal = normalize(inNormal);
+		vec3 objectColor = model.color.rgb;
+		float ambientFac = 0.1f;
+		float diffuseFac = 0.4f;
+		float specularFac = 0.4f;
+		float shininess = 32.f;
 
-	// ambient
-	vec3 col = ambientFac * objectColor;
+		// ambient
+		vec3 col = vec3(0.0);
+		if(scene.showLightTex == 0) {
+			vec3 col = ambientFac * objectColor;
+		}
 
-	// diffuse
-	vec3 ldir = normalize(lightPos - inPos);
-	col += diffuseFac * objectColor * max(dot(ldir, normal), 0.0);
+		// diffuse
+		vec3 ldir = normalize(lightPos - inPos);
+		col += diffuseFac * objectColor * max(dot(ldir, normal), 0.0);
 
-	// blinn-phong
-	vec3 vdir = normalize(scene.viewPos - inPos);
-	vec3 h = normalize(vdir + ldir);
-	col += specularFac * objectColor * pow(max(dot(normal, h), 0.0), shininess);
+		// blinn-phong
+		vec3 vdir = normalize(scene.viewPos - inPos);
+		vec3 h = normalize(vdir + ldir);
+		col += specularFac * objectColor * pow(max(dot(normal, h), 0.0), shininess);
 
-	outCol = vec4(col, 1.0);
-	*/
-	outCol = vec4(texture(light, inPosm).rgb, 1.0);
+		if(scene.showLightTex == 2) {
+			uint ulight = texture(light, inPosm).r;
+			vec3 light = 1/255.f * vec3(
+				((ulight >> 24) & 0xFF),
+				((ulight >> 16) & 0xFF),
+				((ulight >> 8) & 0xFF));
+			// TODO
+			col += 3 * light * objectColor;
+		}
+
+		outCol = vec4(col, 1.0);
+	}
+
 }

@@ -26,7 +26,7 @@ layout(row_major, set = 0, binding = 1) readonly buffer Objects {
 
 // TODO: change dicard in main on count change
 // layout(set = 0, binding = 2, rgba32f) uniform imageCube textures[6];
-layout(set = 0, binding = 2, rgba8) uniform imageCube textures[6];
+layout(set = 0, binding = 2, r32ui) uniform uimageCube textures[6];
 
 const vec3 up = vec3(0, 1, 0);
 const vec3 lightPos = vec3(0, 0, 0);
@@ -203,10 +203,8 @@ vec3 trace(Ray ray) {
 
 	uint ids[maxBounce];
 	vec3 uvs[maxBounce];
-	vec3 normals[maxBounce];
-	vec3 dirs[maxBounce];
+	vec3 colors[maxBounce];
 	float facs[maxBounce];
-	vec3 poss[maxBounce];
 
 	// forward till end
 	int b;
@@ -217,9 +215,7 @@ vec3 trace(Ray ray) {
 
 		ids[b] = id;
 		uvs[b] = uv;
-		normals[b] = normal; // normalized
-		dirs[b] = ray.dir;
-		poss[b] = pos;
+		colors[b] = shade(pos, normal, ray.dir, id);
 
 		// random bounce direction
 		// TODO: better random direction choosing... start with more
@@ -237,19 +233,26 @@ vec3 trace(Ray ray) {
 		// }
 		vec3 v1 = normalize(cross(normal, c));
 		vec3 v2 = normalize(cross(normal, v1));
-		vec3 r = random3(pos + 0.1 * ubo.time * ray.dir);
+		vec3 r = random3(pos + 0.1 * ubo.time * ray.dir + colors[b]);
 		r.yz = 2 * r.yz - 1;
-		// r.x *= 10; // more in normal dir?
+		// r.x = max(2 * r.x, 0.1); // more in normal dir, better convergence
+		r.x = max(r.x, 0.1);
+		// r.x = 1.0;
 		vec3 dir = vec3(0.0);
 		dir += normalize(r.x * normal + r.y * v1 + r.z * v2);
 		// dir += 10 * reflect(ray.dir, normal);
 		// dir += 10 * normal;
 		// dir = normalize(dir);
-		
-		// if(id == 5) { // reflective
-		// 	dir = 10 * reflect(ray.dir, normal);
-		// 	dir = normalize(dir);
+
+		// TODO: this really shouldn't happen....
+		// if(dot(dir, normal) < 0) {
+		// 	discard;
+		// 	// dir = normal;
 		// }
+
+		if(id == 5) { // reflective
+			dir = reflect(ray.dir, normal);
+		}
 
 		float f = dot(dir, normal);
 		facs[b] = f;
@@ -273,27 +276,50 @@ vec3 trace(Ray ray) {
 		ivec3 iuv = ivec3(ivec2(suvxy), face);
 
 		// TODO: we can clamp to higher max when using float texture
-		vec4 light = clamp(imageLoad(textures[id], iuv), 0, 1);
-		// float fac = 0.05;
-		float fac = (0.05 / maxBounce) * (maxBounce - b - 1); // more bounces -> more weight
-		// if(id == 5) { // reflective
-		// 	fac *= 5;
-		// }
+		
+		// TODO: better way to atomic load?
+		// uint ulight = imageLoad(textures[id], iuv).r;
+		if(id == 5) { // reflective
+			// a perfect mirror has no color.
+			// TODO: when we only want to send a few rays per frame and othewise
+			// rasterize (?) later on, we have to use the image
+			// mechanism here as well though
+			continue;
+		}
+
+		uint ulight = imageAtomicCompSwap(textures[id], iuv, 0, 0);
+		vec4 light = (1/255.f) * vec4(
+			((ulight >> 24) & 0xFF),
+			((ulight >> 16) & 0xFF),
+			((ulight >> 8) & 0xFF),
+			((ulight >> 0) & 0xFF));
+		float fac = 0.05;
+		
+		// float fac = (0.25 / maxBounce) * (maxBounce - b - 1); // more bounces -> more weight
+		// fac = max(fac, 0.08);
+		
 		// fac *= (1 - light.a); // make weaker over time? needs reset on scene change
 		light = clamp(mix(light, vec4(col, 1.0), fac), 0, 1);
-		imageStore(textures[ids[b]], iuv, light);
+		ulight =
+			uint(255.f * light.r + 0.5f) << 24u |
+			uint(255.f * light.g + 0.5f) << 16u |
+			uint(255.f * light.b + 0.5f) << 8u |
+			uint(255);
+
+		imageAtomicExchange(textures[id], iuv, ulight);
+		// imageStore(textures[id], iuv, uvec4(ulight, 0, 0, 0));
 
 		// vec4 fcol = vec4(0.1);
 		vec3 color = boxes[id].color.rgb;
-		col = color * (light.rgb + shade(poss[b], normals[b], dirs[b], id));
+		col = color * (light.rgb + colors[b]);
 		// col = 5 * light.rgb + color * shade(poss[b], normals[b], dirs[b], id);
-		
+
 		// XXX: object emission
 		// works better with floating point textures
 		// if(id == 5) {
 			// col += vec3(0, 0, 500);
 		// }
-	
+
 		// if(maxB > 0) {
 		// 	col = 0.5 + 0.5 * dirs[1];
 		// } else {
