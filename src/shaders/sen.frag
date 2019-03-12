@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "ray.glsl"
+#include "noise.glsl"
 
 // TODO: structure data for more efficient traversal
 // k-d tree or sth?
@@ -30,17 +31,6 @@ const float pi = 3.1415926535897932;
 
 const int maxBounce = 4;
 // const int numSamples = 24;
-
-float random(float v) {
-	return fract(sin(7.16294 * v) * 51812.142574);
-}
-
-vec3 random3(vec3 v) {
-	return vec3(
-		random(dot(v, vec3(63.45202, -14.034012, 53.35302))),
-		random(dot(v, vec3(101.32, -23.990653, 29.53))),
-		random(dot(v, vec3(-31.504, 83.23, 45.2))));
-}
 
 // const Sphere spheres[] = {
 // 	Sphere(vec4(0, 0, -3, 1), vec4(1, 1, 1, 1)),

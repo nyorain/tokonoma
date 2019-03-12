@@ -1,3 +1,5 @@
+#include "network.hpp"
+
 #include <stage/app.hpp>
 #include <stage/render.hpp>
 #include <stage/window.hpp>
@@ -384,6 +386,58 @@ public:
 	void update(double delta) override {
 		App::update(delta);
 		App::redraw();
+
+		// network
+		socket_.update([&](auto& recv){ this->handleMsg(recv); }); // recv
+		socket_.nextStep(); // send
+	}
+
+	void handleMsg(RecvBuf& buf) {
+		auto type = doi::read<MessageType>(buf);
+		if(type == MessageType::build) {
+			auto field = doi::read<std::uint32_t>(buf);
+			auto type = doi::read<Field::Type>(buf);
+			setBuilding(field, type);
+		} else if(type == MessageType::velocity) {
+			auto field = doi::read<std::uint32_t>(buf);
+			auto dir = doi::read<nytl::Vec2f>(buf);
+			setVelocity(field, dir);
+		} else {
+			throw std::runtime_error("Invalid package");
+		}
+	}
+
+	void setBuilding(u32 field, Field::Type type) {
+		auto offset = uploadPtr_ - stageView_.ptr();
+		auto size = sizeof(u32) + sizeof(f32);
+		dlg_assert(offset + size < stage_.size());
+
+		doi::write(uploadPtr_, type);
+		doi::write(uploadPtr_, 10.f); // strength
+
+		auto off = offsetof(Field, type);
+		vk::BufferCopy copy;
+		copy.dstOffset = storageNew_.offset() +
+			sizeof(Field) * field + off;
+		copy.srcOffset = stage_.offset() + offset;
+		copy.size = size;
+		uploadRegions_.push_back(copy);
+	}
+
+	void setVelocity(u32 field, nytl::Vec2f dir) {
+		auto offset = uploadPtr_ - stageView_.ptr();
+		auto size = sizeof(nytl::Vec2f);
+		dlg_assert(offset + size < stage_.size());
+
+		doi::write(uploadPtr_, dir);
+
+		auto off = offsetof(Field, vel);
+		vk::BufferCopy copy;
+		copy.dstOffset = storageNew_.offset() +
+			sizeof(Field) * field + off;
+		copy.srcOffset = stage_.offset() + offset;
+		copy.size = size;
+		uploadRegions_.push_back(copy);
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
@@ -449,40 +503,12 @@ public:
 			uploadPtr_ = stageView_.ptr();
 		}
 
-		/*
-		if(updateSpawnFieldsBuffer_) {
-			updateSpawnFieldsBuffer_ = false;
-			auto neededSize = sizeof(vk::DrawIndirectCommand) +
-				spawnFields_.size() * sizeof(float) * 2;
-			if(neededSize > texBuf_.size()) {
-				neededSize *= 2;
-				texBuf_ = {vulkanDevice().bufferAllocator(), neededSize,
-					vk::BufferUsageBits::vertexBuffer,
-					0, vulkanDevice().hostMemoryTypes()};
-				App::rerecord();
-			}
-
-			vk::DrawIndirectCommand cmd;
-			cmd.firstInstance = 0u;
-			cmd.firstVertex = 0u;
-			cmd.instanceCount = spawnFields_.size();
-			cmd.vertexCount = 4u;
-
-			auto map = texBuf_.memoryMap();
-			auto span = map.span();
-			doi::write(span, cmd);
-			for(auto& fieldid : spawnFields_) {
-				doi::write(span, fields_[fieldid].pos);
-			}
-		}
-		*/
-
 		// sync players
 		{
 			auto map = playerBuffer_.memoryMap();
 			auto span = map.span();
 			players_ = doi::read<std::array<Player, 2>>(span);
-			dlg_debug(players_[0].resources);
+			// dlg_debug(players_[0].resources);
 		}
 	}
 
@@ -589,43 +615,22 @@ public:
 				}
 			}
 
-			if(type || vel) {
-				// TODO: resize upload buffer if needed?
-				auto offset = uploadPtr_ - stageView_.ptr();
-				auto size = 0ul;
-				if(type) {
-					size += sizeof(u32) + sizeof(f32);
-				}
-				if(vel) {
-					size += sizeof(nytl::Vec2f);
-				}
-				dlg_assert(offset + size < stage_.size());
+			if(type) {
+				setBuilding(selected_, *type);
 
-				if(type) {
-					/*
-					if(type == Field::Type::spawn) {
-						// TODO: remove if destructed or something!
-						// needs checking after every step...?
-						// or push events from gpu to cpu?
-						// or add data hostVisible structure for that?
-						spawnFields_.push_back(selected_);
-						updateSpawnFieldsBuffer_ = true;
-					}
-					*/
-					doi::write(uploadPtr_, *type);
-					doi::write(uploadPtr_, 10.f); // strength
-				}
-				if(vel) {
-					doi::write(uploadPtr_, *vel);
-				}
+				auto& buf = socket_.add();
+				write(buf, MessageType::build);
+				write(buf, u32(selected_));
+				write(buf, *type);
+			}
 
-				auto off = type ? offsetof(Field, type) : offsetof(Field, vel);
-				vk::BufferCopy copy;
-				copy.dstOffset = storageNew_.offset() +
-					sizeof(Field) * selected_ + off;
-				copy.srcOffset = stage_.offset() + offset;
-				copy.size = size;
-				uploadRegions_.push_back(copy);
+			if(vel) {
+				setVelocity(selected_, *vel);
+
+				auto& buf = socket_.add();
+				write(buf, MessageType::velocity);
+				write(buf, u32(selected_));
+				write(buf, *vel);
 			}
 		}
 
@@ -794,6 +799,7 @@ protected:
 	// vpp::Pipeline texPipe_;
 	// vpp::SubBuffer texBuf_;
 	vpp::Sampler sampler_;
+	Socket socket_;
 };
 
 int main(int argc, const char** argv) {

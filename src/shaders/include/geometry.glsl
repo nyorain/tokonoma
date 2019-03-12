@@ -1,3 +1,5 @@
+// TODO: most of the things here really belong to a new file, e.g. light.glsl
+
 struct Line {
 	vec2 point;
 	vec2 dir;

@@ -20,6 +20,9 @@ warnings = [
 
 	# workaround for ny
 	'-Wno-non-virtual-dtor',
+
+	# woraround for asio
+	'-Wno-undef'
 ]
 
 # default arrguments
@@ -33,6 +36,7 @@ add_project_arguments(
 source_root = '/'.join(meson.source_root().split('\\'))
 flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
 add_project_arguments(flag_dlg, language: 'cpp')
+add_project_arguments('-DASIO_STANDALONE', language: 'cpp')
 
 dep_vpp = dependency('vpp', fallback: ['vpp', 'vpp_dep'])
 dep_nytl = dependency('nytl MASTER', fallback: ['nytl', 'nytl_dep'])

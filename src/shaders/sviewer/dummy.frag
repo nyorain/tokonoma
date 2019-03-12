@@ -38,6 +38,24 @@ float mfbm(vec2 st) {
 	return sum;
 }
 
+// voronoi
+float vfbm(vec2 st) {
+	float sum = 0.f;
+	float lacunarity = 2.0;
+	float gain = 0.5;
+
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	for(int i = 0; i < FBM_OCTAVES; ++i) {
+		sum += amp * voronoiNoise(mod * st);
+		mod *= lacunarity;
+		amp *= gain;
+		st = lacunarity * st;
+	}
+
+	return sum;
+}
+
 void main() {
 	vec2 uv = 2 * inuv - 1;
 	uv = 10 * inuv;
@@ -50,10 +68,14 @@ void main() {
 	} else if(ubo.effect == counter++) {
 		d = gradientNoise(uv);
 	} else if(ubo.effect == counter++) {
+		d = voronoiNoise(uv);
+	} else if(ubo.effect == counter++) {
 		d = fbm(uv);
 	} else if(ubo.effect == counter++) {
+		d = vfbm(uv);
+	} else if(ubo.effect == counter++) {
 		float v1 = fbm(uv);
-		float v2 = fbm(v1 * uv);
+		float v2 = fbm(v1 + uv);
 		d = v2;
 		rgb.r = v1;
 		rgb.g = v2;
