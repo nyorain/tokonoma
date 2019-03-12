@@ -10,4 +10,6 @@ layout(set = 0, binding = 0) uniform UBO {
 	// y axis going up, z axis coming out of screen
 	// could be used raytracing/3d stuff
 	vec3 camPos;
+
+	// TODO: camDir
 } ubo;

@@ -70,6 +70,26 @@ float gradientNoise(vec2 v) {
 	return 0.5 + 0.5 * sgradientNoise(v);
 }
 
+float voronoiNoise(vec2 v) {
+	vec2 cell = floor(v);
+	float minDistSqr = 10.f;
+	for(int x = -1; x <= 1; ++x) {
+		for(int y = -1; y <= 1; ++y) {
+			vec2 ocell = cell + vec2(x, y);
+			vec2 point = ocell + random2(ocell);
+			vec2 dist = v - point;
+			float dsqr = dot(dist, dist);
+			if(dsqr < minDistSqr) {
+				minDistSqr = dsqr;
+			}
+		}
+	}
+
+	return sqrt(minDistSqr);
+}
+
+// TODO: simplex noise
+
 #ifndef FBM_OCTAVES
 	#define FBM_OCTAVES 8
 #endif

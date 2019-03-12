@@ -3,6 +3,8 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "ray.glsl"
+#include "noise.glsl"
+#include "util.glsl"
 
 // TODO: structure data for more efficient traversal
 // k-d tree or sth?
@@ -34,60 +36,6 @@ const float INFINITY = 1.f / 0.f;
 const float pi = 3.1415926535897932;
 
 const int maxBounce = 4;
-
-float random(float v) {
-	return fract(sin(7.16294 * v) * 51812.142574);
-}
-
-vec2 random2(vec2 v) {
-	return vec2(
-		random(dot(v, vec2(15.32, 64.234))),
-		random(dot(v, vec2(-35.2234, 24.23588453))));
-}
-
-vec3 random3(vec3 v) {
-	return vec3(
-		random(dot(v, vec3(63.45202, -14.034012, 53.35302))),
-		random(dot(v, vec3(101.32, -23.990653, 29.53))),
-		random(dot(v, vec3(-31.504, 83.23, 45.2))));
-}
-
-int sign21(float v) {
-	return int(0.5 - 0.5 * sign(v));
-}
-
-// https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
-// https://www.khronos.org/registry/OpenGL/specs/gl/glspec42.core.pdf
-// section 3.9.10
-// TODO: fix border conditions
-int cubeFace(vec3 dir, out vec2 suv) {
-	vec3 ad = abs(dir);
-	if(ad.x >= ad.y && ad.x >= ad.z) {
-		if(dir.x > 0) {
-			suv = vec2(-dir.z, -dir.y) / ad.x;
-			return 0;
-		} else {
-			suv = vec2(dir.z, -dir.y) / ad.x;
-			return 1;
-		}
-	} else if(ad.y > ad.x && ad.y >= ad.z) {
-		if(dir.y > 0) {
-			suv = vec2(dir.x, dir.z) / ad.y;
-			return 2;
-		} else {
-			suv = vec2(dir.x, -dir.z) / ad.y;
-			return 3;
-		}
-	} else { // z is largest
-		if(dir.z > 0) {
-			suv = vec2(dir.x, -dir.y) / ad.z;
-			return 4;
-		} else {
-			suv = vec2(-dir.x, -dir.y) / ad.z;
-			return 5;
-		}
-	}
-}
 
 bool anyhit(Ray ray, float belowt, uint ignore);
 
@@ -250,9 +198,9 @@ vec3 trace(Ray ray) {
 		// 	// dir = normal;
 		// }
 
-		if(id == 5) { // reflective
-			dir = reflect(ray.dir, normal);
-		}
+		// if(id == 5) { // reflective
+			// dir = reflect(ray.dir, normal);
+		// }
 
 		float f = dot(dir, normal);
 		facs[b] = f;
@@ -277,22 +225,17 @@ vec3 trace(Ray ray) {
 
 		// TODO: we can clamp to higher max when using float texture
 		
-		// TODO: better way to atomic load?
 		// uint ulight = imageLoad(textures[id], iuv).r;
-		if(id == 5) { // reflective
+		// if(id == 5) { // reflective
 			// a perfect mirror has no color.
 			// TODO: when we only want to send a few rays per frame and othewise
 			// rasterize (?) later on, we have to use the image
 			// mechanism here as well though
-			continue;
-		}
+			// continue;
+		// }
 
-		uint ulight = imageAtomicCompSwap(textures[id], iuv, 0, 0);
-		vec4 light = (1/255.f) * vec4(
-			((ulight >> 24) & 0xFF),
-			((ulight >> 16) & 0xFF),
-			((ulight >> 8) & 0xFF),
-			((ulight >> 0) & 0xFF));
+		// TODO: better way to atomic load?
+		vec4 light = unpackUnorm4x8(imageAtomicCompSwap(textures[id], iuv, 0, 0));
 		float fac = 0.05;
 		
 		// float fac = (0.25 / maxBounce) * (maxBounce - b - 1); // more bounces -> more weight
@@ -300,13 +243,8 @@ vec3 trace(Ray ray) {
 		
 		// fac *= (1 - light.a); // make weaker over time? needs reset on scene change
 		light = clamp(mix(light, vec4(col, 1.0), fac), 0, 1);
-		ulight =
-			uint(255.f * light.r + 0.5f) << 24u |
-			uint(255.f * light.g + 0.5f) << 16u |
-			uint(255.f * light.b + 0.5f) << 8u |
-			uint(255);
 
-		imageAtomicExchange(textures[id], iuv, ulight);
+		imageAtomicExchange(textures[id], iuv, packUnorm4x8(light));
 		// imageStore(textures[id], iuv, uvec4(ulight, 0, 0, 0));
 
 		// vec4 fcol = vec4(0.1);

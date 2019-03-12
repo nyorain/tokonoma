@@ -4,6 +4,7 @@
 // Volumetric clouds. It performs level of detail (LOD) for faster rendering
 
 // source: https://www.shadertoy.com/view/XslGRr
+// TODO: convert to viewable format
 
 float noise( in vec3 x )
 {
