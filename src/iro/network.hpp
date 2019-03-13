@@ -8,7 +8,7 @@
 
 using asio::ip::udp;
 constexpr auto delay = 10u;
-constexpr auto port = 29163;
+constexpr auto broadcastPort = 49163; // for initial broadcast
 
 
 //XXX: stolen from kyo
@@ -51,12 +51,17 @@ public:
 	udp::socket& socket() { return *socket_; }
 
 private:
+	void recvBroadcast(udp::endpoint& ep, std::uint32_t& num, unsigned& state);
+	void recvSocket(udp::endpoint& ep, std::uint32_t& num, unsigned& state);
+
+private:
 	std::uint64_t step_ {1};
 	std::uint64_t recv_ {0}; // last received
 	std::uint64_t ack_ {0}; // last of our messages acked by other side
 
 	asio::io_service ioService_;
 	std::optional<udp::socket> socket_;
+	std::optional<udp::socket> broadcast_;
 
 	std::vector<SendBuf> messages_; // old, for resending
 	SendBuf pending_;
