@@ -30,16 +30,16 @@ struct Box {
 			nytl::Vec3f z = {0.f, 0.f, 1.f}) {
 
 		// transform (for ray tracing)
-		transform[0] = {x.x, x.y, x.z, -dot(x, center)};
-		transform[1] = {y.x, y.y, y.z, -dot(y, center)};
-		transform[2] = {z.x, z.y, z.z, -dot(z, center)};
-		transform[3][3] = 1.f;
-		auto xx = dot(x, x);
-		auto yy = dot(y, y);
-		auto zz = dot(z, z);
-		if(xx > 0.f) { transform[0] *= 1 / xx; }
-		if(yy > 0.f) { transform[1] *= 1 / yy; }
-		if(zz > 0.f) { transform[2] *= 1 / zz; }
+		// transform[0] = {x.x, x.y, x.z, -dot(x, center)};
+		// transform[1] = {y.x, y.y, y.z, -dot(y, center)};
+		// transform[2] = {z.x, z.y, z.z, -dot(z, center)};
+		// transform[3][3] = 1.f;
+		// auto xx = dot(x, x);
+		// auto yy = dot(y, y);
+		// auto zz = dot(z, z);
+		// if(xx > 0.f) { transform[0] *= 1 / xx; }
+		// if(yy > 0.f) { transform[1] *= 1 / yy; }
+		// if(zz > 0.f) { transform[2] *= 1 / zz; }
 
 		// inv (for rasterization)
 		col(inv, 0, static_cast<nytl::Vec4f>(x));
@@ -47,6 +47,8 @@ struct Box {
 		col(inv, 2, static_cast<nytl::Vec4f>(z));
 		col(inv, 3, static_cast<nytl::Vec4f>(center));
 		inv[3][3] = 1.f;
+
+		transform = nytl::Mat4f(nytl::inverse(inv));
 	}
 
 	nytl::Mat4f transform = nytl::identity<4, float>();

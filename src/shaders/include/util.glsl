@@ -30,3 +30,17 @@ int cubeFace(vec3 dir, out vec2 suv) {
 		}
 	}
 }
+
+// Finds two normalized, orthogonal vectors to the given one
+void basis(vec3 dir, out vec3 x, out vec3 y) {
+	// TODO: probably better way to do this, right?
+	const vec3 anyv = normalize(vec3(-56.345, 12.1234, 1.23445));
+	float diff = dot(anyv, dir);
+	vec3 c = anyv;
+	if(abs(1.0 - diff) < 0.1) {
+		c.xyz = c.yzx;
+	}
+
+	x = normalize(cross(dir, c));
+	y = normalize(cross(dir, x));
+}

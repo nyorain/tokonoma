@@ -25,8 +25,19 @@ const vec3 lightPos = vec3(0, 0, 0);
 
 void main() {
 	if(scene.showLightTex == 1) {
-		vec3 light = unpackUnorm4x8(texture(light, inPosm).r).rgb;
-		outCol = vec4(light, 1.0);
+		// TODO: should probably be gaussian blur sometehing
+		vec2 texelSize = 1 / textureSize(light, 0);
+		int range = 2;
+		vec3 sum = vec3(0);
+		int count = (2 * range + 1) * (2 * range + 1);
+		for(int x = -range; x <= range; ++x) {
+			for(int y = -range; y <= range; ++y) {
+				vec3 off = vec3(texelSize * vec2(x, y),  0);
+				sum += unpackUnorm4x8(texture(light, inPosm + off).r).rgb;
+			}
+		}
+
+		outCol = vec4(model.color.rgb, 1.0) * vec4(sum / count, 1.0);
 	} else {
 		vec3 normal = normalize(inNormal);
 		vec3 objectColor = model.color.rgb;
@@ -52,7 +63,7 @@ void main() {
 
 		if(scene.showLightTex == 2) {
 			vec3 light = unpackUnorm4x8(texture(light, inPosm).r).rgb;
-			col += light * objectColor;
+			col += light;
 		}
 
 		outCol = vec4(col, 1.0);

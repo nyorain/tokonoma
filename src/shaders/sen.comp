@@ -3,23 +3,257 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "ray.glsl"
+#include "util.glsl"
+#include "noise.glsl"
 
+layout(local_size_x = 16, local_size_y = 16) in;
 layout(set = 0, binding = 0) uniform UBO {
 	vec4 pos;
 	vec4 dir;
 	float fov; // on y coord
 	float aspect; // aspect ratio: x / y
 	vec2 res; // resolution
+	float time;
 } ubo;
 
 layout(row_major, set = 0, binding = 1) readonly buffer Objects {
 	Box boxes[];
 };
 
-layout(set = 0, binding = 2, rgba8) uniform imageCube textures[12];
+layout(set = 0, binding = 2, r32ui) uniform uimageCube textures[6];
+
+// settings
+const uint maxBounces = 2;
+const vec3 up = vec3(0, 1, 0);
+const float infinity = 1.f / 0.f;
+const float pi = 3.1415926535897932;
+
+const vec3 lightPos = vec3(0, 0, 0);
+const float lightRadius = 0.1;
+
+// Returns whether the given ray hits anything (except the object
+// to ignore) below the given t parameter.
+bool anyhit(Ray ray, float belowt, uint ignore);
+
+vec3 shade(vec3 pos, vec3 normal, vec3 view, uint ignore) {
+	float diffFac = 0.4;
+	float specFac = 0.4;
+	float shininess = 32;
+
+	vec3 col = vec3(0.0); // no ambient
+
+	vec3 l = lightPos - pos;
+	vec3 x,y;
+	basis(l, x, y);
+	vec2 r = lightRadius * (2 * random2(pos.xy + pos.yz) - 1);
+
+	Ray tolight = Ray(pos, l + r.x * x + r.y * y);
+	l = normalize(l);
+	if(dot(l, normal) > 0 && !anyhit(tolight, 1.f, ignore)) {
+		col += diffFac * clamp(dot(normal, l), 0, 1); // diffuse
+		vec3 h = normalize(-view + l);
+		col += specFac * vec3(clamp(pow(dot(h, normal), shininess), 0, 1));
+	}
+
+	return clamp(col, 0.0, 1.0);
+}
+
+bool anyhit(Ray ray, float belowt, uint ignore) {
+	for(uint i = 0; i < boxes.length(); ++i) {
+		if(i == ignore) {
+			continue;
+		}
+
+		vec3 bnormal;
+		float t = intersect(ray, boxes[i], bnormal);
+		if(t > 0.0 && t < belowt) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// next intersection t on ray.
+// also gives normal and position of intersected object
+// returns -1.0 if there is no intersection
+float next(Ray ray, out vec3 pos, out vec3 normal,
+		out vec3 uv, out uint id, uint ignore) {
+	float mint = infinity;
+	bool found = false;
+	for(uint i = 0; i < boxes.length(); ++i) {
+		if(i == ignore) { // TODO: no self bounce atm
+			continue;
+		}
+
+		vec3 bnormal;
+		vec3 buv;
+		float t = intersect(ray, boxes[i], bnormal, buv);
+		if(t > 0.0 && t < mint) {
+			mint = t;
+			pos = ray.origin + t * ray.dir;
+			normal = bnormal;
+			uv = buv;
+			id = i;
+		}
+	}
+
+	if(mint == infinity) {
+		return -1.0;
+	}
+
+	return mint;
+}
+
+// XXX
+vec2 isize(uint id) {
+	switch(id) {
+		case 0: return imageSize(textures[0]);
+		case 1: return imageSize(textures[1]);
+		case 2: return imageSize(textures[2]);
+		case 3: return imageSize(textures[3]);
+		case 4: return imageSize(textures[4]);
+		case 5: return imageSize(textures[5]);
+	}
+}
+
+void astore(uint id, ivec3 iuv, uint col) {
+	switch(id) {
+		case 0: imageAtomicExchange(textures[0], iuv, col); break;
+		case 1: imageAtomicExchange(textures[1], iuv, col); break;
+		case 2: imageAtomicExchange(textures[2], iuv, col); break;
+		case 3: imageAtomicExchange(textures[3], iuv, col); break;
+		case 4: imageAtomicExchange(textures[4], iuv, col); break;
+		case 5: imageAtomicExchange(textures[5], iuv, col); break;
+	}
+}
+
+vec4 aload(uint id, ivec3 iuv) {
+	switch(id) {
+		case 0: return unpackUnorm4x8(imageAtomicCompSwap(textures[0], iuv, 0, 0));
+		case 1: return unpackUnorm4x8(imageAtomicCompSwap(textures[1], iuv, 0, 0));
+		case 2: return unpackUnorm4x8(imageAtomicCompSwap(textures[2], iuv, 0, 0));
+		case 3: return unpackUnorm4x8(imageAtomicCompSwap(textures[3], iuv, 0, 0));
+		case 4: return unpackUnorm4x8(imageAtomicCompSwap(textures[4], iuv, 0, 0));
+		case 5: return unpackUnorm4x8(imageAtomicCompSwap(textures[5], iuv, 0, 0));
+	}
+}
+
+vec3 trace(Ray ray) {
+	vec3 col = vec3(0, 0, 0); // default, background
+
+	vec3 normal;
+	vec3 pos;
+	vec4 color;
+	vec3 uv;
+	uint id;
+	uint ignore = 99999;
+
+	uint ids[maxBounces];
+	vec3 uvs[maxBounces];
+	vec3 colors[maxBounces];
+	float facs[maxBounces];
+
+	// forward till end
+	int b;
+	for(b = 0; b < maxBounces; ++b) {
+		if(next(ray, pos, normal, uv, id, ignore) < 0.0) {
+			break;
+		}
+
+		ids[b] = id;
+		uvs[b] = uv;
+		colors[b] = shade(pos, normal, ray.dir, id);
+
+		// random ray generation
+		vec3 x, y;
+		basis(normal, x, y);
+
+		vec3 r = random3(pos + 0.1 * ubo.time * ray.dir + colors[b]);
+		r.yz = 2 * r.yz - 1;
+		r.x = max(r.x, 0.1);
+		vec3 dir = vec3(0.0);
+		dir += normalize(r.x * normal + r.y * x + r.z * y);
+
+		// if(id == 5) { // fully reflective
+		// 	dir = reflect(ray.dir, normal);
+		// 	// dir = normalize(dir);
+		// }
+
+		float f = dot(dir, normal);
+		facs[b] = f;
+		ray = Ray(pos, dir);
+		ignore = id;
+	}
+
+	// shade
+	int maxB = b - 1;
+	for(--b; b >= 0; --b) {
+		col *= facs[b];
+		col += colors[b];
+
+		uint id = ids[b];
+		vec2 suvxy;
+		int face = cubeFace(uvs[b], suvxy);
+		// suvxy = (0.5 + 0.5 * suvxy) * imageSize(textures[id]);
+		suvxy = (0.5 + 0.5 * suvxy) * isize(id);
+		ivec3 iuv = ivec3(ivec2(suvxy), face);
+
+		// TODO: better way to atomic load?
+		// vec4 light = unpackUnorm4x8(imageAtomicCompSwap(textures[id], iuv, 0, 0));
+		vec4 light = aload(id, iuv);
+		// float fac = 0.05;
+		float fac = (0.4 / maxBounces) * (maxBounces - b - 1); // more bounces -> more weight
+		// if(id == 5 && b == 0) { // reflective
+		// 	fac = 1.0;
+		// } else if(id == 5 && b != 0) {
+		// 	// in this case, don't store anything. we have to follow
+		// 	// manually
+		// 	continue;
+		// }
+// 
+		// fac = max(fac, 0.02);
+		light = clamp(mix(light, vec4(col, 1.0), fac), 0, 1);
+
+		// TODO
+		// imageAtomicExchange(textures[id], iuv, packUnorm4x8(light));
+		astore(id, iuv, packUnorm4x8(light));
+
+		// TODO: technically, we could ignore color on b == 0
+		// if(id == 5) {
+		// 	// TODO: ignore color here?
+		// 	col = light.rgb;
+		// } else {
+		vec3 color = boxes[id].color.rgb;
+		col = color * light.rgb;
+		// }
+	}
+
+	return col;
+}
 
 void main() {
 	// always just follow one ray
 	// but store it in every texture on the way
 	// problem: with what weight?
+	vec2 invid = gl_GlobalInvocationID.xy;
+	vec2 total = gl_NumWorkGroups.xy * gl_WorkGroupSize.xy;
+	vec2 pstep = 1 / total;
+	vec2 base = invid / total;
+
+	// generate psuedo-random ray into scene
+	vec3 az = normalize(ubo.dir.xyz);
+	vec3 ax = normalize(cross(az, up));
+	vec3 ay = cross(ax, az);
+
+	// vec2 uv = 2 * random2(ubo.time + invid) - 1;
+	vec2 uv = 2 * (base + pstep * (random2(ubo.time + invid) - 0.5)) - 1;
+	// vec2 uv = 2 * base - 1;
+	// vec2 uv = vec2(0.0);
+	float maxy = tan(ubo.fov / 2);
+	uv *= vec2(maxy * ubo.aspect, maxy);
+
+	vec3 ro = ubo.pos.xyz;
+	vec3 rd = normalize(az + uv.x * ax + uv.y * ay);
+	trace(Ray(ro, rd));
 }
