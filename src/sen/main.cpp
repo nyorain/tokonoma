@@ -19,13 +19,12 @@
 #include <ny/keyboardContext.hpp>
 #include <ny/appContext.hpp>
 
-// TODO: handle case where fragmentStoresAndAtomics isn't available
-// by using compute shader to write global light textures
 #include <shaders/fullscreen.vert.h>
 #include <shaders/sen.frag.h>
 #include <shaders/senpt.frag.h>
 #include <shaders/senr.vert.h>
 #include <shaders/senr.frag.h>
+#include <shaders/sen.comp.h>
 
 #include "render.hpp"
 
@@ -40,6 +39,7 @@ public:
 		initRaytracePipe();
 		initPathtracePipe();
 		initRasterPipe();
+		initComputePipe();
 
 		return true;
 	}
@@ -50,8 +50,49 @@ public:
 			return false;
 		}
 
+		// TODO
 		enable.fragmentStoresAndAtomics = true;
 		return true;
+	}
+
+	void initComputePipe() {
+		auto& dev = vulkanDevice();
+		auto dsBindings = {
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::storageImage,
+				vk::ShaderStageBits::compute, -1, 6),
+		};
+
+		comp_.dsLayout = {dev, dsBindings};
+		comp_.pipeLayout = {dev, {comp_.dsLayout}, {}};
+
+		vpp::ShaderModule compShader(dev, sen_comp_data);
+		vk::ComputePipelineCreateInfo cpi;
+		cpi.layout = comp_.pipeLayout;
+		cpi.stage.module = compShader;
+		cpi.stage.pName = "main";
+		cpi.stage.stage = vk::ShaderStageBits::compute;
+
+		vk::Pipeline vkPipeline;
+		vk::createComputePipelines(dev, {}, 1, cpi, nullptr, vkPipeline);
+		comp_.pipe = {dev, vkPipeline};
+
+		// ds
+		std::vector<vk::DescriptorImageInfo> views;
+		for(auto& box : boxes_) {
+			views.push_back({{}, box.global.vkImageView(),
+				vk::ImageLayout::general});
+		}
+
+		comp_.ds = {dev.descriptorAllocator(), comp_.dsLayout};
+		vpp::DescriptorSetUpdate dsu(comp_.ds);
+		dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+		dsu.storage({{boxesBuf_.buffer(), boxesBuf_.offset(), boxesBuf_.size()}});
+		dsu.storage(views);
+		dsu.apply();
 	}
 
 	void initPathtracePipe() {
@@ -121,8 +162,7 @@ public:
 				{vk::ImageAspectBits::color, 0, 1, 0, 6u});
 
 			auto clearValue = vk::ClearColorValue{};
-			// clearValue.uint32 = {0xCCCCCCCCu, 0u, 0u, 0u};
-			clearValue.uint32 = {0x11111111u, 0u, 0u, 0u};
+			clearValue.uint32 = {0x44444444u, 0u, 0u, 0u};
 			auto range = vk::ImageSubresourceRange {};
 			range.aspectMask = vk::ImageAspectBits::color;
 			range.baseArrayLayer = 0;
@@ -445,10 +485,10 @@ public:
 		boxes_.back().color = {1.f, 1.f, 1.f};
 
 		boxes_.emplace_back(); // inside
-		boxes_.back().box = Box {{2.f, -3.f, 0.f}
-			// {1.f, 0.0f, 0.5f},
-			// {0.f, 1.f, 0.f},
-			// {-0.5f, 0.f, 1.f},
+		boxes_.back().box = Box {{2.f, -3.f, 0.f},
+			{1.f, 0.0f, 0.5f},
+			{0.f, 1.f, 0.f},
+			{-0.5f, 0.f, 1.f},
 		};
 		boxes_.back().color = {0.2f, 0.2f, 1.f};
 	}
@@ -482,8 +522,19 @@ public:
 		return false;
 	}
 
+	void beforeRender(vk::CommandBuffer cb) override {
+		if(renderMode_ == 3) {
+			dlg_info("recording dispatch");
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
+				comp_.pipe);
+			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+				comp_.pipeLayout, 0, {comp_.ds}, {});
+			vk::cmdDispatch(cb, 32, 32, 1);
+		}
+	}
+
 	void render(vk::CommandBuffer cb) override {
-		if(renderMode_ == 0) {
+		if(renderMode_ == 0 || renderMode_ == 3) {
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, rasterPipe_);
 			vk::cmdBindIndexBuffer(cb, boxModel_.buffer(),
 				boxModel_.offset(), vk::IndexType::uint32);
@@ -520,7 +571,7 @@ public:
 		}
 
 		if(ev.keycode == ny::Keycode::r) {
-			renderMode_ = (renderMode_ + 1) % 3;
+			renderMode_ = (renderMode_ + 1) % 4;
 			rerecord();
 			return true;
 		} else if(ev.keycode == ny::Keycode::l) {
@@ -633,6 +684,14 @@ private:
 	vpp::SubBuffer boxModel_;
 	vpp::SubBuffer rasterSceneUbo_;
 	vpp::Sampler sampler_;
+
+	// compute
+	struct {
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+	} comp_;
 
 	// path trace
 	struct {

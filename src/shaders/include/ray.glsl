@@ -132,8 +132,8 @@ float intersect(Ray r, Box b, out vec3 normal) {
 
 // also returns the position on the unit cube in bpos
 float intersect(Ray r, Box b, out vec3 normal, out vec3 bpos) {
-	vec3 dir = multDir(b.transform, r.dir);
 	vec3 o = multPos(b.transform, r.origin);
+	vec3 dir = multDir(b.transform, r.dir);
 
 #ifdef EXACT
 	if(dir.x == 0.f) { dir.x += 0.00001; }
@@ -154,11 +154,14 @@ float intersect(Ray r, Box b, out vec3 normal, out vec3 bpos) {
 		return -1.f;
 	}
 
+	bpos = o + tn * dir;
+	// normal = vec3(trunc(bpos.x + 0.001), trunc(bpos.y + 0.001), trunc(bpos.z + 0.001));
+	normal = trunc(bpos * 1.001);
+
 	// TODO: doesn't work that well with many transform matrices...
 	// fix that
-    normal = -sign(r.dir) * step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
-	// normal = normalize(multDir(b.normal, normal));
-	bpos = o + tn * dir;
+    // normal = -sign(r.dir) * step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
+	normal = normalize(multDir(transpose(b.transform), normal));
 
 	return tn;
 }

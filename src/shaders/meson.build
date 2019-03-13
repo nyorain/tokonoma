@@ -7,6 +7,7 @@ add_project_arguments(
 # common/shader glsl files
 include_glsl = files(
   'include/geometry.glsl',
+  'include/util.glsl',
   'include/hex.glsl',
   'include/math.glsl',
   'include/color.glsl',
@@ -95,6 +96,7 @@ shaders_src = [
 	  ['senr.vert'],
 	  ['senr.frag'],
 	  ['senpt.frag', include_glsl],
+	  ['sen.comp', include_glsl],
 	]]
 ]
 
