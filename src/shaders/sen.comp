@@ -23,16 +23,16 @@ layout(row_major, set = 0, binding = 1) readonly buffer Objects {
 layout(set = 0, binding = 2, r32ui) uniform uimage2D lightTex;
 
 // settings
-const uint maxBounces = 2;
+const uint maxBounces = 3;
 const vec3 up = vec3(0, 1, 0);
 const float infinity = 1.f / 0.f;
 const float pi = 3.1415926535897932;
 
-const vec3 lightPos = vec3(0, 0, 0);
-const float lightRadius = 0.1;
+const vec3 lightPos = vec3(0, 1.8, 0);
+const float lightRadius = 0.3;
 // TODO: has to be synced with main.cpp
 // pass in ubo instead. Also helps senr.frag
-const vec2 faceSize = vec2(512, 512);
+const vec2 faceSize = vec2(1024, 1024);
 
 // Returns whether the given ray hits anything (except the object
 // to ignore) below the given t parameter.
@@ -138,9 +138,31 @@ vec3 trace(Ray ray) {
 		vec3 x, y;
 		basis(normal, x, y);
 
-		vec3 r = random3(pos + 0.1 * ubo.time * ray.dir + colors[b]);
-		r.yz = 2 * r.yz - 1;
-		r.x = max(r.x, 0.1);
+		// == best == 
+		// vec3 r = random3(pos + 0.1 * ubo.time);
+		// r.yz = 2 * r.yz - 1;
+	
+		// == i raise you: psychedelic path tracer ==
+		// vec3 r;
+		// r.x = gradientNoise(pos.zy + ubo.time);
+		// r.y = sgradientNoise(pos.xz + ubo.time);
+		// r.z = sgradientNoise(pos.xy + ubo.time);
+		
+		// == combined? ==
+		// vec3 r = random3(pos + 0.1 * ubo.time * ray.dir + colors[b]);
+		// r.x = gradientNoise(5 * pos.zy + ubo.time + 10 * r.zy);
+		// r.y = sgradientNoise(5 * pos.xz + ubo.time + 10 * r.xz);
+		// r.z = sgradientNoise(5 * pos.xy + ubo.time + 10 * r.xy);
+
+		// == other random? ==
+		// also include colors[b] in the noise?
+		vec3 r = random3(pos);
+		r.x = gradientNoise(5 * ubo.time + 10 * r.zy);
+		r.y = sgradientNoise(5 * ubo.time + 10 * r.xz);
+		r.z = sgradientNoise(-5 * ubo.time - 10 * r.xy);
+		
+
+		r.x = max(r.x, 0.01);
 		vec3 dir = vec3(0.0);
 		dir += normalize(r.x * normal + r.y * x + r.z * y);
 
@@ -170,10 +192,11 @@ vec3 trace(Ray ray) {
 		ivec2 iuv = ivec2(uv);
 
 		// TODO: better way to atomic load?
+		// vec4 light = unpackUnorm4x8(imageLoad(lightTex, iuv).r);
 		vec4 light = unpackUnorm4x8(imageAtomicCompSwap(lightTex, iuv, 0, 0));
-		// vec4 light = aload(id, iuv);
 		// float fac = 0.05;
-		float fac = (0.1 / maxBounces) * (maxBounces - b - 1); // more bounces -> more weight
+		float fac = (0.2 / maxBounces) * (maxBounces - b - 1); // more bounces -> more weight
+
 		// if(id == 5 && b == 0) { // reflective
 		// 	fac = 1.0;
 		// } else if(id == 5 && b != 0) {
@@ -187,7 +210,7 @@ vec3 trace(Ray ray) {
 
 		// TODO
 		imageAtomicExchange(lightTex, iuv, packUnorm4x8(light));
-		// astore(id, iuv, packUnorm4x8(light));
+		// imageStore(lightTex, iuv, uvec4(packUnorm4x8(light)));
 
 		// TODO: technically, we could ignore color on b == 0
 		// if(id == 5) {

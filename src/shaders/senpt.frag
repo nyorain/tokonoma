@@ -31,14 +31,14 @@ layout(row_major, set = 0, binding = 1) readonly buffer Objects {
 layout(set = 0, binding = 2, r32ui) uniform uimage2D lightTex;
 
 const vec3 up = vec3(0, 1, 0);
-const vec3 lightPos = vec3(0, 0, 0);
+const vec3 lightPos = vec3(0, 1.8, 0);
 const float INFINITY = 1.f / 0.f;
 const float pi = 3.1415926535897932;
 
 const int maxBounce = 4;
 // TODO: has to be synced with main.cpp
 // pass in ubo instead. Also helps senr.frag
-const vec2 faceSize = vec2(512, 512);
+const vec2 faceSize = vec2(1024, 1024);
 
 bool anyhit(Ray ray, float belowt, uint ignore);
 
@@ -283,11 +283,6 @@ void main() {
 	vec2 uv = 2 * in_uv - 1;
 	uv.y = -uv.y;
 	float maxy = tan(ubo.fov / 2);
-
-	// TODO: change on count change
-	if(boxes.length() != 6) {
-		discard;
-	}
 
 	// random offset instead of antialiasing
 	uv += (random2(ubo.time + uv) - 0.5) * pixel;
