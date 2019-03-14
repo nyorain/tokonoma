@@ -44,10 +44,18 @@ Socket::Socket() {
 	broadcast_->set_option(asio::socket_base::broadcast(true));
 	broadcast_->bind(bep);
 
+	// TODO: bad solution
+	udp::resolver resolver(ioService_);
+	udp::resolver::query query(udp::v4(), asio::ip::host_name(), "");
+	udp::resolver::iterator iter = resolver.resolve(query);
+	udp::resolver::iterator end; // End marker.
+	dlg_assert(iter != end);
+	udp::endpoint sep = *iter;
+
 	// port testing
 	for(auto iport = 21345; iport < 65000; ++iport) {
 		try {
-			auto ep = udp::endpoint(asio::ip::address_v4({127, 0, 0, 1}), iport);
+			auto ep = udp::endpoint(sep.address(), iport);
 			socket_ = asio::ip::udp::socket(ioService_, ep);
 			break;
 		} catch(const std::system_error& exception) {
@@ -178,11 +186,17 @@ void Socket::update(MsgHandler handler) {
 }
 
 void Socket::nextStep() {
-	auto& d = pending_.data;
+	auto& d = sending_.data;
 	if(d.empty()) {
 		return;
 	}
 
 	socket().send(asio::buffer(d.data(), d.size()));
-	pending_.data.clear();
+	sending_.data.clear();
+	++step_;
+}
+
+bool Socket::nextStepAllowed() {
+	// TODO
+	return true;
 }
