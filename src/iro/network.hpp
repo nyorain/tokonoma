@@ -1,4 +1,5 @@
 #include <asio/ip/udp.hpp>
+#include <asio/ip/host_name.hpp>
 #include <asio/io_service.hpp>
 #include <asio/buffer.hpp>
 #include <nytl/span.hpp>
@@ -43,10 +44,13 @@ public:
 
 	// write new messages into that buffer
 	// until next nextStep call
-	SendBuf& add() { return pending_; }
+	SendBuf& add() { return sending_; }
 
 	// sends pending messages
 	void nextStep();
+
+	// whether next step is allowed
+	bool nextStepAllowed();
 
 	udp::socket& socket() { return *socket_; }
 
@@ -63,8 +67,9 @@ private:
 	std::optional<udp::socket> socket_;
 	std::optional<udp::socket> broadcast_;
 
-	std::vector<SendBuf> messages_; // old, for resending
-	SendBuf pending_;
+	std::vector<SendBuf> pending_; // must be processed
+	// std::vector<SendBuf> messages_; // old, for resending
+	SendBuf sending_; // to be sent
 };
 
 enum class MessageType : std::uint32_t {
