@@ -29,8 +29,8 @@
 #include "render.hpp"
 
 // TODO: could be optimized by using smaller images for small faces
-constexpr auto faceWidth = 512u;
-constexpr auto faceHeight = 512u;
+constexpr auto faceWidth = 1024u;
+constexpr auto faceHeight = 1024u;
 
 class SenApp : public doi::App {
 public:
@@ -125,7 +125,6 @@ public:
 		std::uint32_t width = 6 * faceWidth;
 		std::uint32_t height = boxes_.size() * faceHeight;
 		atlasSize_ = {width, height};
-		dlg_assert(boxes_.size() == 6);
 
 		auto imgi = vpp::ViewableImageCreateInfo::color(
 			dev, vk::Extent3D {width, height, 1u}).value();
@@ -438,6 +437,14 @@ public:
 	}
 
 	void initBoxes() {
+		boxes_.emplace_back(); // rotating inside
+		boxes_.back().box = Box {{-2.f, -3.f, 0.f},
+			{1.f, 0.0f, 0.0f},
+			{0.f, 1.f, 0.f},
+			{0.0f, 0.f, 1.f},
+		};
+		boxes_.back().color = {1.0f, 0.8f, 0.2f};
+
 		boxes_.emplace_back(); // back
 		boxes_.back().box = Box {{0.f, 0.f, -4.f},
 			{4.f, 0.f, 0.f},
@@ -523,7 +530,7 @@ public:
 				comp_.pipe);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 				comp_.pipeLayout, 0, {comp_.ds}, {});
-			vk::cmdDispatch(cb, 128, 128, 1);
+			vk::cmdDispatch(cb, 64, 64, 1);
 		}
 	}
 
@@ -663,6 +670,31 @@ public:
 				doi::write(span, camera_.pos);
 				doi::write(span, showLightTex_);
 			}
+		}
+
+		// update rotating box
+		// TODO; allow more comfortable box creation from inv transform matrix
+		// inv is btw named unintuitively, should be reversed
+		auto& b = boxes_[0];
+		float a = 0.5 * time_;
+		auto rot = nytl::Mat3f(doi::rotateMat(nytl::Vec3f{0.f, 1.f, 0.f}, a));
+		b.box = {{-2.f, -3.f, 0.f},
+			nytl::col(rot, 0),
+			nytl::col(rot, 1),
+			nytl::col(rot, 2)};
+
+		{
+			auto map = boxesBuf_.memoryMap();
+			auto span = map.span();
+			doi::write(span, b.box.transform);
+		}
+
+		{
+			auto map = b.rasterdata.memoryMap();
+			auto span = map.span();
+			doi::write(span, b.box.inv);
+			auto nm = nytl::Mat4f(transpose(inverse(b.box.inv)));
+			doi::write(span, nm);
 		}
 	}
 

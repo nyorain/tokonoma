@@ -25,7 +25,7 @@ layout(row_major, set = 0, binding = 1) readonly buffer Objects {
 };
 
 const vec3 up = vec3(0, 1, 0);
-const vec3 lightPos = vec3(0, 0, 0);
+const vec3 lightPos = vec3(0, 1.8, 0);
 const float INFINITY = 1.f / 0.f;
 const float pi = 3.1415926535897932;
 
