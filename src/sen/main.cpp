@@ -45,6 +45,22 @@ public:
 		initRasterPipe();
 		initComputePipe();
 
+		// XXX
+		// VkPhysicalDeviceSubgroupProperties sp {};
+		// sp.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+		// sp.pNext = nullptr;
+//
+		// VkPhysicalDeviceProperties2 props {};
+		// props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+		// props.pNext = &sp;
+//
+		// auto phdev = (VkPhysicalDevice) vulkanDevice().vkPhysicalDevice();
+		// vkGetPhysicalDeviceProperties2(phdev, &props);
+//
+		// dlg_info("shuffle: {}", (sp.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_BIT) != 0);
+		// dlg_info("size: {}", sp.subgroupSize);
+		// dlg_info("compute: {}", sp.supportedStages & VK_SHADER_STAGE_COMPUTE_BIT);
+
 		return true;
 	}
 
@@ -530,7 +546,7 @@ public:
 				comp_.pipe);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 				comp_.pipeLayout, 0, {comp_.ds}, {});
-			vk::cmdDispatch(cb, 64, 64, 1);
+			vk::cmdDispatch(cb, 256, 256, 1);
 		}
 	}
 
@@ -593,7 +609,11 @@ public:
 			return true;
 		} else if(ev.keycode == ny::Keycode::l) {
 			camera_.update = true; // updates ubo
-			showLightTex_ = (showLightTex_ + 1) % 3;
+			if(ev.modifiers & ny::KeyboardModifier::shift) {
+				showLightTex_ = (showLightTex_ + 2) % 3;
+			} else {
+				showLightTex_ = (showLightTex_ + 1) % 3;
+			}
 			return true;
 		}
 

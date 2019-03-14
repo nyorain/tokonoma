@@ -138,16 +138,16 @@ vec3 trace(Ray ray) {
 		vec3 x, y;
 		basis(normal, x, y);
 
-		// == best == 
-		// vec3 r = random3(pos + 0.1 * ubo.time);
+		// == purely random, easiest ==
+		// vec3 r = random3(pos + ubo.time);
 		// r.yz = 2 * r.yz - 1;
-	
+
 		// == i raise you: psychedelic path tracer ==
 		// vec3 r;
 		// r.x = gradientNoise(pos.zy + ubo.time);
 		// r.y = sgradientNoise(pos.xz + ubo.time);
 		// r.z = sgradientNoise(pos.xy + ubo.time);
-		
+
 		// == combined? ==
 		// vec3 r = random3(pos + 0.1 * ubo.time * ray.dir + colors[b]);
 		// r.x = gradientNoise(5 * pos.zy + ubo.time + 10 * r.zy);
@@ -156,20 +156,40 @@ vec3 trace(Ray ray) {
 
 		// == other random? ==
 		// also include colors[b] in the noise?
+		// XXX: not sure why, but this produces better results
+		// less weirdness on edges somehow
 		vec3 r = random3(pos);
-		r.x = gradientNoise(5 * ubo.time + 10 * r.zy);
-		r.y = sgradientNoise(5 * ubo.time + 10 * r.xz);
-		r.z = sgradientNoise(-5 * ubo.time - 10 * r.xy);
+		r.x = gradientNoise(16.31 * ubo.time + 123 * r.zy);
+		r.y = sgradientNoise(19.4 * ubo.time - 23.34 * r.xz);
+		r.z = sgradientNoise(-12.2 * ubo.time - 43.2 * r.xy);
 		
+		// == i raise you: psychedelic path tracer v.2 ==
+		// vec3 r = random3(id + floor(vec3(uv)));
+		// r.x = gradientNoise(5 * ubo.time + 10 * r.zy);
+		// r.y = sgradientNoise(5 * ubo.time + 10 * r.xz);
+		// r.z = sgradientNoise(-5 * ubo.time - 10 * r.xy);
 
-		r.x = max(r.x, 0.01);
+		// == use iuv stuff ==
+		// vec2 suvxy;
+		// int face = cubeFace(uv, suvxy);
+		// vec2 uv = (0.5 + 0.5 * suvxy) * faceSize;
+		// uv.x += face * faceSize.x;
+		// uv.y += id * faceSize.y;
+		// ivec2 iuv = ivec2(uv);
+		// vec3 r = random3(ivec3(uv, id));
+		// r.x = gradientNoise(1.1 * ubo.time + 11.92 * r.zy);
+		// r.y = sgradientNoise(0.9 * ubo.time + 9.4 * r.xz);
+		// r.z = sgradientNoise(-1.3 * ubo.time - 10 * r.xy);
+
+
+		// r.x = max(r.x, 0.01);
 		vec3 dir = vec3(0.0);
 		dir += normalize(r.x * normal + r.y * x + r.z * y);
 
-		// if(id == 5) { // fully reflective
-		// 	dir = reflect(ray.dir, normal);
-		// 	// dir = normalize(dir);
-		// }
+		if(id == 6) { // fully reflective
+			dir = reflect(ray.dir, normal);
+			// dir = normalize(dir);
+		}
 
 		float f = dot(dir, normal);
 		facs[b] = f;
@@ -197,14 +217,14 @@ vec3 trace(Ray ray) {
 		// float fac = 0.05;
 		float fac = (0.2 / maxBounces) * (maxBounces - b - 1); // more bounces -> more weight
 
-		// if(id == 5 && b == 0) { // reflective
-		// 	fac = 1.0;
-		// } else if(id == 5 && b != 0) {
-		// 	// in this case, don't store anything. we have to follow
-		// 	// manually
-		// 	continue;
-		// }
-// 
+		if(id == 6 && b == 0) { // reflective
+			fac = 1.0;
+		} else if(id == 6 && b != 0) {
+			// in this case, don't store anything. we have to follow
+			// manually
+			continue;
+		}
+//
 		// fac = max(fac, 0.02);
 		light = clamp(mix(light, vec4(col, 1.0), fac), 0, 1);
 

@@ -56,7 +56,7 @@ float normpdf3(in vec3 v, in float sigma) {
 	return 0.39894*exp(-0.5*dot(v,v)/(sigma*sigma))/sigma;
 }
 
-vec3 lightColor() {
+vec3 lightColorBlurred() {
 	vec2 uv;
 	int face = cubeFace(inPosm, uv); // uv is returned as [-1,1] here
 	uv = 0.5 + 0.5 * uv;
@@ -70,14 +70,14 @@ vec3 lightColor() {
 	const int kSize = (MSIZE-1)/2;
 	float kernel[MSIZE];
 	vec3 final_color = vec3(0.0);
-	
+
 	//create the 1-D kernel
 	float Z = 0.0;
 	for(int j = 0; j <= kSize; ++j) {
 		kernel[kSize+j] = kernel[kSize-j] = normpdf(float(j), SIGMA);
 	}
-	
-	
+
+
 	vec3 cc;
 	float factor;
 	float bZ = 1.0/normpdf(0.0, BSIGMA);
@@ -95,7 +95,7 @@ vec3 lightColor() {
 	return final_color;
 }
 
-vec3 lightColor2() {
+vec3 lightColorDirect() {
 	vec2 uv;
 	int face = cubeFace(inPosm, uv); // uv is returned as [-1,1] here
 	uv = 0.5 + 0.5 * uv;
@@ -112,16 +112,21 @@ vec3 lightColor2() {
 	vec3 sum = vec3(0);
 	// int count = (2 * filterRange + 1) * (2 * filterRange + 1);
 	for(int x = -filterRange; x <= filterRange; ++x) {
-		for(int y = -filterRange; y <= filterRange; ++y) {
-			float c = coeffs[filterRange + y][filterRange + x];
-			vec2 ouv = uv + texelSize * vec2(x, y);
-			sum += c * unpackUnorm4x8(texture(light, ouv).r).rgb;
-		}
+	for(int y = -filterRange; y <= filterRange; ++y) {
+	float c = coeffs[filterRange + y][filterRange + x];
+	vec2 ouv = uv + texelSize * vec2(x, y);
+	sum += c * unpackUnorm4x8(texture(light, ouv).r).rgb;
+	}
 	}
 
 	// return sum / count;
 	return sum;
-	*/
+	 */
+}
+
+vec3 lightColor() {
+	return lightColorBlurred(); // blurred
+	// return lightColorDirect(); // not blurred
 }
 
 void main() {
@@ -139,7 +144,7 @@ void main() {
 		// ambient
 		vec3 col = vec3(0.0);
 		if(scene.showLightTex == 0) {
-			vec3 col = ambientFac * objectColor;
+			col += ambientFac * objectColor;
 		}
 
 		// diffuse
