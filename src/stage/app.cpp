@@ -218,7 +218,9 @@ bool App::init(const AppSettings& settings) {
 	auto iniExtensions = appContext().vulkanExtensions();
 	iniExtensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
 
-	vk::ApplicationInfo appInfo(settings.name, 1, "doi", 1, VK_API_VERSION_1_0);
+	// TODO: don't require 1.1 since it's not really needed for any app
+	// (just some tests with it in sen)
+	vk::ApplicationInfo appInfo(settings.name, 1, "doi", 1, VK_API_VERSION_1_1);
 	vk::InstanceCreateInfo instanceInfo;
 	instanceInfo.pApplicationInfo = &appInfo;
 
