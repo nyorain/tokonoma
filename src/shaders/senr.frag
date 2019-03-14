@@ -1,5 +1,9 @@
 #version 450
 
+#extension GL_GOOGLE_include_directive : enable
+
+#include "util.glsl"
+
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec3 inPosm;
@@ -16,28 +20,44 @@ layout(set = 1, binding = 0, row_major) uniform Model {
 	mat4 _matrix;
 	mat4 _normal;
 	vec4 color;
+	vec2 faceSize;
+	uint id;
 } model;
 
-layout(set = 1, binding = 1) uniform usamplerCube light;
+layout(set = 1, binding = 1) uniform usampler2D light;
 
 // TODO: as ubo
 const vec3 lightPos = vec3(0, 0, 0);
+const int filterRange = 2;
+
+vec3 lightColor() {
+	vec2 uv;
+	int face = cubeFace(inPosm, uv); // uv is returned as [-1,1] here
+	uv = 0.5 + 0.5 * uv;
+	uv *= model.faceSize;
+	uv.y += model.id * model.faceSize.y;
+	uv.x += face * model.faceSize.x;
+
+	/*
+	// TODO: should probably be gaussian blur sometehing
+	vec2 texelSize = 1 / textureSize(light, 0);
+	vec3 sum = vec3(0);
+	int count = (2 * filterRange + 1) * (2 * filterRange + 1);
+	for(int x = -filterRange; x <= filterRange; ++x) {
+		for(int y = -filterRange; y <= filterRange; ++y) {
+			vec3 off = vec3(texelSize * vec2(x, y),  0);
+			sum += unpackUnorm4x8(texture(light, inPosm + off).r).rgb;
+		}
+	}
+	*/
+
+	return unpackUnorm4x8(texture(light, uv).r).rgb;
+}
 
 void main() {
 	if(scene.showLightTex == 1) {
-		// TODO: should probably be gaussian blur sometehing
-		vec2 texelSize = 1 / textureSize(light, 0);
-		int range = 2;
-		vec3 sum = vec3(0);
-		int count = (2 * range + 1) * (2 * range + 1);
-		for(int x = -range; x <= range; ++x) {
-			for(int y = -range; y <= range; ++y) {
-				vec3 off = vec3(texelSize * vec2(x, y),  0);
-				sum += unpackUnorm4x8(texture(light, inPosm + off).r).rgb;
-			}
-		}
-
-		outCol = vec4(model.color.rgb, 1.0) * vec4(sum / count, 1.0);
+		vec3 light = lightColor();
+		outCol = vec4(model.color.rgb, 1.0) * vec4(light, 1.0);
 	} else {
 		vec3 normal = normalize(inNormal);
 		vec3 objectColor = model.color.rgb;
@@ -62,7 +82,7 @@ void main() {
 		col += specularFac * objectColor * pow(max(dot(normal, h), 0.0), shininess);
 
 		if(scene.showLightTex == 2) {
-			vec3 light = unpackUnorm4x8(texture(light, inPosm).r).rgb;
+			vec3 light = lightColor();
 			col += light;
 		}
 

@@ -28,6 +28,10 @@
 
 #include "render.hpp"
 
+// TODO: could be optimized by using smaller images for small faces
+constexpr auto faceWidth = 512u;
+constexpr auto faceHeight = 512u;
+
 class SenApp : public doi::App {
 public:
 	bool init(const doi::AppSettings& settings) override {
@@ -63,7 +67,7 @@ public:
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
 				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
-				vk::ShaderStageBits::compute, -1, 6),
+				vk::ShaderStageBits::compute)
 		};
 
 		comp_.dsLayout = {dev, dsBindings};
@@ -81,17 +85,11 @@ public:
 		comp_.pipe = {dev, vkPipeline};
 
 		// ds
-		std::vector<vk::DescriptorImageInfo> views;
-		for(auto& box : boxes_) {
-			views.push_back({{}, box.global.vkImageView(),
-				vk::ImageLayout::general});
-		}
-
 		comp_.ds = {dev.descriptorAllocator(), comp_.dsLayout};
 		vpp::DescriptorSetUpdate dsu(comp_.ds);
 		dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 		dsu.storage({{boxesBuf_.buffer(), boxesBuf_.offset(), boxesBuf_.size()}});
-		dsu.storage(views);
+		dsu.storage({{{}, lightTex_.vkImageView(), vk::ImageLayout::general}});
 		dsu.apply();
 	}
 
@@ -104,7 +102,7 @@ public:
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
 				vk::ShaderStageBits::fragment),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
-				vk::ShaderStageBits::fragment, -1, 6),
+				vk::ShaderStageBits::fragment)
 		};
 
 		pt_.dsLayout = {dev, dsBindings};
@@ -124,15 +122,14 @@ public:
 		pt_.pipe = {dev, vkpipe};
 
 		// box images
-		constexpr auto width = 1024;
-		constexpr auto height = 1024;
+		std::uint32_t width = 6 * faceWidth;
+		std::uint32_t height = boxes_.size() * faceHeight;
+		atlasSize_ = {width, height};
+		dlg_assert(boxes_.size() == 6);
+
 		auto imgi = vpp::ViewableImageCreateInfo::color(
 			dev, vk::Extent3D {width, height, 1u}).value();
-		imgi.img.arrayLayers = 6u;
-		imgi.img.flags = vk::ImageCreateBits::cubeCompatible |
-			vk::ImageCreateBits::mutableFormat;
-		imgi.view.viewType = vk::ImageViewType::cube;
-		imgi.view.subresourceRange.layerCount = 6u;
+		imgi.img.flags = vk::ImageCreateBits::mutableFormat;
 		imgi.img.usage = vk::ImageUsageBits::transferDst |
 			vk::ImageUsageBits::storage |
 			vk::ImageUsageBits::sampled;
@@ -145,39 +142,27 @@ public:
 		// TODO: we could create second view with r8g8b8a8 format
 		// and then use linear interpolation in sampler
 		// mutable format already set
-
-		std::vector<vk::DescriptorImageInfo> views;
+		lightTex_ = {dev, imgi};
 
 		auto& qs = dev.queueSubmitter();
 		auto cb = dev.commandAllocator().get(qs.queue().family());
 		vk::beginCommandBuffer(cb, {});
-		for(auto& box : boxes_) {
-			// create global light image
-			box.global = {dev, imgi};
-			auto& img = box.global;
-			vpp::changeLayout(cb, img.image(), vk::ImageLayout::undefined,
-				vk::PipelineStageBits::topOfPipe, {}, vk::ImageLayout::general,
-				vk::PipelineStageBits::transfer,
-				vk::AccessBits::memoryWrite, // not sure what clear image is
-				{vk::ImageAspectBits::color, 0, 1, 0, 6u});
 
-			auto clearValue = vk::ClearColorValue{};
-			clearValue.uint32 = {0x44444444u, 0u, 0u, 0u};
-			auto range = vk::ImageSubresourceRange {};
-			range.aspectMask = vk::ImageAspectBits::color;
-			range.baseArrayLayer = 0;
-			range.layerCount = 6u;
-			range.levelCount = 1;
-			vk::cmdClearColorImage(cb, img.image(), vk::ImageLayout::general,
-				clearValue, {range});
+		vpp::changeLayout(cb, lightTex_.image(), vk::ImageLayout::undefined,
+			vk::PipelineStageBits::topOfPipe, {}, vk::ImageLayout::general,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::memoryWrite, // not sure what clear image is
+			{vk::ImageAspectBits::color, 0, 1, 0, 1u});
 
-			// add to ds update info
-			views.push_back({{}, box.global.vkImageView(),
-				vk::ImageLayout::general});
-		}
-
-		dlg_assert(boxes_.size() == 6);
-		dlg_assert(views.size() == 6);
+		auto clearValue = vk::ClearColorValue{};
+		clearValue.uint32 = {0x44444444u, 0u, 0u, 0u};
+		auto range = vk::ImageSubresourceRange {};
+		range.aspectMask = vk::ImageAspectBits::color;
+		range.baseArrayLayer = 0;
+		range.layerCount = 1u;
+		range.levelCount = 1;
+		vk::cmdClearColorImage(cb, lightTex_.image(), vk::ImageLayout::general,
+			clearValue, {range});
 
 		vk::endCommandBuffer(cb);
 
@@ -191,7 +176,7 @@ public:
 		vpp::DescriptorSetUpdate dsu(pt_.ds);
 		dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 		dsu.storage({{boxesBuf_.buffer(), boxesBuf_.offset(), boxesBuf_.size()}});
-		dsu.storage(views);
+		dsu.storage({{{}, lightTex_.vkImageView(), vk::ImageLayout::general}});
 		dsu.apply();
 	}
 
@@ -421,7 +406,13 @@ public:
 		vpp::apply({sdsu});
 
 		// boxes
-		auto bufSize = 2 * sizeof(nytl::Mat4f) + sizeof(nytl::Vec4f);
+		auto bufSize = 2 * sizeof(nytl::Mat4f) + sizeof(nytl::Vec4f)
+			+ sizeof(nytl::Vec2f) + sizeof(std::uint32_t);
+		// TODO: doesn't have to be in every ubo...
+		auto faceSize = nytl::Vec2f {
+			float(faceWidth) / atlasSize_.x,
+			float(faceHeight) / atlasSize_.y};
+		auto i = 0u;
 		for(auto& b: boxes_) {
 			b.rasterdata = {dev.bufferAllocator(), bufSize,
 				vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
@@ -432,14 +423,17 @@ public:
 				auto nm = nytl::Mat4f(transpose(inverse(b.box.inv)));
 				doi::write(span, nm);
 				doi::write(span, b.color);
+				doi::write(span, faceSize);
+				doi::write(span, i);
 			}
 
 			b.ds = {dev.descriptorAllocator(), rasterObjectDsLayout_};
 			vpp::DescriptorSetUpdate update(b.ds);
 			update.uniform({{b.rasterdata.buffer(),
 				b.rasterdata.offset(), b.rasterdata.size()}});
-			update.imageSampler({{{}, b.global.vkImageView(),
+			update.imageSampler({{{}, lightTex_.vkImageView(),
 				vk::ImageLayout::general}});
+			++i;
 		}
 	}
 
@@ -529,7 +523,7 @@ public:
 				comp_.pipe);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 				comp_.pipeLayout, 0, {comp_.ds}, {});
-			vk::cmdDispatch(cb, 32, 32, 1);
+			vk::cmdDispatch(cb, 128, 128, 1);
 		}
 	}
 
@@ -570,7 +564,23 @@ public:
 			return false;
 		}
 
-		if(ev.keycode == ny::Keycode::r) {
+		if(ev.keycode == ny::Keycode::k0) {
+			renderMode_ = 0;
+			rerecord();
+			return true;
+		} else if(ev.keycode == ny::Keycode::k1) {
+			renderMode_ = 1;
+			rerecord();
+			return true;
+		} else if(ev.keycode == ny::Keycode::k2) {
+			renderMode_ = 2;
+			rerecord();
+			return true;
+		} else if(ev.keycode == ny::Keycode::k3) {
+			renderMode_ = 3;
+			rerecord();
+			return true;
+		} else if(ev.keycode == ny::Keycode::r) {
 			renderMode_ = (renderMode_ + 1) % 4;
 			rerecord();
 			return true;
@@ -675,6 +685,8 @@ private:
 	vpp::SubBuffer ubo_;
 	vpp::SubBuffer boxesBuf_;
 
+	vpp::ViewableImage lightTex_; // glboal light effects; atlas
+
 	// raster
 	vpp::Pipeline rasterPipe_;
 	vpp::PipelineLayout rasterPipeLayout_;
@@ -721,7 +733,8 @@ private:
 	float time_ {};
 	std::uint32_t showLightTex_ {0};
 
-	int renderMode_ {0};
+	int renderMode_ {3};
+	nytl::Vec2ui atlasSize_;
 };
 
 int main(int argc, const char** argv) {

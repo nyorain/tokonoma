@@ -16,9 +16,6 @@ struct RenderBox {
 	// data for rasterized rendering
 	vpp::SubBuffer rasterdata; // raster: inv transform, normal transform, color
 	vpp::TrDs ds;
-
-	// TODO
-	vpp::ViewableImage global; // ray traced global lightning stuff; cubemap
 };
 
 // TODO: concentrated on boxes for now
