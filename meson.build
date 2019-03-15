@@ -8,6 +8,13 @@ project('stage', ['cpp', 'c'],
   		'warning_level=3',
   		'werror=true'])
 
+# options
+profiling = get_option('profiling')
+if profiling
+  add_global_arguments('-pg', language: 'cpp')
+endif
+
+# warnings
 warnings = [
 	'-Wall',
 	'-Wextra',

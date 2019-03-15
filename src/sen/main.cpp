@@ -4,6 +4,9 @@
 #include <stage/window.hpp>
 #include <stage/transform.hpp>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stage/stb_image_write.h>
+
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/pipeline.hpp>
@@ -146,6 +149,7 @@ public:
 			dev, vk::Extent3D {width, height, 1u}).value();
 		imgi.img.flags = vk::ImageCreateBits::mutableFormat;
 		imgi.img.usage = vk::ImageUsageBits::transferDst |
+			vk::ImageUsageBits::transferSrc |
 			vk::ImageUsageBits::storage |
 			vk::ImageUsageBits::sampled;
 
@@ -615,6 +619,9 @@ public:
 				showLightTex_ = (showLightTex_ + 1) % 3;
 			}
 			return true;
+		} else if(ev.keycode == ny::Keycode::i) {
+			// save image
+			saveImage_ = true;
 		}
 
 		return false;
@@ -716,6 +723,22 @@ public:
 			auto nm = nytl::Mat4f(transpose(inverse(b.box.inv)));
 			doi::write(span, nm);
 		}
+
+		// save texture
+		if(saveImage_) {
+			auto work = vpp::retrieveStaging(lightTex_.image(),
+				vk::Format::r32Uint, vk::ImageLayout::general,
+				{atlasSize_.x, atlasSize_.y, 1},
+				{vk::ImageAspectBits::color, 0, 0});
+			auto d = work.data();
+			std::vector<std::byte> buf(d.size());
+			std::memcpy(buf.data(), work.data().data(), buf.size());
+
+			auto name = "lightTex.bmp";
+			stbi_write_png(name, atlasSize_.x, atlasSize_.y, 4,
+				buf.data(), atlasSize_.x * 4);
+			saveImage_ = false;
+		}
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -787,6 +810,7 @@ private:
 
 	int renderMode_ {3};
 	nytl::Vec2ui atlasSize_;
+	bool saveImage_ {false};
 };
 
 int main(int argc, const char** argv) {

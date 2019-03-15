@@ -215,7 +215,7 @@ vec3 trace(Ray ray) {
 		// vec4 light = unpackUnorm4x8(imageLoad(lightTex, iuv).r);
 		vec4 light = unpackUnorm4x8(imageAtomicCompSwap(lightTex, iuv, 0, 0));
 		// float fac = 0.05;
-		float fac = (0.2 / maxBounces) * (maxBounces - b - 1); // more bounces -> more weight
+		float fac = (0.06 / maxBounces) * (maxBounces - b - 1); // more bounces -> more weight
 
 		if(id == 6 && b == 0) { // reflective
 			fac = 1.0;
