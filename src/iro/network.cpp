@@ -44,7 +44,9 @@ Socket::Socket() {
 	broadcast_->set_option(asio::socket_base::broadcast(true));
 	broadcast_->bind(bep);
 
-	// TODO: bad solution
+	// TODO: bad solution: may not work in all cases (even only local)
+	// we could instead somehow get our own ip (to filter out)
+	// from the broadcast we send
 	udp::resolver resolver(ioService_);
 	udp::resolver::query query(udp::v4(), asio::ip::host_name(), "");
 	udp::resolver::iterator iter = resolver.resolve(query);
@@ -77,6 +79,9 @@ Socket::Socket() {
 	dlg_info("sent broadcast");
 
 	// wait
+	// TODO: when our broadcast packet is lost, we will get stuck waiting.
+	// send out new broadcasts occasionally (like every 5 seconds)
+	// probably possible with an asio timer
 	std::uint32_t state = 0;
 
 	udp::endpoint recvep1;
@@ -106,6 +111,10 @@ Socket::Socket() {
 	// Not sure really why this is needed though to make socket().available()
 	// work...
 	socket().non_blocking(true);
+
+	recvd_.resize(delay + 1);
+	ownPending_.resize(delay + 1);
+	write(sending_, std::uint32_t(0)); // add dummy for next step
 }
 
 void Socket::recvSocket(udp::endpoint& ep, std::uint32_t& num, unsigned& state) {
@@ -167,36 +176,57 @@ void Socket::recvBroadcast(udp::endpoint& ep, std::uint32_t& num, unsigned& stat
 	}
 }
 
-void Socket::update(MsgHandler handler) {
+bool Socket::update(MsgHandler handler) {
 	std::error_code ec {};
 	auto a = socket().available(ec);
-	if(a == 0) {
+	if(ec) {
+		dlg_warn("{}", ec.message());
+	}
+
+	while(a > 0) {
+		std::vector<std::byte> buf(a);
+		socket().receive(asio::buffer(buf.data(), buf.size()));
+		recvd_[recv_ % delay] = {buf}; // (recv_ + delay) % delay
+		++recv_;
+		dlg_assert(recv_ < step_ + delay);
+		// dlg_trace("received {} bytes", buf.size());
+
+		a = socket().available(ec);
 		if(ec) {
 			dlg_warn("{}", ec.message());
 		}
-		return;
 	}
 
-	std::vector<std::byte> buf(a);
-	socket().receive(asio::buffer(buf.data(), buf.size()));
-	auto recv = RecvBuf(buf);
-	while(!recv.empty()) {
-		handler(recv);
+	// next step?
+	if(step_ >= recv_ + delay) {
+		dlg_info("no update: {} vs {}", step_, recv_);
+		return false;
 	}
-}
 
-void Socket::nextStep() {
+	// send pending
 	auto& d = sending_.data;
-	if(d.empty()) {
-		return;
+	// dlg_trace("sending {} bytes", d.size());
+	socket().send(asio::buffer(d.data(), d.size()));
+	ownPending_[step_ % delay] = std::move(sending_); // (step_ + delay) % delay
+	write(sending_, std::uint32_t(0)); // add dummy for next step
+	++step_;
+
+	// process
+	auto recv = RecvBuf(recvd_[step_ % delay].data);
+	if(!recv.empty()) { // only at the beginning. assert that?
+		doi::read<std::uint32_t>(recv); // skip dummy
+		while(!recv.empty()) {
+			handler(recv);
+		}
 	}
 
-	socket().send(asio::buffer(d.data(), d.size()));
-	sending_.data.clear();
-	++step_;
-}
+	auto own = RecvBuf(ownPending_[step_ % delay].data);
+	if(!own.empty()) { // only at the beginning. assert that?
+		doi::read<std::uint32_t>(own); // skip dummy
+		while(!own.empty()) {
+			handler(own);
+		}
+	}
 
-bool Socket::nextStepAllowed() {
-	// TODO
 	return true;
 }

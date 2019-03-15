@@ -248,58 +248,35 @@ public:
 			dev.queueSubmitter().queue().family(),
 			vk::CommandPoolCreateBits::resetCommandBuffer);
 
-		/*
-		auto texDsBindings = {
-			vpp::descriptorBinding(
-				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1,
-				&sampler_.vkHandle()),
-		};
+		// own compute cb
+		computeSemaphore_ = {dev};
+		auto qfamily = dev.queueSubmitter().queue().family();
+		compCb_ = dev.commandAllocator().get(qfamily);
+		vk::beginCommandBuffer(compCb_, {});
+		vk::cmdBindDescriptorSets(compCb_, vk::PipelineBindPoint::compute,
+			compPipeLayout_, 0, {compDs_}, {});
+		vk::cmdBindPipeline(compCb_, vk::PipelineBindPoint::compute, compPipe_);
+		vk::cmdDispatch(compCb_, fieldCount_, 1, 1);
 
-		texDsLayout_ = {dev, texDsBindings};
-		texPipeLayout_ = {dev, {gfxDsLayout_, texDsLayout_}, {}};
+		vk::BufferMemoryBarrier barrier;
+		barrier.buffer = storageNew_.buffer();
+		barrier.srcAccessMask = vk::AccessBits::shaderWrite;
+		barrier.dstAccessMask = vk::AccessBits::transferRead;
+		barrier.offset = 0;
+		barrier.size = storageNew_.size();
+		vk::cmdPipelineBarrier(compCb_,
+			vk::PipelineStageBits::computeShader,
+			vk::PipelineStageBits::transfer,
+			{}, {}, {barrier}, {});
 
-		vpp::ShaderModule simpleVert(dev, iro_building_vert_data);
-		vpp::ShaderModule textureFrag(dev, iro_texture_frag_data);
-		vpp::GraphicsPipelineInfo texPipeInfo(renderer().renderPass(),
-			texPipeLayout_, {{
-				{simpleVert, vk::ShaderStageBits::vertex},
-				{textureFrag, vk::ShaderStageBits::fragment}
-			}}, 0, renderer().samples());
+		vk::BufferCopy region;
+		region.srcOffset = storageNew_.offset();
+		region.dstOffset = storageOld_.offset();
+		region.size = storageOld_.size();
+		vk::cmdCopyBuffer(compCb_, storageNew_.buffer(), storageOld_.buffer(),
+			{region});
 
-		vk::VertexInputAttributeDescription attribs[1];
-		attribs[0].format = vk::Format::r32g32Sfloat;
-
-		texPipeInfo.vertex.vertexAttributeDescriptionCount = 1;
-		texPipeInfo.vertex.pVertexAttributeDescriptions = attribs;
-
-		vk::VertexInputBindingDescription binding;
-		binding.inputRate = vk::VertexInputRate::instance;
-		binding.stride = sizeof(float) * 2;
-
-		texPipeInfo.vertex.vertexBindingDescriptionCount = 1;
-		texPipeInfo.vertex.pVertexBindingDescriptions = &binding;
-		texPipeInfo.assembly.topology = vk::PrimitiveTopology::triangleFan;
-
-		vk::Pipeline vkpipe;
-		vk::createGraphicsPipelines(dev, {}, 1, texPipeInfo.info(), nullptr,
-			vkpipe);
-		texPipe_ = {dev, vkpipe};
-
-		// ds
-		texDs_ = {dev.descriptorAllocator(), texDsLayout_};
-		vpp::DescriptorSetUpdate texdsupdate(texDs_);
-		texdsupdate.imageSampler({{{}, textures_.resource.vkImageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-
-		// buffer
-		// we start with enough space for 32 fields, might get resized
-		// TODO: make device local?
-		texBuf_ = {dev.bufferAllocator(),
-			sizeof(vk::DrawIndirectCommand) + sizeof(float) * 2 * 32,
-			vk::BufferUsageBits::vertexBuffer,
-			0, dev.hostMemoryTypes()};
-		*/
+		vk::endCommandBuffer(compCb_);
 
 		return true;
 	}
@@ -383,13 +360,62 @@ public:
 		// 	texBuf_.offset(), 1, 0);
 	}
 
+	// void beforeRender(vk::CommandBuffer cb) override {
+	// 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+	// 		compPipeLayout_, 0, {compDs_}, {});
+	// 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, compPipe_);
+	// 	vk::cmdDispatch(cb, fieldCount_, 1, 1);
+	// }
+
 	void update(double delta) override {
 		App::update(delta);
 		App::redraw();
 
+		// TODO: nesting could lead to problems
 		// network
-		socket_.update([&](auto& recv){ this->handleMsg(recv); }); // recv
-		socket_.nextStep(); // send
+		if(socket_.update([&](auto& recv){ this->handleMsg(recv); })) {
+			// write upload cb
+			auto uploaded = false;
+			if(!uploadRegions_.empty()) {
+				stageView_.flush();
+
+				vk::beginCommandBuffer(uploadCb_, {});
+				vk::cmdCopyBuffer(uploadCb_, stage_.buffer(), storageOld_.buffer(),
+					{uploadRegions_});
+				vk::endCommandBuffer(uploadCb_);
+
+				vk::SubmitInfo si {};
+				si.commandBufferCount = 1u;
+				si.pCommandBuffers = &uploadCb_.vkHandle();
+				si.signalSemaphoreCount = 1u;
+				si.pSignalSemaphores = &uploadSemaphore_.vkHandle();
+				vulkanDevice().queueSubmitter().add(si);
+				// App::addSemaphore(uploadSemaphore_, vk::PipelineStageBits::computeShader);
+
+				uploadRegions_.clear();
+				uploadPtr_ = stageView_.ptr();
+				uploaded = true;
+			}
+
+			// TODO: sync with render via semaphore!
+			auto& dev = vulkanDevice();
+			vk::SubmitInfo info;
+			info.commandBufferCount = 1u;
+			info.pCommandBuffers = &compCb_.vkHandle();
+			info.signalSemaphoreCount = 1;
+			info.pSignalSemaphores = &computeSemaphore_.vkHandle();
+			App::addSemaphore(computeSemaphore_, vk::PipelineStageBits::allGraphics);
+
+			if(uploaded) {
+				info.waitSemaphoreCount = 1;
+				info.pWaitSemaphores = &uploadSemaphore_.vkHandle();
+				static const auto stage =
+					vk::PipelineStageFlags(vk::PipelineStageBits::computeShader);
+				info.pWaitDstStageMask = &stage;
+			}
+
+			dev.queueSubmitter().add(info);
+		}
 	}
 
 	void handleMsg(RecvBuf& buf) {
@@ -440,22 +466,15 @@ public:
 		uploadRegions_.push_back(copy);
 	}
 
-	void beforeRender(vk::CommandBuffer cb) override {
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
-			compPipeLayout_, 0, {compDs_}, {});
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, compPipe_);
-		vk::cmdDispatch(cb, fieldCount_, 1, 1);
-	}
-
-	void afterRender(vk::CommandBuffer cb) override {
-		// TODO: synchronization
-		vk::BufferCopy region;
-		region.srcOffset = storageNew_.offset();
-		region.dstOffset = storageOld_.offset();
-		region.size = storageOld_.size();
-		vk::cmdCopyBuffer(cb, storageNew_.buffer(), storageOld_.buffer(),
-			{region});
-	}
+	// void afterRender(vk::CommandBuffer cb) override {
+	// 	// TODO: synchronization
+	// 	vk::BufferCopy region;
+	// 	region.srcOffset = storageNew_.offset();
+	// 	region.dstOffset = storageOld_.offset();
+	// 	region.size = storageOld_.size();
+	// 	vk::cmdCopyBuffer(cb, storageNew_.buffer(), storageOld_.buffer(),
+	// 		{region});
+	// }
 
 	void updateDevice() override {
 		if(updateTransform_) {
@@ -481,26 +500,6 @@ public:
 			cmd.instanceCount = 1u;
 			cmd.vertexCount = 8u;
 			doi::write(span, cmd);
-		}
-
-		if(!uploadRegions_.empty()) {
-			stageView_.flush();
-
-			vk::beginCommandBuffer(uploadCb_, {});
-			vk::cmdCopyBuffer(uploadCb_, stage_.buffer(), storageOld_.buffer(),
-				{uploadRegions_});
-			vk::endCommandBuffer(uploadCb_);
-
-			vk::SubmitInfo si {};
-			si.commandBufferCount = 1u;
-			si.pCommandBuffers = &uploadCb_.vkHandle();
-			si.signalSemaphoreCount = 1u;
-			si.pSignalSemaphores = &uploadSemaphore_.vkHandle();
-			vulkanDevice().queueSubmitter().add(si);
-			App::addSemaphore(uploadSemaphore_, vk::PipelineStageBits::computeShader);
-
-			uploadRegions_.clear();
-			uploadPtr_ = stageView_.ptr();
 		}
 
 		// sync players
@@ -616,7 +615,7 @@ public:
 			}
 
 			if(type) {
-				setBuilding(selected_, *type);
+				// setBuilding(selected_, *type);
 
 				auto& buf = socket_.add();
 				write(buf, MessageType::build);
@@ -625,7 +624,7 @@ public:
 			}
 
 			if(vel) {
-				setVelocity(selected_, *vel);
+				// setVelocity(selected_, *vel);
 
 				auto& buf = socket_.add();
 				write(buf, MessageType::velocity);
@@ -748,6 +747,7 @@ protected:
 	vpp::PipelineLayout compPipeLayout_;
 	vpp::Pipeline compPipe_;
 	vpp::TrDs compDs_;
+	vpp::CommandBuffer compCb_;
 
 	vpp::PipelineLayout linePipeLayout_;
 	vpp::Pipeline linePipe_;
@@ -758,6 +758,7 @@ protected:
 	std::vector<vk::BufferCopy> uploadRegions_;
 	vpp::CommandBuffer uploadCb_;
 	vpp::Semaphore uploadSemaphore_;
+	vpp::Semaphore computeSemaphore_;
 
 	std::vector<Field> fields_; // not synced to gpu
 
