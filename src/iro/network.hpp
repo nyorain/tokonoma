@@ -40,17 +40,14 @@ public:
 public:
 	Socket();
 
-	void update(MsgHandler handler);
+	// sends pending messages and calls the message handler with the
+	// messages to be processed. Returns whether allowed to make
+	// the next step.
+	bool update(MsgHandler handler);
 
 	// write new messages into that buffer
 	// until next nextStep call
 	SendBuf& add() { return sending_; }
-
-	// sends pending messages
-	void nextStep();
-
-	// whether next step is allowed
-	bool nextStepAllowed();
 
 	udp::socket& socket() { return *socket_; }
 
@@ -59,15 +56,17 @@ private:
 	void recvSocket(udp::endpoint& ep, std::uint32_t& num, unsigned& state);
 
 private:
-	std::uint64_t step_ {1};
+	std::uint64_t step_ {0};
 	std::uint64_t recv_ {0}; // last received
-	std::uint64_t ack_ {0}; // last of our messages acked by other side
+	// std::uint64_t ack_ {0}; // last of our messages acked by other side
 
 	asio::io_service ioService_;
 	std::optional<udp::socket> socket_;
 	std::optional<udp::socket> broadcast_;
 
-	std::vector<SendBuf> pending_; // must be processed
+	std::vector<SendBuf> recvd_; // must be processed
+	std::vector<SendBuf> ownPending_; // must be processed
+
 	// std::vector<SendBuf> messages_; // old, for resending
 	SendBuf sending_; // to be sent
 };
