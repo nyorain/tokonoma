@@ -112,9 +112,9 @@ Socket::Socket() {
 	// work...
 	socket().non_blocking(true);
 
-	recvd_.resize(delay + 1);
-	ownPending_.resize(delay + 1);
-	write(sending_, std::uint32_t(0)); // add dummy for next step
+	recvd_.resize(2 * delay);
+	ownPending_.resize(2 * delay);
+	write(sending_, step_); // add dummy for next step
 }
 
 void Socket::recvSocket(udp::endpoint& ep, std::uint32_t& num, unsigned& state) {
@@ -186,10 +186,16 @@ bool Socket::update(MsgHandler handler) {
 	while(a > 0) {
 		std::vector<std::byte> buf(a);
 		socket().receive(asio::buffer(buf.data(), buf.size()));
-		recvd_[recv_ % delay] = {buf}; // (recv_ + delay) % delay
 		++recv_;
+
+		auto r = RecvBuf(buf);
+		dlg_assert(doi::read<std::uint64_t>(r) == recv_);
+
+		recvd_[(recv_ + delay) % (2 * delay)] = {std::move(buf)};
+
+		// otherwise the other side has made a step they didn't
+		// even have our input for?! critical protocol error
 		dlg_assert(recv_ < step_ + delay);
-		// dlg_trace("received {} bytes", buf.size());
 
 		a = socket().available(ec);
 		if(ec) {
@@ -207,22 +213,24 @@ bool Socket::update(MsgHandler handler) {
 	auto& d = sending_.data;
 	// dlg_trace("sending {} bytes", d.size());
 	socket().send(asio::buffer(d.data(), d.size()));
-	ownPending_[step_ % delay] = std::move(sending_); // (step_ + delay) % delay
-	write(sending_, std::uint32_t(0)); // add dummy for next step
+	ownPending_[(step_ + delay) % (2 * delay)] = std::move(sending_);
 	++step_;
+	write(sending_, step_);
 
 	// process
-	auto recv = RecvBuf(recvd_[step_ % delay].data);
+	auto recv = RecvBuf(recvd_[step_ % (2 * delay)].data);
 	if(!recv.empty()) { // only at the beginning. assert that?
-		doi::read<std::uint32_t>(recv); // skip dummy
+		auto i = doi::read<std::uint64_t>(recv);
+		dlg_assertm(i + delay == step_, "{} {}", i, step_);
 		while(!recv.empty()) {
 			handler(recv);
 		}
 	}
 
-	auto own = RecvBuf(ownPending_[step_ % delay].data);
+	auto own = RecvBuf(ownPending_[step_ % (2 * delay)].data);
 	if(!own.empty()) { // only at the beginning. assert that?
-		doi::read<std::uint32_t>(own); // skip dummy
+		auto i = doi::read<std::uint64_t>(own);
+		dlg_assertm(i + delay == step_, "{} {}", i, step_);
 		while(!own.empty()) {
 			handler(own);
 		}
