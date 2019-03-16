@@ -10,7 +10,8 @@ namespace doi {
 
 /// Throws std::runtime_error if componentType is not a valid gltf component type
 /// Does not check for bounds of address
-double read(const tinygltf::Buffer& buf, unsigned address, unsigned componentType) {
+inline double read(const tinygltf::Buffer& buf, unsigned address,
+		unsigned componentType) {
 	double v;
 	auto t = componentType;
 	if(t == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {

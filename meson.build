@@ -69,6 +69,7 @@ subdir('src/fun')
 subdir('src/sentient')
 subdir('src/sss')
 subdir('src/iro')
+subdir('src/ddd')
 
 # inline (for small projects)
 executable('pendulum',
@@ -129,14 +130,6 @@ executable('sen', [
 		sen_shaders,
 		common_shaders,
 	], dependencies: stage_dep)
-
-executable('ddd', [
-		'src/ddd/main.cpp',
-		ddd_shaders,
-	], dependencies: [
-		stage_dep,
-		gltf_dep,
-	])
 
 # executable('pg',
 # 	'src/playground/main2.cpp',

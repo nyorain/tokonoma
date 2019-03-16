@@ -155,13 +155,12 @@ float intersect(Ray r, Box b, out vec3 normal, out vec3 bpos) {
 	}
 
 	bpos = o + tn * dir;
-	// normal = vec3(trunc(bpos.x + 0.001), trunc(bpos.y + 0.001), trunc(bpos.z + 0.001));
-	normal = trunc(bpos * 1.001);
+	normal = trunc(bpos * 1.0001);
 
 	// TODO: doesn't work that well with many transform matrices...
-	// fix that
+	// Might be more accurate than trunc version? But should probably
+	// use bpos instead of tn?!
     // normal = -sign(r.dir) * step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
 	normal = normalize(multDir(transpose(b.transform), normal));
-
 	return tn;
 }

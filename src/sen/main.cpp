@@ -3,6 +3,7 @@
 #include <stage/bits.hpp>
 #include <stage/window.hpp>
 #include <stage/transform.hpp>
+#include <stage/camera.hpp>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stage/stb_image_write.h>
@@ -245,11 +246,7 @@ public:
 		auto map = boxesBuf_.memoryMap();
 		auto span = map.span();
 		for(auto& b : boxes_) {
-			doi::write(span, b.box.transform);
-
-			// TODO: don't we already have the inverse onf the gpu?
-			// shouldn't it be enough to transpose? test!
-			// doi::write(span, nytl::Mat4f(transpose(inverse(b.box.inv))));
+			doi::write(span, b.box.inv);
 			doi::write(span, b.color);
 
 			auto off = span.begin() - map.span().begin();
@@ -412,6 +409,7 @@ public:
 
 		// ubo
 		auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
+			+ 2 * sizeof(nytl::Vec2f) // face & atlas size in pixels
 			+ sizeof(nytl::Vec3f) // viewPos
 			+ sizeof(float); // show light tex
 		rasterSceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
@@ -426,11 +424,7 @@ public:
 
 		// boxes
 		auto bufSize = 2 * sizeof(nytl::Mat4f) + sizeof(nytl::Vec4f)
-			+ sizeof(nytl::Vec2f) + sizeof(std::uint32_t);
-		// TODO: doesn't have to be in every ubo...
-		auto faceSize = nytl::Vec2f {
-			float(faceWidth) / atlasSize_.x,
-			float(faceHeight) / atlasSize_.y};
+			+ sizeof(std::uint32_t);
 		auto i = 0u;
 		for(auto& b: boxes_) {
 			b.rasterdata = {dev.bufferAllocator(), bufSize,
@@ -438,11 +432,10 @@ public:
 			{
 				auto map = b.rasterdata.memoryMap();
 				auto span = map.span();
-				doi::write(span, b.box.inv);
-				auto nm = nytl::Mat4f(transpose(inverse(b.box.inv)));
+				doi::write(span, b.box.transform);
+				auto nm = nytl::Mat4f(transpose(b.box.inv));
 				doi::write(span, nm);
 				doi::write(span, b.color);
-				doi::write(span, faceSize);
 				doi::write(span, i);
 			}
 
@@ -517,16 +510,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			using nytl::constants::pi;
-			yaw_ += 0.005 * ev.delta.x;
-			pitch_ += 0.005 * ev.delta.y;
-			pitch_ = std::clamp<float>(pitch_, -pi / 2 + 0.1, pi / 2 - 0.1);
-
-			camera_.dir.x = std::sin(yaw_) * std::cos(pitch_);
-			camera_.dir.y = -std::sin(pitch_);
-			camera_.dir.z = -std::cos(yaw_) * std::cos(pitch_);
-			nytl::normalize(camera_.dir);
-			camera_.update = true;
+			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 		}
 	}
 
@@ -545,7 +529,6 @@ public:
 
 	void beforeRender(vk::CommandBuffer cb) override {
 		if(renderMode_ == 3) {
-			dlg_info("recording dispatch");
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
 				comp_.pipe);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
@@ -674,10 +657,11 @@ public:
 		doi::write(rspan, 0.f); // padding
 		doi::write(rspan, camera_.dir);
 		doi::write(rspan, 0.f); // padding
-		doi::write(rspan, fov_);
-		doi::write(rspan, aspect_);
+		doi::write(rspan, camera_.perspective.fov);
+		doi::write(rspan, camera_.perspective.aspect);
 		doi::write(rspan, float(window().size().x));
 		doi::write(rspan, float(window().size().y));
+		doi::write(rspan, nytl::Vec2f{faceWidth, faceHeight});
 		doi::write(rspan, float(time_));
 
 		// update scene ubo
@@ -688,39 +672,31 @@ public:
 			{
 				auto map = rasterSceneUbo_.memoryMap();
 				auto span = map.span();
-
-				auto mat = doi::perspective3RH<float>(fov_, aspect_, near_, far_);
-				nytl::Vec3f up {0.f, 1.f, 0.f};
-				mat = mat * doi::lookAtRH(camera_.pos,
-					camera_.pos + camera_.dir, up);
-				doi::write(span, mat);
+				doi::write(span, matrix(camera_));
 				doi::write(span, camera_.pos);
 				doi::write(span, showLightTex_);
+				doi::write(span, nytl::Vec2f{faceWidth, faceHeight});
+				doi::write(span, nytl::Vec2f(atlasSize_));
 			}
 		}
 
 		// update rotating box
-		// TODO; allow more comfortable box creation from inv transform matrix
-		// inv is btw named unintuitively, should be reversed
 		auto& b = boxes_[0];
 		float a = 0.5 * time_;
 		auto rot = nytl::Mat3f(doi::rotateMat(nytl::Vec3f{0.f, 1.f, 0.f}, a));
-		b.box = {{-2.f, -3.f, 0.f},
-			nytl::col(rot, 0),
-			nytl::col(rot, 1),
-			nytl::col(rot, 2)};
+		b.box = {{-2.f, -3.f, 0.f}, rot};
 
 		{
 			auto map = boxesBuf_.memoryMap();
 			auto span = map.span();
-			doi::write(span, b.box.transform);
+			doi::write(span, b.box.inv);
 		}
 
 		{
 			auto map = b.rasterdata.memoryMap();
 			auto span = map.span();
-			doi::write(span, b.box.inv);
-			auto nm = nytl::Mat4f(transpose(inverse(b.box.inv)));
+			doi::write(span, b.box.transform);
+			auto nm = nytl::Mat4f(transpose(b.box.inv));
 			doi::write(span, nm);
 		}
 
@@ -743,7 +719,7 @@ public:
 
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
-		aspect_ = float(ev.size.x) / ev.size.y;
+		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 		camera_.update = true;
 	}
 
@@ -789,22 +765,10 @@ private:
 		vpp::TrDs ds;
 	} pt_;
 
-	struct {
-		nytl::Vec3f pos {0.f, 0.f, 0.f};
-		nytl::Vec3f dir {0.f, 0.f, -1.f};
-		nytl::Mat4f transform;
-		bool update {true};
-	} camera_;
-
 	std::vector<RenderBox> boxes_;
 
+	doi::Camera camera_;
 	bool rotateView_ {};
-	float fov_ {nytl::constants::pi * 0.4};
-	float aspect_ {1.f};
-	float near_ {0.1f};
-	float far_ {100.f};
-	float pitch_ {};
-	float yaw_ {};
 	float time_ {};
 	std::uint32_t showLightTex_ {0};
 

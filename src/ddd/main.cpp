@@ -1,3 +1,7 @@
+#include "skybox.hpp"
+#include "mesh.hpp"
+
+#include <stage/camera.hpp>
 #include <stage/app.hpp>
 #include <stage/render.hpp>
 #include <stage/window.hpp>
@@ -28,242 +32,9 @@
 #include <shaders/model.vert.h>
 #include <shaders/model.frag.h>
 #include <shaders/shadowmap.vert.h>
-#include <shaders/skybox.vert.h>
-#include <shaders/skybox.frag.h>
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wcast-align"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-#pragma GCC diagnostic pop
-
-// TODO: clean this mess up
-// - seperate skybox file
-// - seperate mesh file (make it a class)
-// - seperate light file (make it a class, implement shadow there as well)
-// - seperate camera file (make it a class)
-// - don't create a pipeline for every object but instead e.g. have
-//   a static method that initializes the pipeline
-
-class Skybox {
-public:
-	void init(vpp::Device& dev, vk::RenderPass rp,
-		vk::SampleCountBits samples);
-	void updateDevice(const nytl::Mat4f& viewProj);
-	void render(vk::CommandBuffer cb);
-
-protected:
-	vpp::Device* dev_;
-	vpp::ViewableImage cubemap_;
-	vpp::Sampler sampler_;
-	vpp::SubBuffer indices_;
-	vpp::SubBuffer ubo_;
-
-	vpp::TrDsLayout dsLayout_;
-	vpp::TrDs ds_;
-	vpp::PipelineLayout pipeLayout_;
-	vpp::Pipeline pipe_;
-};
-
-// TODO: allow loading panorama data
-// https://stackoverflow.com/questions/29678510/convert-21-equirectangular-panorama-to-cube-map
-// load cubemap
-
-// XXX: the way vulkan handles cubemap samplers and image coorindates,
-// top and bottom usually have to be rotated 180 degrees (or at least
-// from the skybox set i tested with, see /assets/skyboxset1, those
-// were rotated manually to fit)
-void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
-		vk::SampleCountBits samples) {
-	// ds layout
-	auto bindings = {
-		vpp::descriptorBinding(
-			vk::DescriptorType::uniformBuffer,
-			vk::ShaderStageBits::vertex),
-		vpp::descriptorBinding(
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment),
-	};
-
-	dsLayout_ = {dev, bindings};
-	pipeLayout_ = {dev, {dsLayout_}, {}};
-
-	vpp::ShaderModule vertShader(dev, skybox_vert_data);
-	vpp::ShaderModule fragShader(dev, skybox_frag_data);
-	vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{
-		{vertShader, vk::ShaderStageBits::vertex},
-		{fragShader, vk::ShaderStageBits::fragment},
-	}}, 0, samples};
-
-	// depth test disabled by default
-	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
-	// gpi.rasterization.cullMode = vk::CullModeBits::back;
-	// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
-
-	vk::Pipeline vkpipe;
-	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), NULL, vkpipe);
-	pipe_ = {dev, vkpipe};
-
-	// indices
-	indices_ = {dev.bufferAllocator(), 36u * sizeof(std::uint16_t),
-		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-		0, dev.deviceMemoryTypes()};
-	std::array<std::uint16_t, 36> indices = {
-		0, 1, 2,  2, 1, 3, // front
-		1, 5, 3,  3, 5, 7, // right
-		2, 3, 6,  6, 3, 7, // top
-		4, 0, 6,  6, 0, 2, // left
-		4, 5, 0,  0, 5, 1, // bottom
-		5, 4, 7,  7, 4, 6, // back
-	};
-	vpp::writeStaging430(indices_, vpp::raw(*indices.data(), 36u));
-
-	auto base = std::string("../assets/skyboxset1/SunSet/SunSet");
-	// https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
-	const char* names[] = {
-		"Right",
-		"Left",
-		"Up",
-		"Down",
-		"Back",
-		"Front",
-	};
-	auto suffix = "2048.png";
-
-	auto width = 0u;
-	auto height = 0u;
-
-	std::array<const std::byte*, 6> faceData {};
-
-	for(auto i = 0u; i < 6u; ++i) {
-		auto filename = base + names[i] + suffix;
-		int iwidth, iheight, channels;
-		unsigned char* data = stbi_load(filename.c_str(), &iwidth, &iheight,
-			&channels, 4);
-		if(!data) {
-			dlg_warn("Failed to open texture file {}", filename);
-
-			std::string err = "Could not load image from ";
-			err += filename;
-			err += ": ";
-			err += stbi_failure_reason();
-			throw std::runtime_error(err);
-		}
-
-		dlg_assert(iwidth > 0 && iheight > 0);
-		if(width == 0 || height == 0) {
-			width = iwidth;
-			height = iheight;
-			dlg_info("skybox: {} {}", width, height);
-		} else {
-			dlg_assert(int(width) == iwidth);
-			dlg_assert(int(height) == iheight);
-		}
-
-		faceData[i] = reinterpret_cast<const std::byte*>(data);
-		dlg_info("{}: {} ({})", i, (int*) faceData[i], (int) faceData[i][0]);
-	}
-
-	// free data
-	nytl::ScopeGuard guard([&]{
-		for(auto i = 0u; i < 6u; ++i) {
-			std::free(const_cast<std::byte*>(faceData[i]));
-		}
-	});
-
-	auto imgi = vpp::ViewableImageCreateInfo::color(
-		dev, vk::Extent3D {width, height, 1u}).value();
-	imgi.img.arrayLayers = 6u;
-	imgi.img.flags = vk::ImageCreateBits::cubeCompatible;
-	imgi.view.viewType = vk::ImageViewType::cube;
-	imgi.view.subresourceRange.layerCount = 6u;
-	cubemap_ = {dev, imgi};
-
-	// buffer
-	// XXX: this might get large
-	auto totalSize = 6u * width * height * 4u;
-	auto stage = vpp::SubBuffer(dev.bufferAllocator(), totalSize,
-		vk::BufferUsageBits::transferSrc, 0u, dev.hostMemoryTypes());
-
-	auto map = stage.memoryMap();
-	auto span = map.span();
-	auto offset = stage.offset();
-	std::array<vk::BufferImageCopy, 6u> copies {};
-	for(auto i = 0u; i < 6u; ++i) {
-		copies[i] = {};
-		copies[i].bufferOffset = offset;
-		copies[i].imageExtent = {width, height, 1u};
-		copies[i].imageOffset = {};
-		copies[i].imageSubresource.aspectMask = vk::ImageAspectBits::color;
-		copies[i].imageSubresource.baseArrayLayer = i;
-		copies[i].imageSubresource.layerCount = 1u;
-		copies[i].imageSubresource.mipLevel = 0u;
-		offset += width * height * 4u;
-		doi::write(span, faceData[i], width * height * 4u);
-	}
-
-	map = {};
-
-	auto& qs = dev.queueSubmitter();
-	auto cb = dev.commandAllocator().get(qs.queue().family());
-	vk::beginCommandBuffer(cb, {});
-	vpp::changeLayout(cb, cubemap_.image(), vk::ImageLayout::undefined,
-		vk::PipelineStageBits::topOfPipe, {}, vk::ImageLayout::transferDstOptimal,
-		vk::PipelineStageBits::transfer, vk::AccessBits::transferWrite,
-		{vk::ImageAspectBits::color, 0, 1, 0, 6u});
-	vk::cmdCopyBufferToImage(cb, stage.buffer(), cubemap_.image(),
-		vk::ImageLayout::transferDstOptimal, copies);
-	vpp::changeLayout(cb, cubemap_.image(), vk::ImageLayout::transferDstOptimal,
-		vk::PipelineStageBits::transfer, vk::AccessBits::transferWrite,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::fragmentShader,
-		vk::AccessBits::shaderRead,
-		{vk::ImageAspectBits::color, 0, 1, 0, 6u});
-	vk::endCommandBuffer(cb);
-
-	vk::SubmitInfo si {};
-	si.commandBufferCount = 1u;
-	si.pCommandBuffers = &cb.vkHandle();
-	qs.wait(qs.add(si));
-
-	// ubo
-	auto uboSize = sizeof(nytl::Mat4f);
-	ubo_ = {dev.bufferAllocator(), uboSize, vk::BufferUsageBits::uniformBuffer,
-		0u, dev.hostMemoryTypes()};
-
-	// sampler
-	vk::SamplerCreateInfo sci {};
-	sci.magFilter = vk::Filter::linear;
-	sci.minFilter = vk::Filter::linear;
-	sci.minLod = 0.0;
-	sci.maxLod = 0.25;
-	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
-	sampler_ = {dev, sci};
-
-	// ds
-	ds_ = {dev.descriptorAllocator(), dsLayout_};
-	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
-	dsu.imageSampler({{sampler_, cubemap_.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.apply();
-}
-
-void Skybox::render(vk::CommandBuffer cb) {
-	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pipeLayout_, 0, {ds_}, {});
-	vk::cmdBindIndexBuffer(cb, indices_.buffer(),
-		indices_.offset(), vk::IndexType::uint16);
-	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-	vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
-}
-
-void Skybox::updateDevice(const nytl::Mat4f& viewProj) {
-	auto map = ubo_.memoryMap();
-	auto span = map.span();
-	doi::write(span, viewProj);
-}
+// TODO:
+// - seperate light into own file/class; move shadow implementation there?
 
 // Matches glsl struct
 struct Light {
@@ -277,173 +48,6 @@ struct Light {
 	nytl::Vec3f color;
 	std::uint32_t pcf {0};
 };
-
-struct Camera {
-	bool update = true;
-	nytl::Vec3f pos {0.f, 0.f, 3.f};
-	nytl::Vec3f dir {0.f, 0.f, -1.f};
-	nytl::Vec3f up {0.f, 1.f, 0.f};
-
-	struct {
-		float fov = 0.48 * nytl::constants::pi;
-		float aspect = 1.f;
-		float near = 0.01f;
-		float far = 30.f;
-	} perspective;
-};
-
-// camera matrix that does take movement into account
-auto fixedMatrix(Camera& c) {
-	auto& p = c.perspective;
-	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
-	return mat * doi::lookAtRH({}, c.dir, c.up);
-}
-
-auto matrix(Camera& c) {
-	// auto mat = doi::ortho3Sym<float>(4.f, 4.f, 0.1f, 10.f);
-
-	auto& p = c.perspective;
-	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
-	return mat * doi::lookAtRH(c.pos, c.pos + c.dir, c.up);
-}
-
-struct Mesh {
-	static constexpr auto uboSize = 2 * sizeof(nytl::Mat4f);
-
-	struct Vertex {
-		nytl::Vec3f pos;
-		nytl::Vec3f normal;
-	};
-
-	unsigned indexCount {};
-	unsigned vertexCount {};
-	vpp::SubBuffer vertices; // indices + vertices
-	vpp::SubBuffer ubo; // different buffer since on mappable mem
-	vpp::TrDs ds;
-	nytl::Mat4f matrix = nytl::identity<4, float>();
-};
-
-std::optional<Mesh> loadMesh(const vpp::Device& dev,
-		const tinygltf::Model& model, const tinygltf::Mesh& mesh,
-		const vpp::TrDsLayout& dsLayout) {
-	auto ret = Mesh {};
-
-	if(mesh.primitives.empty()) {
-		dlg_fatal("No primitive to render");
-		return {};
-	}
-
-	auto& primitive = mesh.primitives[0];
-	auto ip = primitive.attributes.find("POSITION");
-	auto in = primitive.attributes.find("NORMAL");
-	if(ip == primitive.attributes.end() || in == primitive.attributes.end()) {
-		dlg_fatal("primitve doesn't have POSITION or NORMAL");
-		return {};
-	}
-
-	auto& pa = model.accessors[ip->second];
-	auto& na = model.accessors[in->second];
-	auto& ia = model.accessors[primitive.indices];
-
-	// compute total buffer size
-	auto size = 0u;
-	size += ia.count * sizeof(uint32_t); // indices
-	size += na.count * sizeof(nytl::Vec3f); // normals
-	size += pa.count * sizeof(nytl::Vec3f); // positions
-
-	auto devMem = dev.deviceMemoryTypes();
-	auto hostMem = dev.hostMemoryTypes();
-	auto usage = vk::BufferUsageBits::vertexBuffer |
-		vk::BufferUsageBits::indexBuffer |
-		vk::BufferUsageBits::transferDst;
-
-	dlg_assert(na.count == pa.count);
-	ret.vertices = {dev.bufferAllocator(), size, usage, 0u, devMem};
-	ret.indexCount = ia.count;
-	ret.vertexCount = na.count;
-
-	// fill it
-	{
-		auto stage = vpp::SubBuffer{dev.bufferAllocator(), size,
-			vk::BufferUsageBits::transferSrc, 0u, hostMem};
-		auto map = stage.memoryMap();
-		auto span = map.span();
-
-		// write indices
-		for(auto idx : doi::range<1, std::uint32_t>(model, ia)) {
-			doi::write(span, idx);
-		}
-
-		// write vertices and normals
-		auto pr = doi::range<3, float>(model, pa);
-		auto nr = doi::range<3, float>(model, na);
-		for(auto pit = pr.begin(), nit = nr.begin();
-				pit != pr.end() && nit != nr.end();
-				++nit, ++pit) {
-			doi::write(span, *pit);
-			doi::write(span, *nit);
-		}
-
-		// upload
-		auto& qs = dev.queueSubmitter();
-		auto cb = qs.device().commandAllocator().get(qs.queue().family());
-		vk::beginCommandBuffer(cb, {});
-		vk::BufferCopy region;
-		region.dstOffset = ret.vertices.offset();
-		region.srcOffset = stage.offset();
-		region.size = size;
-		vk::cmdCopyBuffer(cb, stage.buffer(), ret.vertices.buffer(), {region});
-		vk::endCommandBuffer(cb);
-
-		// execute
-		// TODO: could be batched with other work; we wait here
-		vk::SubmitInfo submission;
-		submission.commandBufferCount = 1;
-		submission.pCommandBuffers = &cb.vkHandle();
-		qs.wait(qs.add(submission));
-	}
-
-	// ubo
-	size = Mesh::uboSize; // ubo
-	usage = vk::BufferUsageBits::uniformBuffer;
-	ret.ubo = {dev.bufferAllocator(), size, usage, 0u, hostMem};
-
-	{
-		auto map = ret.ubo.memoryMap();
-		auto span = map.span();
-
-		// write ubo
-		doi::write(span, nytl::identity<4, float>()); // model matrix
-		doi::write(span, nytl::identity<4, float>()); // normal matrix
-	}
-
-	// descriptor
-	ret.ds = {dev.descriptorAllocator(), dsLayout};
-	auto& mubo = ret.ubo;
-	vpp::DescriptorSetUpdate odsu(ret.ds);
-	odsu.uniform({{mubo.buffer(), mubo.offset(), mubo.size()}});
-	vpp::apply({odsu});
-
-	return ret;
-}
-
-void draw(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout, const Mesh& mesh) {
-	auto iOffset = mesh.vertices.offset();
-	auto vOffset = iOffset + mesh.indexCount * sizeof(std::uint32_t);
-	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pipeLayout, 1, {mesh.ds}, {});
-	vk::cmdBindVertexBuffers(cb, 0, 1, {mesh.vertices.buffer()}, {vOffset});
-	vk::cmdBindIndexBuffer(cb, mesh.vertices.buffer(), iOffset, vk::IndexType::uint32);
-	vk::cmdDrawIndexed(cb, mesh.indexCount, 1, 0, 0, 0);
-}
-
-void updateDevice(Mesh& mesh) {
-	auto map = mesh.ubo.memoryMap();
-	auto span = map.span();
-	doi::write(span, mesh.matrix);
-	auto normalMatrix = nytl::Mat4f(transpose(inverse(mesh.matrix)));
-	doi::write(span, normalMatrix);
-}
 
 class ViewApp : public doi::App {
 public:
@@ -612,21 +216,6 @@ public:
 
 		dlg_info(">> Loading Succesful...");
 
-		// if(model.meshes.empty()) {
-		// 	dlg_fatal("No mesh to render");
-		// 	return false;
-		// }
-		//
-		// dlg_info("Found {} meshes", model.meshes.size());
-		// simple mesh loading/rendering
-		// for(auto& mesh : model.meshes) {
-		// 	auto m = loadMesh(vulkanDevice(), model, mesh, objectDsLayout_);
-		// 	if(!m) {
-		// 		return false;
-		// 	}
-		// 	meshes_.push_back(std::move(*m));
-		// }
-
 		// traverse nodes
 		dlg_info("Found {} scenes", model.scenes.size());
 		auto& scene = model.scenes[model.defaultScene];
@@ -692,13 +281,9 @@ public:
 
 		if(node.mesh != -1) {
 			auto& mesh = model.meshes[node.mesh];
-			auto m = loadMesh(vulkanDevice(), model, mesh, objectDsLayout_);
-			if(!m) {
-				dlg_error("could not load mesh");
-				return;
-			}
+			auto m = Mesh(vulkanDevice(), model, mesh, objectDsLayout_);
 
-			meshes_.push_back(std::move(*m));
+			meshes_.push_back(std::move(m));
 			meshes_.back().matrix = matrix;
 		}
 	}
@@ -866,7 +451,7 @@ public:
 			pipeLayout_, 0, {shadow_.ds}, {});
 
 		for(auto& mesh : meshes_) {
-			draw(cb, pipeLayout_, mesh);
+			mesh.render(cb, pipeLayout_);
 		}
 
 		vk::cmdEndRenderPass(cb);
@@ -878,7 +463,7 @@ public:
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {sceneDs_}, {});
 		for(auto& mesh : meshes_) {
-			draw(cb, pipeLayout_, mesh);
+			mesh.render(cb, pipeLayout_);
 		}
 	}
 
@@ -953,16 +538,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			using nytl::constants::pi;
-			yaw_ += 0.005 * ev.delta.x;
-			pitch_ += 0.005 * ev.delta.y;
-			pitch_ = std::clamp<float>(pitch_, -pi / 2 + 0.1, pi / 2 - 0.1);
-
-			camera_.dir.x = std::sin(yaw_) * std::cos(pitch_);
-			camera_.dir.y = -std::sin(pitch_);
-			camera_.dir.z = -std::cos(yaw_) * std::cos(pitch_);
-			nytl::normalize(camera_.dir);
-			camera_.update = true;
+			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 		}
 	}
 
@@ -1014,7 +590,7 @@ public:
 
 		// update model matrix
 		for(auto& m : meshes_) {
-			::updateDevice(m);
+			m.updateDevice();
 		}
 	}
 
@@ -1046,10 +622,7 @@ protected:
 	std::vector<Light> lights_;
 	bool updateLights_ {true};
 
-	Camera camera_ {};
-	// XXX: integrate into camera class
-	float yaw_ {0.f};
-	float pitch_ {0.f}; // rotation around x (left/right) axis
+	doi::Camera camera_ {};
 
 	// shadow
 	struct {

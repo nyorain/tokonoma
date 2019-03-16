@@ -15,11 +15,11 @@ layout(set = 0, binding = 1) uniform sampler2DArray textures;
 
 
 void main() {
-	outColor = 0.5 * vec4(inColor, 1.0);
+	outColor = vec4(inColor, 1.0);
 	if(inRad > 0.95) { // outline
 		outColor = vec4(pc.borderColor, 1.0);
-	} else if(inRad < inFull) {
-		outColor += 0.5 * vec4(inColor, 1.0);
+	} else if(inRad > inFull) {
+		outColor *= 0.5;
 	}
 
 	if(inUV.z != -1.0) {

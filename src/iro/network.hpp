@@ -35,7 +35,7 @@ using RecvBuf = nytl::Span<const std::byte>;
 // everything network related
 class Socket {
 public:
-	using MsgHandler = std::function<void(RecvBuf&)>;
+	using MsgHandler = std::function<void(std::uint32_t player, RecvBuf&)>;
 
 public:
 	Socket();
@@ -51,6 +51,7 @@ public:
 
 	udp::socket& socket() { return *socket_; }
 	auto step() const { return step_; }
+	auto player() const { return player_; }
 
 private:
 	void recvBroadcast(udp::endpoint& ep, std::uint32_t& num, unsigned& state);
@@ -70,6 +71,7 @@ private:
 
 	// std::vector<SendBuf> messages_; // old, for resending
 	SendBuf sending_; // to be sent
+	unsigned player_; // own player id
 };
 
 enum class MessageType : std::uint32_t {

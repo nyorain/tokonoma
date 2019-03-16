@@ -10,33 +10,6 @@
 // - acknowledge and stuff
 
 Socket::Socket() {
-	/*
-	auto ep = udp::endpoint(asio::ip::address_v4({127, 0, 0, 1}), port);
-	try {
-		socket_ = {ioService_, ep};
-		ep = udp::endpoint(asio::ip::address_v4({127, 0, 0, 1}), port + 1);
-
-		// wait for other side
-		socket().wait(asio::ip::udp::socket::wait_read);
-		std::vector<std::byte> buf(socket().available());
-		socket().receive(asio::buffer(buf.data(), buf.size()));
-
-		auto span = nytl::Span<const std::byte>(buf);
-		dlg_assert(buf.size() == 4);
-		dlg_assert(doi::read<std::uint32_t>(span) == 42);
-		dlg_info("connection established as 0");
-	} catch(std::system_error& exception) {
-		auto nep = udp::endpoint(asio::ip::address_v4({127, 0, 0, 1}), port + 1);
-		socket_ = {ioService_, nep};
-		socket().connect(ep);
-
-		// send to other side
-		auto i = std::uint32_t(42);
-		socket().send(asio::buffer(&i, 4));
-		dlg_info("connection established as 1");
-	}
-	*/
-
 	auto bep = udp::endpoint(udp::v4(), broadcastPort);
 	broadcast_ = udp::socket(ioService_);
 	broadcast_->open(bep.protocol());
@@ -107,6 +80,8 @@ Socket::Socket() {
 
 	// will run until connected
 	ioService_.run();
+
+	player_ = socket().local_endpoint() < socket().remote_endpoint();
 
 	// Not sure really why this is needed though to make socket().available()
 	// work...
@@ -223,7 +198,7 @@ bool Socket::update(MsgHandler handler) {
 		auto i = doi::read<std::uint64_t>(recv);
 		dlg_assertm(i + delay == step_, "{} {}", i, step_);
 		while(!recv.empty()) {
-			handler(recv);
+			handler(1 - player_, recv);
 		}
 	}
 
@@ -232,7 +207,7 @@ bool Socket::update(MsgHandler handler) {
 		auto i = doi::read<std::uint64_t>(own);
 		dlg_assertm(i + delay == step_, "{} {}", i, step_);
 		while(!own.empty()) {
-			handler(own);
+			handler(player_, own);
 		}
 	}
 

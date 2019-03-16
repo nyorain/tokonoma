@@ -17,6 +17,7 @@ layout(set = 0, binding = 0) uniform UBO {
 	vec4 dir;
 	float fov; // on y coord
 	float aspect; // aspect ratio: x / y
+	vec2 faceSize; // size (in pixels) of one face
 	vec2 res; // resolution
 } ubo;
 
@@ -61,8 +62,6 @@ vec3 shade(vec3 pos, vec3 normal, vec3 view, uint ignore) {
 
 	// check shadow
 	Ray tolight = Ray(pos, lightPos - pos);
-
-	// TODO: ignore original in anyhit
 	if(dot(l, normal) > 0 && !anyhit(tolight, 1.f, ignore)) {
 
 		// diffuse
@@ -94,7 +93,7 @@ bool anyhit(Ray ray, float belowt, uint ignore) {
 
 		vec3 bnormal;
 		t = intersect(ray, boxes[i], bnormal);
-		if(t > 0.0 && t < belowt) {
+		if(t > 0.00001 && t < belowt) {
 			return true;
 		}
 	}
@@ -105,7 +104,8 @@ bool anyhit(Ray ray, float belowt, uint ignore) {
 // next intersection t on ray.
 // also gives normal and position of intersected object
 // returns -1.0 if there is no intersection
-float next(Ray ray, out vec3 pos, out vec3 normal, out vec4 color, out uint id) {
+float next(Ray ray, out vec3 pos, out vec3 normal, out vec4 color, out uint id,
+		uint ignore) {
 	float t;
 	float mint = 1.f / 0.f; // infinity
 	bool found = false;
@@ -122,6 +122,10 @@ float next(Ray ray, out vec3 pos, out vec3 normal, out vec4 color, out uint id) 
 
 	int l = boxes.length();
 	for(uint i = 0; i < l; ++i) {
+		if(i == ignore) { // TODO: no self bounce atm
+			continue;
+		}
+
 		vec3 bnormal;
 		t = intersect(ray, boxes[i], bnormal);
 		if(t > 0.0 && t < mint) {
@@ -149,15 +153,17 @@ vec3 trace(Ray ray) {
 	vec3 pos;
 	vec4 color;
 	uint id;
+	uint ignore = 9999;
 
 	for(int b = 0; b < maxBounce; ++b) {
-		if(next(ray, pos, normal, color, id) < 0.0) {
+		if(next(ray, pos, normal, color, id, ignore) < 0.0) {
 			break;
 		}
 
 		col += fac * vec3(color) * shade(pos, normal, ray.dir, id);
 		fac *= 0.2;
 		ray = Ray(pos, reflect(ray.dir, normal));
+		ignore = id;
 	}
 
 	return col;

@@ -19,6 +19,7 @@ layout(set = 0, binding = 0) uniform UBO {
 	float fov; // on y coord
 	float aspect; // aspect ratio: x / y
 	vec2 res; // resolution
+	vec2 faceSize; // size (in pixels) of one face
 	float time;
 } ubo;
 
@@ -38,7 +39,6 @@ const float pi = 3.1415926535897932;
 const int maxBounce = 4;
 // TODO: has to be synced with main.cpp
 // pass in ubo instead. Also helps senr.frag
-const vec2 faceSize = vec2(1024, 1024);
 
 bool anyhit(Ray ray, float belowt, uint ignore);
 
@@ -223,13 +223,13 @@ vec3 trace(Ray ray) {
 		uint id = ids[b];
 		vec2 suvxy;
 		int face = cubeFace(uvs[b], suvxy);
-		vec2 uv = (0.5 + 0.5 * suvxy) * faceSize;
-		uv.x += face * faceSize.x;
-		uv.y += id * faceSize.y;
+		vec2 uv = (0.5 + 0.5 * suvxy) * ubo.faceSize;
+		uv.x += face * ubo.faceSize.x;
+		uv.y += id * ubo.faceSize.y;
 		ivec2 iuv = ivec2(uv);
 
 		// TODO: we can clamp to higher max when using float texture
-		
+
 		// uint ulight = imageLoad(textures[id], iuv).r;
 		// if(id == 5) { // reflective
 			// a perfect mirror has no color.
@@ -242,10 +242,10 @@ vec3 trace(Ray ray) {
 		// TODO: better way to atomic load?
 		vec4 light = unpackUnorm4x8(imageAtomicCompSwap(lightTex, iuv, 0, 0));
 		float fac = 0.05;
-		
+
 		// float fac = (0.25 / maxBounce) * (maxBounce - b - 1); // more bounces -> more weight
 		// fac = max(fac, 0.08);
-		
+
 		// fac *= (1 - light.a); // make weaker over time? needs reset on scene change
 		light = clamp(mix(light, vec4(col, 1.0), fac), 0, 1);
 

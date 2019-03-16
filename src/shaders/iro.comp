@@ -114,6 +114,11 @@ layout(set = 0, binding = 2, std430) buffer Players {
 	Player[playerCount] players;
 } players;
 
+float diffuseFac(vec2 vel, vec2 dir) {
+	float fac = mix(0.5 * oneSixth, 500 * dot(dir, vel), 500 * dot(vel, vel));
+	return clamp(fac, 0.0, 1.0);
+}
+
 void main() {
 	uint id = gl_GlobalInvocationID.x;
 	Field field = old.fields[id];
@@ -135,8 +140,13 @@ void main() {
 	for(uint i = 0; i < 6; ++i) {
 		if(field.next[i] == nextNone) {
 			// edge condition
+			// TODO: also apply this for buildings?
 			if(field.type == FieldEmpty) {
-				field.velocity -= 0.5 * dot(field.velocity, direction(i)) * direction(i);
+				// TODO: factor:
+				// 1.0: erase all velocity in that direction
+				// 2.0: full bounce back
+				float d = max(dot(field.velocity, direction(i)), 0);
+				field.velocity -= 0.8 * d * direction(i);
 			}
 
 			continue;
@@ -144,17 +154,25 @@ void main() {
 
 
 		const Field next = old.fields[field.next[i]];
-		float fac = clamp(mix(oneSixth, 10 * dot(direction(i), vel), tanh(20 * l)), 0.0, 1.0);
-		// float fac = clamp(10 * dot(direction(i), next.velocity), 0.0, 1.0);
+		// float fac = clamp(mix(oneSixth, 10 * dot(direction(i), vel), tanh(20 * l)), 0.0, 1.0);
+		float fac = diffuseFac(vel, direction(i));
+		
 		if(next.type == FieldEmpty) {
 			if(next.player == field.player) {
 				++freeOwn;
 			}
 
 			if(field.type == FieldEmpty) {
-				if(strength > 1.0) {
-					field.velocity += 0.05 * direction(i) * (strength - next.strength);
+				// pressure/even out
+				// TODO: probably better solution for this...
+				if(strength > 1.0 && strength > next.strength) {
+					field.velocity += 0.001 * direction(i) * (strength - next.strength);
+
+					// slowly die
+					field.strength *= 0.999;
 				}
+
+				// TODO: better diffusion?
 				// field.velocity += 0.01 * direction(i) * (strength - next.strength);
 
 				// attack/diffuse: field -> next
@@ -170,7 +188,7 @@ void main() {
 	}
 
 	// slow down over time
-	field.velocity *= 0.99999;
+	field.velocity *= 0.999;
 
 	// 2: receive
 	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
@@ -182,14 +200,18 @@ void main() {
 
 		const Field next = old.fields[field.next[i]];
 		float l = length(next.velocity);
-		float fac = clamp(mix(oneSixth, 10 * dot(-direction(i), next.velocity), tanh(20 * l)), 0.0, 1.0);
-		// float fac = clamp(10 * dot(-direction(i), next.velocity), 0.0, 1.0);
+		// float fac = clamp(mix(oneSixth, 10 * dot(-direction(i), next.velocity), tanh(20 * l)), 0.0, 1.0);
+		
+		float fac = diffuseFac(next.velocity, -direction(i));
 
 		// TODO: strength cannot be greater than 1? normalize somehow everywhere!
 		// can't move into friendly building, only to attack
 		if(next.type == FieldEmpty && (field.type == FieldEmpty || next.player != field.player)) {
 			// diffuse (friendly or attack): next -> field
 			strengths[next.player] += fac * diffuse * next.strength;
+
+			// TODO: this currently means that enemies can influence
+			// the velocity of an acceleration building... somewhat weird
 			velSum += fac * diffuseVel * next.strength * next.velocity;
 		} else if(next.type == FieldTower && next.player != field.player) {
 			field.strength -= towerDamage;
@@ -197,7 +219,11 @@ void main() {
 			// spawn without any velocity
 			strengths[next.player] += spawnStrength;
 		} else if(next.type == FieldAccel && next.player == field.player) {
-			velSum += field.strength * accelInfluence * next.velocity; // accelerate
+			// acceleration fields can't influence one another.
+			// that leads to divergence
+			if(field.type != FieldAccel) {
+				velSum += field.strength * accelInfluence * next.velocity; // accelerate
+			}
 		}
 	}
 
@@ -228,7 +254,7 @@ void main() {
 	field.strength = 2 * highestStrength - sum; // remainder
 	field.player = bestPlayer;
 	if(bestPlayer != playerNone) {
-		field.velocity = velSum;
+		field.velocity = clamp(velSum, -1, 1);
 	}
 
 	// write back

@@ -20,6 +20,19 @@ struct Sphere {
 struct Box {
 	Box() = default;
 
+	/// Constructs the box with the given transformtion
+	Box(nytl::Mat4f xtransform) {
+		transform = xtransform;
+		inv = nytl::Mat4f(nytl::inverse(transform));
+	}
+
+	Box(nytl::Vec3f center, nytl::Mat3f xtransform) {
+		transform = nytl::Mat4f(xtransform);
+		col(transform, 3, nytl::Vec4f(center));
+		transform[3][3] = 1.f;
+		inv = nytl::Mat4f(nytl::inverse(transform));
+	}
+
 	/// Constructs the box with the given axes and center.
 	/// The axes can be used to achieve rotation, scaling (a different
 	/// box size) and even skewing. E.g. to get a box twice that big only
@@ -29,30 +42,35 @@ struct Box {
 			nytl::Vec3f y = {0.f, 1.f, 0.f},
 			nytl::Vec3f z = {0.f, 0.f, 1.f}) {
 
-		// transform (for ray tracing)
-		// transform[0] = {x.x, x.y, x.z, -dot(x, center)};
-		// transform[1] = {y.x, y.y, y.z, -dot(y, center)};
-		// transform[2] = {z.x, z.y, z.z, -dot(z, center)};
-		// transform[3][3] = 1.f;
-		// auto xx = dot(x, x);
-		// auto yy = dot(y, y);
-		// auto zz = dot(z, z);
-		// if(xx > 0.f) { transform[0] *= 1 / xx; }
-		// if(yy > 0.f) { transform[1] *= 1 / yy; }
-		// if(zz > 0.f) { transform[2] *= 1 / zz; }
+		// transform (for rasterization)
+		// transforms a point from model space (unit cube) to the
+		// cubes local coords
+		col(transform, 0, static_cast<nytl::Vec4f>(x));
+		col(transform, 1, static_cast<nytl::Vec4f>(y));
+		col(transform, 2, static_cast<nytl::Vec4f>(z));
+		col(transform, 3, static_cast<nytl::Vec4f>(center));
+		transform[3][3] = 1.f;
 
-		// inv (for rasterization)
-		col(inv, 0, static_cast<nytl::Vec4f>(x));
-		col(inv, 1, static_cast<nytl::Vec4f>(y));
-		col(inv, 2, static_cast<nytl::Vec4f>(z));
-		col(inv, 3, static_cast<nytl::Vec4f>(center));
+		// inv (for ray tracing)
+		// transforms local coords into unit cube space
+		// TODO: not fully tested, might not work in some special cases?
+		inv[0] = {x.x, x.y, x.z, -dot(x, center)};
+		inv[1] = {y.x, y.y, y.z, -dot(y, center)};
+		inv[2] = {z.x, z.y, z.z, -dot(z, center)};
 		inv[3][3] = 1.f;
+		auto xx = dot(x, x);
+		auto yy = dot(y, y);
+		auto zz = dot(z, z);
+		if(xx > 0.f) { inv[0] *= 1 / xx; }
+		if(yy > 0.f) { inv[1] *= 1 / yy; }
+		if(zz > 0.f) { inv[2] *= 1 / zz; }
 
-		transform = nytl::Mat4f(nytl::inverse(inv));
+		// also possible
+		// inv = nytl::Mat4f(nytl::inverse(transform));
 	}
 
-	nytl::Mat4f transform = nytl::identity<4, float>();
 	nytl::Mat4f inv = nytl::identity<4, float>();
+	nytl::Mat4f transform = nytl::identity<4, float>();
 };
 
 /// TODO: should not be here; mainly playing around
