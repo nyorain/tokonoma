@@ -371,50 +371,12 @@ public:
 		App::update(delta);
 		App::redraw();
 
-		// TODO: nesting could lead to problems
-		// network
 		if(socket_.update([&](auto& recv){ this->handleMsg(recv); })) {
-			// write upload cb
-			auto uploaded = false;
-			if(!uploadRegions_.empty()) {
-				stageView_.flush();
-
-				vk::beginCommandBuffer(uploadCb_, {});
-				vk::cmdCopyBuffer(uploadCb_, stage_.buffer(), storageOld_.buffer(),
-					{uploadRegions_});
-				vk::endCommandBuffer(uploadCb_);
-
-				vk::SubmitInfo si {};
-				si.commandBufferCount = 1u;
-				si.pCommandBuffers = &uploadCb_.vkHandle();
-				si.signalSemaphoreCount = 1u;
-				si.pSignalSemaphores = &uploadSemaphore_.vkHandle();
-				vulkanDevice().queueSubmitter().add(si);
-				// App::addSemaphore(uploadSemaphore_, vk::PipelineStageBits::computeShader);
-
-				uploadRegions_.clear();
-				uploadPtr_ = stageView_.ptr();
-				uploaded = true;
-			}
-
-			// TODO: sync with render via semaphore!
-			auto& dev = vulkanDevice();
-			vk::SubmitInfo info;
-			info.commandBufferCount = 1u;
-			info.pCommandBuffers = &compCb_.vkHandle();
-			info.signalSemaphoreCount = 1;
-			info.pSignalSemaphores = &computeSemaphore_.vkHandle();
-			App::addSemaphore(computeSemaphore_, vk::PipelineStageBits::allGraphics);
-
-			if(uploaded) {
-				info.waitSemaphoreCount = 1;
-				info.pWaitSemaphores = &uploadSemaphore_.vkHandle();
-				static const auto stage =
-					vk::PipelineStageFlags(vk::PipelineStageBits::computeShader);
-				info.pWaitDstStageMask = &stage;
-			}
-
-			dev.queueSubmitter().add(info);
+			// XXX: we need ordering of upload/compute command buffers
+			// and we can't record the upload cb here since it might
+			// be in use. So we do all in updateDevice
+			// TODO i guess
+			doCompute_ = true;
 		}
 	}
 
@@ -424,10 +386,14 @@ public:
 			auto field = doi::read<std::uint32_t>(buf);
 			auto type = doi::read<Field::Type>(buf);
 			setBuilding(field, type);
+			dlg_trace("{}: build {} {}", socket_.step(),
+				field, int(type));
 		} else if(type == MessageType::velocity) {
 			auto field = doi::read<std::uint32_t>(buf);
 			auto dir = doi::read<nytl::Vec2f>(buf);
 			setVelocity(field, dir);
+			dlg_trace("{}: velocity {} {}", socket_.step(),
+				field, dir);
 		} else {
 			throw std::runtime_error("Invalid package");
 		}
@@ -508,6 +474,43 @@ public:
 			auto span = map.span();
 			players_ = doi::read<std::array<Player, 2>>(span);
 			// dlg_debug(players_[0].resources);
+		}
+
+		if(doCompute_) {
+			auto& dev = vulkanDevice();
+			vk::SubmitInfo info;
+			info.commandBufferCount = 1u;
+			info.pCommandBuffers = &compCb_.vkHandle();
+			info.signalSemaphoreCount = 1;
+			info.pSignalSemaphores = &computeSemaphore_.vkHandle();
+			App::addSemaphore(computeSemaphore_, vk::PipelineStageBits::allGraphics);
+
+			if(!uploadRegions_.empty()) {
+				vk::beginCommandBuffer(uploadCb_, {});
+				vk::cmdCopyBuffer(uploadCb_, stage_.buffer(), storageOld_.buffer(),
+					{uploadRegions_});
+				vk::endCommandBuffer(uploadCb_);
+
+				vk::SubmitInfo si {};
+				si.commandBufferCount = 1u;
+				si.pCommandBuffers = &uploadCb_.vkHandle();
+				si.signalSemaphoreCount = 1u;
+				si.pSignalSemaphores = &uploadSemaphore_.vkHandle();
+				vulkanDevice().queueSubmitter().add(si);
+
+				uploadRegions_.clear();
+				uploadPtr_ = stageView_.ptr();
+				stageView_.flush();
+
+				// wait on semaphore with compute
+				info.waitSemaphoreCount = 1;
+				info.pWaitSemaphores = &uploadSemaphore_.vkHandle();
+				static const auto stage =
+					vk::PipelineStageFlags(vk::PipelineStageBits::computeShader);
+				info.pWaitDstStageMask = &stage;
+			}
+
+			dev.queueSubmitter().add(info);
 		}
 	}
 
@@ -781,6 +784,8 @@ protected:
 	float viewScale_ {10.f};
 	bool updateTransform_ {true};
 	bool draggingView_ {false};
+
+	bool doCompute_ {false};
 
 	struct {
 		bool lines {};

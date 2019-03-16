@@ -50,13 +50,14 @@ public:
 	SendBuf& add() { return sending_; }
 
 	udp::socket& socket() { return *socket_; }
+	auto step() const { return step_; }
 
 private:
 	void recvBroadcast(udp::endpoint& ep, std::uint32_t& num, unsigned& state);
 	void recvSocket(udp::endpoint& ep, std::uint32_t& num, unsigned& state);
 
 private:
-	std::uint64_t step_ {0};
+	std::uint64_t step_ {1};
 	std::uint64_t recv_ {0}; // last received
 	// std::uint64_t ack_ {0}; // last of our messages acked by other side
 
