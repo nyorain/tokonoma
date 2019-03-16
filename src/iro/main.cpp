@@ -40,8 +40,11 @@ using namespace doi::types;
 
 // mirrors glsl layout
 struct Player {
-	u32 resources;
-	float padding[3];
+	u32 gained {}; // written by gpu
+
+	u32 resources {}; // global
+	u32 netResources {}; // local; with delayed actions
+	float _1; // padding
 };
 
 // mirrors glsl layout
@@ -52,6 +55,12 @@ struct Field {
 		spawn = 2u,
 		tower = 3u,
 		accel = 4u,
+	};
+
+	// can be indexed with u32(Type)
+	static constexpr u32 prices[5] = {
+		// 0, 20000, 12000, 10000, 3000
+		0, 20, 120, 10, 30 // debugging
 	};
 
 	// weakly typed to allow array indexing
@@ -250,6 +259,13 @@ public:
 
 		// own compute cb
 		computeSemaphore_ = {dev};
+		createComputeCb();
+
+		return true;
+	}
+
+	void createComputeCb() {
+		auto& dev = vulkanDevice();
 		auto qfamily = dev.queueSubmitter().queue().family();
 		compCb_ = dev.commandAllocator().get(qfamily);
 		vk::beginCommandBuffer(compCb_, {});
@@ -277,8 +293,6 @@ public:
 			{region});
 
 		vk::endCommandBuffer(compCb_);
-
-		return true;
 	}
 
 	std::vector<Field> initFields() {
@@ -323,9 +337,17 @@ public:
 		ret[0].type = Field::Type::spawn;
 		ret[0].strength = 10.f;
 
+		ret[2].player = 0u;
+		ret[2].type = Field::Type::resource;
+		ret[2].strength = 10.f;
+
 		ret[ret.size() - 1].player = 1u;
 		ret[ret.size() - 1].type = Field::Type::spawn;
 		ret[ret.size() - 1].strength = 10.f;
+
+		ret[ret.size() - 3].player = 1u;
+		ret[ret.size() - 3].type = Field::Type::resource;
+		ret[ret.size() - 3].strength = 10.f;
 
 		return ret;
 	}
@@ -371,7 +393,7 @@ public:
 		App::update(delta);
 		App::redraw();
 
-		if(socket_.update([&](auto& recv){ this->handleMsg(recv); })) {
+		if(socket_.update([&](auto p, auto& recv){ this->handleMsg(p, recv); })) {
 			// XXX: we need ordering of upload/compute command buffers
 			// and we can't record the upload cb here since it might
 			// be in use. So we do all in updateDevice
@@ -380,11 +402,18 @@ public:
 		}
 	}
 
-	void handleMsg(RecvBuf& buf) {
+	void handleMsg(int player, RecvBuf& buf) {
 		auto type = doi::read<MessageType>(buf);
 		if(type == MessageType::build) {
 			auto field = doi::read<std::uint32_t>(buf);
 			auto type = doi::read<Field::Type>(buf);
+
+			auto needed = Field::prices[u32(type)];
+			if(players_[player].resources < needed) {
+				throw std::runtime_error("Protocol error: insufficient resources");
+			}
+
+			players_[player].resources -= needed;
 			setBuilding(field, type);
 			dlg_trace("{}: build {} {}", socket_.step(),
 				field, int(type));
@@ -455,6 +484,7 @@ public:
 			initGfxPipe(true);
 			initCompPipe(true);
 			rerecord();
+			createComputeCb();
 		}
 
 		if(updateSelected_) {
@@ -470,10 +500,31 @@ public:
 
 		// sync players
 		{
+			static u32 outputCounter = 0;
+			if(++outputCounter % 100 == 0) {
+				outputCounter = 0; // % 500 still 0
+			}
+
 			auto map = playerBuffer_.memoryMap();
 			auto span = map.span();
-			players_ = doi::read<std::array<Player, 2>>(span);
-			// dlg_debug(players_[0].resources);
+
+			// two way sync. First read, but then subtract the used
+			// resources. Relies on the fact that the gpu does never
+			// decrease the resource count
+			auto i = 0u;
+			for(auto& p : players_) {
+				auto& gained = doi::refRead<u32>(span);
+				p.resources += gained;
+				p.netResources += gained;
+				gained = 0u; // reset for next turn
+
+				if(outputCounter % 500 == 0) {
+					dlg_info("resources {}: {}", i++, p.resources);
+				}
+
+				// skip padding
+				doi::skip(span, 12);
+			}
 		}
 
 		if(doCompute_) {
@@ -617,18 +668,28 @@ public:
 				}
 			}
 
+			// TODO: problem: allow change only on "own" fields
+			// should probably be checked when event is processed (after delay)
+			// then refund resources if field is unavailable after
+			// delay? or say that building was planned to be build
+			// but immediately destroyed/resources destroyed?
 			if(type) {
-				// setBuilding(selected_, *type);
+				// we will handle it after delay as well as the other side
+				auto needed = Field::prices[u32(*type)];
+				if(players_[socket_.player()].netResources < needed) {
+					dlg_info("Insufficient resources!");
+				} else {
+					players_[socket_.player()].netResources -= needed;
 
-				auto& buf = socket_.add();
-				write(buf, MessageType::build);
-				write(buf, u32(selected_));
-				write(buf, *type);
+					auto& buf = socket_.add();
+					write(buf, MessageType::build);
+					write(buf, u32(selected_));
+					write(buf, *type);
+				}
 			}
 
 			if(vel) {
-				// setVelocity(selected_, *vel);
-
+				// we will handle it after delay as well as the other side
 				auto& buf = socket_.add();
 				write(buf, MessageType::velocity);
 				write(buf, u32(selected_));

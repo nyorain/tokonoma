@@ -40,24 +40,26 @@ const vec3 colors[] = {
 };
 
 void main() {
-	float s = clamp((inType == 0) ? inStrength : inStrength / 10.f, 0, 1);
+	float s = clamp((inType == 0) ? inStrength / 2.0 : inStrength / 10.f, 0, 1.0);
 	vec3 hp = hexPoints[gl_VertexIndex % 8];
 
 	// rotate for velocity
 	vec2 uv = hp.xy;
-	if(inType == 4) {
+	if(inType == 4 || inType == 0) {
+	// if(inType == 4) {
 		// angle between x axis and velocity
 		float angle = -atan(inVel.y, inVel.x);
 		float c = cos(angle);
 		float s = sin(angle);
- 
+
 		// rotate by angle
 		vec2 ruv = uv;
 		uv.x = c * cospi6 * ruv.x - s * ruv.y;
 		uv.y = s * cospi6 * ruv.x + c * ruv.y;
 		uv.x /= cospi6;
 	}
-	outUV = vec3(0.5 + 0.5 * uv.xy, inType == 0 ? -1.f : inType - 1);
+	// outUV = vec3(0.5 + 0.5 * uv.xy, inType == 0 ? -1.f : inType - 1);
+	outUV = vec3(0.5 + 0.5 * uv.xy, inType == 0 ? 3.f : inType - 1);
 
 	hp.x *= cospi6;
 	gl_Position = ubo.transform * vec4(inPos + hp.xy, 0.0, 1.0);
@@ -65,5 +67,5 @@ void main() {
 	outRad = hp.z;
 
 	// NOTE: all buildings have max 10 hp atm
-	outFull = (inType == 0) ? 0.f : s;
+	outFull = (inType == 0) ? 1.f : s;
 }

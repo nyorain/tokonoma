@@ -35,6 +35,16 @@ T read(nytl::Span<const std::byte>& span) {
 	return ret;
 }
 
+// TODO: not sure if this is valid with aliasing rules. check up!
+template<typename T>
+T& refRead(nytl::Span<std::byte>& span) {
+	T ret;
+	dlg_assert(span.size() >= sizeof(ret));
+	auto data = span.data();
+	span = span.slice(sizeof(ret), span.size() - sizeof(ret));
+	return *reinterpret_cast<T*>(data);
+}
+
 inline void write(nytl::Span<std::byte>& span, const std::byte* ptr,
 		std::size_t size) {
 	dlg_assert(span.size() >= size);

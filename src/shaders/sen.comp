@@ -13,6 +13,7 @@ layout(set = 0, binding = 0) uniform UBO {
 	float fov; // on y coord
 	float aspect; // aspect ratio: x / y
 	vec2 res; // resolution
+	vec2 faceSize; // size (in pixels) of one face
 	float time;
 } ubo;
 
@@ -29,10 +30,7 @@ const float infinity = 1.f / 0.f;
 const float pi = 3.1415926535897932;
 
 const vec3 lightPos = vec3(0, 1.8, 0);
-const float lightRadius = 0.3;
-// TODO: has to be synced with main.cpp
-// pass in ubo instead. Also helps senr.frag
-const vec2 faceSize = vec2(1024, 1024);
+const float lightRadius = 0.2;
 
 // Returns whether the given ray hits anything (except the object
 // to ignore) below the given t parameter.
@@ -162,7 +160,7 @@ vec3 trace(Ray ray) {
 		r.x = gradientNoise(16.31 * ubo.time + 123 * r.zy);
 		r.y = sgradientNoise(19.4 * ubo.time - 23.34 * r.xz);
 		r.z = sgradientNoise(-12.2 * ubo.time - 43.2 * r.xy);
-		
+
 		// == i raise you: psychedelic path tracer v.2 ==
 		// vec3 r = random3(id + floor(vec3(uv)));
 		// r.x = gradientNoise(5 * ubo.time + 10 * r.zy);
@@ -206,9 +204,9 @@ vec3 trace(Ray ray) {
 		uint id = ids[b];
 		vec2 suvxy;
 		int face = cubeFace(uvs[b], suvxy);
-		vec2 uv = (0.5 + 0.5 * suvxy) * faceSize;
-		uv.x += face * faceSize.x;
-		uv.y += id * faceSize.y;
+		vec2 uv = (0.5 + 0.5 * suvxy) * ubo.faceSize;
+		uv.x += face * ubo.faceSize.x;
+		uv.y += id * ubo.faceSize.y;
 		ivec2 iuv = ivec2(uv);
 
 		// TODO: better way to atomic load?
