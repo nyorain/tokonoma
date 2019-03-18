@@ -192,7 +192,7 @@ void main() {
 	field.strength = max(0.0, field.strength);
 	if(field.player != none) {
 		strengths[field.player] += field.strength;
-		velSum += field.strength * field.velocity;
+		velSum += field.velocity;
 	}
 
 	// 3: fight
@@ -218,7 +218,9 @@ void main() {
 	field.player = bestPlayer;
 	if(bestPlayer != none) {
 		// field.velocity = clamp(velSum, -1, 1);
-		field.velocity = clamp(velSum, -1, 1);
+		// TODO
+		float l = max(length(velSum), 1.0);
+		field.velocity = velSum / l;
 	}
 
 	// write back
