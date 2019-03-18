@@ -1,16 +1,15 @@
 #version 450
 
+#extension GL_GOOGLE_include_directive : enable
+
+#include "iro.glsl"
+
 // invariants (before/after every exeuction):
 // - fields.player == playerNone <=>
 // 		(field.type == FieldEmpty && field.strength = 0.f);
 // - fields.player != playerNone => (field.player < playerCount);
 
 const uint playerCount = 2u; // TODO: only 2 works atm, see below
-
-// symbolic special constants
-const uint nextNone = 0xFFFFFFFF;
-const uint playerNone = 0xFFFFFFFF;
-const float oneSixth = 0.166;
 
 // the amount of diffuse per difference in every step
 // if one cell has strength 1 and its neighbor 0, so much will float
@@ -41,52 +40,6 @@ const float spawnStrength = 0.001;
 // influence factor of accelerator field
 const float accelInfluence = 0.05;
 
-// buildings
-const uint FieldEmpty = 0u; // empty field
-const uint FieldResource = 1u; // resource harvester
-const uint FieldSpawn = 2u; // spawns strength
-const uint FieldTower = 3u; // damages nearby enemies
-const uint FieldAccel = 4u; // accelerates
-
-// sides, order of Field.next
-const uint SideRight = 0u;
-const uint SideTopRight = 1u;
-const uint SideTopLeft = 2u;
-const uint SideLeft = 3u;
-const uint SideBotLeft = 4u;
-const uint SideBotRight = 5u;
-
-const float sqrt2 = 1.41421356237;
-const float isqrt2 = 0.70710678118;
-const vec2 sideDirections[6] = {
-	vec2(1, 0), // right
-	vec2(isqrt2, isqrt2), // topRight
-	vec2(-isqrt2, isqrt2), // topLeft
-	vec2(-1, 0), // left
-	vec2(-isqrt2, -isqrt2), // botLeft
-	vec2(isqrt2, -isqrt2), // botRight
-};
-
-// Returns the logical direction of a SideXXX value
-vec2 direction(uint side) {
-	return sideDirections[side];
-}
-
-bool isBuilding(uint fieldType) {
-	return fieldType != FieldEmpty;
-}
-
-// A Field in our grid
-struct Field {
-	vec2 _pos;
-	uint type;
-	float strength; // in [0, 1] for empty cells (?)
-	vec2 velocity;
-	uint player;
-	uint next[6]; // direct neighbors
-	float _;
-};
-
 // Information about a player
 struct Player {
 	uint resources; // should only be atomically accessed
@@ -94,6 +47,10 @@ struct Player {
 };
 
 // TODO: test different settings for performance
+// performance would probably also be improved if we use 2D groups
+//   but then group the ids matchingly (so that we always execute
+//   blocks close to each other). Since they access roughly the
+//   same memory.
 layout(local_size_x = 1) in;
 
 // the old buffer. All reads must be performed from this since the other
@@ -130,15 +87,15 @@ void main() {
 	// diffuse "stronger"
 
 	// NOTE: fix nan velocities
-	
+
 	// diffuse
 	// 1: depart/general
 	float strength = field.strength;
 	vec2 vel = field.velocity;
-	float l = length(vel);
+	// float l = length(vel);
 	uint freeOwn = 0;
 	for(uint i = 0; i < 6; ++i) {
-		if(field.next[i] == nextNone) {
+		if(field.next[i] == none) {
 			// edge condition
 			// TODO: also apply this for buildings?
 			if(field.type == FieldEmpty) {
@@ -156,7 +113,7 @@ void main() {
 		const Field next = old.fields[field.next[i]];
 		// float fac = clamp(mix(oneSixth, 10 * dot(direction(i), vel), tanh(20 * l)), 0.0, 1.0);
 		float fac = diffuseFac(vel, direction(i));
-		
+
 		if(next.type == FieldEmpty) {
 			if(next.player == field.player) {
 				++freeOwn;
@@ -166,14 +123,17 @@ void main() {
 				// pressure/even out
 				// TODO: probably better solution for this...
 				if(strength > 1.0 && strength > next.strength) {
-					field.velocity += 0.001 * direction(i) * (strength - next.strength);
+					// field.velocity += 0.0001 * direction(i) * (strength - next.strength);
 
 					// slowly die
-					field.strength *= 0.999;
+					field.strength -= 0.05 * (strength - 1.0);
 				}
 
 				// TODO: better diffusion?
-				// field.velocity += 0.01 * direction(i) * (strength - next.strength);
+				// maybe don't change velocity, just make diffusion
+				// stronger over boundaries with huge difference?
+				float d = strength - next.strength;
+				field.velocity += 0.001 * direction(i) * d * d * d;
 
 				// attack/diffuse: field -> next
 				field.strength -= fac * diffuse * strength;
@@ -187,21 +147,21 @@ void main() {
 		atomicAdd(players.players[field.player].resources, freeOwn);
 	}
 
-	// slow down over time
+	// XXX: slow down over time?
 	field.velocity *= 0.999;
 
 	// 2: receive
 	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
 	vec2 velSum = vec2(0.0, 0.0); // weighted total velocity sum
 	for(uint i = 0; i < 6; ++i) {
-		if(field.next[i] == nextNone) {
+		if(field.next[i] == none) {
 			continue;
 		}
 
 		const Field next = old.fields[field.next[i]];
-		float l = length(next.velocity);
+		// float l = length(next.velocity);
 		// float fac = clamp(mix(oneSixth, 10 * dot(-direction(i), next.velocity), tanh(20 * l)), 0.0, 1.0);
-		
+
 		float fac = diffuseFac(next.velocity, -direction(i));
 
 		// TODO: strength cannot be greater than 1? normalize somehow everywhere!
@@ -210,9 +170,10 @@ void main() {
 			// diffuse (friendly or attack): next -> field
 			strengths[next.player] += fac * diffuse * next.strength;
 
-			// TODO: this currently means that enemies can influence
-			// the velocity of an acceleration building... somewhat weird
-			velSum += fac * diffuseVel * next.strength * next.velocity;
+			// TODO: should enemies influence acceleration building vel?
+			if(field.type == FieldEmpty) {
+				velSum += fac * diffuseVel * next.strength * next.velocity;
+			}
 		} else if(next.type == FieldTower && next.player != field.player) {
 			field.strength -= towerDamage;
 		} else if(next.type == FieldSpawn && strengths[next.player] < 1.f) {
@@ -227,14 +188,15 @@ void main() {
 		}
 	}
 
+	// XXX: should never be below 0 anyways?
 	field.strength = max(0.0, field.strength);
-	if(field.player != playerNone) {
+	if(field.player != none) {
 		strengths[field.player] += field.strength;
-		velSum += field.velocity;
+		velSum += field.strength * field.velocity;
 	}
 
 	// 3: fight
-	uint bestPlayer = playerNone;
+	uint bestPlayer = none;
 	float highestStrength = 0.0;
 	float sum = 0.0; // TODO: simple sum doesn't work for playerCount > 2
 	for(uint i = 0; i < playerCount; ++i) {
@@ -251,9 +213,11 @@ void main() {
 		// velSum = vec2(0.0, 0.0); // no velocity after invasion
 	}
 
+	// TODO: when force is lost, velocity should be lost as well
 	field.strength = 2 * highestStrength - sum; // remainder
 	field.player = bestPlayer;
-	if(bestPlayer != playerNone) {
+	if(bestPlayer != none) {
+		// field.velocity = clamp(velSum, -1, 1);
 		field.velocity = clamp(velSum, -1, 1);
 	}
 

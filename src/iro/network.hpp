@@ -8,7 +8,7 @@
 #include <functional>
 
 using asio::ip::udp;
-constexpr auto delay = 10u;
+constexpr auto delay = 2u;
 constexpr auto broadcastPort = 49163; // for initial broadcast
 
 
@@ -58,7 +58,7 @@ private:
 	void recvSocket(udp::endpoint& ep, std::uint32_t& num, unsigned& state);
 
 private:
-	std::uint64_t step_ {1};
+	std::uint64_t step_ {1}; // current(next) step
 	std::uint64_t recv_ {0}; // last received
 	// std::uint64_t ack_ {0}; // last of our messages acked by other side
 

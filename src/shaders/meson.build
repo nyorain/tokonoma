@@ -15,6 +15,7 @@ include_glsl = files(
   'include/ray.glsl',
 )
 
+# TODO: can probably be simplified with new meson dictionary feature
 # shader specifications
 # contains multiple shader groups, specified like this:
 # [ <group var>, [ <shader source>, { <dependencies> }], {...} ]
