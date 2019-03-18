@@ -104,13 +104,17 @@ Vec2i neighborPos(Vec2i pos, Field::Side side) {
 
 class HexApp : public doi::App {
 public:
-	static constexpr auto size = 20u;
+	static constexpr auto size = 128u;
 
 public:
 	bool init(const doi::AppSettings& settings) override {
 		if(!doi::App::init(settings)) {
 			return false;
 		}
+
+		// multipler
+		socket_.emplace();
+		player_ = socket_->player();
 
 		// renderer().clearColor({1.f, 1.f, 1.f, 1.f});
 
@@ -197,15 +201,15 @@ public:
 		fields_ = initFields();
 		fieldCount_ = fields_.size();
 
-		// TODO: host/dev memory?
+		// storageOld_ can be accessed from the host
 		auto usage = vk::BufferUsageFlags(vk::BufferUsageBits::storageBuffer);
 		auto storageSize = fields_.size() * sizeof(fields_[0]);
 		storageOld_ = {dev.bufferAllocator(), storageSize,
-			usage | vk::BufferUsageBits::transferDst, 0, devMem};
-		vpp::writeStaging430(storageOld_, vpp::raw(*fields_.data(), fields_.size()));
+			usage | vk::BufferUsageBits::transferDst, 0, hostMem};
+		vpp::writeMap430(storageOld_, vpp::raw(*fields_.data(), fields_.size()));
+		fieldsMap_ = storageOld_.memoryMap();
 
-		usage |= vk::BufferUsageBits::transferSrc |
-			vk::BufferUsageBits::vertexBuffer;
+		usage |= vk::BufferUsageBits::transferSrc | vk::BufferUsageBits::vertexBuffer;
 		storageNew_ = {dev.bufferAllocator(), storageSize, usage, 0, devMem};
 
 		// player buf
@@ -248,6 +252,7 @@ public:
 
 		// upload buffer
 		// XXX: start size? implement dynamic resizing!
+		/*
 		stage_ = {dev.bufferAllocator(), 64u, vk::BufferUsageBits::transferSrc,
 			0, hostMem};
 		stageView_ = stage_.memoryMap();
@@ -256,6 +261,7 @@ public:
 		uploadCb_ = dev.commandAllocator().get(
 			dev.queueSubmitter().queue().family(),
 			vk::CommandPoolCreateBits::resetCommandBuffer);
+		*/
 
 		// own compute cb
 		computeSemaphore_ = {dev};
@@ -393,11 +399,18 @@ public:
 		App::update(delta);
 		App::redraw();
 
-		if(socket_.update([&](auto p, auto& recv){ this->handleMsg(p, recv); })) {
-			// XXX: we need ordering of upload/compute command buffers
-			// and we can't record the upload cb here since it might
-			// be in use. So we do all in updateDevice
-			// TODO i guess
+		if(socket_ && !paused_) {
+			auto r = socket_->update([&](auto p, auto& recv){
+				this->handleMsg(p, recv);
+			});
+			if(r) {
+				// XXX: we need ordering of upload/compute command buffers
+				// and we can't record the upload cb here since it might
+				// be in use. So we do all in updateDevice
+				// TODO i guess
+				doCompute_ = true;
+			}
+		} else if(!paused_) {
 			doCompute_ = true;
 		}
 	}
@@ -413,52 +426,69 @@ public:
 				throw std::runtime_error("Protocol error: insufficient resources");
 			}
 
+			// no matter if action is succesful or not in the end
+			// if not, the resources are lost (building was planned to be
+			// build was it couldn't be)
 			players_[player].resources -= needed;
-			setBuilding(field, type);
-			dlg_trace("{}: build {} {}", socket_.step(),
+
+			setBuilding(player, field, type);
+			dlg_trace("{}: build {} {}", socket_->step(),
 				field, int(type));
 		} else if(type == MessageType::velocity) {
 			auto field = doi::read<std::uint32_t>(buf);
 			auto dir = doi::read<nytl::Vec2f>(buf);
-			setVelocity(field, dir);
-			dlg_trace("{}: velocity {} {}", socket_.step(),
+			setVelocity(player, field, dir);
+			dlg_trace("{}: velocity {} {}", socket_->step(),
 				field, dir);
 		} else {
 			throw std::runtime_error("Invalid package");
 		}
 	}
 
-	void setBuilding(u32 field, Field::Type type) {
-		auto offset = uploadPtr_ - stageView_.ptr();
-		auto size = sizeof(u32) + sizeof(f32);
-		dlg_assert(offset + size < stage_.size());
+	void setBuilding(u32 player, u32 field, Field::Type type) {
+		Command cmd;
+		cmd.type = CommandType::setBuilding;
+		cmd.build = type;
+		cmd.player = player;
+		cmd.field = field;
+		commands_.push_back(cmd);
 
-		doi::write(uploadPtr_, type);
-		doi::write(uploadPtr_, 10.f); // strength
-
-		auto off = offsetof(Field, type);
-		vk::BufferCopy copy;
-		copy.dstOffset = storageNew_.offset() +
-			sizeof(Field) * field + off;
-		copy.srcOffset = stage_.offset() + offset;
-		copy.size = size;
-		uploadRegions_.push_back(copy);
+		// auto offset = uploadPtr_ - stageView_.ptr();
+		// auto size = sizeof(u32) + sizeof(f32);
+		// dlg_assert(offset + size < stage_.size());
+//
+		// doi::write(uploadPtr_, type);
+		// doi::write(uploadPtr_, 10.f); // strength
+//
+		// auto off = offsetof(Field, type);
+		// vk::BufferCopy copy;
+		// copy.dstOffset = storageNew_.offset() +
+		// 	sizeof(Field) * field + off;
+		// copy.srcOffset = stage_.offset() + offset;
+		// copy.size = size;
+		// uploadRegions_.push_back(copy);
 	}
 
-	void setVelocity(u32 field, nytl::Vec2f dir) {
-		auto offset = uploadPtr_ - stageView_.ptr();
-		auto size = sizeof(nytl::Vec2f);
-		dlg_assert(offset + size < stage_.size());
-
-		doi::write(uploadPtr_, dir);
-
-		auto off = offsetof(Field, vel);
-		vk::BufferCopy copy;
-		copy.dstOffset = storageNew_.offset() +
-			sizeof(Field) * field + off;
-		copy.srcOffset = stage_.offset() + offset;
-		copy.size = size;
-		uploadRegions_.push_back(copy);
+	void setVelocity(u32 player, u32 field, nytl::Vec2f dir) {
+		Command cmd;
+		cmd.type = CommandType::setVel;
+		cmd.velocity = dir;
+		cmd.player = player;
+		cmd.field = field;
+		commands_.push_back(cmd);
+		// auto offset = uploadPtr_ - stageView_.ptr();
+		// auto size = sizeof(nytl::Vec2f);
+		// dlg_assert(offset + size < stage_.size());
+//
+		// doi::write(uploadPtr_, dir);
+//
+		// auto off = offsetof(Field, vel);
+		// vk::BufferCopy copy;
+		// copy.dstOffset = storageNew_.offset() +
+		// 	sizeof(Field) * field + off;
+		// copy.srcOffset = stage_.offset() + offset;
+		// copy.size = size;
+		// uploadRegions_.push_back(copy);
 	}
 
 	// void afterRender(vk::CommandBuffer cb) override {
@@ -470,6 +500,13 @@ public:
 	// 	vk::cmdCopyBuffer(cb, storageNew_.buffer(), storageOld_.buffer(),
 	// 		{region});
 	// }
+
+	nytl::Span<Field> deviceFields() {
+		fieldsMap_.invalidate();
+		auto ptr = reinterpret_cast<Field*>(fieldsMap_.ptr());
+		auto size = fieldsMap_.size() / sizeof(Field);
+		return {ptr, size};
+	}
 
 	void updateDevice() override {
 		if(updateTransform_) {
@@ -500,10 +537,7 @@ public:
 
 		// sync players
 		{
-			static u32 outputCounter = 0;
-			if(++outputCounter % 100 == 0) {
-				outputCounter = 0; // % 500 still 0
-			}
+			static u32 outputCounter = 0; // TODO
 
 			auto map = playerBuffer_.memoryMap();
 			auto span = map.span();
@@ -511,23 +545,96 @@ public:
 			// two way sync. First read, but then subtract the used
 			// resources. Relies on the fact that the gpu does never
 			// decrease the resource count
-			auto i = 0u;
 			for(auto& p : players_) {
 				auto& gained = doi::refRead<u32>(span);
 				p.resources += gained;
 				p.netResources += gained;
 				gained = 0u; // reset for next turn
 
-				if(outputCounter % 500 == 0) {
-					dlg_info("resources {}: {}", i++, p.resources);
-				}
-
 				// skip padding
 				doi::skip(span, 12);
+			}
+
+			if(++outputCounter % 500 == 0) {
+				outputCounter = 0;
+				dlg_info("resources: {}", players_[player_].resources);
 			}
 		}
 
 		if(doCompute_) {
+			doCompute_ = false;
+
+			// exeucte commands, upload stuff
+			auto fields = deviceFields();
+			for(auto& cmd : commands_) {
+				auto& field = fields[cmd.field];
+				if(cmd.type == CommandType::sendVel) {
+					dlg_assert(cmd.player == player_);
+					if(field.player != cmd.player) {
+						dlg_info("Cannot perform operation on enemy field");
+						continue;
+					}
+
+					if(socket_) {
+						auto& buf = socket_->add();
+						write(buf, MessageType::velocity);
+						write(buf, u32(cmd.field));
+						write(buf, cmd.velocity);
+					} else {
+						// set it directly
+						// TODO: directly fwd to CommandType::setVelocity in that case?
+						field.vel = cmd.velocity;
+					}
+				} else if(cmd.type == CommandType::sendBuilding) {
+					dlg_assert(cmd.player == player_);
+					if(field.player != cmd.player) {
+						dlg_info("Cannot perform operation on enemy field");
+						continue;
+					}
+
+					// check resources
+					auto needed = Field::prices[u32(cmd.type)];
+					if(players_[cmd.player].netResources < needed) {
+						dlg_info("Insufficient resources!");
+						continue;
+					} else {
+						dlg_assert(players_[player_].netResources <=
+							players_[player_].resources);
+						players_[player_].netResources -= needed;
+					}
+
+					if(socket_) {
+						auto& buf = socket_->add();
+						write(buf, MessageType::build);
+						write(buf, u32(selected_));
+						write(buf, cmd.build);
+					} else {
+						// set it directly
+						// TODO: directly fwd to CommandType::setBuilding in that case?
+						field.type = cmd.build;
+						field.strength = 10.f;
+					}
+				} else if(cmd.type == CommandType::setVel) {
+					if(field.player != cmd.player) {
+						dlg_warn("Cannot perform operation on enemy field (set)");
+						continue;
+					}
+
+					field.vel = cmd.velocity;
+				} else if(cmd.type == CommandType::setBuilding) {
+					if(field.player != cmd.player) {
+						dlg_warn("Cannot perform operation on enemy field (set)");
+						continue;
+					}
+
+					field.type = cmd.build;
+					field.strength = 10.f;
+				}
+			}
+
+			commands_.clear();
+			fieldsMap_.flush();
+
 			auto& dev = vulkanDevice();
 			vk::SubmitInfo info;
 			info.commandBufferCount = 1u;
@@ -536,6 +643,7 @@ public:
 			info.pSignalSemaphores = &computeSemaphore_.vkHandle();
 			App::addSemaphore(computeSemaphore_, vk::PipelineStageBits::allGraphics);
 
+			/*
 			if(!uploadRegions_.empty()) {
 				vk::beginCommandBuffer(uploadCb_, {});
 				vk::cmdCopyBuffer(uploadCb_, stage_.buffer(), storageOld_.buffer(),
@@ -560,6 +668,7 @@ public:
 					vk::PipelineStageFlags(vk::PipelineStageBits::computeShader);
 				info.pWaitDstStageMask = &stage;
 			}
+			*/
 
 			dev.queueSubmitter().add(info);
 		}
@@ -657,6 +766,8 @@ public:
 				case ny::Keycode::d: vel = {1, 0}; break;
 				case ny::Keycode::z: vel = {-cospi3, -sinpi3}; break;
 				case ny::Keycode::x: vel = {cospi3, -sinpi3}; break;
+
+				case ny::Keycode::p: paused_ = !paused_; break;
 				default: break;
 			}
 
@@ -675,25 +786,49 @@ public:
 			// but immediately destroyed/resources destroyed?
 			if(type) {
 				// we will handle it after delay as well as the other side
-				auto needed = Field::prices[u32(*type)];
-				if(players_[socket_.player()].netResources < needed) {
-					dlg_info("Insufficient resources!");
-				} else {
-					players_[socket_.player()].netResources -= needed;
 
-					auto& buf = socket_.add();
-					write(buf, MessageType::build);
-					write(buf, u32(selected_));
-					write(buf, *type);
-				}
+				Command cmd;
+				cmd.type = CommandType::sendBuilding;
+				cmd.field = selected_;
+				cmd.player = player_;
+				cmd.build = *type;
+				commands_.push_back(cmd);
+
+				// if(players_[player_].netResources < needed) {
+				// 	dlg_info("Insufficient resources!");
+				// } else {
+				// 	players_[player_].netResources -= needed;
+//
+				// 	if(socket_) {
+				// 		// check in next updateDevice whether field belongs to player
+				// 		auto& buf = socket_->add();
+				// 		write(buf, MessageType::build);
+				// 		write(buf, u32(selected_));
+				// 		write(buf, *type);
+				// 	} else {
+				// 		setBuilding(player_, selected_, *type);
+				// 	}
+				// }
 			}
 
 			if(vel) {
-				// we will handle it after delay as well as the other side
-				auto& buf = socket_.add();
-				write(buf, MessageType::velocity);
-				write(buf, u32(selected_));
-				write(buf, *vel);
+				Command cmd;
+				cmd.type = CommandType::sendVel;
+				cmd.field = selected_;
+				cmd.player = player_;
+				cmd.velocity = *vel;
+				commands_.push_back(cmd);
+
+				// // we will handle it after delay as well as the other side
+				// if(socket_) {
+				// 	// check in next updateDevice whether field belongs to player
+				// 	auto& buf = socket_->add();
+				// 	write(buf, MessageType::velocity);
+				// 	write(buf, u32(selected_));
+				// 	write(buf, *vel);
+				// } else {
+				// 	setVelocity(player_, selected_, *vel);
+				// }
 			}
 		}
 
@@ -800,9 +935,12 @@ public:
 	}
 
 protected:
+	// TODO: we could make storageOld_ device local and use yet another
+	// buffer to which we copy every frame
 	vpp::SubBuffer storageOld_;
 	vpp::SubBuffer storageNew_;
 	vpp::SubBuffer playerBuffer_;
+	vpp::MemoryMapView fieldsMap_; // map of storageOld_
 
 	// synced from gpu from last step
 	std::array<Player, 2> players_;
@@ -816,12 +954,15 @@ protected:
 	vpp::PipelineLayout linePipeLayout_;
 	vpp::Pipeline linePipe_;
 
+	/*
 	vpp::SubBuffer stage_; // used for syncing when needed
 	vpp::MemoryMapView stageView_;
 	std::byte* uploadPtr_;
 	std::vector<vk::BufferCopy> uploadRegions_;
 	vpp::CommandBuffer uploadCb_;
 	vpp::Semaphore uploadSemaphore_;
+	*/
+
 	vpp::Semaphore computeSemaphore_;
 
 	std::vector<Field> fields_; // not synced to gpu
@@ -866,7 +1007,28 @@ protected:
 	// vpp::Pipeline texPipe_;
 	// vpp::SubBuffer texBuf_;
 	vpp::Sampler sampler_;
-	Socket socket_;
+
+	std::optional<Socket> socket_;
+	u32 player_{0};
+
+	// deferred commands that only be executed in updateDevice phase
+	enum class CommandType {
+		sendVel,
+		sendBuilding,
+		setVel,
+		setBuilding,
+	};
+
+	struct Command {
+		CommandType type;
+		u32 player;
+		u32 field;
+		Field::Type build;
+		nytl::Vec2f velocity;
+	};
+	std::vector<Command> commands_;
+
+	bool paused_ {false}; // for debugging/testing
 };
 
 int main(int argc, const char** argv) {

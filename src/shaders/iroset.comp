@@ -1,0 +1,46 @@
+// XXX: was never used
+// proof of concept for asynchronous iro uploading
+// we need the data on the cpu anyways though since gpu roundtrip + network
+// delay on every input is bad.
+
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+
+#include "iro.glsl"
+
+layout(set = 0, binding = 0, std430) buffer Fields {
+	Field[] fields;
+};
+
+struct Command {
+	uint player;
+	uint field;
+	vec2 vel;
+	uint building; // if building == none: set velocity
+};
+
+layout(set = 0, binding = 1, std430) buffer Commands {
+	Command[] commands;
+};
+
+void main() {
+	uint id = gl_GlobalInvocationID.x;
+	Command cmd = commands[id];
+	Field field = fields[cmd.field];
+
+	// this happens when the field changed the owning player from
+	// input to input execution (e.g. after network delay)
+	if(field.player != cmd.player) {
+		return;
+	}
+
+	if(cmd.building == none) {
+		field.velocity = cmd.vel;
+	} else {
+		field.type = cmd.building;
+		field.strength = 10.f;
+	}
+
+	fields[cmd.field] = field;
+}

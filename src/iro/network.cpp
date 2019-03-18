@@ -164,6 +164,10 @@ bool Socket::update(MsgHandler handler) {
 		++recv_;
 
 		auto r = RecvBuf(buf);
+
+		// XXX: we assume packet ordering here which we obviously
+		// cannot. Handle other packets specifically; account for
+		// lost packets
 		dlg_assert(doi::read<std::uint64_t>(r) == recv_);
 
 		recvd_[(recv_ + delay) % (2 * delay)] = {std::move(buf)};
