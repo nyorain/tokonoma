@@ -8,6 +8,7 @@
 #include <stage/types.hpp>
 #include <stage/bits.hpp>
 #include <stage/texture.hpp>
+#include <argagg.hpp>
 
 #include <vpp/fwd.hpp>
 #include <vpp/trackedDescriptor.hpp>
@@ -104,7 +105,7 @@ Vec2i neighborPos(Vec2i pos, Field::Side side) {
 
 class HexApp : public doi::App {
 public:
-	static constexpr auto size = 128u;
+	static constexpr auto size = 8u * 8u;
 
 public:
 	bool init(const doi::AppSettings& settings) override {
@@ -112,9 +113,11 @@ public:
 			return false;
 		}
 
-		// multipler
-		socket_.emplace();
-		player_ = socket_->player();
+		// multiplaer
+		if(!singleplayer_) {
+			socket_.emplace();
+			player_ = socket_->player();
+		}
 
 		// renderer().clearColor({1.f, 1.f, 1.f, 1.f});
 
@@ -270,6 +273,25 @@ public:
 		return true;
 	}
 
+	argagg::parser argParser() const override {
+		auto parser = App::argParser();
+		parser.definitions.push_back({
+			"singleplayer",
+			{"-s", "--singleplayer"},
+			"Whether to start in singleplayer mode", 1
+		});
+		return parser;
+	}
+
+	bool handleArgs(const argagg::parser_results& result) override {
+		if (!App::handleArgs(result)) {
+			return false;
+		}
+
+		singleplayer_ = result["singleplayer"].count();
+		return true;
+	}
+
 	void createComputeCb() {
 		auto& dev = vulkanDevice();
 		auto qfamily = dev.queueSubmitter().queue().family();
@@ -278,7 +300,7 @@ public:
 		vk::cmdBindDescriptorSets(compCb_, vk::PipelineBindPoint::compute,
 			compPipeLayout_, 0, {compDs_}, {});
 		vk::cmdBindPipeline(compCb_, vk::PipelineBindPoint::compute, compPipe_);
-		vk::cmdDispatch(compCb_, fieldCount_, 1, 1);
+		vk::cmdDispatch(compCb_, fieldCount_ / 32, 1, 1);
 
 		vk::BufferMemoryBarrier barrier;
 		barrier.buffer = storageNew_.buffer();
@@ -1008,6 +1030,7 @@ protected:
 	// vpp::SubBuffer texBuf_;
 	vpp::Sampler sampler_;
 
+	bool singleplayer_ {};
 	std::optional<Socket> socket_;
 	u32 player_{0};
 

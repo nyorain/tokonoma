@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "iro.glsl"
+#include "noise.glsl"
 
 // invariants (before/after every exeuction):
 // - fields.player == playerNone <=>
@@ -16,7 +17,7 @@ const uint playerCount = 2u; // TODO: only 2 works atm, see below
 // into the neighbor. If two neighbor cells don't have the same
 // player, the stronger one will gain the cell
 // must be in range [0, 1/6]
-const float diffuse = 0.01;
+const float diffuse = 0.05;
 const float diffuseVel = 0.05;
 
 // TODO: not used, just a concept atm. Work out clash model further
@@ -38,12 +39,13 @@ const float towerDamage = 0.01;
 const float spawnStrength = 0.001;
 
 // influence factor of accelerator field
-const float accelInfluence = 0.05;
+const float accelInfluence = 0.5;
 
 // Information about a player
 struct Player {
 	uint resources; // should only be atomically accessed
-	float _1, _2, _3; // padding
+	uint aresources;
+	float _2, _3; // padding
 };
 
 // TODO: test different settings for performance
@@ -51,7 +53,7 @@ struct Player {
 //   but then group the ids matchingly (so that we always execute
 //   blocks close to each other). Since they access roughly the
 //   same memory.
-layout(local_size_x = 1) in;
+layout(local_size_x = 32) in;
 
 // the old buffer. All reads must be performed from this since the other
 // buffer may be written by another execution. Holds that was written
@@ -72,7 +74,9 @@ layout(set = 0, binding = 2, std430) buffer Players {
 } players;
 
 float diffuseFac(vec2 vel, vec2 dir) {
-	float fac = mix(0.5 * oneSixth, 500 * dot(dir, vel), 500 * dot(vel, vel));
+	float fac = mix(0.5 * oneSixth, 5 * dot(dir, vel), 15 * dot(vel, vel));
+	// fac = clamp(fac, 0.0, 1.0);
+	// fac += 0.8 * (-1 + 2 * random(vel.x * dir.y + vel.y - dir.x));
 	return clamp(fac, 0.0, 1.0);
 }
 
@@ -88,12 +92,38 @@ void main() {
 
 	// NOTE: fix nan velocities
 
+	// TODO: probably better solution for this...
+
 	// diffuse
 	// 1: depart/general
 	float strength = field.strength;
 	vec2 vel = field.velocity;
 	// float l = length(vel);
 	uint freeOwn = 0;
+
+	if(field.type == FieldEmpty && field.strength > 1.0) {
+		// slowly die
+		field.strength -= 0.05 * (field.strength - 1.0);
+	}
+
+	// bit of randomness?
+	// TODO: non-deterministic... we could use a random texture though
+	// field.velocity.x += 0.001 * (-1 + 2 * voronoiNoise(field._pos + field.velocity));
+	// field.velocity.y += 0.001 * (-1 + 2 * voronoiNoise(field._pos - field.velocity));
+
+	/*
+	if(field.type == FieldEmpty && field.player != none) {
+		float a = players.players[field.player].aresources;
+		field.velocity += 0.001 *
+			(-1 + 2 * random2(a + field._pos + field.velocity + field.strength));
+
+		// field.velocity.x += 0.0001 * 
+		// 	(-1 + 2 * voronoiNoise(field._pos + a));
+		// field.velocity.y += 0.0001 *
+		// 	(-1 + 2 * voronoiNoise(field._pos - a));
+	}
+	*/
+
 	for(uint i = 0; i < 6; ++i) {
 		if(field.next[i] == none) {
 			// edge condition
@@ -111,9 +141,7 @@ void main() {
 
 
 		const Field next = old.fields[field.next[i]];
-		// float fac = clamp(mix(oneSixth, 10 * dot(direction(i), vel), tanh(20 * l)), 0.0, 1.0);
 		float fac = diffuseFac(vel, direction(i));
-
 		if(next.type == FieldEmpty) {
 			if(next.player == field.player) {
 				++freeOwn;
@@ -121,23 +149,19 @@ void main() {
 
 			if(field.type == FieldEmpty) {
 				// pressure/even out
-				// TODO: probably better solution for this...
-				if(strength > 1.0 && strength > next.strength) {
-					// field.velocity += 0.0001 * direction(i) * (strength - next.strength);
-
-					// slowly die
-					field.strength -= 0.05 * (strength - 1.0);
-				}
 
 				// TODO: better diffusion?
 				// maybe don't change velocity, just make diffusion
 				// stronger over boundaries with huge difference?
 				float d = strength - next.strength;
-				field.velocity += 0.001 * direction(i) * d * d * d;
+				field.velocity += 0.00001 * direction(i) * d;
 
 				// attack/diffuse: field -> next
-				field.strength -= fac * diffuse * strength;
-				field.velocity -= fac * diffuseVel * strength * vel;
+				field.strength -= fac * diffuse * strength * strength;
+
+				// TODO: does velocity gets lost on diffusion?
+				// field.velocity -= fac * diffuseVel * strength * vel;
+				field.velocity -= 0.001 * fac * diffuseVel* vel;
 			}
 		}
 	}
@@ -148,7 +172,7 @@ void main() {
 	}
 
 	// XXX: slow down over time?
-	field.velocity *= 0.999;
+	// field.velocity *= 0.999;
 
 	// 2: receive
 	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
@@ -159,20 +183,18 @@ void main() {
 		}
 
 		const Field next = old.fields[field.next[i]];
-		// float l = length(next.velocity);
-		// float fac = clamp(mix(oneSixth, 10 * dot(-direction(i), next.velocity), tanh(20 * l)), 0.0, 1.0);
-
 		float fac = diffuseFac(next.velocity, -direction(i));
 
 		// TODO: strength cannot be greater than 1? normalize somehow everywhere!
 		// can't move into friendly building, only to attack
 		if(next.type == FieldEmpty && (field.type == FieldEmpty || next.player != field.player)) {
 			// diffuse (friendly or attack): next -> field
-			strengths[next.player] += fac * diffuse * next.strength;
+			strengths[next.player] += fac * diffuse * next.strength *
+				next.strength;
 
 			// TODO: should enemies influence acceleration building vel?
 			if(field.type == FieldEmpty) {
-				velSum += fac * diffuseVel * next.strength * next.velocity;
+				velSum += fac * diffuseVel * next.velocity;
 			}
 		} else if(next.type == FieldTower && next.player != field.player) {
 			field.strength -= towerDamage;
@@ -183,7 +205,7 @@ void main() {
 			// acceleration fields can't influence one another.
 			// that leads to divergence
 			if(field.type != FieldAccel) {
-				velSum += field.strength * accelInfluence * next.velocity; // accelerate
+				velSum += accelInfluence * next.velocity; // accelerate
 			}
 		}
 	}
@@ -192,7 +214,7 @@ void main() {
 	field.strength = max(0.0, field.strength);
 	if(field.player != none) {
 		strengths[field.player] += field.strength;
-		velSum += field.strength * field.velocity;
+		velSum += field.velocity;
 	}
 
 	// 3: fight
@@ -218,7 +240,11 @@ void main() {
 	field.player = bestPlayer;
 	if(bestPlayer != none) {
 		// field.velocity = clamp(velSum, -1, 1);
-		field.velocity = clamp(velSum, -1, 1);
+		// TODO
+		float l = max(length(velSum), 1);
+		field.velocity = velSum / l;
+
+		// field.velocity = clamp(velSum, -10, 10);
 	}
 
 	// write back

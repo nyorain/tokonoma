@@ -13,6 +13,7 @@ include_glsl = files(
   'include/color.glsl',
   'include/noise.glsl',
   'include/ray.glsl',
+  'include/iro.glsl',
 )
 
 # TODO: can probably be simplified with new meson dictionary feature
