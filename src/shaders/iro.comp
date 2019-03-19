@@ -161,7 +161,7 @@ void main() {
 				// maybe don't change velocity, just make diffusion
 				// stronger over boundaries with huge difference?
 				float d = strength - next.strength;
-				field.velocity += 0.001 * direction(i) * d * d * d;
+				field.velocity += 0.0005 * direction(i) * d * d * d;
 
 				// attack/diffuse: field -> next
 				field.strength -= fac * diffuse * strength;

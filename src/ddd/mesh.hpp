@@ -9,6 +9,7 @@
 
 #include <tinygltf.hpp>
 
+// TODO: badly named. Corresponds to gltf "Primitive"
 class Mesh {
 public:
 	static constexpr auto uboSize = 2 * sizeof(nytl::Mat4f);

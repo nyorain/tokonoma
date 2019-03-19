@@ -1,6 +1,8 @@
 #version 450
 
 #extension GL_GOOGLE_include_directive : enable
+#extension GL_KHR_shader_subgroup_basic : enable
+#extension GL_KHR_shader_subgroup_shuffle : enable
 
 #include "ray.glsl"
 #include "util.glsl"
@@ -137,8 +139,8 @@ vec3 trace(Ray ray) {
 		basis(normal, x, y);
 
 		// == purely random, easiest ==
-		// vec3 r = random3(pos + ubo.time);
-		// r.yz = 2 * r.yz - 1;
+		vec3 r = random3(pos + ubo.time);
+		r.yz = 2 * r.yz - 1;
 
 		// == i raise you: psychedelic path tracer ==
 		// vec3 r;
@@ -156,10 +158,10 @@ vec3 trace(Ray ray) {
 		// also include colors[b] in the noise?
 		// XXX: not sure why, but this produces better results
 		// less weirdness on edges somehow
-		vec3 r = random3(pos);
-		r.x = gradientNoise(16.31 * ubo.time + 123 * r.zy);
-		r.y = sgradientNoise(19.4 * ubo.time - 23.34 * r.xz);
-		r.z = sgradientNoise(-12.2 * ubo.time - 43.2 * r.xy);
+		// vec3 r = random3(pos);
+		// r.x = gradientNoise(16.31 * ubo.time + 123 * r.zy);
+		// r.y = sgradientNoise(19.4 * ubo.time - 23.34 * r.xz);
+		// r.z = sgradientNoise(-12.2 * ubo.time - 43.2 * r.xy);
 
 		// == i raise you: psychedelic path tracer v.2 ==
 		// vec3 r = random3(id + floor(vec3(uv)));
@@ -184,9 +186,9 @@ vec3 trace(Ray ray) {
 		vec3 dir = vec3(0.0);
 		dir += normalize(r.x * normal + r.y * x + r.z * y);
 
-		if(id == 6) { // fully reflective
-			dir = reflect(ray.dir, normal);
-			// dir = normalize(dir);
+		if(id == 6) { // half reflective
+			dir += 10 * reflect(ray.dir, normal);
+			dir = normalize(dir);
 		}
 
 		float f = dot(dir, normal);
@@ -213,22 +215,60 @@ vec3 trace(Ray ray) {
 		// vec4 light = unpackUnorm4x8(imageLoad(lightTex, iuv).r);
 		vec4 light = unpackUnorm4x8(imageAtomicCompSwap(lightTex, iuv, 0, 0));
 		// float fac = 0.05;
-		float fac = (0.06 / maxBounces) * (maxBounces - b - 1); // more bounces -> more weight
+		float fac = (0.05 / maxBounces) * (maxBounces - b - 1); // more bounces -> more weight
 
-		if(id == 6 && b == 0) { // reflective
-			fac = 1.0;
+		if(id == 6 && b == 0) { // half reflective
+			fac *= 5.0;
 		} else if(id == 6 && b != 0) {
 			// in this case, don't store anything. we have to follow
 			// manually
 			continue;
 		}
-//
+
 		// fac = max(fac, 0.02);
 		light = clamp(mix(light, vec4(col, 1.0), fac), 0, 1);
 
 		// TODO
 		imageAtomicExchange(lightTex, iuv, packUnorm4x8(light));
 		// imageStore(lightTex, iuv, uvec4(packUnorm4x8(light)));
+
+		// XXX: subgroup thing: really bad for performance,
+		// has no visible advantage (it might have theoretically
+		// when many instances of the same subgroup write
+		// the same texel; values get lost in that case)
+		// TODO: instead, we could also try out strict ordering
+		// with atomic compswap instructions. Maybe only minor
+		// performance hit for that?
+		/*
+		vec3 icol = col;
+		uint last = 0xFFFFFFFFu;
+		uint count = 1u;
+		for(uint i = 0; i < gl_SubgroupSize; ++i) {
+			if(i == gl_SubgroupInvocationID) {
+				if(last != 0xFFFFFFFFu) {
+					icol += subgroupShuffle(icol, last);
+				}
+
+				last = i;
+				continue;
+			}
+
+			ivec2 v = subgroupShuffle(iuv, i);
+			if(v == iuv) {
+				++count;
+				last = i;
+			}
+		}
+
+		// atomic still needed since other workgroups might
+		// write the same texel
+		if(last == gl_SubgroupInvocationID) {
+			// imageStore(lightTex, iuv, light);
+			float omfac = 1 - fac;
+			icol = clamp(mix(icol / count, vec3(light), pow(omfac, count)), 0, 1);
+			imageAtomicExchange(lightTex, iuv, packUnorm4x8(vec4(icol, 1.0)));
+		}
+		*/
 
 		// TODO: technically, we could ignore color on b == 0
 		// if(id == 5) {

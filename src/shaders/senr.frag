@@ -16,6 +16,7 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 	uint showLightTex;
 	vec2 faceSize; // size (in pixels) of one face
 	vec2 atlasSize; // total size (in pixels) of atlas
+	// TODO: we could use textureSize(light) instead of atlasSize...
 } scene;
 
 layout(set = 1, binding = 0, row_major) uniform Model {

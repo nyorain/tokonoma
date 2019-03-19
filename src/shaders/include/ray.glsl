@@ -26,25 +26,6 @@ float radius(Sphere s) {
 	return s.geom.w;
 }
 
-/*
-Box box() {
-	return Box(mat4(1), vec4(1.0), mat4(1));
-}
-
-Box box(vec3 center, vec3 color) {
-	Box b = box();
-	b.transform[3].xyz = center;
-	b.color = vec4(color, 1.0);
-	return b;
-}
-
-Box box(vec3 center, vec3 x, vec3 y, vec3 z) {
-	return Box(
-		mat4(vec4(x, 0), vec4(y, 0), vec4(z, 0), vec4(center, 1)),
-		vec4(1.0));
-}
-*/
-
 vec3 multDir(mat4 transform, vec3 dir) {
 	return mat3(transform) * dir;
 }
@@ -163,4 +144,58 @@ float intersect(Ray r, Box b, out vec3 normal, out vec3 bpos) {
     // normal = -sign(r.dir) * step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
 	normal = normalize(multDir(transpose(b.transform), normal));
 	return tn;
+}
+
+// intersection between Ray r and triangle defined by a,b,c
+// https://cadxfem.org/inf/Fast%20MinimumStorage%20RayTriangle%20Intersection.pdf
+// u is the barycentric coordinate for b and v for c
+// so interpolate like that: (1 - u - v) * a + u * b + v * c
+const float epsilon = 0.000001;
+float intersect2(Ray r, vec3 a, vec3 b, vec3 c, out float u, out float v) {
+	vec3 ab = b - a;
+	vec3 ac = c - a;
+	vec3 h = cross(r.dir, ac);
+	float det = dot(ab, h);
+
+	// culling version; don't render backfaces
+	if(det < epsilon) {
+		return -1.0;
+	}
+
+	vec3 s = r.origin - a;
+	u = dot(s, h);
+	if(u < 0.0 || u > det) {
+		return -1.0;
+	}
+
+	vec3 q = cross(s, ab);
+	v = dot(r.dir, q);
+	if(v < 0.0 || u + v > det) {
+		return -1.0;
+	}
+
+	float f = 1 / det;
+	u *= f;
+	v *= f;
+	return f * dot(ac, q);
+}
+
+// experimental intersect rewrite with less branching and early returns
+float intersect(Ray r, vec3 a, vec3 b, vec3 c, out float u, out float v) {
+	vec3 ab = b - a;
+	vec3 ac = c - a;
+	vec3 h = cross(r.dir, ac);
+	float det = dot(ab, h);
+	float idet = 1.0 / det;
+
+	vec3 s = r.origin - a;
+	u = idet * dot(s, h);
+
+	vec3 q = cross(s, ab);
+	v = idet * dot(r.dir, q);
+	if(det < epsilon || u < 0 || v < 0.0 || u + v > 1.0) {
+		return -1.0;
+	}
+
+	return idet * dot(ac, q);
 }
