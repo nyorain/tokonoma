@@ -18,13 +18,14 @@ const uint SideBotLeft = 4u;
 const uint SideBotRight = 5u;
 const float sqrt2 = 1.41421356237;
 const float isqrt2 = 0.70710678118;
+const float sinpi3 = 0.86602540378;
 const vec2 sideDirections[6] = {
 	vec2(1, 0), // right
-	vec2(isqrt2, isqrt2), // topRight
-	vec2(-isqrt2, isqrt2), // topLeft
+	vec2(0.5, sinpi3), // topRight
+	vec2(-0.5, sinpi3), // topLeft
 	vec2(-1, 0), // left
-	vec2(-isqrt2, -isqrt2), // botLeft
-	vec2(isqrt2, -isqrt2), // botRight
+	vec2(-0.5, -sinpi3), // botLeft
+	vec2(0.5, -sinpi3), // botRight
 };
 
 // Returns the logical direction of a SideXXX value

@@ -8,6 +8,7 @@
 #include <stage/types.hpp>
 #include <stage/bits.hpp>
 #include <stage/texture.hpp>
+#include <argagg.hpp>
 
 #include <vpp/fwd.hpp>
 #include <vpp/trackedDescriptor.hpp>
@@ -104,7 +105,7 @@ Vec2i neighborPos(Vec2i pos, Field::Side side) {
 
 class HexApp : public doi::App {
 public:
-	static constexpr auto size = 128u;
+	static constexpr auto size = 32u;
 
 public:
 	bool init(const doi::AppSettings& settings) override {
@@ -113,14 +114,10 @@ public:
 		}
 
 		// multipler
-		socket_.emplace();
-		player_ = socket_->player();
-
-		// renderer().clearColor({1.f, 1.f, 1.f, 1.f});
-
-		// logical
-		view_.center = {0.f, 0.f};
-		view_.size = {size, size};
+		if(network_) {
+			socket_.emplace();
+			player_ = socket_->player();
+		}
 
 		// layouts
 		auto& dev = vulkanDevice();
@@ -214,7 +211,7 @@ public:
 
 		// player buf
 		usage = vk::BufferUsageBits::storageBuffer;
-		auto playerSize = sizeof(Player) * 2;
+		auto playerSize = sizeof(Player) * 2 + sizeof(u32);
 		playerBuffer_ = {dev.bufferAllocator(), playerSize, usage, 0, hostMem};
 
 		{
@@ -267,6 +264,35 @@ public:
 		computeSemaphore_ = {dev};
 		createComputeCb();
 
+		// setup view
+		if(player_ == 0) {
+			view_.center = fields_[0].pos;
+			selected_ = 0;
+		} else {
+			view_.center = fields_.back().pos;
+			selected_ = fields_.size() - 1;
+		}
+
+
+		return true;
+	}
+
+	argagg::parser argParser() const override {
+		auto parser = App::argParser();
+		parser.definitions.push_back({
+			"network",
+			{"-n", "--network"},
+			"Whether to start in network mode", 0
+		});
+		return parser;
+	}
+
+	bool handleArgs(const argagg::parser_results& result) override {
+		if (!App::handleArgs(result)) {
+			return false;
+		}
+
+		network_ = result["network"].count();
 		return true;
 	}
 
@@ -278,7 +304,7 @@ public:
 		vk::cmdBindDescriptorSets(compCb_, vk::PipelineBindPoint::compute,
 			compPipeLayout_, 0, {compDs_}, {});
 		vk::cmdBindPipeline(compCb_, vk::PipelineBindPoint::compute, compPipe_);
-		vk::cmdDispatch(compCb_, fieldCount_, 1, 1);
+		vk::cmdDispatch(compCb_, fieldCount_ / 32, 1, 1);
 
 		vk::BufferMemoryBarrier barrier;
 		barrier.buffer = storageNew_.buffer();
@@ -548,20 +574,24 @@ public:
 			for(auto& p : players_) {
 				auto& gained = doi::refRead<u32>(span);
 				p.resources += gained;
-				p.netResources += gained;
+				p.netResources += gained; // only needed for player_
 				gained = 0u; // reset for next turn
 
 				// skip padding
 				doi::skip(span, 12);
 			}
 
-			if(++outputCounter % 500 == 0) {
+			// write step
+			doi::write(span, u32(step_));
+
+			if(++outputCounter % 60 == 0) {
 				outputCounter = 0;
 				dlg_info("resources: {}", players_[player_].resources);
 			}
 		}
 
 		if(doCompute_) {
+			++step_;
 			doCompute_ = false;
 
 			// exeucte commands, upload stuff
@@ -593,15 +623,15 @@ public:
 					}
 
 					// check resources
-					auto needed = Field::prices[u32(cmd.type)];
+					auto needed = Field::prices[u32(cmd.build)];
 					if(players_[cmd.player].netResources < needed) {
 						dlg_info("Insufficient resources!");
 						continue;
-					} else {
-						dlg_assert(players_[player_].netResources <=
-							players_[player_].resources);
-						players_[player_].netResources -= needed;
 					}
+
+					auto& p = players_[cmd.player];
+					dlg_assert(p.netResources <= p.resources);
+					p.netResources -= needed;
 
 					if(socket_) {
 						auto& buf = socket_->add();
@@ -779,36 +809,14 @@ public:
 				}
 			}
 
-			// TODO: problem: allow change only on "own" fields
-			// should probably be checked when event is processed (after delay)
-			// then refund resources if field is unavailable after
-			// delay? or say that building was planned to be build
-			// but immediately destroyed/resources destroyed?
+			// TODO: check here already if netResources is large enough?
 			if(type) {
-				// we will handle it after delay as well as the other side
-
 				Command cmd;
 				cmd.type = CommandType::sendBuilding;
 				cmd.field = selected_;
 				cmd.player = player_;
 				cmd.build = *type;
 				commands_.push_back(cmd);
-
-				// if(players_[player_].netResources < needed) {
-				// 	dlg_info("Insufficient resources!");
-				// } else {
-				// 	players_[player_].netResources -= needed;
-//
-				// 	if(socket_) {
-				// 		// check in next updateDevice whether field belongs to player
-				// 		auto& buf = socket_->add();
-				// 		write(buf, MessageType::build);
-				// 		write(buf, u32(selected_));
-				// 		write(buf, *type);
-				// 	} else {
-				// 		setBuilding(player_, selected_, *type);
-				// 	}
-				// }
 			}
 
 			if(vel) {
@@ -818,17 +826,6 @@ public:
 				cmd.player = player_;
 				cmd.velocity = *vel;
 				commands_.push_back(cmd);
-
-				// // we will handle it after delay as well as the other side
-				// if(socket_) {
-				// 	// check in next updateDevice whether field belongs to player
-				// 	auto& buf = socket_->add();
-				// 	write(buf, MessageType::velocity);
-				// 	write(buf, u32(selected_));
-				// 	write(buf, *vel);
-				// } else {
-				// 	setVelocity(player_, selected_, *vel);
-				// }
 			}
 		}
 
@@ -983,7 +980,7 @@ protected:
 	unsigned fieldCount_;
 
 	doi::LevelView view_;
-	float viewScale_ {10.f};
+	float viewScale_ {20.f};
 	bool updateTransform_ {true};
 	bool draggingView_ {false};
 
@@ -1008,6 +1005,7 @@ protected:
 	// vpp::SubBuffer texBuf_;
 	vpp::Sampler sampler_;
 
+	bool network_;
 	std::optional<Socket> socket_;
 	u32 player_{0};
 
@@ -1029,6 +1027,9 @@ protected:
 	std::vector<Command> commands_;
 
 	bool paused_ {false}; // for debugging/testing
+
+	// TODO: redundant with socket().step
+	u32 step_ {};
 };
 
 int main(int argc, const char** argv) {
