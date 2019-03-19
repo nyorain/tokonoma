@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "iro.glsl"
+#include "noise.glsl"
 
 // invariants (before/after every exeuction):
 // - fields.player == playerNone <=>
@@ -31,8 +32,8 @@ const float diffuseVel = 0.05;
 // the stronger side will have less losses and the stronger side more.
 const float advantageInfluence = 2;
 
-// constant tower damage per tick
-const float towerDamage = 0.01;
+// constant tower damage per step
+const float towerDamage = 0.001;
 
 // constant strength spawned by building
 const float spawnStrength = 0.001;
@@ -51,7 +52,7 @@ struct Player {
 //   but then group the ids matchingly (so that we always execute
 //   blocks close to each other). Since they access roughly the
 //   same memory.
-layout(local_size_x = 1) in;
+layout(local_size_x = 32) in;
 
 // the old buffer. All reads must be performed from this since the other
 // buffer may be written by another execution. Holds that was written
@@ -69,11 +70,24 @@ layout(set = 0, binding = 1, std430) writeonly buffer NewFields {
 // common data about the players
 layout(set = 0, binding = 2, std430) buffer Players {
 	Player[playerCount] players;
-} players;
+	uint step;
+} ubo;
 
 float diffuseFac(vec2 vel, vec2 dir) {
-	float fac = mix(0.5 * oneSixth, 500 * dot(dir, vel), 500 * dot(vel, vel));
+	float fac = mix(0.5 * oneSixth, 50 * dot(dir, vel), 50 * dot(vel, vel));
 	return clamp(fac, 0.0, 1.0);
+}
+
+// absolute norm: we have to use this instead of euclidean norm
+// since euclidean norm isn't guaranteed to be exact.
+// good enough
+float alength(vec2 v) {
+	return abs(v.x) + abs(v.y);
+}
+
+// maximum norm: not sure about difference to absolute norm for behavior
+float mlength(vec2 v) {
+	return max(v.x, v.y);
 }
 
 void main() {
@@ -86,7 +100,21 @@ void main() {
 	// fields that have more strength should (not just proportionally)
 	// diffuse "stronger"
 
-	// NOTE: fix nan velocities
+	// XXX: some randomness
+	// currently not precision-guaranteed but we could use a texture for
+	// random values; noise can probably be done precision-guaranteed
+	/*
+	if(field.type == FieldEmpty && field.player != none) {
+		float a = ubo.step;
+		float f = 0.01 * alength(field.velocity);
+		// field.velocity += f *
+		// 	(-1 + 2 * random2(a + field._pos + field.velocity + field.strength));
+		vec2 r = 2 * field._pos; // dont make it too uniform over areas
+
+		field.velocity.x += f * sgradientNoise(r + vec2(0.01 * a, 0));
+		field.velocity.y += f * sgradientNoise(r + vec2(0, 0.01 * a));
+	}
+	*/
 
 	// diffuse
 	// 1: depart/general
@@ -137,18 +165,19 @@ void main() {
 
 				// attack/diffuse: field -> next
 				field.strength -= fac * diffuse * strength;
-				field.velocity -= fac * diffuseVel * strength * vel;
+				field.velocity -= 1.0 * fac * diffuseVel * strength * vel;
 			}
 		}
 	}
 
+	// TODO: can be moved to cpu now
 	// resources
 	if(field.type == FieldResource) {
-		atomicAdd(players.players[field.player].resources, freeOwn);
+		atomicAdd(ubo.players[field.player].resources, freeOwn);
 	}
 
 	// XXX: slow down over time?
-	field.velocity *= 0.999;
+	// field.velocity *= 0.999;
 
 	// 2: receive
 	float strengths[playerCount] = {0.0, 0.0}; // player strengths in this field
@@ -219,7 +248,9 @@ void main() {
 	if(bestPlayer != none) {
 		// field.velocity = clamp(velSum, -1, 1);
 		// TODO
-		float l = max(length(velSum), 1.0);
+		// float l = max(length(velSum), 1.0);
+		// float l = max(dot(velSum, velSum), 1.0);
+		float l = max(alength(velSum), 1.0);
 		field.velocity = velSum / l;
 	}
 
