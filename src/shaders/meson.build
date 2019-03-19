@@ -98,7 +98,12 @@ shaders_src = [
 	  ['senr.frag'],
 	  ['senpt.frag', include_glsl],
 	  ['sen.comp', include_glsl],
-	]]
+	]],
+	['lith_shaders', [
+	  ['lith.frag', include_glsl],
+	  ['lith.vert'],
+	  ['lith.comp', include_glsl],
+	]],
 ]
 
 # build them
@@ -115,6 +120,7 @@ foreach shader_group : shaders_src
 		data_name = name.underscorify() + '_data'
 		args = [glslang, '-V', '@INPUT@',
 			'-o', '@OUTPUT@',
+			'--target-env', 'vulkan1.1',
 			'--vn', data_name,
 			'-I' + shader_inc_dir]
 		args += shader.get(3, [])

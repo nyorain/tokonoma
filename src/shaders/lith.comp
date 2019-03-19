@@ -1,0 +1,168 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+
+#include "ray.glsl"
+#include "noise.glsl"
+#include "util.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform UBO {
+	vec4 pos;
+	vec4 dir;
+	float fov; // on y coord
+	float aspect; // aspect ratio: x / y
+	float time;
+} ubo;
+
+struct Vertex {
+	vec3 pos;
+	float _padding;
+	vec2 uv; // into all textures/maps
+};
+
+layout(row_major, set = 0, binding = 1) readonly buffer Vertices {
+	Vertex verts[];
+};
+
+layout(row_major, set = 0, binding = 2) readonly buffer Indices {
+	uint indices[];
+};
+
+layout(set = 0, binding = 3) uniform sampler2D albedoMap; // atlas
+layout(set = 0, binding = 4) uniform sampler2D normalMap; // atlas
+layout(set = 0, binding = 5) uniform sampler2D roughnessMap; // atlas
+layout(set = 0, binding = 6, r32ui) uniform uimage2D lightMap; // atlas
+
+const uint maxBounces = 3;
+const vec3 up = vec3(0, 1, 0);
+const float infinity = 1.f / 0.f;
+const vec3 lightPos = vec3(0, 1.8, 0);
+const float lightRadius = 0.2;
+const uint none = 0xFFFFFFFFu;
+
+// TODO:
+// - next/anyhit: see if ignore is really needed or if epsilon offset it enough
+// - we could make maxBounces larger and add dynamic end condition (fac too smalld
+// - use facs[i] for mix instead of factor
+// - also use brdf for shadow and stuff
+
+vec3 brdf(vec3 pos, vec3 normal, vec3 dir, vec2 uv) {
+}
+
+vec3 shade(vec3 pos, vec2 uv, vec3 dir, out vec3 normal) {
+	return vec3(0.0);
+}
+
+// next intersection t on ray.
+// also gives normal and position of intersected object
+// returns -1.0 if there is no intersection
+float next(Ray ray, uint ignore, out vec2 uv, out uint idx) {
+	float mint = infinity;
+	float u,v;
+	for(uint i = 0; i < indices.length(); i += 3) {
+		if(i == ignore) {
+			continue;
+		}
+
+		Vertex a = verts[indices[i]];
+		Vertex b = verts[indices[i + 1]];
+		Vertex c = verts[indices[i + 2]];
+		float t = intersect(ray, a.pos, b.pos, c.pos, u, v);
+		if(t > epsilon && t < mint) {
+			mint = t;
+			idx = i;
+			uv = (1 - u - v) * a.uv + u * b.uv + v * c.uv;
+		}
+	}
+
+	if(mint == infinity) {
+		return -1.0;
+	}
+
+	return mint;
+}
+
+// just returns whether the given ray hits anything below 'belowt'
+bool anyhit(Ray ray, uint ignore, float belowt) {
+	float u,v;
+	for(uint i = 0; i < indices.length(); i += 3) {
+		if(i == ignore) {
+			continue;
+		}
+
+		Vertex a = verts[indices[i]];
+		Vertex b = verts[indices[i + 1]];
+		Vertex c = verts[indices[i + 2]];
+		float t = intersect(ray, a.pos, b.pos, c.pos, u, v);
+		if(t > epsilon && t < belowt) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// iteratively follows the ray and its bounces
+vec3 trace(Ray ray) {
+	vec3 col = vec3(0, 0, 0); // default, background
+
+	vec2 uv;
+	uint id;
+	uint ignore = none;
+	vec3 normal;
+
+	vec2 uvs[maxBounces];
+	vec3 normals[maxBounces]; // could be re-read (uvs), but extra tex access
+	vec3 facs[maxBounces]; // brdf * dot(dir, normal)
+
+	// forward till end
+	int b;
+	for(b = 0; b < maxBounces; ++b) {
+		float t = next(ray, ignore, uv, id);
+		if(t < 0.0) {
+			break;
+		}
+
+		vec3 pos = ray.origin + t * ray.dir;
+		vec3 normal = vec3(texture(normalMap, uv));
+		ignore = id;
+		uvs[b] = uv;
+		normals[b] = normal;
+
+		// random bounce ray generation. See sen.comp for more
+		vec3 x, y;
+		basis(normal, x, y);
+		vec3 r = random3(pos + ubo.time);
+		r.yz = 2 * r.yz - 1;
+		vec3 dir = vec3(0.0);
+		dir += normalize(r.x * normal + r.y * x + r.z * y);
+
+		facs[b] = brdf(pos, normal, ray.dir, uv) * dot(dir, normal);
+		ray = Ray(pos, dir);
+	}
+
+	// shade
+	int maxB = b - 1;
+	for(--b; b >= 0; --b) {
+		col *= facs[b];
+		col += colors[b];
+
+		ivec2 iuv = ivec2(uvs[b] * imageSize(lightMap));
+		vec4 light = unpackUnorm4x8(imageAtomicCompSwap(lightMap, iuv, 0, 0));
+		float fac = (0.05 / maxBounces) * (maxBounces - b - 1);
+
+		light = clamp(mix(light, vec4(col, 1.0), fac), 0, 1);
+
+		imageAtomicExchange(lightMap, iuv, packUnorm4x8(light));
+
+		vec3 color = boxes[id].color.rgb;
+		col = color * light.rgb;
+	}
+
+	return col;
+}
+
+void main() {
+}
+

@@ -70,6 +70,7 @@ subdir('src/sentient')
 subdir('src/sss')
 subdir('src/iro')
 subdir('src/ddd')
+subdir('src/lith')
 
 # inline (for small projects)
 executable('pendulum',
