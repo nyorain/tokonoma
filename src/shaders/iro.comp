@@ -250,8 +250,10 @@ void main() {
 		// TODO
 		// float l = max(length(velSum), 1.0);
 		// float l = max(dot(velSum, velSum), 1.0);
-		float l = max(alength(velSum), 1.0);
-		field.velocity = velSum / l;
+		if(alength(velSum) > 1.0) {
+			velSum *= 0.9;
+		}
+		field.velocity = velSum;
 	}
 
 	// write back
