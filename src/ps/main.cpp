@@ -145,7 +145,7 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, compPipeline_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 			compPipelineLayout_, 0, {compDs_}, {});
-		vk::cmdDispatch(cb, count_, 1, 1);
+		vk::cmdDispatch(cb, count_ / 256, 1, 1);
 	}
 
 	void render(vk::CommandBuffer cb) {
@@ -201,6 +201,12 @@ public:
 	// to be rerecorded
 	void count(unsigned count, vpp::DescriptorSetUpdate* update = nullptr) {
 		dlg_assert(count > 0);
+
+		// next power of 2
+		unsigned power = 1;
+		while(power < count)
+			power *= 2;
+		count = power;
 
 		// NOTE: could make this smart; only recreate if really needed,
 		// also copy old particles over... some work though to keep track

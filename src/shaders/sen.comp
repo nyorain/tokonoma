@@ -186,10 +186,12 @@ vec3 trace(Ray ray) {
 		vec3 dir = vec3(0.0);
 		dir += normalize(r.x * normal + r.y * x + r.z * y);
 
+		/*
 		if(id == 6) { // half reflective
 			dir += 10 * reflect(ray.dir, normal);
 			dir = normalize(dir);
 		}
+		*/
 
 		float f = dot(dir, normal);
 		facs[b] = f;
@@ -217,6 +219,7 @@ vec3 trace(Ray ray) {
 		// float fac = 0.05;
 		float fac = (0.05 / maxBounces) * (maxBounces - b - 1); // more bounces -> more weight
 
+		/*
 		if(id == 6 && b == 0) { // half reflective
 			fac *= 5.0;
 		} else if(id == 6 && b != 0) {
@@ -224,6 +227,7 @@ vec3 trace(Ray ray) {
 			// manually
 			continue;
 		}
+		*/
 
 		// fac = max(fac, 0.02);
 		light = clamp(mix(light, vec4(col, 1.0), fac), 0, 1);
