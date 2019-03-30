@@ -12,7 +12,7 @@ struct Particle {
 	float alpha;
 };
 
-layout(local_size_x = 1) in;
+layout(local_size_x = 256) in;
 layout(std430, set = 0, binding = 0) buffer Particles {
 	Particle particles[];
 };
@@ -36,8 +36,9 @@ void snow(uint index, inout Particle p) {
 
 	if(p.lifetime < 0 || p.pos.y > 1.f) {
 		p.lifetime = 3 + 3 * random((1 + index) * (1 + ubo.time));
-		p.pos.x = -1 + 2 * random(gradientNoise(p.vel) * sin(ubo.time) * index);
-		p.pos.y = -1 + 2 * random(gradientNoise(-p.vel) * cos(ubo.time) * index);
+		p.pos = -1 + 2 * random2(p.pos);
+		// p.pos.x = -1 + 2 * random(gradientNoise(p.vel) * sin(ubo.time) * index);
+		// p.pos.y = -1 + 2 * random(gradientNoise(-p.vel) * cos(ubo.time) * index);
 		// p.pos.y = -1;
 		p.vel = vec2(0);
 		p.alpha = 0; // if lifetime ran out, this should be the case
@@ -60,10 +61,79 @@ void radial(uint index, inout Particle p) {
 
 	if(p.lifetime < 0 || oob(p.pos)) { // reset
 		p.lifetime = 1 + 3 * random((1 + index) * (1 + ubo.time));
+		p.vel = -1 + 2 * random2(ubo.time * p.pos);
 		p.pos = vec2(0);
-		p.vel = -1 + 2 * random2(vec2(1 + ubo.time, -1 + index));
-		// p.vel.x = random(ubo.time * index);
-		// p.vel.y = random(-ubo.time * index);
+
+		// make sure the length doesn't go over 1
+		// that means unusually many will have velocity length 1 but
+		// at least it looks like a circle and not like a square
+		float l = length(p.vel);
+		if(l > 1.0) {
+			p.vel /= l;
+		}
+	}
+}
+
+void spiraly(uint index, inout Particle p) {
+	p.vel *= exp(-0.5 * ubo.dt); // friction
+	p.pos += p.vel * ubo.dt;
+	p.lifetime -= ubo.dt;
+	p.alpha = min(p.alpha + sign(p.lifetime - 1) * ubo.dt, 1);
+
+	if(p.lifetime < 0 || oob(p.pos)) { // reset
+		p.lifetime = 1 + 3 * random((1 + index) * (1 + ubo.time));
+
+		// spiraly
+		float t = ubo.time;
+		p.vel = (0.05 + random(ubo.time + p.pos)) * vec2(cos(t), sin(t));
+
+		// some random offset to make it look diffusing
+		// remove this for pure spiral
+		p.vel += 0.05 * (-1 + 2 * random2(ubo.dt * index + ubo.time * p.pos));
+
+		p.pos = vec2(0);
+	}
+}
+
+void reset(inout Particle p) {
+	p.pos = vec2(0.0);
+	p.vel = vec2(0.0);
+}
+
+void still(uint index, inout Particle p) {
+	p.vel *= exp(-0.5 * ubo.dt); // friction
+	p.pos += p.vel * ubo.dt;
+	p.lifetime -= ubo.dt;
+	p.alpha = min(p.alpha + sign(p.lifetime - 1) * ubo.dt, 1);
+
+	if(p.lifetime < 0 || oob(p.pos)) { // reset
+		p.lifetime = 1 + 3 * random((1 + index) * (1 + ubo.time));
+		p.pos = -1 + 2 * random2(vec2(ubo.dt * index, ubo.time));
+	}
+}
+
+// adds force fields
+struct ForceField {
+	vec2 pos;
+	vec2 vel;
+};
+
+void forcefields(uint index, inout Particle p) {
+	float t = ubo.time;
+	const float fac = 0.05;
+	ForceField forces[] = {
+		{{-0.5, -0.5}, {0.4, -0.8}},
+		{{0.0, 0.5}, {-1.0, 0.0}},
+
+		// circling and adding force back to origin
+		{{0.5 * cos(t), 0.5 * sin(t)}, {-cos(t), -sin(t)}},
+	};
+
+	for(uint i = 0; i < forces.length(); ++i) {
+		ForceField f = forces[i];
+		vec2 diff = p.pos - f.pos;
+		float d = dot(diff, diff);
+		p.vel += fac * ubo.dt * f.vel / d;
 	}
 }
 
@@ -73,11 +143,25 @@ void main() {
 	Particle p = particles[index];
 
 	switch(ubo.pstype) {
+		case 0:
+			reset(p);
+			break;
 		case 1:
 			snow(index, p);
 			break;
 		case 2:
 			radial(index, p);
+			break;
+		case 3:
+			spiraly(index, p);
+			break;
+		case 4:
+			still(index, p);
+			break;
+		case 5:
+			spiraly(index, p);
+			p.vel *= exp(-0.5 * ubo.dt); // more friction
+			forcefields(index, p);
 			break;
 	}
 

@@ -1,18 +1,38 @@
 // The random/noise/fbm functions return a number between 0 and 1
 float random(float v) {
-	return fract(sin(7.16294 * v) * 51812.142574);
+    float a = 43758.5453;
+    float sn = mod(v, 3.14);
+    return fract(sin(sn) * a);
 }
 
 float random(vec2 v) {
-	return random(dot(v, vec2(96.342291, -235.91764)));
+    float a = 43758.5453;
+    float b = 12.9898;
+    float c = 78.233;
+    float dt = dot(v, vec2(b, c));
+    float sn = mod(dt, 3.14);
+    return fract(sin(sn) * a);
 }
 
 float random(vec3 v) {
-	return random(dot(v, vec3(96.342291, -235.91764, 12.63231)));
+    float a = 43758.5453;
+    float b = 12.9898;
+    float c = 78.233;
+    float d = 4.749;
+    float dt = dot(v, vec3(b, c, d));
+    float sn = mod(dt, 3.14);
+    return fract(sin(sn) * a);
 }
 
 float random(vec4 v) {
-	return random(dot(v, vec4(-0.921286, 96.342291, -235.91764, 12.63231)));
+    float a = 43758.5453;
+    float b = 12.9898;
+    float c = 78.233;
+    float d = 4.749;
+    float e = 51.0531;
+    float dt = dot(v, vec4(b, c, d, e));
+    float sn = mod(dt, 3.14);
+    return fract(sin(sn) * a);
 }
 
 vec2 random2(vec2 v) {
