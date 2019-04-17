@@ -1,4 +1,5 @@
 #include "mesh.hpp"
+#include "material.hpp"
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
 
@@ -7,16 +8,14 @@
 
 #include <dlg/dlg.hpp>
 
-Mesh::Mesh(const vpp::Device& dev,
-		const tinygltf::Model& model, const tinygltf::Mesh& mesh,
-		const vpp::TrDsLayout& dsLayout) {
-	if(mesh.primitives.empty()) {
-		throw std::runtime_error("No primitive to render");
-	}
+Primitive::Primitive(const vpp::Device& dev,
+		const tinygltf::Model& model, const tinygltf::Primitive& primitive,
+		const vpp::TrDsLayout& dsLayout, const Material& material) {
+	this->material_ = &material;
 
-	auto& primitive = mesh.primitives[0];
 	auto ip = primitive.attributes.find("POSITION");
 	auto in = primitive.attributes.find("NORMAL");
+	auto iuv = primitive.attributes.find("TEXCOORD_0"); // TODO: more coords
 	if(ip == primitive.attributes.end() || in == primitive.attributes.end()) {
 		throw std::runtime_error("primitve doesn't have POSITION or NORMAL");
 	}
@@ -24,6 +23,12 @@ Mesh::Mesh(const vpp::Device& dev,
 	auto& pa = model.accessors[ip->second];
 	auto& na = model.accessors[in->second];
 	auto& ia = model.accessors[primitive.indices];
+
+	auto* uva = iuv == primitive.attributes.end() ?
+		nullptr : &model.accessors[iuv->second];
+	if(!uva && material.hasTexture()) {
+		throw std::runtime_error("primitive uses texture but has no uv coords");
+	}
 
 	// compute total buffer size
 	auto size = 0u;
@@ -38,13 +43,22 @@ Mesh::Mesh(const vpp::Device& dev,
 		vk::BufferUsageBits::transferDst;
 
 	dlg_assert(na.count == pa.count);
-	vertices = {dev.bufferAllocator(), size, usage, 0u, devMem};
-	indexCount = ia.count;
-	vertexCount = na.count;
+	vertices_ = {dev.bufferAllocator(), size, usage, 0u, devMem};
+	indexCount_ = ia.count;
+	vertexCount_ = na.count;
+
+	auto stageSize = size;
+	if(uva) {
+		auto uvSize = uva->count * sizeof(nytl::Vec2f); // uv coords
+		auto uvUsage = vk::BufferUsageBits::vertexBuffer |
+			vk::BufferUsageBits::transferDst;
+		uv_ = {dev.bufferAllocator(), uvSize, uvUsage, 0u, devMem};
+		stageSize += uvSize;
+	}
 
 	// fill it
 	{
-		auto stage = vpp::SubBuffer{dev.bufferAllocator(), size,
+		auto stage = vpp::SubBuffer{dev.bufferAllocator(), stageSize,
 			vk::BufferUsageBits::transferSrc, 0u, hostMem};
 		auto map = stage.memoryMap();
 		auto span = map.span();
@@ -69,10 +83,27 @@ Mesh::Mesh(const vpp::Device& dev,
 		auto cb = qs.device().commandAllocator().get(qs.queue().family());
 		vk::beginCommandBuffer(cb, {});
 		vk::BufferCopy region;
-		region.dstOffset = vertices.offset();
+		region.dstOffset = vertices_.offset();
 		region.srcOffset = stage.offset();
 		region.size = size;
-		vk::cmdCopyBuffer(cb, stage.buffer(), vertices.buffer(), {region});
+		vk::cmdCopyBuffer(cb, stage.buffer(), vertices_.buffer(), {region});
+
+		if(uva) {
+			auto offset = span.data() - map.ptr();
+			auto uvr = doi::range<2, float>(model, *uva);
+			for(auto uv : uvr) {
+				doi::write(span, uv);
+			}
+			dlg_assert(vk::DeviceSize(span.data() - map.ptr() - offset)
+				== uv_.size());
+
+			vk::BufferCopy region;
+			region.dstOffset = uv_.offset();
+			region.srcOffset = stage.offset() + offset;
+			region.size = uv_.size();
+			vk::cmdCopyBuffer(cb, stage.buffer(), uv_.buffer(), {region});
+		}
+
 		vk::endCommandBuffer(cb);
 
 		// execute
@@ -84,12 +115,12 @@ Mesh::Mesh(const vpp::Device& dev,
 	}
 
 	// ubo
-	size = Mesh::uboSize; // ubo
+	size = Primitive::uboSize; // ubo
 	usage = vk::BufferUsageBits::uniformBuffer;
-	ubo = {dev.bufferAllocator(), size, usage, 0u, hostMem};
+	ubo_ = {dev.bufferAllocator(), size, usage, 0u, hostMem};
 
 	{
-		auto map = ubo.memoryMap();
+		auto map = ubo_.memoryMap();
 		auto span = map.span();
 
 		// write ubo
@@ -98,25 +129,41 @@ Mesh::Mesh(const vpp::Device& dev,
 	}
 
 	// descriptor
-	ds = {dev.descriptorAllocator(), dsLayout};
-	auto& mubo = ubo;
-	vpp::DescriptorSetUpdate odsu(ds);
+	ds_ = {dev.descriptorAllocator(), dsLayout};
+	auto& mubo = ubo_;
+	vpp::DescriptorSetUpdate odsu(ds_);
 	odsu.uniform({{mubo.buffer(), mubo.offset(), mubo.size()}});
 	vpp::apply({odsu});
 }
 
-void Mesh::render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout) {
-	auto iOffset = vertices.offset();
-	auto vOffset = iOffset + indexCount * sizeof(std::uint32_t);
+void Primitive::render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout,
+		bool shadow) {
+	auto iOffset = vertices_.offset();
+	auto vOffset = iOffset + indexCount_ * sizeof(std::uint32_t);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pipeLayout, 1, {ds}, {});
-	vk::cmdBindVertexBuffers(cb, 0, 1, {vertices.buffer()}, {vOffset});
-	vk::cmdBindIndexBuffer(cb, vertices.buffer(), iOffset, vk::IndexType::uint32);
-	vk::cmdDrawIndexed(cb, indexCount, 1, 0, 0, 0);
+		pipeLayout, 1, {ds_}, {});
+	vk::cmdBindVertexBuffers(cb, 0, 1, {vertices_.buffer()}, {vOffset});
+
+	if(!shadow) {
+		material().bind(cb, pipeLayout);
+		if(uv_.size() > 0) {
+			vk::cmdBindVertexBuffers(cb, 1, 1, {uv_.buffer()}, {uv_.offset()});
+		} else {
+			// in this case we bind the vertex (pos + normal) buffer as
+			// uv buffer. This is obviously utter garbage but allows us
+			// to use just one pipeline. If we land here, the material of
+			// this primitive uses no textures so uv coords are irrevelant.
+			// The size of position+normals will always be larger than of uv coords.
+			vk::cmdBindVertexBuffers(cb, 1, 1, {vertices_.buffer()}, {vOffset});
+		}
+	}
+
+	vk::cmdBindIndexBuffer(cb, vertices_.buffer(), iOffset, vk::IndexType::uint32);
+	vk::cmdDrawIndexed(cb, indexCount_, 1, 0, 0, 0);
 }
 
-void Mesh::updateDevice() {
-	auto map = ubo.memoryMap();
+void Primitive::updateDevice() {
+	auto map = ubo_.memoryMap();
 	auto span = map.span();
 	doi::write(span, matrix);
 	auto normalMatrix = nytl::Mat4f(transpose(inverse(matrix)));

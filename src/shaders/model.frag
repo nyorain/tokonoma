@@ -2,7 +2,8 @@
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec3 inLightPos;
+layout(location = 2) in vec3 inLightPos; // position from pov light; for shadow
+layout(location = 3) in vec2 inUV;
 
 layout(location = 0) out vec4 outCol;
 
@@ -13,7 +14,7 @@ struct Light {
 	vec3 pd; // position for point light, direction of dir light
 	uint type; // point or dir
 	vec3 color;
-	uint pcf; // padding
+	uint pcf;
 };
 
 layout(constant_id = 0) const uint maxLightSize = 8;
@@ -27,6 +28,20 @@ layout(set = 0, binding = 0, row_major) uniform Lights {
 } lights;
 
 layout(set = 0, binding = 1) uniform sampler2DShadow shadowTex;
+
+// material
+layout(set = 2, binding = 0) uniform sampler2D albedoTex;
+layout(set = 2, binding = 1) uniform sampler2D metalRoughTex;
+layout(set = 2, binding = 2) uniform sampler2D normalTex;
+layout(set = 2, binding = 3) uniform sampler2D occlusionTex;
+
+// factors
+layout(push_constant) uniform materialPC {
+	vec4 albedo;
+	float roughness;
+	float metallic;
+	bool normalmap; // whether material has a normalmap
+} material;
 
 // samples the shadow texture multiple times to get smoother shadow
 // returns (1 - shadow), i.e. the light factor
@@ -49,17 +64,49 @@ float shadowpcf(vec3 pos) {
 	return sum / total;
 }
 
+// NOTE: tangent and bitangent could also be passed in for each vertex
+// then we could already compute light and view positiong in tangent space
+vec3 getNormal() {
+	vec3 n = normalize(inNormal);
+	if(!material.normalmap) {
+		return n;
+	}
+
+	// http://www.thetenthplanet.de/archives/1180
+	vec3 q1 = dFdx(inPos);
+	vec3 q2 = dFdy(inPos);
+	vec2 st1 = dFdx(inUV);
+	vec2 st2 = dFdy(inUV);
+
+	vec3 t = normalize(q1 * st2.t - q2 * st1.t);
+	vec3 b = -normalize(cross(n, t));
+
+	// texture contains normal in tangent space
+	// we could also just use a signed format here i guess
+	vec3 tn = texture(normalTex, inUV).xyz * 2.0 - 1.0;
+	return normalize(mat3(t, b, n) * tn);
+}
+
 void main() {
-	vec3 normal = normalize(inNormal);
-	vec3 objectColor = vec3(1, 1, 1);
-	float ambientFac = 0.1f;
+	vec4 albedo = material.albedo * texture(albedoTex, inUV);
+	outCol = albedo;
+
+	vec3 normal = getNormal();
+
+	// TODO: actually use them...
+	// vec2 mr = texture(metalRoughTex).rg;
+	// float metalness = material.matallic * mr.b;
+	// float roughness = material.roughness * mr.g;
+
+	// TODO: remove random factors, implement pbr
+	float ambientFac = 0.1 * texture(occlusionTex, inUV).r;
 	float diffuseFac = 0.5f;
 	float specularFac = 0.5f;
 	float shininess = 64.f;
 
 	// TODO: shadow coords only for first light supported
-
-	vec3 col = vec3(0.1, 0.1, 0.1);
+	// but that's one of the main problems of a forward renderer
+	vec3 col = vec3(0.0);
 	for(uint i = 0; i < lights.numLights; ++i) {
 		Light light = lights.lights[i];
 		vec3 ldir = (light.type == pointLight) ?
@@ -87,7 +134,7 @@ void main() {
 		lfac += ambientFac;
 
 		// combine
-		col += lfac * light.color * objectColor;
+		col += lfac * light.color * albedo.rgb;
 	}
 
 	outCol = vec4(col, 1.0);
