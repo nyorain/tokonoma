@@ -204,7 +204,6 @@ nytl::SquareMat<4, P> lookAtLH(const nytl::Vec3<P>& eye,
 	return ret;
 }
 
-// NOTE: remove?
 template<typename P>
 nytl::SquareMat<4, P> lookAtRH(const nytl::Vec3<P>& eye,
 		const nytl::Vec3<P>& center, const nytl::Vec3<P>& up) {
