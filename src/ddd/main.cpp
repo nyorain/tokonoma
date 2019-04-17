@@ -1,5 +1,6 @@
 #include "skybox.hpp"
 #include "mesh.hpp"
+#include "material.hpp"
 
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
@@ -52,7 +53,7 @@ struct Light {
 class ViewApp : public doi::App {
 public:
 	static constexpr auto maxLightSize = 8u;
-	using Vertex = Mesh::Vertex;
+	using Vertex = Primitive::Vertex;
 
 public:
 	bool init(const doi::AppSettings& settings) override {
@@ -73,20 +74,33 @@ public:
 		auto hostMem = dev.hostMemoryTypes();
 		skybox_.init(dev, renderer().renderPass(), renderer().samples());
 
-		// shadow sampler
+		// tex sampler
 		vk::SamplerCreateInfo sci {};
-		sci.addressModeU = vk::SamplerAddressMode::clampToBorder;
-		sci.addressModeV = vk::SamplerAddressMode::clampToBorder;
-		sci.addressModeW = vk::SamplerAddressMode::clampToBorder;
-		sci.borderColor = vk::BorderColor::floatOpaqueWhite;
+		sci.addressModeU = vk::SamplerAddressMode::repeat;
+		sci.addressModeV = vk::SamplerAddressMode::repeat;
+		sci.addressModeW = vk::SamplerAddressMode::repeat;
 		sci.magFilter = vk::Filter::linear;
 		sci.minFilter = vk::Filter::linear;
 		sci.minLod = 0.0;
 		sci.maxLod = 0.25;
+		sci.mipmapMode = vk::SamplerMipmapMode::linear;
+		sampler_ = {dev, sci};
+
+		// shadow sampler
+		sci.addressModeU = vk::SamplerAddressMode::clampToBorder;
+		sci.addressModeV = vk::SamplerAddressMode::clampToBorder;
+		sci.addressModeW = vk::SamplerAddressMode::clampToBorder;
+		sci.borderColor = vk::BorderColor::floatOpaqueWhite;
 		sci.mipmapMode = vk::SamplerMipmapMode::nearest;
 		sci.compareEnable = true;
 		sci.compareOp = vk::CompareOp::lessOrEqual;
-		shadow_.sampler = vpp::Sampler(dev, sci);
+		shadow_.sampler = {dev, sci};
+
+		// dummy texture for materials that don't have a texture
+		std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
+		auto ptr = reinterpret_cast<std::byte*>(data.data());
+		dummyTex_ = doi::loadTexture(dev, {1, 1, 1},
+			vk::Format::r8g8b8a8Unorm, {ptr, data.size()});
 
 		// per scense; view + projection matrix, lights
 		auto sceneBindings = {
@@ -109,7 +123,20 @@ public:
 
 		objectDsLayout_ = {dev, objectBindings};
 
-		pipeLayout_ = {dev, {sceneDsLayout_, objectDsLayout_}, {}};
+		// per material
+		// push constant range for material
+		materialDsLayout_ = Material::createDsLayout(dev, sampler_);
+		vk::PushConstantRange pcr;
+		pcr.offset = 0;
+		pcr.size = sizeof(float) * 7;
+		pcr.stageFlags = vk::ShaderStageBits::fragment;
+
+		// pipeline layout consisting of all ds layouts and pcrs
+		pipeLayout_ = {dev, {
+			sceneDsLayout_,
+			objectDsLayout_,
+			materialDsLayout_
+		}, {pcr}};
 
 		vk::SpecializationMapEntry maxLightsEntry;
 		maxLightsEntry.size = sizeof(std::uint32_t);
@@ -128,21 +155,26 @@ public:
 		}}, 0, renderer().samples()};
 
 		constexpr auto stride = sizeof(Vertex);
-		vk::VertexInputBindingDescription bufferBinding {
-			0, stride, vk::VertexInputRate::vertex
+		vk::VertexInputBindingDescription bufferBindings[2] = {
+			{0, stride, vk::VertexInputRate::vertex},
+			{1, sizeof(float) * 2, vk::VertexInputRate::vertex} // uv
 		};
 
-		vk::VertexInputAttributeDescription attributes[2];
+		vk::VertexInputAttributeDescription attributes[3] {};
 		attributes[0].format = vk::Format::r32g32b32Sfloat; // pos
 
 		attributes[1].format = vk::Format::r32g32b32Sfloat; // normal
 		attributes[1].offset = sizeof(float) * 3; // pos
 		attributes[1].location = 1;
 
+		attributes[2].format = vk::Format::r32g32Sfloat; // uv
+		attributes[2].location = 2;
+		attributes[2].binding = 1;
+
 		gpi.vertex.pVertexAttributeDescriptions = attributes;
-		gpi.vertex.vertexAttributeDescriptionCount = 2u;
-		gpi.vertex.pVertexBindingDescriptions = &bufferBinding;
-		gpi.vertex.vertexBindingDescriptionCount = 1u;
+		gpi.vertex.vertexAttributeDescriptionCount = 3u;
+		gpi.vertex.pVertexBindingDescriptions = bufferBindings;
+		gpi.vertex.vertexBindingDescriptionCount = 2u;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 		gpi.depthStencil.depthTestEnable = true;
@@ -159,7 +191,8 @@ public:
 		pipe_ = {dev, vkpipe};
 
 		// Load Model
-		const auto filename = "../assets/gltf/test3.gltf";
+		// const auto filename = "../assets/gltf/test3.gltf";
+		const auto filename = "./scene.gltf";
 		if (!loadModel(filename)) {
 			return false;
 		}
@@ -210,11 +243,19 @@ public:
 		}
 
 		if(!res) {
-			dlg_fatal(">> Failed to load model");
+			dlg_fatal(">> Failed to parse model");
 			return false;
 		}
 
-		dlg_info(">> Loading Succesful...");
+		dlg_info(">> Parsing Succesful...");
+
+		// load materials
+		dlg_info("Found {} materials", model.materials.size());
+		for(auto material : model.materials) {
+			auto m = Material(vulkanDevice(), model, material,
+				materialDsLayout_, dummyTex_.imageView());
+			materials_.push_back(std::move(m));
+		}
 
 		// traverse nodes
 		dlg_info("Found {} scenes", model.scenes.size());
@@ -222,6 +263,7 @@ public:
 
 		auto mat = nytl::identity<4, float>();
 		for(auto nodeid : scene.nodes) {
+			dlg_assert(unsigned(nodeid) < model.nodes.size());
 			auto& node = model.nodes[nodeid];
 			loadNode(model, node, mat);
 		}
@@ -279,12 +321,24 @@ public:
 			loadNode(model, child, matrix);
 		}
 
+
 		if(node.mesh != -1) {
 			auto& mesh = model.meshes[node.mesh];
-			auto m = Mesh(vulkanDevice(), model, mesh, objectDsLayout_);
+			for(auto& primitive : mesh.primitives) {
+				Material* mat;
+				if(primitive.material < 0) {
+					mat = &materials_[0];
+				} else {
+					auto mid = unsigned(primitive.material);
+					dlg_assert(mid <= materials_.size());
+					mat = &materials_[mid];
+				}
+				auto m = Primitive(vulkanDevice(), model, primitive,
+					objectDsLayout_, *mat);
+				primitives_.push_back(std::move(m));
+				primitives_.back().matrix = matrix;
+			}
 
-			meshes_.push_back(std::move(m));
-			meshes_.back().matrix = matrix;
 		}
 	}
 
@@ -336,6 +390,7 @@ public:
 
 		// layouts
 		// XXX: using other layouts for now
+		// we could theoretically also use same pipe layout
 		/*
 		auto bindings = {
 			vpp::descriptorBinding(
@@ -347,11 +402,11 @@ public:
 		};
 
 		shadow_.dsLayout = {dev, bindings};
-		shadow_.pipeLayout = {dev, {shadow_.dsLayout}, {}};
 		*/
+		shadow_.pipeLayout = {dev, {sceneDsLayout_, objectDsLayout_}, {}};
 
 		vpp::ShaderModule vertShader(dev, shadowmap_vert_data);
-		vpp::GraphicsPipelineInfo gpi {shadow_.rp, pipeLayout_, {{
+		vpp::GraphicsPipelineInfo gpi {shadow_.rp, shadow_.pipeLayout, {{
 			{vertShader, vk::ShaderStageBits::vertex},
 		}}, 0, vk::SampleCountBits::e1};
 
@@ -448,10 +503,10 @@ public:
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, shadow_.pipeline);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {shadow_.ds}, {});
+			shadow_.pipeLayout, 0, {shadow_.ds}, {});
 
-		for(auto& mesh : meshes_) {
-			mesh.render(cb, pipeLayout_);
+		for(auto& primitive : primitives_) {
+			primitive.render(cb, shadow_.pipeLayout, true);
 		}
 
 		vk::cmdEndRenderPass(cb);
@@ -462,8 +517,8 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {sceneDs_}, {});
-		for(auto& mesh : meshes_) {
-			mesh.render(cb, pipeLayout_);
+		for(auto& primitive : primitives_) {
+			primitive.render(cb, pipeLayout_, false);
 		}
 	}
 
@@ -589,7 +644,7 @@ public:
 		}
 
 		// update model matrix
-		for(auto& m : meshes_) {
+		for(auto& m : primitives_) {
 			m.updateDevice();
 		}
 	}
@@ -605,20 +660,24 @@ public:
 	}
 
 protected:
-	vpp::SubBuffer sceneUbo_;
+	vpp::Sampler sampler_;
 	vpp::TrDsLayout sceneDsLayout_;
 	vpp::TrDsLayout objectDsLayout_;
-	vpp::TrDs sceneDs_;
-
+	vpp::TrDsLayout materialDsLayout_;
 	vpp::PipelineLayout pipeLayout_;
+
+	vpp::SubBuffer sceneUbo_;
+	vpp::TrDs sceneDs_;
 	vpp::Pipeline pipe_;
 
+	vpp::ViewableImage dummyTex_;
 	bool moveLight_ {false};
 
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
 
-	std::vector<Mesh> meshes_;
+	std::vector<Material> materials_;
+	std::vector<Primitive> primitives_;
 	std::vector<Light> lights_;
 	bool updateLights_ {true};
 
@@ -633,11 +692,11 @@ protected:
 		// vpp::TrDsLayout objectDsLayout;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipeline;
-		vk::Format format = vk::Format::d32Sfloat; // TODO
+		vk::Format format = vk::Format::d32Sfloat; // TODO: don't hardcode
 
 		vk::Extent3D extent {2048u, 2048u, 1u};
 
-		// per light
+		// should exist per light
 		vpp::ViewableImage target;
 		vpp::Framebuffer fb;
 		vpp::TrDs ds;

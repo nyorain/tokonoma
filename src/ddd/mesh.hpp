@@ -9,8 +9,9 @@
 
 #include <tinygltf.hpp>
 
-// TODO: badly named. Corresponds to gltf "Primitive"
-class Mesh {
+class Material;
+
+class Primitive {
 public:
 	static constexpr auto uboSize = 2 * sizeof(nytl::Mat4f);
 	struct Vertex {
@@ -23,17 +24,21 @@ public:
 	nytl::Mat4f matrix = nytl::identity<4, float>();
 
 public:
-	Mesh(const vpp::Device& dev,
-		const tinygltf::Model& model, const tinygltf::Mesh& mesh,
-		const vpp::TrDsLayout& dsLayout);
+	Primitive(const vpp::Device& dev,
+		const tinygltf::Model& model, const tinygltf::Primitive& primitive,
+		const vpp::TrDsLayout& dsLayout, const Material& material);
 
-	void render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout);
+	void render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout,
+		bool shadow);
 	void updateDevice();
+	const Material& material() const { return *material_; }
 
 protected:
-	unsigned indexCount {};
-	unsigned vertexCount {};
-	vpp::SubBuffer vertices; // indices + vertices
-	vpp::SubBuffer ubo; // different buffer since on mappable mem
-	vpp::TrDs ds;
+	unsigned indexCount_ {};
+	unsigned vertexCount_ {};
+	vpp::SubBuffer vertices_; // indices + vertices
+	vpp::SubBuffer uv_; // uv coords (optional)
+	vpp::SubBuffer ubo_; // different buffer since on mappable mem
+	vpp::TrDs ds_;
+	const Material* material_;
 };

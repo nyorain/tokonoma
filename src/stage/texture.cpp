@@ -40,55 +40,17 @@ std::tuple<const std::byte*, vk::Extent3D> loadImage(nytl::StringParam filename,
 	return {ptr, extent};
 }
 
-vpp::ViewableImage loadTexture(vpp::Device& dev, nytl::StringParam filename) {
+vpp::ViewableImage loadTexture(const vpp::Device& dev, nytl::StringParam filename) {
 	auto [data, extent] = loadImage(filename);
-	vpp::ViewableImageCreateInfo info;
-	info = vpp::ViewableImageCreateInfo::color(dev, extent).value();
-
-	info.img.imageType = vk::ImageType::e2d;
-	info.view.viewType = vk::ImageViewType::e2d;
-	auto memBits = dev.memoryTypeBits(vk::MemoryPropertyBits::deviceLocal);
-
-	vpp::ViewableImage image = {dev, info, memBits};
-
-	// TODO: return it as well instead of waiting for it...
-	// then also return the staging area
-	auto cmdBuf = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
-	vk::beginCommandBuffer(cmdBuf, {});
-	vpp::changeLayout(cmdBuf, image.image(),
-		vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
-		vk::ImageLayout::transferDstOptimal, vk::PipelineStageBits::transfer,
-		vk::AccessBits::transferWrite,
-		{vk::ImageAspectBits::color, 0, 1, 0, 1});
-
 	auto format = vk::Format::r8g8b8a8Unorm;
 	auto dataSize = extent.width * extent.height * 4;
 	auto dspan = nytl::Span<const std::byte>(data, dataSize);
-	auto stage = vpp::fillStaging(cmdBuf, image.image(), format,
-		vk::ImageLayout::transferDstOptimal, extent, dspan,
-		{vk::ImageAspectBits::color});
-
-	vpp::changeLayout(cmdBuf, image.image(),
-		vk::ImageLayout::transferDstOptimal, vk::PipelineStageBits::transfer,
-		vk::AccessBits::transferWrite,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::allGraphics,
-		vk::AccessBits::shaderRead,
-		{vk::ImageAspectBits::color, 0, 1, 0, 1});
-
-	vk::endCommandBuffer(cmdBuf);
-
-	vk::SubmitInfo submission;
-	submission.commandBufferCount = 1;
-	submission.pCommandBuffers = &cmdBuf.vkHandle();
-	dev.queueSubmitter().add(submission);
-	dev.queueSubmitter().wait(dev.queueSubmitter().current());
-	free(const_cast<std::byte*>(data));
-
-	return image;
+	auto img = loadTexture(dev, extent, format, dspan);
+	::free(const_cast<std::byte*>(data));
+	return img;
 }
 
-vpp::ViewableImage loadTextureArray(vpp::Device& dev,
+vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 		nytl::Span<const nytl::StringParam> files) {
 
 	uint32_t layerCount = files.size();
@@ -157,6 +119,50 @@ vpp::ViewableImage loadTextureArray(vpp::Device& dev,
 		vk::PipelineStageBits::allGraphics,
 		vk::AccessBits::shaderRead,
 		{vk::ImageAspectBits::color, 0, 1, 0, layerCount});
+	vk::endCommandBuffer(cmdBuf);
+
+	vk::SubmitInfo submission;
+	submission.commandBufferCount = 1;
+	submission.pCommandBuffers = &cmdBuf.vkHandle();
+	dev.queueSubmitter().add(submission);
+	dev.queueSubmitter().wait(dev.queueSubmitter().current());
+
+	return image;
+}
+
+vpp::ViewableImage loadTexture(const vpp::Device& dev, vk::Extent3D extent,
+		vk::Format format, nytl::Span<const std::byte> data) {
+	vpp::ViewableImageCreateInfo info;
+	info = vpp::ViewableImageCreateInfo::color(dev, extent).value();
+
+	info.img.imageType = vk::ImageType::e2d;
+	info.view.viewType = vk::ImageViewType::e2d;
+	auto memBits = dev.memoryTypeBits(vk::MemoryPropertyBits::deviceLocal);
+
+	vpp::ViewableImage image = {dev, info, memBits};
+
+	// TODO: return it as well instead of waiting for it...
+	// then also return the staging area
+	auto cmdBuf = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
+	vk::beginCommandBuffer(cmdBuf, {});
+	vpp::changeLayout(cmdBuf, image.image(),
+		vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
+		vk::ImageLayout::transferDstOptimal, vk::PipelineStageBits::transfer,
+		vk::AccessBits::transferWrite,
+		{vk::ImageAspectBits::color, 0, 1, 0, 1});
+
+	auto stage = vpp::fillStaging(cmdBuf, image.image(), format,
+		vk::ImageLayout::transferDstOptimal, extent, data,
+		{vk::ImageAspectBits::color});
+
+	vpp::changeLayout(cmdBuf, image.image(),
+		vk::ImageLayout::transferDstOptimal, vk::PipelineStageBits::transfer,
+		vk::AccessBits::transferWrite,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::allGraphics,
+		vk::AccessBits::shaderRead,
+		{vk::ImageAspectBits::color, 0, 1, 0, 1});
+
 	vk::endCommandBuffer(cmdBuf);
 
 	vk::SubmitInfo submission;
