@@ -1,4 +1,5 @@
 #include <tinygltf.hpp>
+
 #include <algorithm>
 //#include <cassert>
 #ifndef TINYGLTF_NO_FS
@@ -48,30 +49,71 @@
 #if __has_warning("-Wnewline-eof")
 #pragma clang diagnostic ignored "-Wnewline-eof"
 #endif
+#if __has_warning("-Wunused-parameter")
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#endif
+#if __has_warning("-Wmismatched-tags")
+#pragma clang diagnostic ignored "-Wmismatched-tags"
+#endif
 #endif
 
-#include "json.hpp"
+// Disable GCC warnigs
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wtype-limits"
+#endif  // __GNUC__
 
-#ifndef TINYGLTF_NO_STB_IMAGE
+#ifndef TINYGLTF_NO_INCLUDE_JSON
+#include "json.hpp"
+#endif
+
+#ifdef TINYGLTF_ENABLE_DRACO
+#include "draco/compression/decode.h"
+#include "draco/core/decoder_buffer.h"
+#endif
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-align"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #pragma GCC diagnostic pop
-#endif
 
-#ifndef TINYGLTF_NO_STB_IMAGE_WRITE
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
-#endif
 
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
 
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
+
 #ifdef _WIN32
-#include <windows.h>
+
+// issue 143.
+// Define NOMINMAX to avoid min/max defines,
+// but undef it after included windows.h
+#ifndef NOMINMAX
+#define TINYGLTF_INTERNAL_NOMINMAX
+#define NOMINMAX
+#endif
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#define TINYGLTF_INTERNAL_WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>  // include API for expanding a file path
+
+#ifdef TINYGLTF_INTERNAL_WIN32_LEAN_AND_MEAN
+#undef WIN32_LEAN_AND_MEAN
+#endif
+
+#if defined(TINYGLTF_INTERNAL_NOMINMAX)
+#undef NOMINMAX
+#endif
+
 #elif !defined(__ANDROID__)
 #include <wordexp.h>
 #endif
@@ -125,7 +167,7 @@ static bool Equals(const tinygltf::Value &one, const tinygltf::Value &other) {
     case ARRAY_TYPE: {
       if (one.Size() != other.Size()) return false;
       for (int i = 0; i < int(one.Size()); ++i)
-        if (Equals(one.Get(i), other.Get(i))) return false;
+        if (!Equals(one.Get(i), other.Get(i))) return false;
       return true;
     }
     case STRING_TYPE:
@@ -188,7 +230,8 @@ bool BufferView::operator==(const BufferView &other) const {
   return this->buffer == other.buffer && this->byteLength == other.byteLength &&
          this->byteOffset == other.byteOffset &&
          this->byteStride == other.byteStride && this->name == other.name &&
-         this->target == other.target && this->extras == other.extras;
+         this->target == other.target && this->extras == other.extras &&
+         this->dracoDecoded == other.dracoDecoded;
 }
 bool Camera::operator==(const Camera &other) const {
   return this->name == other.name && this->extensions == other.extensions &&
@@ -584,46 +627,73 @@ void TinyGLTF::SetImageLoader(LoadImageDataFunction func, void *user_data) {
 }
 
 #ifndef TINYGLTF_NO_STB_IMAGE
-bool LoadImageData(Image *image, std::string *err, std::string *warn,
-                   int req_width, int req_height, const unsigned char *bytes,
-                   int size, void *) {
+bool LoadImageData(Image *image, const int image_idx, std::string *err,
+                   std::string *warn, int req_width, int req_height,
+                   const unsigned char *bytes, int size, void *user_data) {
+  (void)user_data;
   (void)warn;
 
   int w, h, comp, req_comp;
 
+  unsigned char *data = nullptr;
+
   // force 32-bit textures for common Vulkan compatibility. It appears that
   // some GPU drivers do not support 24-bit images for Vulkan
   req_comp = 4;
+  int bits = 8;
+  int pixel_type = TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE;
 
+  // It is possible that the image we want to load is a 16bit per channel image
+  // We are going to attempt to load it as 16bit per channel, and if it worked,
+  // set the image data accodingly. We are casting the returned pointer into
+  // unsigned char, because we are representing "bytes". But we are updating
+  // the Image metadata to signal that this image uses 2 bytes (16bits) per
+  // channel:
+  if (stbi_is_16_bit_from_memory(bytes, size)) {
+    data = (unsigned char *)stbi_load_16_from_memory(bytes, size, &w, &h, &comp,
+                                                     req_comp);
+    if (data) {
+      bits = 16;
+      pixel_type = TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT;
+    }
+  }
+
+  // at this point, if data is still NULL, it means that the image wasn't
+  // 16bit per channel, we are going to load it as a normal 8bit per channel
+  // mage as we used to do:
   // if image cannot be decoded, ignore parsing and keep it by its path
   // don't break in this case
   // FIXME we should only enter this function if the image is embedded. If
   // image->uri references
   // an image file, it should be left as it is. Image loading should not be
   // mandatory (to support other formats)
-  unsigned char *data =
-      stbi_load_from_memory(bytes, size, &w, &h, &comp, req_comp);
+  if (!data) data = stbi_load_from_memory(bytes, size, &w, &h, &comp, req_comp);
   if (!data) {
     // NOTE: you can use `warn` instead of `err`
     if (err) {
-      (*err) += "Unknown image format.\n";
+      (*err) +=
+          "Unknown image format. STB cannot decode image data for image[" +
+          std::to_string(image_idx) + "] name = \"" + image->name + "\".\n";
     }
     return false;
   }
 
   if (w < 1 || h < 1) {
-    free(data);
+    stbi_image_free(data);
     if (err) {
-      (*err) += "Invalid image data.\n";
+      (*err) += "Invalid image data for image[" + std::to_string(image_idx) +
+                "] name = \"" + image->name + "\"\n";
     }
     return false;
   }
 
   if (req_width > 0) {
     if (req_width != w) {
-      free(data);
+      stbi_image_free(data);
       if (err) {
-        (*err) += "Image width mismatch.\n";
+        (*err) += "Image width mismatch for image[" +
+                  std::to_string(image_idx) + "] name = \"" + image->name +
+                  "\"\n";
       }
       return false;
     }
@@ -631,9 +701,11 @@ bool LoadImageData(Image *image, std::string *err, std::string *warn,
 
   if (req_height > 0) {
     if (req_height != h) {
-      free(data);
+      stbi_image_free(data);
       if (err) {
-        (*err) += "Image height mismatch.\n";
+        (*err) += "Image height mismatch. for image[" +
+                  std::to_string(image_idx) + "] name = \"" + image->name +
+                  "\"\n";
       }
       return false;
     }
@@ -642,10 +714,11 @@ bool LoadImageData(Image *image, std::string *err, std::string *warn,
   image->width = w;
   image->height = h;
   image->component = req_comp;
-  image->image.resize(static_cast<size_t>(w * h * req_comp));
-  std::copy(data, data + w * h * req_comp, image->image.begin());
-
-  free(data);
+  image->bits = bits;
+  image->pixel_type = pixel_type;
+  image->image.resize(static_cast<size_t>(w * h * req_comp) * (bits / 8));
+  std::copy(data, data + w * h * req_comp * (bits / 8), image->image.begin());
+  stbi_image_free(data);
 
   return true;
 }
@@ -675,6 +748,12 @@ bool WriteImageData(const std::string *basepath, const std::string *filename,
   std::vector<unsigned char> data;
 
   if (ext == "png") {
+    if ((image->bits != 8) ||
+        (image->pixel_type != TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE)) {
+      // Unsupported pixel format
+      return false;
+    }
+
     if (!stbi_write_png_to_func(WriteToMemory_stbi, &data, image->width,
                                 image->height, image->component,
                                 &image->image[0], 0)) {
@@ -737,6 +816,19 @@ void TinyGLTF::SetFsCallbacks(FsCallbacks callbacks) { fs = callbacks; }
 
 bool FileExists(const std::string &abs_filename, void *) {
   bool ret;
+#ifdef TINYGLTF_ANDROID_LOAD_FROM_ASSETS
+  if (asset_manager) {
+    AAsset *asset = AAssetManager_open(asset_manager, abs_filename.c_str(),
+                                       AASSET_MODE_STREAMING);
+    if (!asset) {
+      return false;
+    }
+    AAsset_close(asset);
+    ret = true;
+  } else {
+    return false;
+  }
+#else
 #ifdef _WIN32
   FILE *fp;
   errno_t err = fopen_s(&fp, abs_filename.c_str(), "rb");
@@ -752,6 +844,7 @@ bool FileExists(const std::string &abs_filename, void *) {
   } else {
     ret = false;
   }
+#endif
 
   return ret;
 }
@@ -805,6 +898,34 @@ std::string ExpandFilePath(const std::string &filepath, void *) {
 
 bool ReadWholeFile(std::vector<unsigned char> *out, std::string *err,
                    const std::string &filepath, void *) {
+#ifdef TINYGLTF_ANDROID_LOAD_FROM_ASSETS
+  if (asset_manager) {
+    AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(),
+                                       AASSET_MODE_STREAMING);
+    if (!asset) {
+      if (err) {
+        (*err) += "File open error : " + filepath + "\n";
+      }
+      return false;
+    }
+    size_t size = AAsset_getLength(asset);
+    if (size <= 0) {
+      if (err) {
+        (*err) += "Invalid file size : " + filepath +
+                  " (does the path point to a directory?)";
+      }
+    }
+    out->resize(size);
+    AAsset_read(asset, reinterpret_cast<char *>(&out->at(0)), size);
+    AAsset_close(asset);
+    return true;
+  } else {
+    if (err) {
+      (*err) += "No asset manager specified : " + filepath + "\n";
+    }
+    return false;
+  }
+#else
   std::ifstream f(filepath.c_str(), std::ifstream::binary);
   if (!f) {
     if (err) {
@@ -836,6 +957,7 @@ bool ReadWholeFile(std::vector<unsigned char> *out, std::string *err,
   f.close();
 
   return true;
+#endif
 }
 
 bool WriteWholeFile(std::string *err, const std::string &filepath,
@@ -1356,12 +1478,13 @@ static bool ParseExtensionsProperty(ExtensionMap *ret, std::string *err,
   json::const_iterator extIt = it.value().begin();
   for (; extIt != it.value().end(); extIt++) {
     if (!extIt.value().is_object()) continue;
-	if (!ParseJsonAsValue(&extensions[extIt.key()], extIt.value())) {
+    if (!ParseJsonAsValue(&extensions[extIt.key()], extIt.value())) {
       if (!extIt.key().empty()) {
-        // create empty object so that an extension object is still of type object
-        extensions[extIt.key()] = Value{ Value::Object{} };
+        // create empty object so that an extension object is still of type
+        // object
+        extensions[extIt.key()] = Value{Value::Object{}};
       }
-	}
+    }
   }
   if (ret) {
     (*ret) = extensions;
@@ -1382,9 +1505,9 @@ static bool ParseAsset(Asset *asset, std::string *err, const json &o) {
   return true;
 }
 
-static bool ParseImage(Image *image, std::string *err, std::string *warn,
-                       const json &o, const std::string &basedir,
-                       FsCallbacks *fs,
+static bool ParseImage(Image *image, const int image_idx, std::string *err,
+                       std::string *warn, const json &o,
+                       const std::string &basedir, FsCallbacks *fs,
                        LoadImageDataFunction *LoadImageData = nullptr,
                        void *load_image_user_data = nullptr) {
   // A glTF image must either reference a bufferView or an image uri
@@ -1394,24 +1517,28 @@ static bool ParseImage(Image *image, std::string *err, std::string *warn,
   bool hasBufferView = (o.find("bufferView") != o.end());
   bool hasURI = (o.find("uri") != o.end());
 
+  ParseStringProperty(&image->name, err, o, "name", false);
+
   if (hasBufferView && hasURI) {
     // Should not both defined.
     if (err) {
       (*err) +=
           "Only one of `bufferView` or `uri` should be defined, but both are "
-          "defined for Image.\n";
+          "defined for image[" +
+          std::to_string(image_idx) + "] name = \"" + image->name + "\"\n";
     }
     return false;
   }
 
   if (!hasBufferView && !hasURI) {
     if (err) {
-      (*err) += "Neither required `bufferView` nor `uri` defined for Image.\n";
+      (*err) += "Neither required `bufferView` nor `uri` defined for image[" +
+                std::to_string(image_idx) + "] name = \"" + image->name +
+                "\"\n";
     }
     return false;
   }
 
-  ParseStringProperty(&image->name, err, o, "name", false);
   ParseExtensionsProperty(&image->extensions, err, o);
   ParseExtrasProperty(&image->extras, o);
 
@@ -1419,7 +1546,9 @@ static bool ParseImage(Image *image, std::string *err, std::string *warn,
     double bufferView = -1;
     if (!ParseNumberProperty(&bufferView, err, o, "bufferView", true)) {
       if (err) {
-        (*err) += "Failed to parse `bufferView` for Image.\n";
+        (*err) += "Failed to parse `bufferView` for image[" +
+                  std::to_string(image_idx) + "] name = \"" + image->name +
+                  "\"\n";
       }
       return false;
     }
@@ -1449,7 +1578,8 @@ static bool ParseImage(Image *image, std::string *err, std::string *warn,
   std::string tmp_err;
   if (!ParseStringProperty(&uri, &tmp_err, o, "uri", true)) {
     if (err) {
-      (*err) += "Failed to parse `uri` for Image.\n";
+      (*err) += "Failed to parse `uri` for image[" + std::to_string(image_idx) +
+                "] name = \"" + image->name + "\".\n";
     }
     return false;
   }
@@ -1459,7 +1589,9 @@ static bool ParseImage(Image *image, std::string *err, std::string *warn,
   if (IsDataURI(uri)) {
     if (!DecodeDataURI(&img, image->mimeType, uri, 0, false)) {
       if (err) {
-        (*err) += "Failed to decode 'uri' for image parameter.\n";
+        (*err) += "Failed to decode 'uri' for image[" +
+                  std::to_string(image_idx) + "] name = [" + image->name +
+                  "]\n";
       }
       return false;
     }
@@ -1472,7 +1604,9 @@ static bool ParseImage(Image *image, std::string *err, std::string *warn,
 #endif
     if (!LoadExternalFile(&img, err, warn, uri, basedir, false, 0, false, fs)) {
       if (warn) {
-        (*warn) += "Failed to load external 'uri' for image parameter\n";
+        (*warn) += "Failed to load external 'uri' for image[" +
+                   std::to_string(image_idx) + "] name = [" + image->name +
+                   "]\n";
       }
       // If the image cannot be loaded, keep uri as image->uri.
       return true;
@@ -1480,7 +1614,9 @@ static bool ParseImage(Image *image, std::string *err, std::string *warn,
 
     if (img.empty()) {
       if (warn) {
-        (*warn) += "Image is empty.\n";
+        (*warn) += "Image data is empty for image[" +
+                   std::to_string(image_idx) + "] name = [" + image->name +
+                   "] \n";
       }
       return false;
     }
@@ -1492,7 +1628,7 @@ static bool ParseImage(Image *image, std::string *err, std::string *warn,
     }
     return false;
   }
-  return (*LoadImageData)(image, err, warn, 0, 0, &img.at(0),
+  return (*LoadImageData)(image, image_idx, err, warn, 0, 0, &img.at(0),
                           static_cast<int>(img.size()), load_image_user_data);
 }
 
@@ -1676,16 +1812,58 @@ static bool ParseBufferView(BufferView *bufferView, std::string *err,
   bufferView->byteOffset = static_cast<size_t>(byteOffset);
   bufferView->byteLength = static_cast<size_t>(byteLength);
   bufferView->byteStride = static_cast<size_t>(byteStride);
+  return true;
+}
+
+static bool ParseSparseAccessor(Accessor *accessor, std::string *err,
+                                const json &o) {
+  accessor->sparse.isSparse = true;
+
+  double count = 0.0;
+  ParseNumberProperty(&count, err, o, "count", true);
+
+  const auto indices_iterator = o.find("indices");
+  const auto values_iterator = o.find("values");
+  if (indices_iterator == o.end()) {
+    (*err) = "the sparse object of this accessor doesn't have indices";
+    return false;
+  }
+
+  if (values_iterator == o.end()) {
+    (*err) = "the sparse object ob ths accessor doesn't have values";
+    return false;
+  }
+
+  const json &indices_obj = *indices_iterator;
+  const json &values_obj = *values_iterator;
+
+  double indices_buffer_view = 0.0, indices_byte_offset = 0.0,
+         component_type = 0.0;
+  ParseNumberProperty(&indices_buffer_view, err, indices_obj, "bufferView",
+                      true);
+  ParseNumberProperty(&indices_byte_offset, err, indices_obj, "byteOffset",
+                      true);
+  ParseNumberProperty(&component_type, err, indices_obj, "componentType", true);
+
+  double values_buffer_view = 0.0, values_byte_offset = 0.0;
+  ParseNumberProperty(&values_buffer_view, err, values_obj, "bufferView", true);
+  ParseNumberProperty(&values_byte_offset, err, values_obj, "byteOffset", true);
+
+  accessor->sparse.count = static_cast<int>(count);
+  accessor->sparse.indices.bufferView = static_cast<int>(indices_buffer_view);
+  accessor->sparse.indices.byteOffset = static_cast<int>(indices_byte_offset);
+  accessor->sparse.indices.componentType = static_cast<int>(component_type);
+  accessor->sparse.values.bufferView = static_cast<int>(values_buffer_view);
+  accessor->sparse.values.byteOffset = static_cast<int>(values_byte_offset);
+
+  // todo check theses values
 
   return true;
 }
 
 static bool ParseAccessor(Accessor *accessor, std::string *err, const json &o) {
   double bufferView = -1.0;
-  if (!ParseNumberProperty(&bufferView, err, o, "bufferView", true,
-                           "Accessor")) {
-    return false;
-  }
+  ParseNumberProperty(&bufferView, err, o, "bufferView", false, "Accessor");
 
   double byteOffset = 0.0;
   ParseNumberProperty(&byteOffset, err, o, "byteOffset", false, "Accessor");
@@ -1764,10 +1942,209 @@ static bool ParseAccessor(Accessor *accessor, std::string *err, const json &o) {
 
   ParseExtrasProperty(&(accessor->extras), o);
 
+  // check if accessor has a "sparse" object:
+  const auto iterator = o.find("sparse");
+  if (iterator != o.end()) {
+    // here this accessor has a "sparse" subobject
+    return ParseSparseAccessor(accessor, err, *iterator);
+  }
+
   return true;
 }
 
-static bool ParsePrimitive(Primitive *primitive, std::string *err,
+#ifdef TINYGLTF_ENABLE_DRACO
+
+static void DecodeIndexBuffer(draco::Mesh *mesh, size_t componentSize,
+                              std::vector<uint8_t> &outBuffer) {
+  if (componentSize == 4) {
+    assert(sizeof(mesh->face(draco::FaceIndex(0))[0]) == componentSize);
+    memcpy(outBuffer.data(), &mesh->face(draco::FaceIndex(0))[0],
+           outBuffer.size());
+  } else {
+    size_t faceStride = componentSize * 3;
+    for (draco::FaceIndex f(0); f < mesh->num_faces(); ++f) {
+      const draco::Mesh::Face &face = mesh->face(f);
+      if (componentSize == 2) {
+        uint16_t indices[3] = {(uint16_t)face[0].value(),
+                               (uint16_t)face[1].value(),
+                               (uint16_t)face[2].value()};
+        memcpy(outBuffer.data() + f.value() * faceStride, &indices[0],
+               faceStride);
+      } else {
+        uint8_t indices[3] = {(uint8_t)face[0].value(),
+                              (uint8_t)face[1].value(),
+                              (uint8_t)face[2].value()};
+        memcpy(outBuffer.data() + f.value() * faceStride, &indices[0],
+               faceStride);
+      }
+    }
+  }
+}
+
+template <typename T>
+static bool GetAttributeForAllPoints(draco::Mesh *mesh,
+                                     const draco::PointAttribute *pAttribute,
+                                     std::vector<uint8_t> &outBuffer) {
+  size_t byteOffset = 0;
+  T values[4] = {0, 0, 0, 0};
+  for (draco::PointIndex i(0); i < mesh->num_points(); ++i) {
+    const draco::AttributeValueIndex val_index = pAttribute->mapped_index(i);
+    if (!pAttribute->ConvertValue<T>(val_index, pAttribute->num_components(),
+                                     values))
+      return false;
+
+    memcpy(outBuffer.data() + byteOffset, &values[0],
+           sizeof(T) * pAttribute->num_components());
+    byteOffset += sizeof(T) * pAttribute->num_components();
+  }
+
+  return true;
+}
+
+static bool GetAttributeForAllPoints(uint32_t componentType, draco::Mesh *mesh,
+                                     const draco::PointAttribute *pAttribute,
+                                     std::vector<uint8_t> &outBuffer) {
+  bool decodeResult = false;
+  switch (componentType) {
+    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+      decodeResult =
+          GetAttributeForAllPoints<uint8_t>(mesh, pAttribute, outBuffer);
+      break;
+    case TINYGLTF_COMPONENT_TYPE_BYTE:
+      decodeResult =
+          GetAttributeForAllPoints<int8_t>(mesh, pAttribute, outBuffer);
+      break;
+    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+      decodeResult =
+          GetAttributeForAllPoints<uint16_t>(mesh, pAttribute, outBuffer);
+      break;
+    case TINYGLTF_COMPONENT_TYPE_SHORT:
+      decodeResult =
+          GetAttributeForAllPoints<int16_t>(mesh, pAttribute, outBuffer);
+      break;
+    case TINYGLTF_COMPONENT_TYPE_INT:
+      decodeResult =
+          GetAttributeForAllPoints<int32_t>(mesh, pAttribute, outBuffer);
+      break;
+    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+      decodeResult =
+          GetAttributeForAllPoints<uint32_t>(mesh, pAttribute, outBuffer);
+      break;
+    case TINYGLTF_COMPONENT_TYPE_FLOAT:
+      decodeResult =
+          GetAttributeForAllPoints<float>(mesh, pAttribute, outBuffer);
+      break;
+    case TINYGLTF_COMPONENT_TYPE_DOUBLE:
+      decodeResult =
+          GetAttributeForAllPoints<double>(mesh, pAttribute, outBuffer);
+      break;
+    default:
+      return false;
+  }
+
+  return decodeResult;
+}
+
+static bool ParseDracoExtension(Primitive *primitive, Model *model,
+                                std::string *err,
+                                const Value &dracoExtensionValue) {
+  auto bufferViewValue = dracoExtensionValue.Get("bufferView");
+  if (!bufferViewValue.IsInt()) return false;
+  auto attributesValue = dracoExtensionValue.Get("attributes");
+  if (!attributesValue.IsObject()) return false;
+
+  auto attributesObject = attributesValue.Get<Value::Object>();
+  int bufferView = bufferViewValue.Get<int>();
+
+  BufferView &view = model->bufferViews[bufferView];
+  Buffer &buffer = model->buffers[view.buffer];
+  // BufferView has already been decoded
+  if (view.dracoDecoded) return true;
+  view.dracoDecoded = true;
+
+  const char *bufferViewData =
+      reinterpret_cast<const char *>(buffer.data.data() + view.byteOffset);
+  size_t bufferViewSize = view.byteLength;
+
+  // decode draco
+  draco::DecoderBuffer decoderBuffer;
+  decoderBuffer.Init(bufferViewData, bufferViewSize);
+  draco::Decoder decoder;
+  auto decodeResult = decoder.DecodeMeshFromBuffer(&decoderBuffer);
+  if (!decodeResult.ok()) {
+    return false;
+  }
+  const std::unique_ptr<draco::Mesh> &mesh = decodeResult.value();
+
+  // create new bufferView for indices
+  if (primitive->indices >= 0) {
+    int32_t componentSize = GetComponentSizeInBytes(
+        model->accessors[primitive->indices].componentType);
+    Buffer decodedIndexBuffer;
+    decodedIndexBuffer.data.resize(mesh->num_faces() * 3 * componentSize);
+
+    DecodeIndexBuffer(mesh.get(), componentSize, decodedIndexBuffer.data);
+
+    model->buffers.emplace_back(std::move(decodedIndexBuffer));
+
+    BufferView decodedIndexBufferView;
+    decodedIndexBufferView.buffer = int(model->buffers.size() - 1);
+    decodedIndexBufferView.byteLength =
+        int(mesh->num_faces() * 3 * componentSize);
+    decodedIndexBufferView.byteOffset = 0;
+    decodedIndexBufferView.byteStride = 0;
+    decodedIndexBufferView.target = TINYGLTF_TARGET_ARRAY_BUFFER;
+    model->bufferViews.emplace_back(std::move(decodedIndexBufferView));
+
+    model->accessors[primitive->indices].bufferView =
+        int(model->bufferViews.size() - 1);
+    model->accessors[primitive->indices].count = int(mesh->num_faces() * 3);
+  }
+
+  for (const auto &attribute : attributesObject) {
+    if (!attribute.second.IsInt()) return false;
+    auto primitiveAttribute = primitive->attributes.find(attribute.first);
+    if (primitiveAttribute == primitive->attributes.end()) return false;
+
+    int dracoAttributeIndex = attribute.second.Get<int>();
+    const auto pAttribute = mesh->GetAttributeByUniqueId(dracoAttributeIndex);
+    const auto pBuffer = pAttribute->buffer();
+    const auto componentType =
+        model->accessors[primitiveAttribute->second].componentType;
+
+    // Create a new buffer for this decoded buffer
+    Buffer decodedBuffer;
+    size_t bufferSize = mesh->num_points() * pAttribute->num_components() *
+                        GetComponentSizeInBytes(componentType);
+    decodedBuffer.data.resize(bufferSize);
+
+    if (!GetAttributeForAllPoints(componentType, mesh.get(), pAttribute,
+                                  decodedBuffer.data))
+      return false;
+
+    model->buffers.emplace_back(std::move(decodedBuffer));
+
+    BufferView decodedBufferView;
+    decodedBufferView.buffer = int(model->buffers.size() - 1);
+    decodedBufferView.byteLength = bufferSize;
+    decodedBufferView.byteOffset = pAttribute->byte_offset();
+    decodedBufferView.byteStride = pAttribute->byte_stride();
+    decodedBufferView.target = primitive->indices >= 0
+                                   ? TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER
+                                   : TINYGLTF_TARGET_ARRAY_BUFFER;
+    model->bufferViews.emplace_back(std::move(decodedBufferView));
+
+    model->accessors[primitiveAttribute->second].bufferView =
+        int(model->bufferViews.size() - 1);
+    model->accessors[primitiveAttribute->second].count =
+        int(mesh->num_points());
+  }
+
+  return true;
+}
+#endif
+
+static bool ParsePrimitive(Primitive *primitive, Model *model, std::string *err,
                            const json &o) {
   double material = -1.0;
   ParseNumberProperty(&material, err, o, "material", false);
@@ -1807,10 +2184,23 @@ static bool ParsePrimitive(Primitive *primitive, std::string *err,
 
   ParseExtrasProperty(&(primitive->extras), o);
 
+  ParseExtensionsProperty(&primitive->extensions, err, o);
+
+#ifdef TINYGLTF_ENABLE_DRACO
+  auto dracoExtension =
+      primitive->extensions.find("KHR_draco_mesh_compression");
+  if (dracoExtension != primitive->extensions.end()) {
+    ParseDracoExtension(primitive, model, err, dracoExtension->second);
+  }
+#else
+  (void)model;
+#endif
+
   return true;
 }
 
-static bool ParseMesh(Mesh *mesh, std::string *err, const json &o) {
+static bool ParseMesh(Mesh *mesh, Model *model, std::string *err,
+                      const json &o) {
   ParseStringProperty(&mesh->name, err, o, "name", false);
 
   mesh->primitives.clear();
@@ -1819,7 +2209,7 @@ static bool ParseMesh(Mesh *mesh, std::string *err, const json &o) {
     for (json::const_iterator i = primObject.value().begin();
          i != primObject.value().end(); i++) {
       Primitive primitive;
-      if (ParsePrimitive(&primitive, err, i.value())) {
+      if (ParsePrimitive(&primitive, model, err, i.value())) {
         // Only add the primitive if the parsing succeeds.
         mesh->primitives.push_back(primitive);
       }
@@ -2021,13 +2411,8 @@ static bool ParseAnimation(Animation *animation, std::string *err,
           }
           return false;
         }
-        if (!ParseStringProperty(&sampler.interpolation, err, s,
-                                 "interpolation", true)) {
-          if (err) {
-            (*err) += "`interpolation` field is missing in animation.sampler\n";
-          }
-          return false;
-        }
+        ParseStringProperty(&sampler.interpolation, err, s, "interpolation",
+                            false);
         if (!ParseNumberProperty(&outputIndex, err, s, "output", true)) {
           if (err) {
             (*err) += "`output` field is missing in animation.sampler\n";
@@ -2478,7 +2863,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
           return false;
         }
         Mesh mesh;
-        if (!ParseMesh(&mesh, err, it->get<json>())) {
+        if (!ParseMesh(&mesh, model, err, it->get<json>())) {
           return false;
         }
 
@@ -2490,21 +2875,22 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
   // Assign missing bufferView target types
   // - Look for missing Mesh indices
   // - Look for missing bufferView targets
-  for (auto &mesh : model->meshes)
-  {
-    for (auto &primitive : mesh.primitives)
-    {
-      if (primitive.indices > -1) // has indices from parsing step, must be Element Array Buffer
+  for (auto &mesh : model->meshes) {
+    for (auto &primitive : mesh.primitives) {
+      if (primitive.indices >
+          -1)  // has indices from parsing step, must be Element Array Buffer
       {
-        model->bufferViews[primitive.indices].target = TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER;
-        // we could optionally check if acessors' bufferView type is Scalar, as it should be
+        model->bufferViews[model->accessors[primitive.indices].bufferView]
+            .target = TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER;
+        // we could optionally check if acessors' bufferView type is Scalar, as
+        // it should be
       }
     }
   }
-  // find any missing targets, must be an array buffer type if not fulfilled from previous check
-  for (auto &bufferView : model->bufferViews)
-  {
-    if (bufferView.target == 0) // missing target type
+  // find any missing targets, must be an array buffer type if not fulfilled
+  // from previous check
+  for (auto &bufferView : model->bufferViews) {
+    if (bufferView.target == 0)  // missing target type
     {
       bufferView.target = TINYGLTF_TARGET_ARRAY_BUFFER;
     }
@@ -2619,15 +3005,17 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
 
       json::const_iterator it(root.begin());
       json::const_iterator itEnd(root.end());
-      for (; it != itEnd; it++) {
+      int idx = 0;
+      for (; it != itEnd; it++, idx++) {
         if (!it.value().is_object()) {
           if (err) {
-            (*err) += "`images' does not contain an JSON object.";
+            (*err) +=
+                "image[" + std::to_string(idx) + "] is not a JSON object.";
           }
           return false;
         }
         Image image;
-        if (!ParseImage(&image, err, warn, it.value(), base_dir, &fs,
+        if (!ParseImage(&image, idx, err, warn, it.value(), base_dir, &fs,
                         &this->LoadImageData, load_image_user_data_)) {
           return false;
         }
@@ -2637,7 +3025,7 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
           if (size_t(image.bufferView) >= model->bufferViews.size()) {
             if (err) {
               std::stringstream ss;
-              ss << "bufferView \"" << image.bufferView
+              ss << "image[" << idx << "] bufferView \"" << image.bufferView
                  << "\" not found in the scene." << std::endl;
               (*err) += ss.str();
             }
@@ -2654,10 +3042,10 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
             }
             return false;
           }
-          bool ret = LoadImageData(&image, err, warn, image.width, image.height,
-                                   &buffer.data[bufferView.byteOffset],
-                                   static_cast<int>(bufferView.byteLength),
-                                   load_image_user_data_);
+          bool ret = LoadImageData(
+              &image, idx, err, warn, image.width, image.height,
+              &buffer.data[bufferView.byteOffset],
+              static_cast<int>(bufferView.byteLength), load_image_user_data_);
           if (!ret) {
             return false;
           }
@@ -3111,7 +3499,7 @@ static void SerializeGltfBufferData(const std::vector<unsigned char> &data,
 static bool SerializeGltfBufferData(const std::vector<unsigned char> &data,
                                     const std::string &binFilename) {
   std::ofstream output(binFilename.c_str(), std::ofstream::binary);
-  if(!output.is_open()) return false;
+  if (!output.is_open()) return false;
   output.write(reinterpret_cast<const char *>(&data[0]),
                std::streamsize(data.size()));
   output.close();
@@ -3160,9 +3548,10 @@ static void SerializeExtensionMap(ExtensionMap &extensions, json &o) {
     if (ValueToJson(extIt->second, &ret)) {
       extMap[extIt->first] = ret;
     }
-    if(ret.is_null()) {
-      if (!(extIt->first.empty())) { // name should not be empty, but for sure
-        // create empty object so that an extension name is still included in json.
+    if (ret.is_null()) {
+      if (!(extIt->first.empty())) {  // name should not be empty, but for sure
+        // create empty object so that an extension name is still included in
+        // json.
         extMap[extIt->first] = json({});
       }
     }
@@ -3180,6 +3569,7 @@ static void SerializeGltfAccessor(Accessor &accessor, json &o) {
   SerializeNumberProperty<size_t>("count", accessor.count, o);
   SerializeNumberArrayProperty<double>("min", accessor.minValues, o);
   SerializeNumberArrayProperty<double>("max", accessor.maxValues, o);
+  SerializeValue("normalized", Value(accessor.normalized), o);
   std::string type;
   switch (accessor.type) {
     case TINYGLTF_TYPE_SCALAR:
@@ -3293,7 +3683,7 @@ static void SerializeGltfBuffer(Buffer &buffer, json &o) {
 static bool SerializeGltfBuffer(Buffer &buffer, json &o,
                                 const std::string &binFilename,
                                 const std::string &binBaseFilename) {
-  if(!SerializeGltfBufferData(buffer.data, binFilename)) return false;
+  if (!SerializeGltfBufferData(buffer.data, binFilename)) return false;
   SerializeNumberProperty("byteLength", buffer.data.size(), o);
   SerializeStringProperty("uri", binBaseFilename, o);
 
@@ -3581,18 +3971,21 @@ static void WriteBinaryGltfFile(const std::string &output,
   const int version = 2;
   const int padding_size = content.size() % 4;
 
-  // 12 bytes for header, JSON content length, 8 bytes for JSON chunk info, padding
-  const int length = 12 + 8 + content.size() + padding_size;
+  // 12 bytes for header, JSON content length, 8 bytes for JSON chunk info,
+  // padding
+  const int length = 12 + 8 + int(content.size()) + padding_size;
 
   gltfFile.write(header.c_str(), header.size());
   gltfFile.write(reinterpret_cast<const char *>(&version), sizeof(version));
   gltfFile.write(reinterpret_cast<const char *>(&length), sizeof(length));
 
   // JSON chunk info, then JSON data
-  const int model_length = content.size() + padding_size;
+  const int model_length = int(content.size()) + padding_size;
   const int model_format = 0x4E4F534A;
-  gltfFile.write(reinterpret_cast<const char *>(&model_length), sizeof(model_length));
-  gltfFile.write(reinterpret_cast<const char *>(&model_format), sizeof(model_format));
+  gltfFile.write(reinterpret_cast<const char *>(&model_length),
+                 sizeof(model_length));
+  gltfFile.write(reinterpret_cast<const char *>(&model_format),
+                 sizeof(model_format));
   gltfFile.write(content.c_str(), content.size());
 
   // Chunk must be multiplies of 4, so pad with spaces
@@ -3638,7 +4031,8 @@ bool TinyGLTF::WriteGltfSceneToFile(Model *model, const std::string &filename,
 
   std::string defaultBinFilename = GetBaseFilename(filename);
   std::string defaultBinFileExt = ".bin";
-  std::string::size_type pos = defaultBinFilename.rfind('.', defaultBinFilename.length());
+  std::string::size_type pos =
+      defaultBinFilename.rfind('.', defaultBinFilename.length());
 
   if (pos != std::string::npos) {
     defaultBinFilename = defaultBinFilename.substr(0, pos);
@@ -3658,28 +4052,27 @@ bool TinyGLTF::WriteGltfSceneToFile(Model *model, const std::string &filename,
     } else {
       std::string binSavePath;
       std::string binUri;
-      if (!model->buffers[i].uri.empty()
-        && !IsDataURI(model->buffers[i].uri)) {
+      if (!model->buffers[i].uri.empty() && !IsDataURI(model->buffers[i].uri)) {
         binUri = model->buffers[i].uri;
-      }
-      else {
+      } else {
         binUri = defaultBinFilename + defaultBinFileExt;
         bool inUse = true;
         int numUsed = 0;
-        while(inUse) {
+        while (inUse) {
           inUse = false;
-          for (const std::string& usedName : usedUris) {
+          for (const std::string &usedName : usedUris) {
             if (binUri.compare(usedName) != 0) continue;
             inUse = true;
-            binUri = defaultBinFilename + std::to_string(numUsed++) + defaultBinFileExt;
+            binUri = defaultBinFilename + std::to_string(numUsed++) +
+                     defaultBinFileExt;
             break;
           }
         }
       }
       usedUris.push_back(binUri);
-	  binSavePath = JoinPath(baseDir, binUri);
-      if(!SerializeGltfBuffer(model->buffers[i], buffer, binSavePath,
-                          binUri)) {
+      binSavePath = JoinPath(baseDir, binUri);
+      if (!SerializeGltfBuffer(model->buffers[i], buffer, binSavePath,
+                               binUri)) {
         return false;
       }
     }

@@ -288,7 +288,7 @@ public:
 	}
 
 	bool handleArgs(const argagg::parser_results& result) override {
-		if (!App::handleArgs(result)) {
+		if(!App::handleArgs(result)) {
 			return false;
 		}
 

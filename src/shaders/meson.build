@@ -119,9 +119,12 @@ foreach shader_group : shaders_src
 
 	foreach shader : shader_group[1]
 		file = shader[0]
-		name = shader.get(2, file).underscorify()
+		name = shader.get(2, file)
 
-		data_name = name + '_data'
+		# name.replace('/', '.')
+		name = '.'.join(name.split('/'))
+
+		data_name = name.underscorify() + '_data'
 		args = [glslang, '-V', '@INPUT@',
 			'-o', '@OUTPUT@',
 			'--target-env', 'vulkan1.1',

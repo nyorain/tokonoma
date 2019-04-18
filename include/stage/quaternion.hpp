@@ -109,7 +109,7 @@ nytl::SquareMat<N, T> toMat(const Quaternion& q) {
 	ret[1][2] = 2 * (yz - wx);
 
 	ret[2][0] = 2 * (xz - wy);
-	ret[2][1] = 2 * (wx - yz);
+	ret[2][1] = 2 * (wx + yz);
 	ret[2][2] = 1 - 2 * (xx + yy);
 
 	return ret;

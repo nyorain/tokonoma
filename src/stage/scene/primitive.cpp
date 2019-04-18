@@ -12,7 +12,9 @@ namespace doi {
 
 Primitive::Primitive(const vpp::Device& dev,
 		const tinygltf::Model& model, const tinygltf::Primitive& primitive,
-		const vpp::TrDsLayout& dsLayout, const Material& material) {
+		const vpp::TrDsLayout& dsLayout, const Material& material,
+		const nytl::Mat4f& mat) {
+	this->matrix = mat;
 	this->material_ = &material;
 
 	auto ip = primitive.attributes.find("POSITION");
@@ -120,15 +122,7 @@ Primitive::Primitive(const vpp::Device& dev,
 	size = Primitive::uboSize; // ubo
 	usage = vk::BufferUsageBits::uniformBuffer;
 	ubo_ = {dev.bufferAllocator(), size, usage, 0u, hostMem};
-
-	{
-		auto map = ubo_.memoryMap();
-		auto span = map.span();
-
-		// write ubo
-		doi::write(span, nytl::identity<4, float>()); // model matrix
-		doi::write(span, nytl::identity<4, float>()); // normal matrix
-	}
+	updateDevice();
 
 	// descriptor
 	ds_ = {dev.descriptorAllocator(), dsLayout};

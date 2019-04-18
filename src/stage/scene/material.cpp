@@ -25,6 +25,24 @@ vpp::TrDsLayout Material::createDsLayout(const vpp::Device& dev,
 	return {dev, bindings};
 }
 
+Material::Material(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
+		vk::ImageView dummy) {
+	// descriptor
+	ds_ = {dev.descriptorAllocator(), dsLayout};
+	vpp::DescriptorSetUpdate update(ds_);
+	auto imgLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+
+	albedoTex_ = dummy;
+	metalnessRoughnessTex_ = dummy;
+	normalTex_ = dummy;
+	occlusionTex_ = dummy;
+
+	update.imageSampler({{{}, albedoTex_, imgLayout}});
+	update.imageSampler({{{}, metalnessRoughnessTex_, imgLayout}});
+	update.imageSampler({{{}, normalTex_, imgLayout}});
+	update.imageSampler({{{}, occlusionTex_, imgLayout}});
+}
+
 Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& dsLayout,
 		vk::ImageView dummyView, nytl::Span<const vpp::ViewableImage> images) {
@@ -109,7 +127,6 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 	update.imageSampler({{{}, metalnessRoughnessTex_, imgLayout}});
 	update.imageSampler({{{}, normalTex_, imgLayout}});
 	update.imageSampler({{{}, occlusionTex_, imgLayout}});
-
 }
 
 bool Material::hasTexture() const {

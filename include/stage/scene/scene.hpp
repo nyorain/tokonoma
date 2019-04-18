@@ -31,15 +31,15 @@ public:
 
 public:
 	Scene() = default;
-	Scene(vpp::Device&, const gltf::Model&,
-		const gltf::Scene&, const SceneRenderInfo&);
+	Scene(vpp::Device&, nytl::StringParam path, const gltf::Model&,
+		const gltf::Scene&, nytl::Mat4f matrix,
+		const SceneRenderInfo&);
 
 	void render(vk::CommandBuffer, vk::PipelineLayout);
 
 protected:
-	void loadNode(vpp::Device&, const gltf::Model&,
-		const gltf::Node&, const SceneRenderInfo&,
-		nytl::Mat4f matrix);
+	void loadNode(vpp::Device&, const gltf::Model&, const gltf::Node&,
+		const SceneRenderInfo&, nytl::Mat4f matrix);
 
 	std::vector<Primitive> primitives_;
 	std::vector<Material> materials_;
