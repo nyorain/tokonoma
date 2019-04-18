@@ -15,7 +15,7 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 light; // light matrix (from global space to model space)
 } scene;
 
-layout(set = 1, binding = 0, row_major) uniform Model {
+layout(set = 2, binding = 0, row_major) uniform Model {
 	mat4 matrix; // model matrix
 	mat4 normal; // normal matrix (transpose(inverse(matrix))); effectively 3x3
 } model;

@@ -1,12 +1,13 @@
 #include "skybox.hpp"
-#include "mesh.hpp"
-#include "material.hpp"
+#include "scene.hpp"
+#include "primitive.hpp"
 
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
 #include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/transform.hpp>
+#include <stage/texture.hpp>
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
 #include <stage/quaternion.hpp>
@@ -33,6 +34,10 @@
 #include <shaders/model.vert.h>
 #include <shaders/model.frag.h>
 #include <shaders/shadowmap.vert.h>
+
+#include <optional>
+#include <vector>
+#include <string>
 
 // TODO:
 // - seperate light into own file/class; move shadow implementation there?
@@ -134,8 +139,8 @@ public:
 		// pipeline layout consisting of all ds layouts and pcrs
 		pipeLayout_ = {dev, {
 			sceneDsLayout_,
+			materialDsLayout_,
 			objectDsLayout_,
-			materialDsLayout_
 		}, {pcr}};
 
 		vk::SpecializationMapEntry maxLightsEntry;
@@ -191,8 +196,8 @@ public:
 		pipe_ = {dev, vkpipe};
 
 		// Load Model
-		// const auto filename = "../assets/gltf/test3.gltf";
-		const auto filename = "./scene.gltf";
+		const auto filename = "../assets/gltf/test3.gltf";
+		// const auto filename = "./scene.gltf";
 		if (!loadModel(filename)) {
 			return false;
 		}
@@ -249,97 +254,14 @@ public:
 
 		dlg_info(">> Parsing Succesful...");
 
-		// load materials
-		dlg_info("Found {} materials", model.materials.size());
-		for(auto material : model.materials) {
-			auto m = Material(vulkanDevice(), model, material,
-				materialDsLayout_, dummyTex_.imageView());
-			materials_.push_back(std::move(m));
-		}
-
 		// traverse nodes
 		dlg_info("Found {} scenes", model.scenes.size());
 		auto& scene = model.scenes[model.defaultScene];
-
-		auto mat = nytl::identity<4, float>();
-		for(auto nodeid : scene.nodes) {
-			dlg_assert(unsigned(nodeid) < model.nodes.size());
-			auto& node = model.nodes[nodeid];
-			loadNode(model, node, mat);
-		}
+		scene_.emplace(vulkanDevice(), model, scene, SceneRenderInfo {
+			materialDsLayout_, objectDsLayout_, pipeLayout_,
+			dummyTex_.vkImageView()});
 
 		return true;
-	}
-
-	void loadNode(const tinygltf::Model& model,
-			const tinygltf::Node& node,
-			nytl::Mat4f matrix) {
-		if(!node.matrix.empty()) {
-			nytl::Mat4f mat;
-			for(auto r = 0u; r < 4; ++r) {
-				for(auto c = 0u; c < 4; ++c) {
-					// they are column major
-					mat[r][c] = node.matrix[c * 4 + r];
-				}
-			}
-
-			dlg_info(mat);
-			matrix = matrix * mat;
-		} else if(!node.scale.empty() || !node.translation.empty() || !node.rotation.empty()) {
-			// gltf: matrix computed as T * R * S
-			auto mat = nytl::identity<4, float>();
-			if(!node.scale.empty()) {
-				mat[0][0] = node.scale[0];
-				mat[1][1] = node.scale[1];
-				mat[2][2] = node.scale[2];
-			}
-
-			if(!node.rotation.empty()) {
-				doi::Quaternion q;
-				q.x = node.rotation[0];
-				q.y = node.rotation[1];
-				q.z = node.rotation[2];
-				q.w = node.rotation[3];
-
-				mat = doi::toMat<4>(q) * mat;
-			}
-
-			if(!node.translation.empty()) {
-				nytl::Vec3f t;
-				t.x = node.translation[0];
-				t.y = node.translation[1];
-				t.z = node.translation[2];
-				mat = doi::translateMat(t) * mat;
-			}
-
-			dlg_info(mat);
-			matrix = matrix * mat;
-		}
-
-		for(auto nodeid : node.children) {
-			auto& child = model.nodes[nodeid];
-			loadNode(model, child, matrix);
-		}
-
-
-		if(node.mesh != -1) {
-			auto& mesh = model.meshes[node.mesh];
-			for(auto& primitive : mesh.primitives) {
-				Material* mat;
-				if(primitive.material < 0) {
-					mat = &materials_[0];
-				} else {
-					auto mid = unsigned(primitive.material);
-					dlg_assert(mid <= materials_.size());
-					mat = &materials_[mid];
-				}
-				auto m = Primitive(vulkanDevice(), model, primitive,
-					objectDsLayout_, *mat);
-				primitives_.push_back(std::move(m));
-				primitives_.back().matrix = matrix;
-			}
-
-		}
 	}
 
 	void initShadowPipe() {
@@ -402,11 +324,12 @@ public:
 		};
 
 		shadow_.dsLayout = {dev, bindings};
-		*/
 		shadow_.pipeLayout = {dev, {sceneDsLayout_, objectDsLayout_}, {}};
+		*/
 
 		vpp::ShaderModule vertShader(dev, shadowmap_vert_data);
-		vpp::GraphicsPipelineInfo gpi {shadow_.rp, shadow_.pipeLayout, {{
+		// vpp::GraphicsPipelineInfo gpi {shadow_.rp, shadow_.pipeLayout, {{
+		vpp::GraphicsPipelineInfo gpi {shadow_.rp, pipeLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
 		}}, 0, vk::SampleCountBits::e1};
 
@@ -503,12 +426,10 @@ public:
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, shadow_.pipeline);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			shadow_.pipeLayout, 0, {shadow_.ds}, {});
+			// shadow_.pipeLayout, 0, {shadow_.ds}, {});
+			pipeLayout_, 0, {shadow_.ds}, {});
 
-		for(auto& primitive : primitives_) {
-			primitive.render(cb, shadow_.pipeLayout, true);
-		}
-
+		scene_->render(cb, pipeLayout_);
 		vk::cmdEndRenderPass(cb);
 	}
 
@@ -517,9 +438,7 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {sceneDs_}, {});
-		for(auto& primitive : primitives_) {
-			primitive.render(cb, pipeLayout_, false);
-		}
+		scene_->render(cb, pipeLayout_);
 	}
 
 	void update(double dt) override {
@@ -643,10 +562,7 @@ public:
 			doi::write(span, lightMatrix());
 		}
 
-		// update model matrix
-		for(auto& m : primitives_) {
-			m.updateDevice();
-		}
+		// TODO: update scene/model matrices for animations and stuff
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -676,11 +592,10 @@ protected:
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
 
-	std::vector<Material> materials_;
-	std::vector<Primitive> primitives_;
 	std::vector<Light> lights_;
 	bool updateLights_ {true};
 
+	std::optional<Scene> scene_; // no default constructor
 	doi::Camera camera_ {};
 
 	// shadow

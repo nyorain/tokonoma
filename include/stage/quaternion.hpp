@@ -116,17 +116,17 @@ nytl::SquareMat<N, T> toMat(const Quaternion& q) {
 }
 
 /// Returns the conjugate of the given Quaternion.
-Quaternion conjugate(const Quaternion& q) {
+inline Quaternion conjugate(const Quaternion& q) {
 	return {q.w, -q.x, -q.y, -q.z};
 }
 
 /// Returns the norm of the given Quaternion.
-double norm(const Quaternion& q) {
+inline double norm(const Quaternion& q) {
 	return std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
 }
 
 /// Returns a unit quaternion for the given quaternion.
-Quaternion normalize(const Quaternion& q) {
+inline Quaternion normalize(const Quaternion& q) {
 	auto l = norm(q);
 	if(l <= 0.0) return {1.0, 0.0, 0.0, 0.0};
 	return {q.w / l, q.x /l, q.y / l, q.z / l};
@@ -149,14 +149,14 @@ nytl::Vec3<T> apply(const Quaternion& q, const nytl::Vec3<T>& v) {
 }
 
 /// Retrieves the roll (x-axis rotation) of the given Quaternion
-double xRot(const Quaternion& q) {
+inline double xRot(const Quaternion& q) {
 	double t0 = 2.0 * (q.w * q.x + q.y * q.z);
 	double t1 = 1.0 - 2.0 * (q.x * q.x + q.y * q.y);
 	return std::atan2(t0, t1);
 }
 
 /// Retrieves the pitch (y-axis rotation) of the given Quaternion
-double yRot(const Quaternion& q) {
+inline double yRot(const Quaternion& q) {
 	double t2 = 2.0 * (q.w * q.y - q.z * q.x);
 	t2 = t2 > 1.0 ? 1.0 : t2;
 	t2 = t2 < -1.0 ? -1.0 : t2;
@@ -164,7 +164,7 @@ double yRot(const Quaternion& q) {
 }
 
 /// Retrieves the yaw (z-axis rotation) of the given Quaternion.
-double zRot(const Quaternion& q) {
+inline double zRot(const Quaternion& q) {
 	double t3 = 2.0 * (q.w * q.z + q.x * q.y);
 	double t4 = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
 	return std::atan2(t3, t4);

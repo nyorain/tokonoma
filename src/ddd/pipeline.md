@@ -14,3 +14,12 @@ fragment input:
 	- inUV: uv coord (might be garbage, see uv vertex input)
 	- inLightPos: position in light space of first light
 	  required for shadow map lookup
+	
+scene/per-level:
+	- expects descriptor 0 for per-scene data like vertex ubo, lights
+	  and viewer position
+material:
+	- expects push constant range for fragment shader at offset 0
+	- expects descriptor set 1 for fragment maps
+primitive:
+	- expectes descriptor set 2 for model and normal matrix

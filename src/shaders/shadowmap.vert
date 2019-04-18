@@ -6,7 +6,7 @@ layout(set = 0, binding = 0, row_major) uniform Matrices {
 	mat4 matrix; // view and projection
 } view;
 
-layout(set = 1, binding = 0, row_major) uniform Model {
+layout(set = 2, binding = 0, row_major) uniform Model {
 	mat4 matrix; // model matrix
 } model;
 

@@ -148,13 +148,23 @@ struct AccessorRange {
 	}
 };
 
+// Returns an iterator over the given accessor.
+// The iterator will return Vec<N, T> values (or just T for N == 1)
+// that will have been converted from the values in the accessor.
+// If N is greater than the number of components in the accessor,
+// will fill the remaining values with 0 and if N is smaller, will
+// just not return the remaining values.
+// Useful to e.g. read index/vertex buffers since gltf models
+// may store data in different formats (e.g. index buffer u16/u32)
+// and this iterator allows easy access in the required type, independent
+// from the real type of the gltf data.
 template<std::size_t N, typename T>
 AccessorRange<N, T> range(const tinygltf::Model& model,
 		const tinygltf::Accessor& accessor) {
 	return {model, accessor};
 }
 
-// TODO: just use <=> in C++20
+// TODO: just use/implement <=> in C++20
 template<std::size_t N, typename T>
 bool operator==(const AccessorIterator<N, T>& a, const AccessorIterator<N, T>& b) {
 	return a.buffer == b.buffer && a.address == b.address && a.stride == b.stride;

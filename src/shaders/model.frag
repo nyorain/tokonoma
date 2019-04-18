@@ -17,6 +17,8 @@ struct Light {
 	uint pcf;
 };
 
+// TODO: remove this, we effictively only support one light in this
+// forward renderer... at least regarding shadow
 layout(constant_id = 0) const uint maxLightSize = 8;
 
 layout(set = 0, binding = 0, row_major) uniform Lights {
@@ -30,10 +32,10 @@ layout(set = 0, binding = 0, row_major) uniform Lights {
 layout(set = 0, binding = 1) uniform sampler2DShadow shadowTex;
 
 // material
-layout(set = 2, binding = 0) uniform sampler2D albedoTex;
-layout(set = 2, binding = 1) uniform sampler2D metalRoughTex;
-layout(set = 2, binding = 2) uniform sampler2D normalTex;
-layout(set = 2, binding = 3) uniform sampler2D occlusionTex;
+layout(set = 1, binding = 0) uniform sampler2D albedoTex;
+layout(set = 1, binding = 1) uniform sampler2D metalRoughTex;
+layout(set = 1, binding = 2) uniform sampler2D normalTex;
+layout(set = 1, binding = 3) uniform sampler2D occlusionTex;
 
 // factors
 layout(push_constant) uniform materialPC {
@@ -94,7 +96,7 @@ void main() {
 	vec3 normal = getNormal();
 
 	// TODO: actually use them...
-	// vec2 mr = texture(metalRoughTex).rg;
+	// vec2 mr = texture(metalRoughTex, inUV).rg;
 	// float metalness = material.matallic * mr.b;
 	// float roughness = material.roughness * mr.g;
 
