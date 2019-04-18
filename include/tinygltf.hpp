@@ -1,10 +1,12 @@
+#pragma once
+
 //
 // Header-only tiny glTF 2.0 loader and serializer.
 //
 //
 // The MIT License (MIT)
 //
-// Copyright (c) 2015 - 2018 Syoyo Fujita, Aurélien Chatelain and many
+// Copyright (c) 2015 - 2019 Syoyo Fujita, Aurélien Chatelain and many
 // contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -26,6 +28,9 @@
 // THE SOFTWARE.
 
 // Version:
+//  - v2.2.0 Add loading 16bit PNG support. Add Sparse accessor support(Thanks
+//  to @Ybalrid)
+//  - v2.1.0 Add draco compression.
 //  - v2.0.1 Add comparsion feature(Thanks to @Selmar).
 //  - v2.0.0 glTF 2.0!.
 //
@@ -47,11 +52,18 @@
 #include <string>
 #include <vector>
 
+#ifdef __ANDROID__
+#ifdef TINYGLTF_ANDROID_LOAD_FROM_ASSETS
+#include <android/asset_manager.h>
+#endif
+#endif
+
 namespace tinygltf {
 
 #define TINYGLTF_MODE_POINTS (0)
 #define TINYGLTF_MODE_LINE (1)
 #define TINYGLTF_MODE_LINE_LOOP (2)
+#define TINYGLTF_MODE_LINE_STRIP (3)
 #define TINYGLTF_MODE_TRIANGLES (4)
 #define TINYGLTF_MODE_TRIANGLE_STRIP (5)
 #define TINYGLTF_MODE_TRIANGLE_FAN (6)
@@ -138,6 +150,12 @@ namespace tinygltf {
 
 #define TINYGLTF_DOUBLE_EPS (1.e-12)
 #define TINYGLTF_DOUBLE_EQUAL(a, b) (std::fabs((b) - (a)) < TINYGLTF_DOUBLE_EPS)
+
+#ifdef __ANDROID__
+#ifdef TINYGLTF_ANDROID_LOAD_FROM_ASSETS
+AAssetManager *asset_manager = nullptr;
+#endif
+#endif
 
 typedef enum {
   NULL_TYPE = 0,
@@ -366,6 +384,17 @@ struct Parameter {
     return -1;
   }
 
+  /// Return the index of a texture coordinate set if this Parameter is a
+  /// texture map. Returned value is only valid if the parameter represent a
+  /// texture from a material
+  int TextureTexCoord() const {
+    const auto it = json_double_value.find("texCoord");
+    if (it != std::end(json_double_value)) {
+      return int(it->second);
+    }
+    return 0;
+  }
+
   /// Material factor, like the roughness or metalness of a material
   /// Returned value is only valid if the parameter represent a texture from a
   /// material
@@ -454,9 +483,11 @@ struct Sampler {
   Value extras;
 
   Sampler()
-      : wrapS(TINYGLTF_TEXTURE_WRAP_REPEAT),
+      : minFilter(TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR),
+        magFilter(TINYGLTF_TEXTURE_FILTER_LINEAR),
+        wrapS(TINYGLTF_TEXTURE_WRAP_REPEAT),
         wrapT(TINYGLTF_TEXTURE_WRAP_REPEAT),
-        wrapR(TINYGLTF_TEXTURE_WRAP_REPEAT){}
+        wrapR(TINYGLTF_TEXTURE_WRAP_REPEAT) {}
   bool operator==(const Sampler &) const;
 };
 
@@ -465,6 +496,9 @@ struct Image {
   int width;
   int height;
   int component;
+  int bits;        // bit depth per channel. 8(byte), 16 or 32.
+  int pixel_type;  // pixel type(TINYGLTF_COMPONENT_TYPE_***). usually
+                   // UBYTE(bits = 8) or USHORT(bits = 16)
   std::vector<unsigned char> image;
   int bufferView;        // (required if no uri)
   std::string mimeType;  // (required if no uri) ["image/jpeg", "image/png",
@@ -526,8 +560,9 @@ struct BufferView {
                       // understood to be tightly packed
   int target;         // ["ARRAY_BUFFER", "ELEMENT_ARRAY_BUFFER"]
   Value extras;
+  bool dracoDecoded;  // Flag indicating this has been draco decoded
 
-  BufferView() : byteOffset(0), byteStride(0) {}
+  BufferView() : byteOffset(0), byteStride(0), dracoDecoded(false) {}
   bool operator==(const BufferView &) const;
 };
 
@@ -536,7 +571,7 @@ struct Accessor {
                    // are not supported
   std::string name;
   size_t byteOffset;
-  bool normalized;    // optinal.
+  bool normalized;    // optional.
   int componentType;  // (required) One of TINYGLTF_COMPONENT_TYPE_***
   size_t count;       // required
   int type;           // (required) One of TINYGLTF_TYPE_***   ..
@@ -545,7 +580,19 @@ struct Accessor {
   std::vector<double> minValues;  // optional
   std::vector<double> maxValues;  // optional
 
-  // TODO(syoyo): "sparse"
+  struct {
+    int count;
+    bool isSparse;
+    struct {
+      int byteOffset;
+      int bufferView;
+      int componentType;  // a TINYGLTF_COMPONENT_TYPE_ value
+    } indices;
+    struct {
+      int bufferView;
+      int byteOffset;
+    } values;
+  } sparse;
 
   ///
   /// Utility function to compute byteStride for a given bufferView object.
@@ -584,7 +631,10 @@ struct Accessor {
     return 0;
   }
 
-  Accessor() { bufferView = -1; }
+  Accessor() {
+    bufferView = -1;
+    sparse.isSparse = false;
+  }
   bool operator==(const tinygltf::Accessor &) const;
 };
 
@@ -646,6 +696,7 @@ struct Primitive {
   // where each target is a dict with attribues in ["POSITION, "NORMAL",
   // "TANGENT"] pointing
   // to their corresponding accessors
+  ExtensionMap extensions;
   Value extras;
 
   Primitive() {
@@ -789,9 +840,9 @@ enum SectionCheck {
 ///
 /// LoadImageDataFunction type. Signature for custom image loading callbacks.
 ///
-typedef bool (*LoadImageDataFunction)(Image *, std::string *, std::string *,
-                                      int, int, const unsigned char *, int,
-                                      void *);
+typedef bool (*LoadImageDataFunction)(Image *, const int, std::string *,
+                                      std::string *, int, int,
+                                      const unsigned char *, int, void *);
 
 ///
 /// WriteImageDataFunction type. Signature for custom image writing callbacks.
@@ -801,9 +852,9 @@ typedef bool (*WriteImageDataFunction)(const std::string *, const std::string *,
 
 #ifndef TINYGLTF_NO_STB_IMAGE
 // Declaration of default image loader callback
-bool LoadImageData(Image *image, std::string *err, std::string *warn,
-                   int req_width, int req_height, const unsigned char *bytes,
-                   int size, void *);
+bool LoadImageData(Image *image, const int image_idx, std::string *err,
+                   std::string *warn, int req_width, int req_height,
+                   const unsigned char *bytes, int size, void *);
 #endif
 
 #ifndef TINYGLTF_NO_STB_IMAGE_WRITE
@@ -923,10 +974,8 @@ class TinyGLTF {
   /// Write glTF to file.
   ///
   bool WriteGltfSceneToFile(Model *model, const std::string &filename,
-                            bool embedImages,
-                            bool embedBuffers,
-                            bool prettyPrint,
-                            bool writeBinary);
+                            bool embedImages, bool embedBuffers,
+                            bool prettyPrint, bool writeBinary);
 
   ///
   /// Set callback to use for loading image data

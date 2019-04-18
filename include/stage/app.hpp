@@ -13,16 +13,17 @@
 #include <string>
 #include <optional>
 
-// fwd
-class MainWindow;
-class Renderer;
-
 namespace argagg {
 	struct parser;
 	struct parser_results;
 } // namespace argagg
 
 namespace doi {
+
+// fwd
+class MainWindow;
+class Renderer;
+struct RendererCreateInfo;
 
 struct AppSettings {
 	const char* name;
@@ -56,6 +57,9 @@ protected:
 	// If overwritten by derived class to return true, will create default
 	// framebuffer and renderpass with a depth buffer as attachment 1
 	virtual bool needsDepth() const { return false; }
+
+	// Can be overriden to use custom renderer implementation
+	virtual std::unique_ptr<Renderer> createRenderer(const RendererCreateInfo&);
 
 	// argument parsing
 	virtual argagg::parser argParser() const;

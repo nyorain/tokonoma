@@ -74,20 +74,20 @@ void main() {
 	// position of texel in light space
 	float lfac = 0.0;
 	vec3 ldir = (light.type == pointLight) ?
-		inPos - light.pd :
+		pos - light.pd :
 		light.pd;
 
 	// diffuse
 	lfac += diffuseFac * max(dot(normal, -ldir), 0.0);
+
+	// blinn-phong specular
+	vec3 vdir = normalize(pos - scene.viewPos);
 	vec3 halfway = normalize(-ldir - vdir);
 	lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
 
-	// blinn-phong specular
-	vec3 vdir = normalize(inPos - scene.viewPos);
-
 	// shadow
 	vec4 lsPos = light.matrix * vec4(pos, 1.0);
-	lfac *= shadowpcf(lsPos.xyz / lsPos.w, light.pcf);
+	lfac *= shadowpcf(lsPos.xyz / lsPos.w, int(light.pcf));
 
 	// ambient always added, indepdnent from shadow
 	lfac += ambientFac;

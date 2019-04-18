@@ -20,6 +20,8 @@ public:
 		vk::Sampler sampler);
 
 public:
+	Material(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
+		vk::ImageView dummy); // default, dummy
 	Material(const vpp::Device& dev, const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& layout,
 		vk::ImageView dummy, nytl::Span<const vpp::ViewableImage> images);

@@ -9,6 +9,7 @@
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
 #include <stage/quaternion.hpp>
+#include <argagg.hpp>
 
 #include <stage/scene/scene.hpp>
 #include <stage/scene/primitive.hpp>
@@ -42,6 +43,14 @@
 
 // TODO:
 // - seperate light into own file/class; move shadow implementation there?
+//   shadow mapping really badly implemented. Lots of artefacts, mixing up
+//   point and dir light; no support for point light: shadow cube map
+//   shadow mapping also doesn't respect alpha. Should discard if albedo.a == 0
+
+bool has_suffix(const std::string_view& str, const std::string_view& suffix) {
+    return str.size() >= suffix.size() &&
+           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
 
 // Matches glsl struct
 struct Light {
@@ -66,6 +75,8 @@ public:
 		if(!doi::App::init(settings)) {
 			return false;
 		}
+
+		camera_.perspective.far = 200.f;
 
 		// == example light ==
 		lights_.emplace_back();
@@ -194,10 +205,30 @@ public:
 
 		pipe_ = {dev, vkpipe};
 
+		// TODO: support loading .gltb
 		// Load Model
-		const auto filename = "../assets/gltf/test3.gltf";
-		// const auto filename = "./scene.gltf";
-		if (!loadModel(filename)) {
+		std::string path = "../assets/gltf/";
+		std::string file = "test3.gltf";
+		if(!modelname_.empty()) {
+			if(has_suffix(modelname_, ".gltf")) {
+				auto i = modelname_.find_last_of('/');
+				if(i == std::string::npos) {
+					path = {};
+					file = modelname_;
+				} else {
+					path = modelname_.substr(0, i + 1);
+					file = modelname_.substr(i + 1);
+				}
+			} else {
+				path = modelname_;
+				if(path.back() != '/') {
+					path.push_back('/');
+				}
+				file = "scene.gltf";
+			}
+		}
+
+		if (!loadModel(path, file)) {
 			return false;
 		}
 
@@ -222,7 +253,35 @@ public:
 		return true;
 	}
 
-	bool loadModel(nytl::StringParam filename) {
+	argagg::parser argParser() const override {
+		auto parser = App::argParser();
+		parser.definitions.push_back({
+			"model", {"--model"},
+			"Path of the gltf model to load (dir must contain scene.gltf)", 1
+		});
+		parser.definitions.push_back({
+			"scale", {"--scale"},
+			"Apply scale to whole scene", 1
+		});
+		return parser;
+	}
+
+	bool handleArgs(const argagg::parser_results& result) override {
+		if(!App::handleArgs(result)) {
+			return false;
+		}
+
+		if(result.has_option("model")) {
+			modelname_ = result["model"].as<const char*>();
+		}
+		if(result.has_option("scale")) {
+			sceneScale_ = result["scale"].as<float>();
+		}
+
+		return true;
+	}
+
+	bool loadModel(nytl::StringParam path, nytl::StringParam scene) {
 		dlg_info(">> Loading model...");
 		namespace gltf = tinygltf;
 
@@ -230,7 +289,10 @@ public:
 		gltf::Model model;
 		std::string err;
 		std::string warn;
-		auto res = loader.LoadASCIIFromFile(&model, &err, &warn, filename.c_str());
+
+		auto file = std::string(path);
+		file += scene;
+		auto res = loader.LoadASCIIFromFile(&model, &err, &warn, file.c_str());
 
 		// error, warnings
 		auto pos = 0u;
@@ -255,10 +317,13 @@ public:
 
 		// traverse nodes
 		dlg_info("Found {} scenes", model.scenes.size());
-		auto& scene = model.scenes[model.defaultScene];
-		scene_.emplace(vulkanDevice(), model, scene, doi::SceneRenderInfo {
-			materialDsLayout_, objectDsLayout_, pipeLayout_,
-			dummyTex_.vkImageView()});
+		auto& sc = model.scenes[model.defaultScene];
+
+		auto s = sceneScale_;
+		auto mat = doi::scaleMat<4, float>({s, s, s});
+		auto ri = doi::SceneRenderInfo{materialDsLayout_, objectDsLayout_,
+			pipeLayout_, dummyTex_.vkImageView()};
+		scene_.emplace(vulkanDevice(), path, model, sc, mat, ri);
 
 		return true;
 	}
@@ -468,6 +533,11 @@ public:
 		}
 
 		switch(ev.keycode) {
+			case ny::Keycode::m: // move light here
+				moveLight_ = false;
+				lights_[0].pd = camera_.pos;
+				updateLights_ = true;
+				return true;
 			case ny::Keycode::l:
 				moveLight_ ^= true;
 				return true;
@@ -590,6 +660,10 @@ protected:
 	} shadow_;
 
 	Skybox skybox_;
+
+	// args
+	std::string modelname_ {};
+	float sceneScale_ {1.f};
 };
 
 int main(int argc, const char** argv) {

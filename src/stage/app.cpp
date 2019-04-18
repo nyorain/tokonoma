@@ -158,7 +158,7 @@ struct App::Impl {
 	std::optional<vpp::DebugCallback> debugCallback;
 
 	std::optional<MainWindow> window;
-	std::optional<Renderer> renderer;
+	std::unique_ptr<Renderer> renderer;
 
 	std::optional<rvg::Context> rvgContext;
 	rvg::Transform windowTransform;
@@ -362,7 +362,7 @@ bool App::init(const AppSettings& settings) {
 		impl_->samples, args_.vsync, clearColor, needsDepth()
 	};
 
-	impl_->renderer.emplace(renderInfo);
+	impl_->renderer = createRenderer(renderInfo);
 	renderer().beforeRender = [&](auto cb) {
 		beforeRender(cb);
 	};
@@ -399,28 +399,22 @@ bool App::init(const AppSettings& settings) {
 argagg::parser App::argParser() const {
 	return {{
 		{
-			"help",
-			{"-h", "--help"},
+			"help", {"-h", "--help"},
 			"Displays help information", 0
 		}, {
-			"no-validation",
-			{"--no-validation"},
+			"no-validation", {"--no-validation"},
 			"Disabled layer validation", 0
 		}, {
-			"renderdoc",
-			{"-r", "--renderdoc"},
+			"renderdoc", {"-r", "--renderdoc"},
 			"Load the renderdoc vulkan layer", 0
 		}, {
-			"no-vsync",
-			{"--no-vsync"},
+			"no-vsync", {"--no-vsync"},
 			"Disable vsync", 0
 		}, {
-			"multisamples",
-			{"--multisamples", "-m"},
+			"multisamples", {"--multisamples", "-m"},
 			"Sets the samples to use", 1
 		}, {
-			"phdev",
-			{"--phdev"},
+			"phdev", {"--phdev"},
 			"Sets the physical device id to use."
 			"Can be id, name or {igpu, dgpu, auto}", 1
 		}
@@ -729,6 +723,11 @@ rvg::Transform& App::windowTransform() const {
 
 vk::SampleCountBits App::samples() const {
 	return impl_->samples;
+}
+
+std::unique_ptr<Renderer>
+App::createRenderer(const RendererCreateInfo& ri) {
+	return std::make_unique<Renderer>(ri);
 }
 
 // free util

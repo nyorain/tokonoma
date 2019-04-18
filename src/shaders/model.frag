@@ -108,7 +108,7 @@ void main() {
 
 	// TODO: shadow coords only for first light supported
 	// but that's one of the main problems of a forward renderer
-	vec3 col = vec3(0.0);
+	vec4 col = vec4(0.0);
 	for(uint i = 0; i < lights.numLights; ++i) {
 		Light light = lights.lights[i];
 		vec3 ldir = (light.type == pointLight) ?
@@ -136,8 +136,8 @@ void main() {
 		lfac += ambientFac;
 
 		// combine
-		col += lfac * light.color * albedo.rgb;
+		col += vec4(lfac * light.color, 1.0) * albedo;
 	}
 
-	outCol = vec4(col, 1.0);
+	outCol = col;
 }

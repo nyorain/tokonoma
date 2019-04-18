@@ -29,7 +29,8 @@ public:
 public:
 	Primitive(const vpp::Device& dev,
 		const gltf::Model& model, const gltf::Primitive& primitive,
-		const vpp::TrDsLayout& dsLayout, const Material& material);
+		const vpp::TrDsLayout& dsLayout, const Material& material,
+		const nytl::Mat4f& matrix);
 
 	void render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout,
 		bool shadow);

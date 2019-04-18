@@ -13,16 +13,26 @@
 #include <vpp/swapchain.hpp>
 #include <vpp/formats.hpp>
 
-#include <dlg/dlg.hpp> // dlg
+#include <dlg/dlg.hpp>
+
+namespace doi {
 
 // TODO: support for reading depth target in shader
-
-vpp::RenderPass createRenderPass(const vpp::Device&, vk::Format,
-	vk::SampleCountBits, vk::Format depthFormat = vk::Format::undefined);
+Renderer::Renderer(const vpp::Queue& present) : vpp::Renderer(present) {
+	// don't call init here
+}
 
 Renderer::Renderer(const RendererCreateInfo& info) :
-	DefaultRenderer(info.present), sampleCount_(info.samples),
+	vpp::Renderer(info.present), sampleCount_(info.samples),
 		clearColor_(info.clearColor) {
+	init(info);
+}
+
+void Renderer::init(const RendererCreateInfo& info) {
+	dlg_assert(present_);
+
+	sampleCount_ = info.samples;
+	clearColor_ = info.clearColor;
 
 	vpp::SwapchainPreferences prefs {};
 	if(info.vsync) {
@@ -38,9 +48,153 @@ Renderer::Renderer(const RendererCreateInfo& info) :
 		depthFormat_ = vk::Format::d32Sfloat;
 	}
 
-	renderPass_ = createRenderPass(info.dev, scInfo_.imageFormat, samples(),
-		depthFormat_);
-	vpp::DefaultRenderer::init(renderPass_, scInfo_);
+	createRenderPass();
+	vpp::Renderer::init(scInfo_);
+}
+
+void Renderer::createRenderPass() {
+	vk::AttachmentDescription attachments[3] {};
+	auto msaa = sampleCount_ != vk::SampleCountBits::e1;
+
+	auto aid = 0u;
+	auto depthid = 0u;
+	auto resolveid = 0u;
+	auto colorid = 0u;
+
+	// swapchain color attachments
+	// msaa: we resolve to this
+	// otherwise this is directly rendered
+	attachments[aid].format = scInfo_.imageFormat;
+	attachments[aid].samples = vk::SampleCountBits::e1;
+	attachments[aid].storeOp = vk::AttachmentStoreOp::store;
+	attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+	attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+	attachments[aid].initialLayout = vk::ImageLayout::undefined;
+	attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
+	if(msaa) {
+		attachments[aid].loadOp = vk::AttachmentLoadOp::dontCare;
+		resolveid = aid;
+	} else {
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		colorid = aid;
+	}
+	++aid;
+
+	// optiontal multisampled render target
+	if(msaa) {
+		// multisample color attachment
+		attachments[aid].format = scInfo_.imageFormat;
+		attachments[aid].samples = sampleCount_;
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].initialLayout = vk::ImageLayout::undefined;
+		attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
+
+		colorid = aid;
+		++aid;
+	}
+
+	// optional depth target
+	if(depthFormat_ != vk::Format::undefined) {
+		// depth attachment
+		attachments[aid].format = depthFormat_;
+		attachments[aid].samples = sampleCount_;
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].initialLayout = vk::ImageLayout::undefined;
+		attachments[aid].finalLayout = vk::ImageLayout::depthStencilAttachmentOptimal;
+
+		depthid = aid;
+		++aid;
+	}
+
+	// refs
+	vk::AttachmentReference colorReference;
+	colorReference.attachment = colorid;
+	colorReference.layout = vk::ImageLayout::colorAttachmentOptimal;
+
+	vk::AttachmentReference resolveReference;
+	resolveReference.attachment = resolveid;
+	resolveReference.layout = vk::ImageLayout::colorAttachmentOptimal;
+
+	vk::AttachmentReference depthReference;
+	depthReference.attachment = depthid;
+	depthReference.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
+
+	// deps
+	std::vector<vk::SubpassDependency> dependencies;
+
+	// TODO: do we really need this? isn't this detected by default?
+	if(msaa) {
+		dependencies.resize(2);
+
+		dependencies[0].srcSubpass = vk::subpassExternal;
+		dependencies[0].dstSubpass = 0;
+		dependencies[0].srcStageMask = vk::PipelineStageBits::bottomOfPipe;
+		dependencies[0].dstStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+		dependencies[0].srcAccessMask = vk::AccessBits::memoryRead;
+		dependencies[0].dstAccessMask = vk::AccessBits::colorAttachmentRead |
+			vk::AccessBits::colorAttachmentWrite;
+		dependencies[0].dependencyFlags = vk::DependencyBits::byRegion;
+
+		dependencies[1].srcSubpass = 0;
+		dependencies[1].dstSubpass = vk::subpassExternal;
+		dependencies[1].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+		dependencies[1].dstStageMask = vk::PipelineStageBits::bottomOfPipe;
+		dependencies[1].srcAccessMask = vk::AccessBits::colorAttachmentRead |
+			vk::AccessBits::colorAttachmentWrite;
+		dependencies[1].dstAccessMask = vk::AccessBits::memoryRead;
+		dependencies[1].dependencyFlags = vk::DependencyBits::byRegion;
+	}
+
+	// only subpass
+	vk::SubpassDescription subpass {};
+	subpass.pipelineBindPoint = vk::PipelineBindPoint::graphics;
+	subpass.colorAttachmentCount = 1;
+	subpass.pColorAttachments = &colorReference;
+	if(depthFormat_ != vk::Format::undefined) {
+		subpass.pDepthStencilAttachment = &depthReference;
+	}
+
+	if(sampleCount_ != vk::SampleCountBits::e1) {
+		subpass.pResolveAttachments = &resolveReference;
+	}
+
+	// most general dependency
+	// should cover almost all cases of external access to data that
+	// is read during a render pass (host, transfer, compute shader)
+	vk::SubpassDependency dependency;
+	dependency.srcSubpass = vk::subpassExternal;
+	dependency.srcStageMask =
+		vk::PipelineStageBits::host |
+		vk::PipelineStageBits::computeShader |
+		vk::PipelineStageBits::colorAttachmentOutput |
+		vk::PipelineStageBits::transfer;
+	dependency.srcAccessMask = vk::AccessBits::hostWrite |
+		vk::AccessBits::shaderWrite |
+		vk::AccessBits::transferWrite |
+		vk::AccessBits::colorAttachmentWrite;
+	dependency.dstSubpass = 0u;
+	dependency.dstStageMask = vk::PipelineStageBits::allGraphics;
+	dependency.dstAccessMask = vk::AccessBits::uniformRead |
+		vk::AccessBits::vertexAttributeRead |
+		vk::AccessBits::indirectCommandRead |
+		vk::AccessBits::shaderRead;
+	dependencies.push_back(dependency);
+
+	vk::RenderPassCreateInfo renderPassInfo;
+	renderPassInfo.attachmentCount = aid;
+	renderPassInfo.pAttachments = attachments;
+	renderPassInfo.subpassCount = 1;
+	renderPassInfo.pSubpasses = &subpass;
+	renderPassInfo.dependencyCount = dependencies.size();
+	renderPassInfo.pDependencies = dependencies.data();
+
+	renderPass_ = {device(), renderPassInfo};
 }
 
 void Renderer::createDepthTarget(const vk::Extent2D& size) {
@@ -162,7 +316,7 @@ void Renderer::record(const RenderBuffer& buf) {
 }
 
 void Renderer::resize(nytl::Vec2ui size) {
-	vpp::DefaultRenderer::recreate({size[0], size[1]}, scInfo_);
+	vpp::Renderer::recreate({size[0], size[1]}, scInfo_);
 }
 
 void Renderer::samples(vk::SampleCountBits samples) {
@@ -171,8 +325,7 @@ void Renderer::samples(vk::SampleCountBits samples) {
 		createMultisampleTarget(scInfo_.imageExtent);
 	}
 
-	renderPass_ = createRenderPass(device(), scInfo_.imageFormat, samples);
-	vpp::DefaultRenderer::renderPass_ = renderPass_;
+	createRenderPass();
 
 	initBuffers(scInfo_.imageExtent, renderBuffers_);
 	invalidate();
@@ -180,165 +333,30 @@ void Renderer::samples(vk::SampleCountBits samples) {
 
 void Renderer::initBuffers(const vk::Extent2D& size,
 		nytl::Span<RenderBuffer> bufs) {
-	std::vector<vk::ImageView> views {vk::ImageView {}}; // swapchain image
+	std::vector<vk::ImageView> attachments {vk::ImageView {}};
+	auto scPos = 0u; // attachments[scPos]: swapchain image
+
 	if(sampleCount_ != vk::SampleCountBits::e1) {
 		createMultisampleTarget(scInfo_.imageExtent);
-		views.push_back(multisampleTarget_.vkImageView());
+		attachments.push_back(multisampleTarget_.vkImageView());
 	}
 
 	if(depthFormat_ != vk::Format::undefined) {
 		createDepthTarget(scInfo_.imageExtent);
-		views.push_back(depthTarget_.vkImageView());
+		attachments.push_back(depthTarget_.vkImageView());
 	}
 
-	vpp::DefaultRenderer::initBuffers(size, bufs, views);
+	for(auto& buf : bufs) {
+		attachments[scPos] = buf.imageView;
+		vk::FramebufferCreateInfo info ({},
+			renderPass_,
+			attachments.size(),
+			attachments.data(),
+			size.width,
+			size.height,
+			1);
+		buf.framebuffer = {device(), info};
+	}
 }
 
-// util
-vpp::RenderPass createRenderPass(const vpp::Device& dev,
-		vk::Format format, vk::SampleCountBits sampleCount,
-		vk::Format depthFormat) {
-
-	vk::AttachmentDescription attachments[3] {};
-	auto msaa = sampleCount != vk::SampleCountBits::e1;
-
-	auto aid = 0u;
-	auto depthid = 0u;
-	auto resolveid = 0u;
-	auto colorid = 0u;
-
-	// swapchain color attachments
-	// msaa: we resolve to this
-	// otherwise this is directly rendered
-	attachments[aid].format = format;
-	attachments[aid].samples = vk::SampleCountBits::e1;
-	attachments[aid].storeOp = vk::AttachmentStoreOp::store;
-	attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-	attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-	attachments[aid].initialLayout = vk::ImageLayout::undefined;
-	attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
-	if(msaa) {
-		attachments[aid].loadOp = vk::AttachmentLoadOp::dontCare;
-		resolveid = aid;
-	} else {
-		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
-		colorid = aid;
-	}
-	++aid;
-
-	// optiontal multisampled render target
-	if(msaa) {
-		// multisample color attachment
-		attachments[aid].format = format;
-		attachments[aid].samples = sampleCount;
-		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
-		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
-		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-		attachments[aid].initialLayout = vk::ImageLayout::undefined;
-		attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
-
-		colorid = aid;
-		++aid;
-	}
-
-	// optional depth target
-	if(depthFormat != vk::Format::undefined) {
-		// depth attachment
-		attachments[aid].format = depthFormat;
-		attachments[aid].samples = sampleCount;
-		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
-		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
-		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::clear;
-		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-		attachments[aid].initialLayout = vk::ImageLayout::undefined;
-		attachments[aid].finalLayout = vk::ImageLayout::depthStencilAttachmentOptimal;
-
-		depthid = aid;
-		++aid;
-	}
-
-	// refs
-	vk::AttachmentReference colorReference;
-	colorReference.attachment = colorid;
-	colorReference.layout = vk::ImageLayout::colorAttachmentOptimal;
-
-	vk::AttachmentReference resolveReference;
-	resolveReference.attachment = resolveid;
-	resolveReference.layout = vk::ImageLayout::colorAttachmentOptimal;
-
-	vk::AttachmentReference depthReference;
-	depthReference.attachment = depthid;
-	depthReference.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
-
-	// deps
-	std::vector<vk::SubpassDependency> dependencies;
-
-	// TODO: do we really need this? isn't this detected by default?
-	if(msaa) {
-		dependencies.resize(2);
-
-		dependencies[0].srcSubpass = vk::subpassExternal;
-		dependencies[0].dstSubpass = 0;
-		dependencies[0].srcStageMask = vk::PipelineStageBits::bottomOfPipe;
-		dependencies[0].dstStageMask = vk::PipelineStageBits::colorAttachmentOutput;
-		dependencies[0].srcAccessMask = vk::AccessBits::memoryRead;
-		dependencies[0].dstAccessMask = vk::AccessBits::colorAttachmentRead |
-			vk::AccessBits::colorAttachmentWrite;
-		dependencies[0].dependencyFlags = vk::DependencyBits::byRegion;
-
-		dependencies[1].srcSubpass = 0;
-		dependencies[1].dstSubpass = vk::subpassExternal;
-		dependencies[1].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
-		dependencies[1].dstStageMask = vk::PipelineStageBits::bottomOfPipe;
-		dependencies[1].srcAccessMask = vk::AccessBits::colorAttachmentRead |
-			vk::AccessBits::colorAttachmentWrite;
-		dependencies[1].dstAccessMask = vk::AccessBits::memoryRead;
-		dependencies[1].dependencyFlags = vk::DependencyBits::byRegion;
-	}
-
-	// only subpass
-	vk::SubpassDescription subpass {};
-	subpass.pipelineBindPoint = vk::PipelineBindPoint::graphics;
-	subpass.colorAttachmentCount = 1;
-	subpass.pColorAttachments = &colorReference;
-	if(depthFormat != vk::Format::undefined) {
-		subpass.pDepthStencilAttachment = &depthReference;
-	}
-
-	if(sampleCount != vk::SampleCountBits::e1) {
-		subpass.pResolveAttachments = &resolveReference;
-	}
-
-	// most general dependency
-	// should cover almost all cases of external access to data that
-	// is read during a render pass (host, transfer, compute shader)
-	vk::SubpassDependency dependency;
-	dependency.srcSubpass = vk::subpassExternal;
-	dependency.srcStageMask =
-		vk::PipelineStageBits::host |
-		vk::PipelineStageBits::computeShader |
-		vk::PipelineStageBits::colorAttachmentOutput |
-		vk::PipelineStageBits::transfer;
-	dependency.srcAccessMask = vk::AccessBits::hostWrite |
-		vk::AccessBits::shaderWrite |
-		vk::AccessBits::transferWrite |
-		vk::AccessBits::colorAttachmentWrite;
-	dependency.dstSubpass = 0u;
-	dependency.dstStageMask = vk::PipelineStageBits::allGraphics;
-	dependency.dstAccessMask = vk::AccessBits::uniformRead |
-		vk::AccessBits::vertexAttributeRead |
-		vk::AccessBits::indirectCommandRead |
-		vk::AccessBits::shaderRead;
-	dependencies.push_back(dependency);
-
-	vk::RenderPassCreateInfo renderPassInfo;
-	renderPassInfo.attachmentCount = aid;
-	renderPassInfo.pAttachments = attachments;
-	renderPassInfo.subpassCount = 1;
-	renderPassInfo.pSubpasses = &subpass;
-	renderPassInfo.dependencyCount = dependencies.size();
-	renderPassInfo.pDependencies = dependencies.data();
-
-	return {dev, renderPassInfo};
-}
+} // namespace doi
