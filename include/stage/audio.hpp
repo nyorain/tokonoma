@@ -10,6 +10,9 @@
 #include <nytl/span.hpp>
 #include <nytl/callback.hpp>
 
+// TODO: audio impl currently broken
+// will fix on next motivation gain
+
 // soundio fwd
 struct SoundIo;
 struct SoundIoDevice;

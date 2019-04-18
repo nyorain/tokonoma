@@ -71,6 +71,7 @@ subdir('src/sss')
 subdir('src/iro')
 subdir('src/ddd')
 # subdir('src/lith')
+subdir('src/deferred')
 
 # inline (for small projects)
 executable('pendulum',

@@ -1,3 +1,5 @@
+see src/stage/gltf/pipeline.md for material/primitive
+
 vertex input:
 	- buffer 0:
 		- position (always)
@@ -18,8 +20,3 @@ fragment input:
 scene/per-level:
 	- expects descriptor 0 for per-scene data like vertex ubo, lights
 	  and viewer position
-material:
-	- expects push constant range for fragment shader at offset 0
-	- expects descriptor set 1 for fragment maps
-primitive:
-	- expectes descriptor set 2 for model and normal matrix

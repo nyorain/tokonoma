@@ -1,5 +1,5 @@
-#include "primitive.hpp"
-#include "material.hpp"
+#include <stage/scene/primitive.hpp>
+#include <stage/scene/material.hpp>
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
 
@@ -7,6 +7,8 @@
 #include <vpp/bufferOps.hpp>
 
 #include <dlg/dlg.hpp>
+
+namespace doi {
 
 Primitive::Primitive(const vpp::Device& dev,
 		const tinygltf::Model& model, const tinygltf::Primitive& primitive,
@@ -170,3 +172,5 @@ void Primitive::updateDevice() {
 	auto normalMatrix = nytl::Mat4f(transpose(inverse(matrix)));
 	doi::write(span, normalMatrix);
 }
+
+} // namespace gltf

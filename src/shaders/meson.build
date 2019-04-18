@@ -104,6 +104,10 @@ shaders_src = [
 	  ['lith.vert'],
 	  ['lith.comp', include_glsl],
 	]],
+	['deferred_shaders', [
+	  ['deferred/gbuf.frag', include_glsl],
+	  ['deferred/light.frag', include_glsl],
+	]],
 ]
 
 # build them
@@ -115,9 +119,9 @@ foreach shader_group : shaders_src
 
 	foreach shader : shader_group[1]
 		file = shader[0]
-		name = shader.get(2, file)
+		name = shader.get(2, file).underscorify()
 
-		data_name = name.underscorify() + '_data'
+		data_name = name + '_data'
 		args = [glslang, '-V', '@INPUT@',
 			'-o', '@OUTPUT@',
 			'--target-env', 'vulkan1.1',
@@ -128,7 +132,7 @@ foreach shader_group : shaders_src
 		header = custom_target(
 			name + '_spv',
 			output: name + '.h',
-			input: file,
+			input: files(file),
 			depend_files: shader.get(1, []),
 			command: args)
 

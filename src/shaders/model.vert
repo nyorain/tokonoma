@@ -12,7 +12,7 @@ layout(location = 3) out vec2 outUV;
 // TODO: support multiple lights/multiple light matrices
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj; // view and pojection
-	mat4 light; // light matrix (from global space to model space)
+	mat4 light; // light matrix (from global space to ligt space)
 } scene;
 
 layout(set = 2, binding = 0, row_major) uniform Model {

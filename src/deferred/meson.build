@@ -1,9 +1,9 @@
-executable('ddd', [
+executable('deferred', [
 		'main.cpp',
-		'skybox.cpp',
-		ddd_shaders,
+		deferred_shaders,
 	], dependencies: [
 		stage_dep,
 		gltf_dep,
 	])
+
 
