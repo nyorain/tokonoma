@@ -54,8 +54,9 @@ void main() {
 	outNormal.xyz = getNormal();
 	outAlbedo.rgb = (material.albedo * texture(albedoTex, inUV)).rgb;
 
-	vec2 mr = texture(metalRoughTex, inUV).rg;
-	outPos.w = material.roughness * mr.g;
-	outNormal.w = material.matallic * mr.b;
+	// as specified by gltf spec
+	vec2 mr = texture(metalRoughTex, inUV).gb;
+	outPos.w = material.roughness * mr.x;
+	outNormal.w = material.metallic * mr.y;
 	outAlbedo.w = texture(occlusionTex, inUV).r;
 }

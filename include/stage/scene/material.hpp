@@ -7,6 +7,7 @@
 #include <tinygltf.hpp>
 #include <variant>
 
+namespace doi {
 namespace gltf = tinygltf;
 
 // TODO: don't laod textures/images per material, maybe they are shared
@@ -44,3 +45,5 @@ protected:
 	bool normalmap_ {}; // whether normal map is valid
 };
 
+
+} // namespace doi

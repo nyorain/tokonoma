@@ -1,7 +1,9 @@
-#include "material.hpp"
+#include <stage/scene/material.hpp>
 #include <dlg/dlg.hpp>
 #include <vpp/vk.hpp>
 #include <stage/texture.hpp>
+
+namespace doi {
 
 vpp::TrDsLayout Material::createDsLayout(const vpp::Device& dev,
 		vk::Sampler sampler) {
@@ -129,3 +131,5 @@ void Material::bind(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 		pl, 1, {ds_}, {});
 }
+
+} // namespace doi

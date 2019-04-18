@@ -9,6 +9,9 @@
 
 #include <tinygltf.hpp>
 
+namespace doi {
+namespace gltf = tinygltf;
+
 class Material;
 
 class Primitive {
@@ -25,7 +28,7 @@ public:
 
 public:
 	Primitive(const vpp::Device& dev,
-		const tinygltf::Model& model, const tinygltf::Primitive& primitive,
+		const gltf::Model& model, const gltf::Primitive& primitive,
 		const vpp::TrDsLayout& dsLayout, const Material& material);
 
 	void render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout,
@@ -42,3 +45,5 @@ protected:
 	vpp::TrDs ds_;
 	const Material* material_;
 };
+
+} // namespace doi

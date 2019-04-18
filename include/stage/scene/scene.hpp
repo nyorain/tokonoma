@@ -9,8 +9,8 @@
 #include <tinygltf.hpp>
 #include <vector>
 
-class Material;
-class Primitive;
+namespace doi {
+namespace gltf = tinygltf;
 
 struct SceneRenderInfo {
 	const vpp::TrDsLayout& materialDsLayout;
@@ -31,14 +31,14 @@ public:
 
 public:
 	Scene() = default;
-	Scene(vpp::Device&, const tinygltf::Model&,
-		const tinygltf::Scene&, const SceneRenderInfo&);
+	Scene(vpp::Device&, const gltf::Model&,
+		const gltf::Scene&, const SceneRenderInfo&);
 
 	void render(vk::CommandBuffer, vk::PipelineLayout);
 
 protected:
-	void loadNode(vpp::Device&, const tinygltf::Model&,
-		const tinygltf::Node&, const SceneRenderInfo&,
+	void loadNode(vpp::Device&, const gltf::Model&,
+		const gltf::Node&, const SceneRenderInfo&,
 		nytl::Mat4f matrix);
 
 	std::vector<Primitive> primitives_;
@@ -48,3 +48,5 @@ protected:
 	// TODO: use (in materials)
 	std::vector<Sampler> samplers_;
 };
+
+} // namespace doi

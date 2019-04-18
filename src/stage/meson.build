@@ -14,13 +14,18 @@ stage_deps = [
 ]
 
 stage_src = [
-	'render.cpp',
-	'window.cpp',
-	'geometry.cpp',
 	'app.cpp',
 	'audio.cpp',
+	'render.cpp',
+	'window.cpp',
+	'camera.cpp',
+	'geometry.cpp',
 	'physics.cpp',
 	'texture.cpp',
+
+	'scene/scene.cpp',
+	'scene/material.cpp',
+	'scene/primitive.cpp',
 ]
 
 stage_inc = [

@@ -46,19 +46,19 @@ layout(push_constant) uniform materialPC {
 } material;
 
 // samples the shadow texture multiple times to get smoother shadow
+// pos: position in light space
 // returns (1 - shadow), i.e. the light factor
-float shadowpcf(vec3 pos) {
+float shadowpcf(vec3 pos, int range) {
 	if(pos.z > 1.0) {
 		return 1.0;
 	}
 
 	vec2 texelSize = 1.f / textureSize(shadowTex, 0);
 	float sum = 0.f;
-	int range = int(lights.lights[0].pcf);
 	for(int x = -range; x <= range; ++x) {
 		for(int y = -range; y <= range; ++y) {
 			vec3 off = vec3(texelSize * vec2(x, y),  0);
-			sum += texture(shadowTex, inLightPos + off).r;
+			sum += texture(shadowTex, pos + off).r;
 		}
 	}
 
@@ -130,7 +130,7 @@ void main() {
 		lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
 
 		// shadow
-		lfac *= shadowpcf(inLightPos);
+		lfac *= shadowpcf(inLightPos, int(light.pcf));
 
 		// ambient, always added, even in shadow
 		lfac += ambientFac;

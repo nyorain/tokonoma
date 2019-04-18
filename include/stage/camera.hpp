@@ -5,6 +5,7 @@
 #include <nytl/vecOps.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/matOps.hpp>
+#include <ny/fwd.hpp>
 
 namespace doi {
 
@@ -50,5 +51,8 @@ inline void rotateView(Camera& c, float dyaw, float dpitch) {
 	nytl::normalize(c.dir);
 	c.update = true;
 }
+
+// checks default wasd+qe movement
+void checkMovement(Camera& c, ny::KeyboardContext& kc, float dt);
 
 } // namespace doi

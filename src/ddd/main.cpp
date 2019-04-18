@@ -1,6 +1,4 @@
 #include "skybox.hpp"
-#include "scene.hpp"
-#include "primitive.hpp"
 
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
@@ -11,6 +9,9 @@
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
 #include <stage/quaternion.hpp>
+
+#include <stage/scene/scene.hpp>
+#include <stage/scene/primitive.hpp>
 
 #include <ny/key.hpp>
 #include <ny/keyboardContext.hpp>
@@ -58,7 +59,7 @@ struct Light {
 class ViewApp : public doi::App {
 public:
 	static constexpr auto maxLightSize = 8u;
-	using Vertex = Primitive::Vertex;
+	using Vertex = doi::Primitive::Vertex;
 
 public:
 	bool init(const doi::AppSettings& settings) override {
@@ -66,13 +67,11 @@ public:
 			return false;
 		}
 
-		// TODO: getting position right is hard
 		// == example light ==
 		lights_.emplace_back();
 		lights_.back().color = {1.f, 1.f, 1.f};
 		lights_.back().pd = {5.8f, 4.0f, 4.f};
 		lights_.back().type = Light::Type::point;
-
 
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
@@ -130,7 +129,7 @@ public:
 
 		// per material
 		// push constant range for material
-		materialDsLayout_ = Material::createDsLayout(dev, sampler_);
+		materialDsLayout_ = doi::Material::createDsLayout(dev, sampler_);
 		vk::PushConstantRange pcr;
 		pcr.offset = 0;
 		pcr.size = sizeof(float) * 7;
@@ -257,7 +256,7 @@ public:
 		// traverse nodes
 		dlg_info("Found {} scenes", model.scenes.size());
 		auto& scene = model.scenes[model.defaultScene];
-		scene_.emplace(vulkanDevice(), model, scene, SceneRenderInfo {
+		scene_.emplace(vulkanDevice(), model, scene, doi::SceneRenderInfo {
 			materialDsLayout_, objectDsLayout_, pipeLayout_,
 			dummyTex_.vkImageView()});
 
@@ -311,8 +310,8 @@ public:
 		shadow_.fb = {dev, fbi};
 
 		// layouts
-		// XXX: using other layouts for now
-		// we could theoretically also use same pipe layout
+		// we could use another pipe layout for shadows since they
+		// don't need most of the descriptors
 		/*
 		auto bindings = {
 			vpp::descriptorBinding(
@@ -448,34 +447,8 @@ public:
 
 		// movement
 		auto kc = appContext().keyboardContext();
-		auto fac = dt;
-
-		auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-		auto right = nytl::normalized(nytl::cross(camera_.dir, yUp));
-		auto up = nytl::normalized(nytl::cross(camera_.dir, right));
-		if(kc->pressed(ny::Keycode::d)) { // right
-			camera_.pos += fac * right;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::a)) { // left
-			camera_.pos += -fac * right;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::w)) {
-			camera_.pos += fac * camera_.dir;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::s)) {
-			camera_.pos += -fac * camera_.dir;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::q)) { // up
-			camera_.pos += -fac * up;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::e)) { // down
-			camera_.pos += fac * up;
-			camera_.update = true;
+		if(kc) {
+			doi::checkMovement(camera_, *kc, dt);
 		}
 
 		if(moveLight_) {
@@ -561,8 +534,6 @@ public:
 			auto span = map.span();
 			doi::write(span, lightMatrix());
 		}
-
-		// TODO: update scene/model matrices for animations and stuff
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -595,7 +566,7 @@ protected:
 	std::vector<Light> lights_;
 	bool updateLights_ {true};
 
-	std::optional<Scene> scene_; // no default constructor
+	std::optional<doi::Scene> scene_; // no default constructor
 	doi::Camera camera_ {};
 
 	// shadow

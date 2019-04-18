@@ -1,12 +1,13 @@
-#include "scene.hpp"
-#include "material.hpp"
-#include "primitive.hpp"
+#include <stage/scene/scene.hpp>
+#include <stage/scene/primitive.hpp>
+#include <stage/scene/material.hpp>
 #include <stage/quaternion.hpp>
 #include <stage/transform.hpp>
 #include <stage/texture.hpp>
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
 
+namespace doi {
 namespace {
 
 vpp::ViewableImage loadImage(const vpp::Device& dev, const gltf::Image& tex) {
@@ -137,3 +138,5 @@ void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl) {
 		p.render(cb, pl, false); // TODO: don't care about shadow
 	}
 }
+
+} // namespace doi
