@@ -236,7 +236,7 @@ struct LevelView {
 // Returns a matrix mapping from the given view into level space to
 // normalized coordinates ([-1, 1], for rendering).
 // yup: whether the y axis is going up in level coordinates.
-nytl::Mat4f levelMatrix(const LevelView& view, bool yup = true) {
+inline nytl::Mat4f levelMatrix(const LevelView& view, bool yup = true) {
 	// the matrix gets level coordinates as input and returns
 	// normalized window coordinates ([-1, 1])
 	auto mat = nytl::identity<4, float>();
@@ -260,7 +260,7 @@ nytl::Mat4f levelMatrix(const LevelView& view, bool yup = true) {
 // the larger window dimension should show `longSide` in level coordinate
 // units.
 // windowRatio: windowSize.x / windowSize.y
-nytl::Vec2f levelViewSize(float windowRatio, float longSide) {
+inline nytl::Vec2f levelViewSize(float windowRatio, float longSide) {
 	nytl::Vec2f viewSize = {longSide, longSide};
 	if (windowRatio > 1.f) {
 		viewSize.y *= (1 / windowRatio);
@@ -277,7 +277,7 @@ nytl::Vec2f levelViewSize(float windowRatio, float longSide) {
 //   is drawn in this position, it will be in the mid of the center
 // longSide: how many coordinate units of the level the larger window will cover.
 // yup: whether the y axis is going up in level coordinates.
-nytl::Mat4f levelMatrix(float windowRatio, nytl::Vec2f center,
+inline nytl::Mat4f levelMatrix(float windowRatio, nytl::Vec2f center,
 		float longSide, bool yup = true) {
 	return levelMatrix({center, levelViewSize(windowRatio, longSide)}, yup);
 }
@@ -288,7 +288,7 @@ nytl::Mat4f levelMatrix(float windowRatio, nytl::Vec2f center,
 //   origin in the top left.
 // NOTE: you usually don't need the matrix, see the windowToLevel function
 // below.
-nytl::Mat4f windowToLevelMatrix(nytl::Vec2ui windowSize,
+inline nytl::Mat4f windowToLevelMatrix(nytl::Vec2ui windowSize,
 		const LevelView& view, bool yup = true) {
 	auto mat = nytl::identity<4, float>();
 	auto vs = nytl::Vec2f {view.size.x, yup ? -view.size.y : view.size.y};
@@ -302,7 +302,7 @@ nytl::Mat4f windowToLevelMatrix(nytl::Vec2ui windowSize,
 	return mat;
 }
 
-nytl::Vec2f windowToLevel(nytl::Vec2ui windowSize,
+inline nytl::Vec2f windowToLevel(nytl::Vec2ui windowSize,
 		const LevelView& view, nytl::Vec2i input, bool yup = true) {
 	auto vs = nytl::Vec2f {view.size.x, yup ? -view.size.y : view.size.y};
 	return {

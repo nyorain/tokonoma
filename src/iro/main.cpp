@@ -277,7 +277,7 @@ public:
 		return true;
 	}
 
-	argagg::parser argParse() const override {
+	argagg::parser argParser() const override {
 		auto parser = App::argParser();
 		parser.definitions.push_back({
 			"network",

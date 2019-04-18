@@ -1,4 +1,4 @@
-#include "mesh.hpp"
+#include "primitive.hpp"
 #include "material.hpp"
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
@@ -141,7 +141,8 @@ void Primitive::render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout,
 	auto iOffset = vertices_.offset();
 	auto vOffset = iOffset + indexCount_ * sizeof(std::uint32_t);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pipeLayout, 1, {ds_}, {});
+		// pipeLayout, 2 - shadow, {ds_}, {});
+		pipeLayout, 2, {ds_}, {});
 	vk::cmdBindVertexBuffers(cb, 0, 1, {vertices_.buffer()}, {vOffset});
 
 	if(!shadow) {

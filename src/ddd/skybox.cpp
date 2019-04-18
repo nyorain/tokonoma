@@ -109,14 +109,13 @@ void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 		if(width == 0 || height == 0) {
 			width = iwidth;
 			height = iheight;
-			dlg_info("skybox: {} {}", width, height);
+			dlg_info("skybox size: {} {}", width, height);
 		} else {
 			dlg_assert(int(width) == iwidth);
 			dlg_assert(int(height) == iheight);
 		}
 
 		faceData[i] = reinterpret_cast<const std::byte*>(data);
-		dlg_info("{}: {} ({})", i, (int*) faceData[i], (int) faceData[i][0]);
 	}
 
 	// free data
