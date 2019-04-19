@@ -23,7 +23,6 @@ layout(constant_id = 0) const uint maxLightSize = 8;
 
 layout(set = 0, binding = 0, row_major) uniform Lights {
 	mat4 _proj;
-	mat4 _light;
 	Light lights[maxLightSize];
 	vec3 viewPos; // camera position. For specular light
 	uint numLights; // <= maxLightSize

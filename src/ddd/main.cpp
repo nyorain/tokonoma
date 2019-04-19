@@ -1,4 +1,5 @@
 #include "skybox.hpp"
+#include "light.hpp"
 
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
@@ -9,6 +10,7 @@
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
 #include <stage/quaternion.hpp>
+#include <stage/scene/shape.hpp>
 #include <argagg.hpp>
 
 #include <stage/scene/scene.hpp>
@@ -35,35 +37,10 @@
 
 #include <shaders/model.vert.h>
 #include <shaders/model.frag.h>
-#include <shaders/shadowmap.vert.h>
 
 #include <optional>
 #include <vector>
 #include <string>
-
-// TODO:
-// - seperate light into own file/class; move shadow implementation there?
-//   shadow mapping really badly implemented. Lots of artefacts, mixing up
-//   point and dir light; no support for point light: shadow cube map
-//   shadow mapping also doesn't respect alpha. Should discard if albedo.a == 0
-
-bool has_suffix(const std::string_view& str, const std::string_view& suffix) {
-    return str.size() >= suffix.size() &&
-           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
-// Matches glsl struct
-struct Light {
-	enum class Type : std::uint32_t {
-		point = 1u,
-		dir = 2u,
-	};
-
-	nytl::Vec3f pd; // position/direction
-	Type type;
-	nytl::Vec3f color;
-	std::uint32_t pcf {0};
-};
 
 class ViewApp : public doi::App {
 public:
@@ -76,13 +53,9 @@ public:
 			return false;
 		}
 
-		camera_.perspective.far = 200.f;
-
-		// == example light ==
-		lights_.emplace_back();
-		lights_.back().color = {1.f, 1.f, 1.f};
-		lights_.back().pd = {5.8f, 4.0f, 4.f};
-		lights_.back().type = Light::Type::point;
+		// renderer already queried the best supported depth format
+		depthFormat_ = renderer().depthFormat();
+		camera_.perspective.far = 100.f;
 
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
@@ -100,16 +73,6 @@ public:
 		sci.maxLod = 0.25;
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
 		sampler_ = {dev, sci};
-
-		// shadow sampler
-		sci.addressModeU = vk::SamplerAddressMode::clampToBorder;
-		sci.addressModeV = vk::SamplerAddressMode::clampToBorder;
-		sci.addressModeW = vk::SamplerAddressMode::clampToBorder;
-		sci.borderColor = vk::BorderColor::floatOpaqueWhite;
-		sci.mipmapMode = vk::SamplerMipmapMode::nearest;
-		sci.compareEnable = true;
-		sci.compareOp = vk::CompareOp::lessOrEqual;
-		shadow_.sampler = {dev, sci};
 
 		// dummy texture for materials that don't have a texture
 		std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
@@ -136,7 +99,7 @@ public:
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		objectDsLayout_ = {dev, objectBindings};
+		primitiveDsLayout_ = {dev, objectBindings};
 
 		// per material
 		// push constant range for material
@@ -146,11 +109,21 @@ public:
 		pcr.size = sizeof(float) * 8;
 		pcr.stageFlags = vk::ShaderStageBits::fragment;
 
+		// per light
+		auto lightBindings = {
+			vpp::descriptorBinding(
+				vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::vertex),
+		};
+
+		lightDsLayout_ = {dev, lightBindings};
+
 		// pipeline layout consisting of all ds layouts and pcrs
 		pipeLayout_ = {dev, {
 			sceneDsLayout_,
 			materialDsLayout_,
-			objectDsLayout_,
+			primitiveDsLayout_,
+			lightDsLayout_,
 		}, {pcr}};
 
 		vk::SpecializationMapEntry maxLightsEntry;
@@ -210,35 +183,27 @@ public:
 
 		pipe_ = {dev, vkpipe};
 
-		// TODO: support loading .gltb
 		// Load Model
-		std::string path = "../assets/gltf/";
-		std::string file = "test3.gltf";
-		if(!modelname_.empty()) {
-			if(has_suffix(modelname_, ".gltf")) {
-				auto i = modelname_.find_last_of('/');
-				if(i == std::string::npos) {
-					path = {};
-					file = modelname_;
-				} else {
-					path = modelname_.substr(0, i + 1);
-					file = modelname_.substr(i + 1);
-				}
-			} else {
-				path = modelname_;
-				if(path.back() != '/') {
-					path.push_back('/');
-				}
-				file = "scene.gltf";
-			}
-		}
-
-		if (!loadModel(path, file)) {
+		auto s = sceneScale_;
+		auto mat = doi::scaleMat<4, float>({s, s, s});
+		auto ri = doi::SceneRenderInfo{materialDsLayout_, primitiveDsLayout_,
+			pipeLayout_, dummyTex_.vkImageView()};
+		if(!(scene_ = doi::loadGltf(modelname_, dev, mat, ri))) {
 			return false;
 		}
 
+		// add light primitive
+		lightMaterial_.emplace(vulkanDevice(), materialDsLayout_,
+			dummyTex_.vkImageView(), nytl::Vec{1.f, 1.f, 0.4f, 1.f});
+		auto sphere = doi::Sphere{{}, {0.1f, 0.1f, 0.1f}};
+		auto shape = doi::generateUV(sphere);
+		// auto cube = doi::Cube{{}, {0.1f, 0.1f, 0.1f}};
+		// auto shape = doi::generate(cube);
+		lightBall_.emplace(vulkanDevice(), shape, primitiveDsLayout_,
+			*lightMaterial_, nytl::identity<4, float>());
+
 		// == ubo and stuff ==
-		auto sceneUboSize = 2 * sizeof(nytl::Mat4f) // light; proj matrix
+		auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
 			+ maxLightSize * sizeof(Light) // lights
 			+ sizeof(nytl::Vec3f) // viewPos
 			+ sizeof(std::uint32_t); // numLights
@@ -246,12 +211,18 @@ public:
 		sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
-		initShadowPipe();
+		// == example light ==
+		shadowData_ = initShadowData(dev, pipeLayout_, depthFormat_);
+		light_ = {dev, lightDsLayout_, depthFormat_, shadowData_.rp};
+		light_.data.pd = {5.8f, 12.0f, 4.f};
+		light_.data.type = Light::Type::point;
+		updateLights_ = true;
 
 		// descriptors
 		vpp::DescriptorSetUpdate sdsu(sceneDs_);
 		sdsu.uniform({{sceneUbo_.buffer(), sceneUbo_.offset(), sceneUbo_.size()}});
-		sdsu.imageSampler({{shadow_.sampler, shadow_.target.vkImageView(),
+		sdsu.imageSampler({{shadowData_.sampler,
+			light_.shadowMap(),
 			vk::ImageLayout::depthStencilReadOnlyOptimal}});
 		vpp::apply({sdsu});
 
@@ -286,222 +257,9 @@ public:
 		return true;
 	}
 
-	bool loadModel(nytl::StringParam path, nytl::StringParam scene) {
-		dlg_info(">> Loading model...");
-		namespace gltf = tinygltf;
-
-		gltf::TinyGLTF loader;
-		gltf::Model model;
-		std::string err;
-		std::string warn;
-
-		auto file = std::string(path);
-		file += scene;
-		auto res = loader.LoadASCIIFromFile(&model, &err, &warn, file.c_str());
-
-		// error, warnings
-		auto pos = 0u;
-		auto end = warn.npos;
-		while((end = warn.find_first_of('\n', pos)) != warn.npos) {
-			auto d = warn.data() + pos;
-			dlg_warn("  {}", std::string_view{d, end - pos});
-			pos = end + 1;
-		}
-
-		pos = 0u;
-		while((end = err.find_first_of('\n', pos)) != err.npos) {
-			auto d = err.data() + pos;
-			dlg_error("  {}", std::string_view{d, end - pos});
-			pos = end + 1;
-		}
-
-		if(!res) {
-			dlg_fatal(">> Failed to parse model");
-			return false;
-		}
-
-		dlg_info(">> Parsing Succesful...");
-
-		// traverse nodes
-		dlg_info("Found {} scenes", model.scenes.size());
-		auto& sc = model.scenes[model.defaultScene];
-
-		auto s = sceneScale_;
-		auto mat = doi::scaleMat<4, float>({s, s, s});
-		auto ri = doi::SceneRenderInfo{materialDsLayout_, objectDsLayout_,
-			pipeLayout_, dummyTex_.vkImageView()};
-		scene_.emplace(vulkanDevice(), path, model, sc, mat, ri);
-
-		return true;
-	}
-
-	void initShadowPipe() {
-		auto& dev = vulkanDevice();
-		auto hostMem = dev.hostMemoryTypes();
-
-		// renderpass
-		vk::AttachmentDescription depth {};
-		depth.initialLayout = vk::ImageLayout::undefined;
-		depth.finalLayout = vk::ImageLayout::depthStencilReadOnlyOptimal;
-		depth.format = shadow_.format;
-		depth.loadOp = vk::AttachmentLoadOp::clear;
-		depth.storeOp = vk::AttachmentStoreOp::store;
-		depth.samples = vk::SampleCountBits::e1;
-
-		vk::AttachmentReference depthRef {};
-		depthRef.attachment = 0;
-		depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
-
-		vk::SubpassDescription subpass {};
-		subpass.pDepthStencilAttachment = &depthRef;
-
-		vk::RenderPassCreateInfo rpi {};
-		rpi.attachmentCount = 1;
-		rpi.pAttachments = &depth;
-		rpi.subpassCount = 1;
-		rpi.pSubpasses = &subpass;
-
-		shadow_.rp = {dev, rpi};
-
-		// target
-		auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
-			vk::ImageUsageBits::sampled;
-		auto targetInfo = vpp::ViewableImageCreateInfo::general(dev,
-			shadow_.extent, targetUsage, {shadow_.format},
-			vk::ImageAspectBits::depth);
-		shadow_.target = {dev, *targetInfo};
-
-		// framebuffer
-		vk::FramebufferCreateInfo fbi {};
-		fbi.attachmentCount = 1;
-		fbi.width = shadow_.extent.width;
-		fbi.height = shadow_.extent.height;
-		fbi.layers = 1u;
-		fbi.pAttachments = &shadow_.target.vkImageView();
-		fbi.renderPass = shadow_.rp;
-		shadow_.fb = {dev, fbi};
-
-		// layouts
-		// we could use another pipe layout for shadows since they
-		// don't need most of the descriptors
-		/*
-		auto bindings = {
-			vpp::descriptorBinding(
-				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::vertex), // view/projection
-			vpp::descriptorBinding(
-				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::vertex) // model
-		};
-
-		shadow_.dsLayout = {dev, bindings};
-		shadow_.pipeLayout = {dev, {sceneDsLayout_, objectDsLayout_}, {}};
-		*/
-
-		vpp::ShaderModule vertShader(dev, shadowmap_vert_data);
-		// vpp::GraphicsPipelineInfo gpi {shadow_.rp, shadow_.pipeLayout, {{
-		vpp::GraphicsPipelineInfo gpi {shadow_.rp, pipeLayout_, {{
-			{vertShader, vk::ShaderStageBits::vertex},
-		}}, 0, vk::SampleCountBits::e1};
-
-		constexpr auto stride = sizeof(Vertex);
-		vk::VertexInputBindingDescription bufferBinding {
-			0, stride, vk::VertexInputRate::vertex
-		};
-
-		vk::VertexInputAttributeDescription attributes[1];
-		attributes[0].format = vk::Format::r32g32b32Sfloat; // pos
-
-		gpi.vertex.pVertexAttributeDescriptions = attributes;
-		gpi.vertex.vertexAttributeDescriptionCount = 1u;
-		gpi.vertex.pVertexBindingDescriptions = &bufferBinding;
-		gpi.vertex.vertexBindingDescriptionCount = 1u;
-
-		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
-
-		gpi.depthStencil.depthTestEnable = true;
-		gpi.depthStencil.depthWriteEnable = true;
-		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
-
-		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
-		gpi.rasterization.cullMode = vk::CullModeBits::back;
-		gpi.rasterization.depthBiasEnable = true;
-
-		auto dynamicStates = {
-			vk::DynamicState::depthBias,
-			vk::DynamicState::viewport,
-			vk::DynamicState::scissor
-		};
-		gpi.dynamic.pDynamicStates = dynamicStates.begin();
-		gpi.dynamic.dynamicStateCount = 3;
-
-		gpi.blend.attachmentCount = 0;
-
-		vk::Pipeline vkpipe;
-		vk::createGraphicsPipelines(dev, {},
-			1, gpi.info(), NULL, vkpipe);
-
-		shadow_.pipeline = {dev, vkpipe};
-
-		// setup light ds and ubo
-		auto lightUboSize = sizeof(nytl::Mat4f); // projection, view
-		shadow_.ds = {dev.descriptorAllocator(), sceneDsLayout_};
-		shadow_.ubo = {dev.bufferAllocator(), lightUboSize,
-			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
-
-		auto& lubo = shadow_.ubo;
-		vpp::DescriptorSetUpdate ldsu(shadow_.ds);
-		ldsu.uniform({{lubo.buffer(), lubo.offset(), lubo.size()}});
-		vpp::apply({ldsu});
-
-		// fill ubo once
-		{
-			auto map = shadow_.ubo.memoryMap();
-			auto span = map.span();
-			doi::write(span, lightMatrix());
-		}
-	}
-
-	nytl::Mat4f lightMatrix() {
-		auto& light = lights_[0];
-		auto mat = doi::ortho3Sym(20.f, 20.f, 0.5f, 20.f);
-		// auto mat = doi::perspective3RH<float>(0.25 * nytl::constants::pi, 1.f, 0.1, 5.f);
-		mat = mat * doi::lookAtRH(light.pd,
-			{0.f, 0.f, 0.f}, // always looks at center
-			{0.f, 1.f, 0.f});
-		return mat;
-	}
-
 	void beforeRender(vk::CommandBuffer cb) override {
 		App::beforeRender(cb);
-
-		auto width = shadow_.extent.width;
-		auto height = shadow_.extent.height;
-		vk::ClearValue clearValue {};
-		clearValue.depthStencil = {1.f, 0u};
-
-		// draw shadow map!
-		vk::RenderPassBeginInfo rpb; // TODO
-		vk::cmdBeginRenderPass(cb, {
-			shadow_.rp,
-			shadow_.fb,
-			{0u, 0u, width, height},
-			1,
-			&clearValue
-		}, {});
-
-		vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
-		vk::cmdSetViewport(cb, 0, 1, vp);
-		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
-		vk::cmdSetDepthBias(cb, 1.25, 0.f, 1.75);
-
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, shadow_.pipeline);
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			// shadow_.pipeLayout, 0, {shadow_.ds}, {});
-			pipeLayout_, 0, {shadow_.ds}, {});
-
-		scene_->render(cb, pipeLayout_);
-		vk::cmdEndRenderPass(cb);
+		light_.render(cb, pipeLayout_, shadowData_, *scene_);
 	}
 
 	void render(vk::CommandBuffer cb) override {
@@ -509,7 +267,10 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {sceneDs_}, {});
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+			pipeLayout_, 3, {light_.ds()}, {});
 		scene_->render(cb, pipeLayout_);
+		lightBall_->render(cb, pipeLayout_);
 	}
 
 	void update(double dt) override {
@@ -523,8 +284,8 @@ public:
 		}
 
 		if(moveLight_) {
-			lights_[0].pd.x = 10.0 * std::cos(0.2 * time_);
-			lights_[0].pd.z = 10.0 * std::sin(0.2 * time_);
+			light_.data.pd.x = 7.0 * std::cos(0.2 * time_);
+			light_.data.pd.z = 7.0 * std::sin(0.2 * time_);
 			updateLights_ = true;
 		}
 
@@ -545,14 +306,14 @@ public:
 		switch(ev.keycode) {
 			case ny::Keycode::m: // move light here
 				moveLight_ = false;
-				lights_[0].pd = camera_.pos;
+				light_.data.pd = camera_.pos;
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::l:
 				moveLight_ ^= true;
 				return true;
 			case ny::Keycode::p:
-				lights_[0].pcf = 1 - lights_[0].pcf;
+				light_.data.pcf = 1 - light_.data.pcf;
 				updateLights_ = true;
 				return true;
 			default:
@@ -593,27 +354,34 @@ public:
 			auto span = map.span();
 
 			doi::write(span, matrix(camera_));
-			doi::write(span, lightMatrix());
 
-			{ // lights
+			// lights
+			{
 				auto lspan = span;
-				for(auto& l : lights_) {
-					doi::write(lspan, l);
-				}
+				doi::write(lspan, light_.data);
 			}
 
 			doi::skip(span, sizeof(Light) * maxLightSize);
 			doi::write(span, camera_.pos);
-			doi::write(span, std::uint32_t(lights_.size()));
+			doi::write(span, std::uint32_t(1)); // 1 light
 
 			skybox_.updateDevice(fixedMatrix(camera_));
+
+			// light ball
+			// offset slightly from real light position so the geometry
+			// itself gets light
+			auto off = light_.data.pd;
+			off.y -= 0.1;
+			off.x -= 0.1;
+			off.z -= 0.1;
+			auto mat = doi::translateMat(off);
+			lightBall_->matrix = mat;
+			lightBall_->updateDevice();
 		}
 
 		if(updateLights_) {
+			light_.updateDevice();
 			updateLights_ = false;
-			auto map = shadow_.ubo.memoryMap();
-			auto span = map.span();
-			doi::write(span, lightMatrix());
 		}
 	}
 
@@ -630,8 +398,9 @@ public:
 protected:
 	vpp::Sampler sampler_;
 	vpp::TrDsLayout sceneDsLayout_;
-	vpp::TrDsLayout objectDsLayout_;
+	vpp::TrDsLayout primitiveDsLayout_;
 	vpp::TrDsLayout materialDsLayout_;
+	vpp::TrDsLayout lightDsLayout_;
 	vpp::PipelineLayout pipeLayout_;
 
 	vpp::SubBuffer sceneUbo_;
@@ -644,37 +413,26 @@ protected:
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
 
-	std::vector<Light> lights_;
+	// std::vector<Light> lights_;
 	bool updateLights_ {true};
 
-	std::optional<doi::Scene> scene_; // no default constructor
+	std::unique_ptr<doi::Scene> scene_; // no default constructor
 	doi::Camera camera_ {};
 
 	// shadow
-	struct {
-		// static
-		vpp::RenderPass rp;
-		vpp::Sampler sampler; // with compareOp (?) glsl: sampler2DShadow
-		// vpp::TrDsLayout sceneDsLayout;
-		// vpp::TrDsLayout objectDsLayout;
-		vpp::PipelineLayout pipeLayout;
-		vpp::Pipeline pipeline;
-		vk::Format format = vk::Format::d32Sfloat; // TODO: don't hardcode
-
-		vk::Extent3D extent {2048u, 2048u, 1u};
-
-		// should exist per light
-		vpp::ViewableImage target;
-		vpp::Framebuffer fb;
-		vpp::TrDs ds;
-		vpp::SubBuffer ubo; // holding the light view matrix
-	} shadow_;
+	vk::Format depthFormat_;
+	ShadowData shadowData_;
+	DirLight light_;
 
 	Skybox skybox_;
 
 	// args
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
+
+	// light ball
+	std::optional<doi::Material> lightMaterial_;
+	std::optional<doi::Primitive> lightBall_;
 };
 
 int main(int argc, const char** argv) {

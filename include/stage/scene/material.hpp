@@ -10,10 +10,6 @@
 namespace doi {
 namespace gltf = tinygltf;
 
-// TODO: don't laod textures/images per material, maybe they are shared
-// between materials. Many models combine occlusion and metal/roughness
-// into one texture (which makes sense), we currently allocate two
-// full textures
 class Material {
 public:
 	// See flags in model.frag
@@ -27,8 +23,10 @@ public:
 		vk::Sampler sampler);
 
 public:
+	// default, dummy material
 	Material(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
-		vk::ImageView dummy); // default, dummy
+		vk::ImageView dummy, nytl::Vec4f albedo = {1.f, 1.f, 1.f, 1.f},
+		float roughness = 1.f, float metalness = 1.f, bool doubleSided = false);
 	Material(const vpp::Device& dev, const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& layout,
 		vk::ImageView dummy, nytl::Span<const vpp::ViewableImage> images);

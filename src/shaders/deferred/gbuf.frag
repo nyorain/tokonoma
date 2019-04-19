@@ -2,14 +2,10 @@
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec3 inLightPos; // position from pov light; for shadow
-layout(location = 3) in vec2 inUV;
+layout(location = 2) in vec2 inUV;
 
 layout(location = 0) out vec4 outPos; // xyz: pos, w: roughness
 layout(location = 1) out vec4 outNormal; // xyz: normal, w: metallic
-
-// TODO: alpha channel really unused?
-// how do we render transparent objects?
 layout(location = 2) out vec4 outAlbedo; // rgb: albedo, w: occlusion
 
 // material
@@ -23,14 +19,19 @@ layout(push_constant) uniform materialPC {
 	vec4 albedo;
 	float roughness;
 	float metallic;
-	bool normalmap; // whether material has a normalmap
+	uint flags;
+	float alphaCutoff;
 } material;
 
+// flags
+const uint normalmap = (1u << 0);
+const uint doubleSided = (1u << 1);
+
+
 // NOTE: tangent and bitangent could also be passed in for each vertex
-// then we could already compute light and view positiong in tangent space
 vec3 getNormal() {
 	vec3 n = normalize(inNormal);
-	if(!material.normalmap) {
+	if((material.flags & normalmap) == 0u) {
 		return n;
 	}
 
@@ -50,9 +51,23 @@ vec3 getNormal() {
 }
 
 void main() {
+	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
+		discard;
+	}
+
+	vec4 albedo = material.albedo * texture(albedoTex, inUV);
+	if(albedo.a < material.alphaCutoff) {
+		discard;
+	}
+
+	vec3 normal = getNormal();
+	if(!gl_FrontFacing) {
+		normal *= -1;
+	}
+
+	outNormal.xyz = normal;
 	outPos.xyz = inPos;
-	outNormal.xyz = getNormal();
-	outAlbedo.rgb = (material.albedo * texture(albedoTex, inUV)).rgb;
+	outAlbedo.rgb = albedo.rgb;
 
 	// as specified by gltf spec
 	vec2 mr = texture(metalRoughTex, inUV).gb;

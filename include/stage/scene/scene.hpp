@@ -35,7 +35,14 @@ public:
 		const gltf::Scene&, nytl::Mat4f matrix,
 		const SceneRenderInfo&);
 
-	void render(vk::CommandBuffer, vk::PipelineLayout);
+	void render(vk::CommandBuffer, vk::PipelineLayout) const;
+
+	auto& primitives() { return primitives_; }
+	auto& materials() { return materials_; }
+	auto& images() { return images_; }
+	auto& primitives() const { return primitives_; }
+	auto& materials() const { return materials_; }
+	auto& images() const { return images_; }
 
 protected:
 	void loadNode(vpp::Device&, const gltf::Model&, const gltf::Node&,
@@ -46,7 +53,12 @@ protected:
 	std::vector<vpp::ViewableImage> images_;
 
 	// TODO: use (in materials)
-	std::vector<Sampler> samplers_;
+	// std::vector<Sampler> samplers_;
 };
+
+// Tries to parse the given string as path or filename of a gltf/gltb file
+// and parse a scene from it.
+std::unique_ptr<Scene> loadGltf(nytl::StringParam at, vpp::Device& dev,
+	nytl::Mat4f matrix, const SceneRenderInfo&);
 
 } // namespace doi

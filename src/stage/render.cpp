@@ -44,8 +44,31 @@ void Renderer::init(const RendererCreateInfo& info) {
 
 	depthFormat_ = vk::Format::undefined;
 	if(info.depth) {
-		// TODO: search for supported one
-		depthFormat_ = vk::Format::d32Sfloat;
+		// find supported depth format
+		vk::ImageCreateInfo img; // dummy for property checking
+		img.extent = {1, 1, 1};
+		img.mipLevels = 1;
+		img.arrayLayers = 1;
+		img.imageType = vk::ImageType::e2d;
+		img.sharingMode = vk::SharingMode::exclusive;
+		img.tiling = vk::ImageTiling::optimal;
+		img.samples = sampleCount_;
+		img.usage = vk::ImageUsageBits::depthStencilAttachment;
+		img.initialLayout = vk::ImageLayout::undefined;
+
+		auto fmts = {
+			vk::Format::d32Sfloat,
+			vk::Format::d32SfloatS8Uint,
+			vk::Format::d24UnormS8Uint,
+			vk::Format::d16Unorm,
+			vk::Format::d16UnormS8Uint,
+		};
+		auto features = vk::FormatFeatureBits::depthStencilAttachment |
+			vk::FormatFeatureBits::sampledImage;
+		depthFormat_ = vpp::findSupported(device(), fmts, img, features);
+		if(depthFormat_ == vk::Format::undefined) {
+			throw std::runtime_error("No depth format supported");
+		}
 	}
 
 	createRenderPass();
@@ -270,19 +293,6 @@ void Renderer::record(const RenderBuffer& buf) {
 	const auto width = scInfo_.imageExtent.width;
 	const auto height = scInfo_.imageExtent.height;
 
-	auto clearCount = 1u;
-	vk::ClearValue clearValues[3] {};
-	clearValues[0].color.float32 = clearColor_;
-	if(sampleCount_ != vk::SampleCountBits::e1) { // msaa attachment
-		clearValues[clearCount].color.float32 = clearColor_;
-		++clearCount;
-	}
-
-	if(depthFormat_ != vk::Format::undefined) {
-		clearValues[clearCount].depthStencil = {1.f, 0u};
-		++clearCount;
-	}
-
 	auto cmdBuf = buf.commandBuffer;
 	vk::beginCommandBuffer(cmdBuf, {});
 
@@ -290,12 +300,12 @@ void Renderer::record(const RenderBuffer& buf) {
 		beforeRender(cmdBuf);
 	}
 
+	auto cv = clearValues();
 	vk::cmdBeginRenderPass(cmdBuf, {
 		renderPass(),
 		buf.framebuffer,
 		{0u, 0u, width, height},
-		clearCount,
-		clearValues
+		std::uint32_t(cv.size()), cv.data()
 	}, {});
 
 	vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
@@ -317,6 +327,23 @@ void Renderer::record(const RenderBuffer& buf) {
 
 void Renderer::resize(nytl::Vec2ui size) {
 	vpp::Renderer::recreate({size[0], size[1]}, scInfo_);
+}
+
+std::vector<vk::ClearValue> Renderer::clearValues() {
+	std::vector<vk::ClearValue> clearValues;
+	clearValues.reserve(3);
+	vk::ClearValue c {{0.f, 0.f, 0.f, 0.f}};
+
+	clearValues.push_back({clearColor_});
+	if(sampleCount_ != vk::SampleCountBits::e1) { // msaa attachment
+		clearValues.push_back({clearColor_});
+	}
+
+	if(depthFormat_ != vk::Format::undefined) {
+		clearValues.emplace_back(c).depthStencil = {1.f, 0u};
+	}
+
+	return clearValues;
 }
 
 void Renderer::samples(vk::SampleCountBits samples) {

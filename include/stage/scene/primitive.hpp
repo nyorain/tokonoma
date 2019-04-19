@@ -8,11 +8,13 @@
 #include <vpp/trackedDescriptor.hpp>
 
 #include <tinygltf.hpp>
+#include <variant>
 
 namespace doi {
 namespace gltf = tinygltf;
 
-class Material;
+class Shape; // stage/scene/shape.hpp
+class Material; // stage/scene/material.hpp
 
 class Primitive {
 public:
@@ -27,13 +29,15 @@ public:
 	nytl::Mat4f matrix = nytl::identity<4, float>();
 
 public:
+	Primitive(const vpp::Device& dev, const Shape& shape,
+		const vpp::TrDsLayout& dsLayout, const Material& material,
+		const nytl::Mat4f& matrix);
 	Primitive(const vpp::Device& dev,
 		const gltf::Model& model, const gltf::Primitive& primitive,
 		const vpp::TrDsLayout& dsLayout, const Material& material,
 		const nytl::Mat4f& matrix);
 
-	void render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout,
-		bool shadow);
+	void render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout) const;
 	void updateDevice();
 	const Material& material() const { return *material_; }
 
