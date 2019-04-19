@@ -42,7 +42,7 @@ std::tuple<const std::byte*, vk::Extent3D> loadImage(nytl::StringParam filename,
 
 vpp::ViewableImage loadTexture(const vpp::Device& dev, nytl::StringParam filename) {
 	auto [data, extent] = loadImage(filename);
-	auto format = vk::Format::r8g8b8a8Unorm;
+	auto format = vk::Format::r8g8b8a8Srgb;
 	auto dataSize = extent.width * extent.height * 4;
 	auto dspan = nytl::Span<const std::byte>(data, dataSize);
 	auto img = loadTexture(dev, extent, format, dspan);
@@ -101,7 +101,7 @@ vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 		}
 
 		// write
-		auto format = vk::Format::r8g8b8a8Unorm;
+		auto format = vk::Format::r8g8b8a8Srgb;
 		auto dataSize = extent.width * extent.height * 4;
 		auto dspan = nytl::Span<const std::byte>(data, dataSize);
 		stages.push_back(vpp::fillStaging(cmdBuf, image.image(), format,

@@ -16,6 +16,13 @@ namespace gltf = tinygltf;
 // full textures
 class Material {
 public:
+	// See flags in model.frag
+	enum class Flags : std::uint32_t {
+		normalMap = (1u << 0),
+		doubleSided = (1u << 1),
+		textured = (1u << 2),
+	};
+
 	static vpp::TrDsLayout createDsLayout(const vpp::Device& dev,
 		vk::Sampler sampler);
 
@@ -35,6 +42,7 @@ protected:
 	nytl::Vec4f albedo_ {1.f, 1.f, 1.f, 1.f}; // baseColor
 	float roughness_ {1.f};
 	float metalness_ {1.f};
+	float alphaCutoff_ {-1.f}; // opaque alpha mode
 
 	// optional maps
 	vk::ImageView albedoTex_;
@@ -43,9 +51,9 @@ protected:
 	vk::ImageView occlusionTex_;
 
 	vpp::TrDs ds_;
-	bool textured_ {}; // whether at least one texture is valid
-	bool normalmap_ {}; // whether normal map is valid
+	nytl::Flags<Flags> flags_;
 };
 
+NYTL_FLAG_OPS(Material::Flags)
 
 } // namespace doi

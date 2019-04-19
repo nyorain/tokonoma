@@ -53,6 +53,7 @@ inline void rotateView(Camera& c, float dyaw, float dpitch) {
 }
 
 // checks default wasd+qe movement
-void checkMovement(Camera& c, ny::KeyboardContext& kc, float dt);
+// returns whether a change was made
+bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt);
 
 } // namespace doi

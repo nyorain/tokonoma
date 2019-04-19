@@ -143,7 +143,7 @@ public:
 		materialDsLayout_ = doi::Material::createDsLayout(dev, sampler_);
 		vk::PushConstantRange pcr;
 		pcr.offset = 0;
-		pcr.size = sizeof(float) * 7;
+		pcr.size = sizeof(float) * 8;
 		pcr.stageFlags = vk::ShaderStageBits::fragment;
 
 		// pipeline layout consisting of all ds layouts and pcrs
@@ -196,7 +196,12 @@ public:
 		gpi.depthStencil.depthWriteEnable = true;
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 
-		gpi.rasterization.cullMode = vk::CullModeBits::back;
+		// NOTE: see the gltf material.doubleSided property. We can't switch
+		// this per material (without requiring two pipelines) so we simply
+		// always render backfaces currently and then dynamically cull in the
+		// fragment shader. That is required since some models rely on
+		// backface culling for effects (e.g. outlines). See model.frag
+		gpi.rasterization.cullMode = vk::CullModeBits::none;
 		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 		vk::Pipeline vkpipe;
@@ -300,12 +305,14 @@ public:
 		while((end = warn.find_first_of('\n', pos)) != warn.npos) {
 			auto d = warn.data() + pos;
 			dlg_warn("  {}", std::string_view{d, end - pos});
+			pos = end + 1;
 		}
 
 		pos = 0u;
-		while((end = err.find_first_of('\n', pos + 1)) != err.npos) {
+		while((end = err.find_first_of('\n', pos)) != err.npos) {
 			auto d = err.data() + pos;
 			dlg_error("  {}", std::string_view{d, end - pos});
+			pos = end + 1;
 		}
 
 		if(!res) {
@@ -507,7 +514,6 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
-		App::redraw();
 		time_ += dt;
 
 		// movement
@@ -520,6 +526,10 @@ public:
 			lights_[0].pd.x = 10.0 * std::cos(0.2 * time_);
 			lights_[0].pd.z = 10.0 * std::sin(0.2 * time_);
 			updateLights_ = true;
+		}
+
+		if(moveLight_ || camera_.update || updateLights_) {
+			App::scheduleRedraw();
 		}
 	}
 
@@ -556,6 +566,7 @@ public:
 		App::mouseMove(ev);
 		if(rotateView_) {
 			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			App::scheduleRedraw();
 		}
 	}
 
