@@ -77,7 +77,7 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		unsigned src = model.textures[tex].source;
 		dlg_assert(src < images.size());
 		albedoTex_ = images[src].vkImageView();
-		textured_ = true;
+		flags_ |= Flags::textured;
 	} else {
 		albedoTex_ = dummyView;
 	}
@@ -88,7 +88,7 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		unsigned src = model.textures[tex].source;
 		dlg_assert(src < images.size());
 		metalnessRoughnessTex_ = images[src].vkImageView();
-		textured_ = true;
+		flags_ |= Flags::textured;
 	} else {
 		metalnessRoughnessTex_ = dummyView;
 	}
@@ -101,8 +101,8 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		unsigned src = model.textures[tex].source;
 		dlg_assert(src < images.size());
 		normalTex_ = images[src].vkImageView();
-		textured_ = true;
-		normalmap_ = true;
+		flags_ |= Flags::textured;
+		flags_ |= Flags::normalMap;
 	} else {
 		normalTex_ = dummyView;
 	}
@@ -113,9 +113,33 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		unsigned src = model.textures[tex].source;
 		dlg_assert(src < images.size());
 		occlusionTex_ = images[src].vkImageView();
-		textured_ = true;
+		flags_ |= Flags::textured;
 	} else {
 		occlusionTex_ = dummyView;
+	}
+
+	// default is OPAQUE (alphaCutoff_ == -1.f);
+	if(auto am = add.find("alphaMode"); am != add.end()) {
+		auto& alphaMode = am->second.string_value;
+		dlg_assert(!alphaMode.empty());
+		if(alphaMode == "BLEND") {
+			// NOTE: sorting and stuff is required for that to work...
+			dlg_warn("BLEND alphaMode not yet fully supported");
+			alphaCutoff_ = 0.f;
+		} else if(alphaMode == "MASK") {
+			alphaCutoff_ = 0.5; // default per gltf
+			if(auto m = add.find("alphaCutoff"); m != add.end()) {
+				dlg_assert(m->second.has_number_value);
+				alphaCutoff_ = m->second.number_value;
+			}
+		}
+	}
+
+	// doubleSided, default is false
+	if(auto d = add.find("doubleSided"); d != add.end()) {
+		if(d->second.bool_value) {
+			flags_ |= Flags::doubleSided;
+		}
 	}
 
 	// descriptor
@@ -130,7 +154,7 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 }
 
 bool Material::hasTexture() const {
-	return textured_;
+	return flags_ & Flags::textured;
 }
 
 void Material::bind(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
@@ -138,9 +162,14 @@ void Material::bind(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 		nytl::Vec4f albedo;
 		float roughness;
 		float metalness;
-		std::uint32_t has_normal;
+		std::uint32_t flags;
+		float alphaCutoff;
 	} data = {
-		albedo_, roughness_, metalness_, (normalmap_ ? 1u : 0u)
+		albedo_,
+		roughness_,
+		metalness_,
+		flags_,
+		alphaCutoff_
 	};
 
 	vk::cmdPushConstants(cb, pl, vk::ShaderStageBits::fragment, 0,

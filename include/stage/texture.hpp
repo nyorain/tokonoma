@@ -6,6 +6,9 @@
 
 namespace doi {
 
+// NOTE: assumes all data to be in srgb color space (which most data is).
+// When read in shader, will return color in linear space.
+
 // TODO: util for loading skyboxes. Wrapper/abstraction of loadTextureArray
 // TODO: allow 8bit textures (r8)
 

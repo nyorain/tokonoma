@@ -78,9 +78,14 @@ protected:
 	virtual void updateDevice();
 	virtual void frameFinished() {}
 
-	// better names would be scheduleRerecord, scheduleRedraw
+	[[deprecated("Use scheduleRerecord")]]
 	void rerecord() { rerecord_ = true; }
+	void scheduleRerecord() { rerecord_ = true; }
+
+	[[deprecated("Use scheduleRedraw")]]
 	void redraw() { redraw_ = true; }
+	void scheduleRedraw() { redraw_ = true; }
+
 	void addSemaphore(vk::Semaphore, vk::PipelineStageFlags waitDst);
 	void callUpdate();
 

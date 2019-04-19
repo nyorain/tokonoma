@@ -37,12 +37,17 @@ layout(set = 1, binding = 1) uniform sampler2D metalRoughTex;
 layout(set = 1, binding = 2) uniform sampler2D normalTex;
 layout(set = 1, binding = 3) uniform sampler2D occlusionTex;
 
+// flags
+const uint normalmap = (1u << 0);
+const uint doubleSided = (1u << 1);
+
 // factors
 layout(push_constant) uniform materialPC {
 	vec4 albedo;
 	float roughness;
 	float metallic;
-	bool normalmap; // whether material has a normalmap
+	uint flags;
+	float alphaCutoff;
 } material;
 
 // samples the shadow texture multiple times to get smoother shadow
@@ -70,7 +75,7 @@ float shadowpcf(vec3 pos, int range) {
 // then we could already compute light and view positiong in tangent space
 vec3 getNormal() {
 	vec3 n = normalize(inNormal);
-	if(!material.normalmap) {
+	if((material.flags & normalmap) == 0u) {
 		return n;
 	}
 
@@ -91,9 +96,23 @@ vec3 getNormal() {
 
 void main() {
 	vec4 albedo = material.albedo * texture(albedoTex, inUV);
-	outCol = albedo;
+	if(albedo.a < material.alphaCutoff) {
+		discard;
+	}
 
 	vec3 normal = getNormal();
+
+	// NOTE: logic here has to be that weird (two independent if statements)
+	// since otherwise i seem to trigger a bug (probably in driver or llvm?)
+	// on mesas vulkan-radeon 19.0.2
+	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
+		discard;
+	}
+
+	// otherwise flip normal, as gltf specifies it
+	if(!gl_FrontFacing) {
+		normal *= -1;
+	}
 
 	// TODO: actually use them...
 	// vec2 mr = texture(metalRoughTex, inUV).rg;
@@ -140,4 +159,7 @@ void main() {
 	}
 
 	outCol = col;
+	if(material.alphaCutoff == -1.f) { // alphaMode opque
+		outCol.a = 1.f;
+	}
 }
