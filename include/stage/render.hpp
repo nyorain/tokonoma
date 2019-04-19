@@ -59,6 +59,7 @@ protected:
 	Renderer(const vpp::Queue& present);
 	virtual void init(const RendererCreateInfo& info);
 	virtual void createRenderPass();
+	virtual std::vector<vk::ClearValue> clearValues();
 
 	virtual void createMultisampleTarget(const vk::Extent2D& size);
 	virtual void createDepthTarget(const vk::Extent2D& size);

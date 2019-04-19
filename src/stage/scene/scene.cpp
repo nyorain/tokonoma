@@ -147,10 +147,106 @@ void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,
 	}
 }
 
-void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl) {
+void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 	for(auto& p : primitives_) {
-		p.render(cb, pl, false); // TODO: don't care about shadow
+		p.render(cb, pl);
 	}
+}
+
+// util
+bool has_suffix(const std::string_view& str, const std::string_view& suffix) {
+    return str.size() >= suffix.size() &&
+           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::unique_ptr<Scene> loadGltf(nytl::StringParam at, vpp::Device& dev,
+		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
+
+	// Load Model
+	// fallback
+	std::string path = "../assets/gltf/";
+	std::string file = "test3.gltf";
+	bool binary = false;
+	if(!at.empty()) {
+		if(has_suffix(at, ".gltf")) {
+			auto i = at.find_last_of('/');
+			if(i == std::string::npos) {
+				path = {};
+				file = at;
+			} else {
+				path = at.substr(0, i + 1);
+				file = at.substr(i + 1);
+			}
+		} else if(has_suffix(at, ".gltb")) {
+			binary = true;
+			auto i = at.find_last_of('/');
+			if(i == std::string::npos) {
+				path = {};
+				file = at;
+			} else {
+				path = at.substr(0, i + 1);
+				file = at.substr(i + 1);
+			}
+		} else {
+			path = at;
+			if(path.back() != '/') {
+				path.push_back('/');
+			}
+			if(tinygltf::FileExists(path + "scene.gltf", nullptr)) {
+				file = "scene.gltf";
+			} else if(tinygltf::FileExists(path + "scene.gltb", nullptr)) {
+				binary = true;
+				file = "scene.gltb";
+			} else {
+				dlg_fatal("Given folder doesn't have scene.gltf/gltb");
+				return {};
+			}
+		}
+	}
+
+	dlg_info(">> Parsing gltf model...");
+
+	gltf::TinyGLTF loader;
+	gltf::Model model;
+	std::string err;
+	std::string warn;
+
+	auto full = std::string(path);
+	full += file;
+	bool res;
+	if(binary) {
+		res = loader.LoadBinaryFromFile(&model, &err, &warn, full.c_str());
+	} else {
+		res = loader.LoadASCIIFromFile(&model, &err, &warn, full.c_str());
+	}
+
+	// error, warnings
+	auto pos = 0u;
+	auto end = warn.npos;
+	while((end = warn.find_first_of('\n', pos)) != warn.npos) {
+		auto d = warn.data() + pos;
+		dlg_warn("  {}", std::string_view{d, end - pos});
+		pos = end + 1;
+	}
+
+	pos = 0u;
+	while((end = err.find_first_of('\n', pos)) != err.npos) {
+		auto d = err.data() + pos;
+		dlg_error("  {}", std::string_view{d, end - pos});
+		pos = end + 1;
+	}
+
+	if(!res) {
+		dlg_fatal(">> Failed to parse model");
+		return {};
+	}
+
+	dlg_info(">> Parsing Succesful...");
+
+	// traverse nodes
+	dlg_info("Found {} scenes", model.scenes.size());
+	auto& sc = model.scenes[model.defaultScene];
+	return std::make_unique<Scene>(dev, path, model, sc, matrix, ri);
 }
 
 } // namespace doi

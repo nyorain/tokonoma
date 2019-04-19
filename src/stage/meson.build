@@ -1,3 +1,18 @@
+stage_inc = [
+	include_directories('../../include'),
+	include_directories('..'),
+	external_inc,
+]
+
+# tinygltf
+gltf_lib = library('tinygltf',
+	sources: 'tinygltf.cpp',
+	include_directories: stage_inc)
+
+gltf_dep = declare_dependency(
+	link_with: gltf_lib,
+	include_directories: stage_inc)
+
 # libstage
 dep_soundio = meson.get_compiler('cpp').find_library('soundio', dirs: libpath)
 dep_b2d = meson.get_compiler('cpp').find_library('Box2D', dirs: libpath)
@@ -11,6 +26,7 @@ stage_deps = [
   dep_vulkan,
   dep_soundio,
   dep_b2d,
+  gltf_dep,
 ]
 
 stage_src = [
@@ -26,12 +42,7 @@ stage_src = [
 	'scene/scene.cpp',
 	'scene/material.cpp',
 	'scene/primitive.cpp',
-]
-
-stage_inc = [
-	include_directories('../../include'),
-	include_directories('..'),
-	external_inc,
+	'scene/shape.cpp',
 ]
 
 stage_lib = library('stage',
@@ -42,14 +53,5 @@ stage_lib = library('stage',
 stage_dep = declare_dependency(
 	link_with: stage_lib,
 	dependencies: stage_deps,
-	include_directories: stage_inc)
-
-# tinygltf
-gltf_lib = library('tinygltf',
-	sources: 'tinygltf.cpp',
-	include_directories: stage_inc)
-
-gltf_dep = declare_dependency(
-	link_with: gltf_lib,
 	include_directories: stage_inc)
 

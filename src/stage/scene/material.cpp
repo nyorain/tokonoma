@@ -26,7 +26,15 @@ vpp::TrDsLayout Material::createDsLayout(const vpp::Device& dev,
 }
 
 Material::Material(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
-		vk::ImageView dummy) {
+		vk::ImageView dummy, nytl::Vec4f albedo, float roughness,
+		float metalness, bool doubleSided) {
+	albedo_ = albedo;
+	roughness_ = roughness;
+	metalness_ = metalness;
+	if(doubleSided) {
+		flags_ |= Flags::doubleSided;
+	}
+
 	// descriptor
 	ds_ = {dev.descriptorAllocator(), dsLayout};
 	vpp::DescriptorSetUpdate update(ds_);

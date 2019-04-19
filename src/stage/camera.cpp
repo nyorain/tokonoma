@@ -6,6 +6,10 @@ namespace doi {
 
 bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
 	auto fac = dt;
+	if(kc.modifiers() & ny::KeyboardModifier::shift) {
+		fac *= 5;
+	}
+
 	auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
 	auto right = nytl::normalized(nytl::cross(c.dir, yUp));
 	auto up = nytl::normalized(nytl::cross(c.dir, right));

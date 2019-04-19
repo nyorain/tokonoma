@@ -80,6 +80,7 @@ shaders_src = [
 		['model.vert'],
 		['model.frag'],
 		['shadowmap.vert'],
+		['shadowmap.frag'],
 		['skybox.vert'],
 		['skybox.frag'],
 	]],
@@ -105,6 +106,7 @@ shaders_src = [
 	  ['lith.comp', include_glsl],
 	]],
 	['deferred_shaders', [
+	  ['deferred/gbuf.vert', include_glsl],
 	  ['deferred/gbuf.frag', include_glsl],
 	  ['deferred/light.frag', include_glsl],
 	]],

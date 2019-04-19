@@ -1,5 +1,6 @@
 #include <stage/scene/primitive.hpp>
 #include <stage/scene/material.hpp>
+#include <stage/scene/shape.hpp>
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
 
@@ -9,6 +10,83 @@
 #include <dlg/dlg.hpp>
 
 namespace doi {
+
+// NOTE: currently some code duplication between constructors
+// hard to factor out into one function though
+Primitive::Primitive(const vpp::Device& dev, const Shape& shape,
+		const vpp::TrDsLayout& dsLayout, const Material& material,
+		const nytl::Mat4f& mat) {
+	dlg_assert(shape.normals.size() == shape.positions.size());
+	this->matrix = mat;
+	this->material_ = &material;
+
+	auto size = shape.indices.size() * sizeof(std::uint32_t);
+	size += shape.positions.size() * sizeof(nytl::Vec3f);
+	size += shape.normals.size() * sizeof(nytl::Vec3f);
+
+	auto devMem = dev.deviceMemoryTypes();
+	auto hostMem = dev.hostMemoryTypes();
+	auto usage = vk::BufferUsageBits::vertexBuffer |
+		vk::BufferUsageBits::indexBuffer |
+		vk::BufferUsageBits::transferDst;
+	vertices_ = {dev.bufferAllocator(), size, usage, 0u, devMem};
+	indexCount_ = shape.indices.size();
+	vertexCount_ = shape.positions.size();
+
+	// fill it
+	{
+		auto stage = vpp::SubBuffer{dev.bufferAllocator(), size,
+			vk::BufferUsageBits::transferSrc, 0u, hostMem};
+		auto map = stage.memoryMap();
+		auto span = map.span();
+
+		// write indices
+		for(auto idx : shape.indices) {
+			doi::write(span, idx);
+		}
+
+		// write vertices and normals
+		auto& pr = shape.positions;
+		auto& nr = shape.normals;
+		for(auto pit = pr.begin(), nit = nr.begin();
+				pit != pr.end() && nit != nr.end();
+				++nit, ++pit) {
+			doi::write(span, *pit);
+			doi::write(span, *nit);
+		}
+
+		// upload
+		auto& qs = dev.queueSubmitter();
+		auto cb = qs.device().commandAllocator().get(qs.queue().family());
+		vk::beginCommandBuffer(cb, {});
+		vk::BufferCopy region;
+		region.dstOffset = vertices_.offset();
+		region.srcOffset = stage.offset();
+		region.size = size;
+		vk::cmdCopyBuffer(cb, stage.buffer(), vertices_.buffer(), {region});
+		vk::endCommandBuffer(cb);
+
+		// execute
+		// TODO: could be batched with other work; we wait here
+		vk::SubmitInfo submission;
+		submission.commandBufferCount = 1;
+		submission.pCommandBuffers = &cb.vkHandle();
+		qs.wait(qs.add(submission));
+	}
+
+	// ubo
+	size = Primitive::uboSize; // ubo
+	usage = vk::BufferUsageBits::uniformBuffer;
+	ubo_ = {dev.bufferAllocator(), size, usage, 0u, hostMem};
+	updateDevice();
+
+	// descriptor
+	ds_ = {dev.descriptorAllocator(), dsLayout};
+	auto& mubo = ubo_;
+	vpp::DescriptorSetUpdate odsu(ds_);
+	odsu.uniform({{mubo.buffer(), mubo.offset(), mubo.size()}});
+	vpp::apply({odsu});
+}
 
 Primitive::Primitive(const vpp::Device& dev,
 		const tinygltf::Model& model, const tinygltf::Primitive& primitive,
@@ -132,27 +210,25 @@ Primitive::Primitive(const vpp::Device& dev,
 	vpp::apply({odsu});
 }
 
-void Primitive::render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout,
-		bool shadow) {
+void Primitive::render(vk::CommandBuffer cb,
+		vk::PipelineLayout pipeLayout) const {
 	auto iOffset = vertices_.offset();
 	auto vOffset = iOffset + indexCount_ * sizeof(std::uint32_t);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		// pipeLayout, 2 - shadow, {ds_}, {});
 		pipeLayout, 2, {ds_}, {});
+	material().bind(cb, pipeLayout);
+
 	vk::cmdBindVertexBuffers(cb, 0, 1, {vertices_.buffer()}, {vOffset});
 
-	if(!shadow) {
-		material().bind(cb, pipeLayout);
-		if(uv_.size() > 0) {
-			vk::cmdBindVertexBuffers(cb, 1, 1, {uv_.buffer()}, {uv_.offset()});
-		} else {
-			// in this case we bind the vertex (pos + normal) buffer as
-			// uv buffer. This is obviously utter garbage but allows us
-			// to use just one pipeline. If we land here, the material of
-			// this primitive uses no textures so uv coords are irrevelant.
-			// The size of position+normals will always be larger than of uv coords.
-			vk::cmdBindVertexBuffers(cb, 1, 1, {vertices_.buffer()}, {vOffset});
-		}
+	if(uv_.size() > 0) {
+		vk::cmdBindVertexBuffers(cb, 1, 1, {uv_.buffer()}, {uv_.offset()});
+	} else {
+		// in this case we bind the vertex (pos + normal) buffer as
+		// uv buffer. This is obviously utter garbage but allows us
+		// to use just one pipeline. If we land here, the material of
+		// this primitive uses no textures so uv coords are irrevelant.
+		// The size of position+normals will always be larger than of uv coords.
+		vk::cmdBindVertexBuffers(cb, 1, 1, {vertices_.buffer()}, {vOffset});
 	}
 
 	vk::cmdBindIndexBuffer(cb, vertices_.buffer(), iOffset, vk::IndexType::uint32);
