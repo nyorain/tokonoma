@@ -5,6 +5,14 @@
 
 namespace doi {
 
+vk::PushConstantRange Material::pcr() {
+	vk::PushConstantRange pcr;
+	pcr.offset = 0;
+	pcr.size = sizeof(float) * 8;
+	pcr.stageFlags = vk::ShaderStageBits::fragment;
+	return pcr;
+}
+
 vpp::TrDsLayout Material::createDsLayout(const vpp::Device& dev,
 		vk::Sampler sampler) {
 	auto bindings = {

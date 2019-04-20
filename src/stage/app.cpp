@@ -374,24 +374,27 @@ bool App::init(const AppSettings& settings) {
 	};
 
 	// additional stuff
-	rvg::ContextSettings rvgcs {renderer().renderPass(), 0u};
-	rvgcs.samples = samples();
-	rvgcs.clipDistanceEnable = impl_->clipDistance;
+	if(settings.rvgSubpass) {
+		rvg::ContextSettings rvgcs {renderer().renderPass(),
+			*settings.rvgSubpass};
+		rvgcs.samples = samples();
+		rvgcs.clipDistanceEnable = impl_->clipDistance;
 
-	impl_->rvgContext.emplace(vulkanDevice(), rvgcs);
-	impl_->windowTransform = {rvgContext()};
-	impl_->fontAtlas.emplace(rvgContext());
+		impl_->rvgContext.emplace(vulkanDevice(), rvgcs);
+		impl_->windowTransform = {rvgContext()};
+		impl_->fontAtlas.emplace(rvgContext());
 
-	std::string fontPath = baseResPath;
-	fontPath += "assets/Roboto-Regular.ttf";
-	// fontPath += "assets/OpenSans-Light.ttf";
-	// fontPath += "build/Lucida-Grande.ttf"; // nonfree
-	impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath, fontHeight);
-	impl_->fontAtlas->bake(rvgContext());
+		std::string fontPath = baseResPath;
+		fontPath += "assets/Roboto-Regular.ttf";
+		// fontPath += "assets/OpenSans-Light.ttf";
+		// fontPath += "build/Lucida-Grande.ttf"; // nonfree
+		impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath, fontHeight);
+		impl_->fontAtlas->bake(rvgContext());
 
-	// gui
-	impl_->guiListener.app(*this);
-	impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
+		// gui
+		impl_->guiListener.app(*this);
+		impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
+	}
 
 	return true;
 }
@@ -609,10 +612,16 @@ void App::update(double dt) {
 		return;
 	}
 
-	redraw_ |= gui().update(dt);
+	if(impl_->gui) {
+		redraw_ |= gui().update(dt);
+	}
 }
 
 void App::updateDevice() {
+	if(!impl_->rvgContext) {
+		return;
+	}
+
 	auto [rec, seph] = rvgContext().upload();
 	if(seph) {
 		impl_->nextFrameWait.push_back({seph,
@@ -630,21 +639,23 @@ void App::addSemaphore(vk::Semaphore seph, vk::PipelineStageFlags waitDst) {
 void App::resize(const ny::SizeEvent& ev) {
 	resize_ = true;
 
-	// TODO: probably best to remove this completetly
-	// NOTE: currently top left (for mists)
-	// window-coords, origin bottom left
-	auto s = nytl::Vec{ 2.f / ev.size.x, 2.f / ev.size.y, 1};
-	auto transform = nytl::identity<4, float>();
-	scale(transform, s);
-	translate(transform, {-1, -1, 0});
-	impl_->windowTransform.matrix(transform);
+	if(impl_->gui) {
+		// TODO: probably best to remove this completetly
+		// NOTE: currently top left (for mists)
+		// window-coords, origin bottom left
+		auto s = nytl::Vec{ 2.f / ev.size.x, 2.f / ev.size.y, 1};
+		auto transform = nytl::identity<4, float>();
+		scale(transform, s);
+		translate(transform, {-1, -1, 0});
+		impl_->windowTransform.matrix(transform);
 
-	// window-coords, origin top left
-	s = nytl::Vec{ 2.f / ev.size.x, 2.f / ev.size.y, 1};
-	transform = nytl::identity<4, float>();
-	scale(transform, s);
-	translate(transform, {-1, -1, 0});
-	gui().transform(transform);
+		// window-coords, origin top left
+		s = nytl::Vec{2.f / ev.size.x, 2.f / ev.size.y, 1};
+		transform = nytl::identity<4, float>();
+		scale(transform, s);
+		translate(transform, {-1, -1, 0});
+		gui().transform(transform);
+	}
 }
 
 void App::close(const ny::CloseEvent&) {
@@ -652,6 +663,10 @@ void App::close(const ny::CloseEvent&) {
 }
 
 bool App::key(const ny::KeyEvent& ev) {
+	if(!impl_->gui) {
+		return false;
+	}
+
 	auto ret = false;
 	auto vev = vui::KeyEvent {};
 	vev.key = static_cast<vui::Key>(ev.keycode); // both modeled after linux
@@ -670,25 +685,39 @@ bool App::key(const ny::KeyEvent& ev) {
 }
 
 bool App::mouseButton(const ny::MouseButtonEvent& ev) {
-	auto p = static_cast<nytl::Vec2f>(ev.position);
-	auto b = static_cast<vui::MouseButton>(ev.button);
-	return gui().mouseButton({ev.pressed, b, p});
+	if(impl_->gui) {
+		auto p = static_cast<nytl::Vec2f>(ev.position);
+		auto b = static_cast<vui::MouseButton>(ev.button);
+		return gui().mouseButton({ev.pressed, b, p});
+	}
+
+	return false;
 }
 
 void App::mouseMove(const ny::MouseMoveEvent& ev) {
-	gui().mouseMove({static_cast<nytl::Vec2f>(ev.position)});
+	if(impl_->gui) {
+		gui().mouseMove({static_cast<nytl::Vec2f>(ev.position)});
+	}
 }
 
 bool App::mouseWheel(const ny::MouseWheelEvent& ev) {
-	return gui().mouseWheel({ev.value, nytl::Vec2f(ev.position)});
+	if(impl_->gui) {
+		return gui().mouseWheel({ev.value, nytl::Vec2f(ev.position)});
+	}
+
+	return false;
 }
 
 void App::mouseCross(const ny::MouseCrossEvent& ev) {
-	gui().mouseOver(ev.entered);
+	if(impl_->gui) {
+		gui().mouseOver(ev.entered);
+	}
 }
 
 void App::focus(const ny::FocusEvent& ev) {
-	gui().focus(ev.gained);
+	if(impl_->gui) {
+		gui().focus(ev.gained);
+	}
 }
 
 ny::AppContext& App::appContext() const {
@@ -710,10 +739,12 @@ vpp::Device& App::vulkanDevice() const {
 }
 
 rvg::Context& App::rvgContext() const {
+	dlg_assert(impl_->rvgContext);
 	return *impl_->rvgContext;
 }
 
 vui::Gui& App::gui() const {
+	dlg_assert(impl_->gui);
 	return *impl_->gui;
 }
 

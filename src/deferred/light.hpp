@@ -15,10 +15,11 @@
 // point and dir light; no support for point light: shadow cube map
 
 struct ShadowData {
-	vpp::Pipeline pipe;
-	vpp::RenderPass rp;
-	vpp::Sampler sampler;
 	vk::Format depthFormat;
+	vpp::Sampler sampler;
+	vpp::RenderPass rp;
+	vpp::PipelineLayout pl;
+	vpp::Pipeline pipe;
 };
 
 struct Light {
@@ -61,4 +62,8 @@ protected:
 	// TODO: something about matrix
 };
 
-ShadowData initShadowData(const vpp::Device&, vk::PipelineLayout, vk::Format);
+ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,
+	vk::DescriptorSetLayout lightDsLayout,
+	vk::DescriptorSetLayout materialDsLayout,
+	vk::DescriptorSetLayout primitiveDsLayout,
+	vk::PushConstantRange materialPcr);

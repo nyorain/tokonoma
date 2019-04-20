@@ -35,11 +35,9 @@
 
 class GRenderer : public doi::Renderer {
 public:
-	const vpp::TrDsLayout* inputDsLayout_ {};
-
-public:
 	GRenderer(const doi::RendererCreateInfo& ri);
 	const auto& inputDs() const { return inputDs_; }
+	const auto& inputDsLayout() const { return inputDsLayout_; }
 
 protected:
 	void createRenderPass() override;
@@ -47,6 +45,7 @@ protected:
 	std::vector<vk::ClearValue> clearValues() override;
 
 protected:
+	vpp::TrDsLayout inputDsLayout_;
 	vpp::TrDs inputDs_;
 
 	// additional render targets
@@ -61,7 +60,9 @@ public:
 
 public:
 	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+		auto cpy = settings;
+		cpy.rvgSubpass = std::nullopt; // we don't need rvg/gui
+		if(!doi::App::init(cpy)) {
 			return false;
 		}
 
@@ -69,7 +70,6 @@ public:
 		auto hostMem = dev.hostMemoryTypes();
 
 		// renderer already queried the best supported depth format
-		depthFormat_ = renderer().depthFormat();
 		camera_.perspective.far = 100.f;
 
 		// tex sampler
@@ -110,11 +110,21 @@ public:
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
 		// example light
-		shadowData_ = initShadowData(dev, gPipeLayout_, depthFormat_);
+		shadowData_ = initShadowData(dev, renderer().depthFormat(),
+			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
+			doi::Material::pcr());
 		auto& l = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
 		l.data.pd = {5.8f, 12.0f, 4.f};
+		l.data.color = {0.5f, 0.5f, 0.5f};
 		l.data.type = Light::Type::point;
 		l.updateDevice();
+
+		auto& l2 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
+		l2.data.pd = {-1.0, 8.0f, -1.0};
+		l2.data.color = {0.5f, 0.4f, 0.05f};
+		l2.data.type = Light::Type::point;
+		l2.data.pcf = 1u;
+		l2.updateDevice();
 
 		// descriptors
 		vpp::DescriptorSetUpdate sdsu(sceneDs_);
@@ -148,10 +158,7 @@ public:
 		// per material
 		// push constant range for material
 		materialDsLayout_ = doi::Material::createDsLayout(dev, sampler_);
-		vk::PushConstantRange pcr;
-		pcr.offset = 0;
-		pcr.size = sizeof(float) * 8;
-		pcr.stageFlags = vk::ShaderStageBits::fragment;
+		auto pcr = doi::Material::pcr();
 
 		gPipeLayout_ = {dev, {
 			sceneDsLayout_,
@@ -186,8 +193,14 @@ public:
 		// we don't blend in the gbuffers; simply overwrite
 		vk::PipelineColorBlendAttachmentState blendAttachments[3];
 		blendAttachments[0].blendEnable = false;
-		blendAttachments[1].blendEnable = false;
-		blendAttachments[2].blendEnable = false;
+		blendAttachments[0].colorWriteMask =
+			vk::ColorComponentBits::r |
+			vk::ColorComponentBits::g |
+			vk::ColorComponentBits::b |
+			vk::ColorComponentBits::a;
+
+		blendAttachments[1] = blendAttachments[0];
+		blendAttachments[2] = blendAttachments[0];
 
 		gpi.blend.attachmentCount = 3u;
 		gpi.blend.pAttachments = blendAttachments;
@@ -220,22 +233,6 @@ public:
 	void initLPipe() {
 		auto& dev = vulkanDevice();
 
-		// gbuffer input ds
-		auto inputBindings = {
-			vpp::descriptorBinding( // pos
-				vk::DescriptorType::inputAttachment,
-				vk::ShaderStageBits::fragment),
-			vpp::descriptorBinding( // normal
-				vk::DescriptorType::inputAttachment,
-				vk::ShaderStageBits::fragment),
-			vpp::descriptorBinding( // albedo
-				vk::DescriptorType::inputAttachment,
-				vk::ShaderStageBits::fragment),
-		};
-
-		inputDsLayout_ = {dev, inputBindings};
-		renderer().inputDsLayout_ = &inputDsLayout_;
-
 		// light ds
 		// TODO: statically use shadow data sampler here?
 		auto lightBindings = {
@@ -250,7 +247,12 @@ public:
 		lightDsLayout_ = {dev, lightBindings};
 
 		// light pipe
-		lPipeLayout_ = {dev, {sceneDsLayout_, inputDsLayout_, lightDsLayout_}, {}};
+		vk::PushConstantRange pcr {};
+		pcr.size = 4;
+		pcr.stageFlags = vk::ShaderStageBits::fragment;
+
+		auto& ids = renderer().inputDsLayout();
+		lPipeLayout_ = {dev, {sceneDsLayout_, ids, lightDsLayout_}, {pcr}};
 
 		vpp::ShaderModule vertShader(dev, fullscreen_vert_data);
 		vpp::ShaderModule fragShader(dev, deferred_light_frag_data);
@@ -261,6 +263,22 @@ public:
 
 		gpi.depthStencil.depthTestEnable = false;
 		gpi.depthStencil.depthWriteEnable = false;
+		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
+
+		// additive blending
+		vk::PipelineColorBlendAttachmentState blendAttachment;
+		blendAttachment.blendEnable = true;
+		blendAttachment.colorBlendOp = vk::BlendOp::add;
+		blendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
+		blendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
+		blendAttachment.colorWriteMask =
+			vk::ColorComponentBits::r |
+			vk::ColorComponentBits::g |
+			vk::ColorComponentBits::b |
+			vk::ColorComponentBits::a;
+
+		gpi.blend.attachmentCount = 1u;
+		gpi.blend.pAttachments = &blendAttachment;
 
 		vk::Pipeline vkpipe;
 		vk::createGraphicsPipelines(dev, {},
@@ -307,10 +325,9 @@ public:
 		App::beforeRender(cb);
 
 		// render shadow maps
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			gPipeLayout_, 0, {sceneDs_}, {});
+		auto pl = shadowData_.pl.vkHandle();
 		for(auto& light : lights_) {
-			light.render(cb, gPipeLayout_, shadowData_, *scene_);
+			light.render(cb, pl, shadowData_, *scene_);
 		}
 	}
 
@@ -323,13 +340,15 @@ public:
 
 		// render lights
 		vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
+		vk::cmdPushConstants(cb, lPipeLayout_, vk::ShaderStageBits::fragment,
+			0, 4, &show_);
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, lPipe_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			gPipeLayout_, 1, {renderer().inputDs()}, {});
+			lPipeLayout_, 0, {sceneDs_, renderer().inputDs()}, {});
 		for(auto& light : lights_) {
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-				gPipeLayout_, 2, {light.ds()}, {});
-			vk::cmdDraw(cb, 6, 1, 0, 0);
+				lPipeLayout_, 2, {light.ds()}, {});
+			vk::cmdDraw(cb, 4, 1, 0, 0);
 		}
 	}
 
@@ -366,6 +385,10 @@ public:
 				lights_[0].data.pcf = 1 - lights_[0].data.pcf;
 				updateLights_ = true;
 				return true;
+			case ny::Keycode::n:
+				show_ = (show_ + 1) % 7;
+				App::scheduleRerecord();
+				return true;
 			default:
 				break;
 		}
@@ -396,9 +419,8 @@ public:
 
 	void updateDevice() override {
 		// update scene ubo
-		if(camera_.update || updateLights_) {
+		if(camera_.update) {
 			camera_.update = false;
-
 			auto map = sceneUbo_.memoryMap();
 			auto span = map.span();
 			doi::write(span, matrix(camera_));
@@ -432,9 +454,11 @@ protected:
 	vpp::TrDsLayout sceneDsLayout_;
 	vpp::TrDsLayout primitiveDsLayout_;
 	vpp::TrDsLayout materialDsLayout_;
-
-	vpp::TrDsLayout inputDsLayout_; // input attachments
 	vpp::TrDsLayout lightDsLayout_;
+
+	// shadow
+	ShadowData shadowData_;
+	std::vector<DirLight> lights_;
 
 	vpp::PipelineLayout gPipeLayout_; // gbuf
 	vpp::PipelineLayout lPipeLayout_; // light
@@ -444,26 +468,38 @@ protected:
 	vpp::Pipeline gPipe_; // gbuf
 	vpp::Pipeline lPipe_; // light
 
-	std::unique_ptr<doi::Scene> scene_;
 	vpp::ViewableImage dummyTex_;
+	std::unique_ptr<doi::Scene> scene_;
 
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
 
+	std::uint32_t show_ {}; // what to show
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
 	doi::Camera camera_ {};
 	bool updateLights_ = true;
-
-	// shadow
-	vk::Format depthFormat_;
-	ShadowData shadowData_;
-	std::vector<DirLight> lights_;
 };
 
 // GRenderer impl
 GRenderer::GRenderer(const doi::RendererCreateInfo& ri) :
 		doi::Renderer(ri.present) {
+	// gbuffer input ds
+	auto inputBindings = {
+		vpp::descriptorBinding( // pos
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // normal
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // albedo
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+	};
+
+	inputDsLayout_ = {ri.dev, inputBindings};
+	inputDs_ = {device().descriptorAllocator(), inputDsLayout_};
+
 	init(ri);
 }
 
@@ -529,17 +565,21 @@ void GRenderer::createRenderPass() {
 
 	// gbuffer targets
 	auto gbufid = aid;
-	for(auto i = 0u; i < 3; ++i) {
-		attachments[aid].format = vk::Format::r8g8b8a8Unorm;
+	auto addgbuf = [&](vk::Format format) {
+		attachments[aid].format = format;
 		attachments[aid].samples = sampleCount_;
 		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
 		attachments[aid].storeOp = vk::AttachmentStoreOp::store;
-		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
 		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
 		attachments[aid].initialLayout = vk::ImageLayout::undefined;
 		attachments[aid].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 		++aid;
-	}
+	};
+
+	addgbuf(vk::Format::r16g16b16a16Sfloat); // pos
+	addgbuf(vk::Format::r8g8b8a8Snorm); // normal
+	addgbuf(vk::Format::r8g8b8a8Unorm); // albedo
 
 	vk::SubpassDescription subpasses[2] {};
 
@@ -619,18 +659,22 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 	}
 
 	// gbufs
-	for(auto* pgbuf : {&pos_, &normal_, &albedo_}) {
-		auto& gbuf = *pgbuf;
+	auto initBuf = [&](vpp::ViewableImage& img, vk::Format format) {
 		auto usage = vk::ImageUsageBits::colorAttachment |
 			vk::ImageUsageBits::inputAttachment |
 			vk::ImageUsageBits::sampled;
 		auto info = vpp::ViewableImageCreateInfo::color(device(),
-			{size.width, size.height}, usage, {vk::Format::r8g8b8a8Unorm},
+			{size.width, size.height}, usage, {format},
 			vk::ImageTiling::optimal, sampleCount_);
 		dlg_assert(info);
-		gbuf = {device(), *info};
-		attachments.push_back(gbuf.vkImageView());
-	}
+		img = {device(), *info};
+		attachments.push_back(img.vkImageView());
+	};
+
+	// TODO: maybe use 16f buffers for normal as well?
+	initBuf(pos_, vk::Format::r16g16b16a16Sfloat);
+	initBuf(normal_, vk::Format::r8g8b8a8Snorm);
+	initBuf(albedo_, vk::Format::r8g8b8a8Unorm);
 
 	for(auto& buf : bufs) {
 		attachments[scPos] = buf.imageView;
@@ -645,13 +689,6 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 	}
 
 	// update descriptor set
-	if(!inputDs_) {
-		if(!inputDsLayout_) {
-			return;
-		}
-		inputDs_ = {device().descriptorAllocator(), *inputDsLayout_};
-	}
-
 	vpp::DescriptorSetUpdate dsu(inputDs_);
 	dsu.inputAttachment({{{}, pos_.vkImageView(), vk::ImageLayout::general}});
 	dsu.inputAttachment({{{}, normal_.vkImageView(), vk::ImageLayout::general}});

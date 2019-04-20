@@ -9,11 +9,11 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 } scene;
 
 // gbuffer
-layout(input_attachment_index = 0, set = 1, binding = 0)
+layout(set = 1, binding = 0, input_attachment_index = 0)
 	uniform subpassInput inPos;
-layout(input_attachment_index = 0, set = 1, binding = 1)
+layout(set = 1, binding = 1, input_attachment_index = 1)
 	uniform subpassInput inNormal;
-layout(input_attachment_index = 0, set = 1, binding = 2)
+layout(set = 1, binding = 2, input_attachment_index = 2)
 	uniform subpassInput inAlbedo;
 
 layout(set = 2, binding = 0, row_major) uniform Light {
@@ -25,6 +25,10 @@ layout(set = 2, binding = 0, row_major) uniform Light {
 } light;
 
 layout(set = 2, binding = 1) uniform sampler2DShadow shadowTex;
+
+layout(push_constant) uniform Show {
+	uint mode;
+} show;
 
 const uint pointLight = 1;
 const uint dirLight = 2;
@@ -65,6 +69,29 @@ void main() {
 	float metallic = sNormal.w;
 	float occlusion = sAlbedo.w;
 
+	switch(show.mode) {
+	case 1:
+		fragColor = vec4(albedo, 1.0);
+		return;
+	case 2:
+		fragColor = vec4(normal, 1.0);
+		return;
+	case 3:
+		fragColor = vec4(pos, 1.0);
+		return;
+	case 4:
+		fragColor = vec4(vec3(roughness), 1.0);
+		return;
+	case 5:
+		fragColor = vec4(vec3(occlusion), 1.0);
+		return;
+	case 6:
+		fragColor = vec4(vec3(metallic), 1.0);
+		return;
+	default:
+		break;
+	}
+
 	// TODO: remove random factors, implement pbr
 	float ambientFac = 0.1 * occlusion;
 	float diffuseFac = 0.5f;
@@ -76,6 +103,7 @@ void main() {
 	vec3 ldir = (light.type == pointLight) ?
 		pos - light.pd :
 		light.pd;
+	ldir = normalize(ldir);
 
 	// diffuse
 	lfac += diffuseFac * max(dot(normal, -ldir), 0.0);
@@ -87,7 +115,10 @@ void main() {
 
 	// shadow
 	vec4 lsPos = light.matrix * vec4(pos, 1.0);
-	lfac *= shadowpcf(lsPos.xyz / lsPos.w, int(light.pcf));
+	lsPos.xyz /= lsPos.w;
+	lsPos.y *= -1; // invert y
+	lsPos.xy = 0.5 + 0.5 * lsPos.xy; // normalize for texture access
+	lfac *= shadowpcf(lsPos.xyz, int(light.pcf));
 
 	// ambient always added, indepdnent from shadow
 	lfac += ambientFac;

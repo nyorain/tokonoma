@@ -19,6 +19,7 @@ public:
 		textured = (1u << 2),
 	};
 
+	static vk::PushConstantRange pcr();
 	static vpp::TrDsLayout createDsLayout(const vpp::Device& dev,
 		vk::Sampler sampler);
 
