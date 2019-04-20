@@ -22,7 +22,7 @@ void main() {
 	outUV = inUV;
 
 	vec4 m = model.matrix * vec4(inPos, 1.0);
-	outPos = m.xyz;
+	outPos = m.xyz / m.w;
 
 	gl_Position = scene.proj * m;
 	gl_Position.y = -gl_Position.y;

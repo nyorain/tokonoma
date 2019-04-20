@@ -9,8 +9,11 @@
 #include <shaders/shadowmap.vert.h>
 #include <shaders/shadowmap.frag.h>
 
-ShadowData initShadowData(const vpp::Device& dev, vk::PipelineLayout pl,
-		vk::Format depthFormat) {
+ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
+		vk::DescriptorSetLayout lightDsLayout,
+		vk::DescriptorSetLayout materialDsLayout,
+		vk::DescriptorSetLayout primitiveDsLayout,
+		vk::PushConstantRange materialPcr) {
 	ShadowData data;
 	data.depthFormat = depthFormat;
 
@@ -53,11 +56,16 @@ ShadowData initShadowData(const vpp::Device& dev, vk::PipelineLayout pl,
 	sci.maxLod = 0.25;
 	data.sampler = {dev, sci};
 
+	// pipeline layout
+	data.pl = {dev,
+		{lightDsLayout, materialDsLayout, primitiveDsLayout},
+		{materialPcr}};
+
 	// pipeline
 	vpp::ShaderModule vertShader(dev, shadowmap_vert_data);
 	vpp::ShaderModule fragShader(dev, shadowmap_frag_data);
 
-	vpp::GraphicsPipelineInfo gpi {data.rp, pl, {{
+	vpp::GraphicsPipelineInfo gpi {data.rp, data.pl, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
 	}}, 0, vk::SampleCountBits::e1};
@@ -170,11 +178,11 @@ void DirLight::render(vk::CommandBuffer cb, vk::PipelineLayout pl,
 
 	// TODO: fine tune these values!
 	// maybe they should be scene dependent?
-	vk::cmdSetDepthBias(cb, 0.25, 0.f, 4.0);
+	vk::cmdSetDepthBias(cb, 0.25, 0.f, 8.0);
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pl, 3, {ds_}, {});
+		pl, 0, {ds_}, {});
 
 	scene.render(cb, pl);
 	vk::cmdEndRenderPass(cb);

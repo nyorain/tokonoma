@@ -48,9 +48,9 @@ protected:
 	void loadNode(vpp::Device&, const gltf::Model&, const gltf::Node&,
 		const SceneRenderInfo&, nytl::Mat4f matrix);
 
-	std::vector<Primitive> primitives_;
-	std::vector<Material> materials_;
 	std::vector<vpp::ViewableImage> images_;
+	std::vector<Material> materials_;
+	std::vector<Primitive> primitives_;
 
 	// TODO: use (in materials)
 	// std::vector<Sampler> samplers_;

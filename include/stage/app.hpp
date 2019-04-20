@@ -26,8 +26,13 @@ class Renderer;
 struct RendererCreateInfo;
 
 struct AppSettings {
-	const char* name;
-	nytl::Span<const char*> args;
+	const char* name; // name of app
+	nytl::Span<const char*> args; // cmd line args
+
+	// if none, will not create rvg and vui contexts.
+	// otherwise will create them for the given subpass of the renderers
+	// render pass.
+	std::optional<unsigned> rvgSubpass {{0}};
 };
 
 /// Implements basic setup and main loop.

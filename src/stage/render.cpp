@@ -72,7 +72,11 @@ void Renderer::init(const RendererCreateInfo& info) {
 	}
 
 	createRenderPass();
+
+	// avoid initial record since app probably isn't set up yet
+	mode_ = RecordMode::onDemand;
 	vpp::Renderer::init(scInfo_);
+	mode_ = RecordMode::all;
 }
 
 void Renderer::createRenderPass() {
