@@ -17,7 +17,6 @@
 
 namespace doi {
 
-// TODO: support for reading depth target in shader
 Renderer::Renderer(const vpp::Queue& present) : vpp::Renderer(present) {
 	// don't call init here
 }
@@ -240,7 +239,8 @@ void Renderer::createDepthTarget(const vk::Extent2D& size) {
 	img.sharingMode = vk::SharingMode::exclusive;
 	img.tiling = vk::ImageTiling::optimal;
 	img.samples = sampleCount_;
-	img.usage = vk::ImageUsageBits::depthStencilAttachment;
+	img.usage = vk::ImageUsageBits::depthStencilAttachment |
+		vk::ImageUsageBits::sampled;
 	img.initialLayout = vk::ImageLayout::undefined;
 
 	// view

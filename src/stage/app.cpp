@@ -428,7 +428,10 @@ bool App::handleArgs(const argagg::parser_results& result) {
 	args_.layers = !result["no-validation"];
 	args_.vsync = !result["no-vsync"];
 	args_.renderdoc = result["renderdoc"];
-	args_.samples = result["multisamples"].as<unsigned>(1);
+
+	if(result.has_option("multisamples") > 0) {
+		args_.samples = result["multisamples"].as<unsigned>(1);
+	}
 
 	auto& phdev = result["phdev"];
 	if(phdev.count() > 0) {

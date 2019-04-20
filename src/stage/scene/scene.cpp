@@ -1,6 +1,7 @@
 #include <stage/scene/scene.hpp>
 #include <stage/scene/primitive.hpp>
 #include <stage/scene/material.hpp>
+#include <stage/scene/shape.hpp> // TODO(tmp)
 #include <stage/quaternion.hpp>
 #include <stage/transform.hpp>
 #include <stage/texture.hpp>
@@ -43,7 +44,8 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 		const tinygltf::Model& model, const tinygltf::Scene& scene,
 		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
 	// TODO: lazy image loading? we currently load all, even when
-	// maybe not needed
+	// maybe not needed. not a huge optimization though, most scenes
+	// are probably optimized
 	// load images
 	dlg_info("Found {} images", model.materials.size());
 	for(auto& img : model.images) {
@@ -60,6 +62,10 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 		materials_.push_back(std::move(m));
 	}
 
+	// TODO(tmp)
+	materials_.emplace_back(dev, ri.materialDsLayout, ri.dummyTex,
+		nytl::Vec4f {1.f, 1.f, 1.f, 1.f}, 1.f, 1.f, true);
+
 	// we need at least one material (see primitive creation)
 	// if there is none, add dummy
 	if(materials_.empty()) {
@@ -72,6 +78,12 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 		auto& node = model.nodes[nodeid];
 		loadNode(dev, model, node, ri, matrix);
 	}
+
+	// TODO(tmp)
+	// auto cube = doi::Cube{{}, {100.f, 100.f, 100.f}};
+	// auto shape = doi::generate(cube);
+	// primitives_.emplace_back(dev, shape, ri.primitiveDsLayout,
+	// 	materials_.back(), nytl::identity<4, float>());
 }
 
 void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,

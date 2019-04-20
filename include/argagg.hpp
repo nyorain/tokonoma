@@ -390,8 +390,9 @@ struct definition {
   /**
    * @brief
    * Name of the option. Option parser results are keyed by this name.
+   * NOTE: changed manually (was const before)
    */
-  const std::string name;
+  std::string name;
 
   /**
    * @brief
