@@ -8,16 +8,22 @@
 #include <vpp/pipeline.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
-#include <stage/scene/scene.hpp>
 
 // TODO:
-// shadow mapping badly implemented. Still some artefacts, mixing up
-// point and dir light; no support for point light: shadow cube map
+// shadow mapping badly implemented. Still some artefacts, light matrix
+// and depth bias guessing, mixing up point and dir light;
+// no support for point light: shadow cube map
+
+namespace doi {
+
+class Scene;
 
 struct ShadowData {
-	vpp::Pipeline pipe;
-	vpp::RenderPass rp;
+	vk::Format depthFormat;
 	vpp::Sampler sampler;
+	vpp::RenderPass rp;
+	vpp::PipelineLayout pl;
+	vpp::Pipeline pipe;
 };
 
 struct Light {
@@ -40,11 +46,10 @@ class DirLight : public Light {
 public:
 	DirLight() = default;
 	DirLight(const vpp::Device&, const vpp::TrDsLayout&,
-		vk::Format depthFormat, vk::RenderPass rp);
+		const ShadowData& data);
 
 	// renders shadow map
-	void render(vk::CommandBuffer cb, vk::PipelineLayout,
-		const ShadowData& data, const doi::Scene& scene);
+	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
 	void updateDevice();
 	nytl::Mat4f lightMatrix() const;
 	const auto& ds() const { return ds_; }
@@ -58,6 +63,13 @@ protected:
 	vpp::TrDs ds_;
 
 	// TODO: something about matrix
+	// TODO: light ball visualization (primitive)
 };
 
-ShadowData initShadowData(const vpp::Device&, vk::PipelineLayout, vk::Format);
+ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,
+	vk::DescriptorSetLayout lightDsLayout,
+	vk::DescriptorSetLayout materialDsLayout,
+	vk::DescriptorSetLayout primitiveDsLayout,
+	vk::PushConstantRange materialPcr);
+
+} // namespace doi

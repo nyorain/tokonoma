@@ -61,7 +61,7 @@ void main() {
 	}
 
 	vec3 normal = getNormal();
-	if(!gl_FrontFacing) {
+	if(!gl_FrontFacing) { // flip normal, see gltf spec
 		normal *= -1;
 	}
 
