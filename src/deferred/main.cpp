@@ -1,5 +1,3 @@
-#include "light.hpp"
-
 #include <stage/app.hpp>
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
@@ -10,6 +8,8 @@
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
 #include <stage/scene/shape.hpp>
+#include <stage/scene/light.hpp>
+#include <stage/scene/scene.hpp>
 #include <argagg.hpp>
 
 #include <ny/appContext.hpp>
@@ -31,7 +31,13 @@
 
 #include <cstdlib>
 
-// TODO: no hdr at the moment. Will look shitty for multiple lights
+// TODO: no hdr at the moment. Will look shitty for multiple full lights
+//   add post processing step
+// TODO(optimization): we could theoretically just use one shadow map at all.
+// TODO(optimization): position gbuffer probably not needed, can be
+//   reconstructed from depth buffer and xy coord in light stage
+//
+// deferred lightning? http://gameangst.com/?p=141
 
 class GRenderer : public doi::Renderer {
 public:
@@ -110,19 +116,19 @@ public:
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
 		// example light
-		shadowData_ = initShadowData(dev, renderer().depthFormat(),
+		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
 		auto& l = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
 		l.data.pd = {5.8f, 12.0f, 4.f};
 		l.data.color = {0.5f, 0.5f, 0.5f};
-		l.data.type = Light::Type::point;
+		l.data.type = doi::Light::Type::point;
 		l.updateDevice();
 
 		auto& l2 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
 		l2.data.pd = {-1.0, 8.0f, -1.0};
 		l2.data.color = {0.5f, 0.4f, 0.05f};
-		l2.data.type = Light::Type::point;
+		l2.data.type = doi::Light::Type::point;
 		l2.data.pcf = 1u;
 		l2.updateDevice();
 
@@ -254,6 +260,9 @@ public:
 		auto& ids = renderer().inputDsLayout();
 		lPipeLayout_ = {dev, {sceneDsLayout_, ids, lightDsLayout_}, {pcr}};
 
+		// TODO: don't use fullscreen here. Only render the areas of the screen
+		// that are effected by the light (huge, important optimization
+		// when there are many lights in the scene!)
 		vpp::ShaderModule vertShader(dev, fullscreen_vert_data);
 		vpp::ShaderModule fragShader(dev, deferred_light_frag_data);
 		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), lPipeLayout_, {{
@@ -325,9 +334,8 @@ public:
 		App::beforeRender(cb);
 
 		// render shadow maps
-		auto pl = shadowData_.pl.vkHandle();
 		for(auto& light : lights_) {
-			light.render(cb, pl, shadowData_, *scene_);
+			light.render(cb, shadowData_, *scene_);
 		}
 	}
 
@@ -457,8 +465,8 @@ protected:
 	vpp::TrDsLayout lightDsLayout_;
 
 	// shadow
-	ShadowData shadowData_;
-	std::vector<DirLight> lights_;
+	doi::ShadowData shadowData_;
+	std::vector<doi::DirLight> lights_;
 
 	vpp::PipelineLayout gPipeLayout_; // gbuf
 	vpp::PipelineLayout lPipeLayout_; // light

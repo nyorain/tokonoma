@@ -51,6 +51,8 @@ void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 	}}, 0, samples};
 
 	// depth test disabled by default
+	gpi.depthStencil.depthTestEnable = false;
+	gpi.depthStencil.depthWriteEnable = false;
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 	// gpi.rasterization.cullMode = vk::CullModeBits::back;
 	// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;

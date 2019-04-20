@@ -43,6 +43,7 @@ stage_src = [
 	'scene/material.cpp',
 	'scene/primitive.cpp',
 	'scene/shape.cpp',
+	'scene/light.cpp',
 ]
 
 stage_lib = library('stage',

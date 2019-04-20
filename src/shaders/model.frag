@@ -10,31 +10,27 @@ layout(location = 0) out vec4 outCol;
 const uint pointLight = 1;
 const uint dirLight = 2;
 
-struct Light {
-	vec3 pd; // position for point light, direction of dir light
-	uint type; // point or dir
-	vec3 color;
-	uint pcf;
-};
-
-// TODO: remove this, we effictively only support one light in this
-// forward renderer... at least regarding shadow
-layout(constant_id = 0) const uint maxLightSize = 8;
-
-layout(set = 0, binding = 0, row_major) uniform Lights {
+layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 _proj;
-	Light lights[maxLightSize];
 	vec3 viewPos; // camera position. For specular light
-	uint numLights; // <= maxLightSize
-} lights;
-
-layout(set = 0, binding = 1) uniform sampler2DShadow shadowTex;
+} scene;
 
 // material
 layout(set = 1, binding = 0) uniform sampler2D albedoTex;
 layout(set = 1, binding = 1) uniform sampler2D metalRoughTex;
 layout(set = 1, binding = 2) uniform sampler2D normalTex;
 layout(set = 1, binding = 3) uniform sampler2D occlusionTex;
+
+// light
+layout(set = 3, binding = 0, row_major) uniform Light {
+	mat4 proj; // view and projection
+	vec3 pd; // position for point light, direction of dir light
+	uint type; // point or dir
+	vec3 color;
+	uint pcf;
+} light;
+
+layout(set = 3, binding = 1) uniform sampler2DShadow shadowTex;
 
 // flags
 const uint normalmap = (1u << 0);
@@ -94,22 +90,17 @@ vec3 getNormal() {
 }
 
 void main() {
+	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
+		discard;
+	}
+
 	vec4 albedo = material.albedo * texture(albedoTex, inUV);
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}
 
 	vec3 normal = getNormal();
-
-	// NOTE: logic here has to be that weird (two independent if statements)
-	// since otherwise i seem to trigger a bug (probably in driver or llvm?)
-	// on mesas vulkan-radeon 19.0.2
-	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
-		discard;
-	}
-
-	// otherwise flip normal, as gltf specifies it
-	if(!gl_FrontFacing) {
+	if(!gl_FrontFacing) { // flip normal, see gltf spec
 		normal *= -1;
 	}
 
@@ -117,45 +108,39 @@ void main() {
 	// vec2 mr = texture(metalRoughTex, inUV).rg;
 	// float metalness = material.matallic * mr.b;
 	// float roughness = material.roughness * mr.g;
-
 	// TODO: remove random factors, implement pbr
 	float ambientFac = 0.1 * texture(occlusionTex, inUV).r;
 	float diffuseFac = 0.5f;
 	float specularFac = 0.5f;
 	float shininess = 64.f;
 
-	// TODO: shadow coords only for first light supported
-	// but that's one of the main problems of a forward renderer
 	vec4 col = vec4(0.0);
-	for(uint i = 0; i < lights.numLights; ++i) {
-		Light light = lights.lights[i];
-		vec3 ldir = (light.type == pointLight) ?
-			inPos - light.pd :
-			light.pd;
-		ldir = normalize(ldir);
+	vec3 ldir = (light.type == pointLight) ?
+		inPos - light.pd :
+		light.pd;
+	ldir = normalize(ldir);
 
-		float lfac = diffuseFac * max(dot(normal, -ldir), 0.0); // diffuse
+	float lfac = diffuseFac * max(dot(normal, -ldir), 0.0); // diffuse
 
-		// specular
-		vec3 vdir = normalize(inPos - lights.viewPos);
+	// specular
+	vec3 vdir = normalize(inPos - scene.viewPos);
 
-		// phong
-		// vec3 refl = reflect(ldir, normal);
-		// lfac += specularFac * pow(max(dot(-vdir, refl), 0.0), shininess);
+	// phong
+	// vec3 refl = reflect(ldir, normal);
+	// lfac += specularFac * pow(max(dot(-vdir, refl), 0.0), shininess);
 
-		// blinn-phong
-		vec3 halfway = normalize(-ldir - vdir);
-		lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
+	// blinn-phong
+	vec3 halfway = normalize(-ldir - vdir);
+	lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
 
-		// shadow
-		lfac *= shadowpcf(inLightPos, int(light.pcf));
+	// shadow
+	lfac *= shadowpcf(inLightPos, int(light.pcf));
 
-		// ambient, always added, even in shadow
-		lfac += ambientFac;
+	// ambient, always added, even in shadow
+	lfac += ambientFac;
 
-		// combine
-		col += vec4(lfac * light.color, 1.0) * albedo;
-	}
+	// combine
+	col += vec4(lfac * light.color, 1.0) * albedo;
 
 	outCol = col;
 	if(material.alphaCutoff == -1.f) { // alphaMode opque

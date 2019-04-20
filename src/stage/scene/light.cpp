@@ -1,5 +1,6 @@
-#include "light.hpp"
+#include <stage/scene/light.hpp>
 #include <stage/scene/primitive.hpp>
+#include <stage/scene/scene.hpp>
 #include <stage/bits.hpp>
 #include <stage/transform.hpp>
 #include <vpp/vk.hpp>
@@ -9,9 +10,15 @@
 #include <shaders/shadowmap.vert.h>
 #include <shaders/shadowmap.frag.h>
 
-ShadowData initShadowData(const vpp::Device& dev, vk::PipelineLayout pl,
-		vk::Format depthFormat) {
+namespace doi {
+
+ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
+		vk::DescriptorSetLayout lightDsLayout,
+		vk::DescriptorSetLayout materialDsLayout,
+		vk::DescriptorSetLayout primitiveDsLayout,
+		vk::PushConstantRange materialPcr) {
 	ShadowData data;
+	data.depthFormat = depthFormat;
 
 	// renderpass
 	vk::AttachmentDescription depth {};
@@ -52,11 +59,16 @@ ShadowData initShadowData(const vpp::Device& dev, vk::PipelineLayout pl,
 	sci.maxLod = 0.25;
 	data.sampler = {dev, sci};
 
+	// pipeline layout
+	data.pl = {dev,
+		{lightDsLayout, materialDsLayout, primitiveDsLayout},
+		{materialPcr}};
+
 	// pipeline
 	vpp::ShaderModule vertShader(dev, shadowmap_vert_data);
 	vpp::ShaderModule fragShader(dev, shadowmap_frag_data);
 
-	vpp::GraphicsPipelineInfo gpi {data.rp, pl, {{
+	vpp::GraphicsPipelineInfo gpi {data.rp, data.pl, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
 	}}, 0, vk::SampleCountBits::e1};
@@ -114,14 +126,14 @@ ShadowData initShadowData(const vpp::Device& dev, vk::PipelineLayout pl,
 }
 
 DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
-		vk::Format depthFormat, vk::RenderPass rp) {
+		const ShadowData& data) {
 	auto extent = vk::Extent3D{size_.x, size_.y, 1u};
 
 	// target
 	auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
 		vk::ImageUsageBits::sampled;
 	auto targetInfo = vpp::ViewableImageCreateInfo::general(dev,
-		extent, targetUsage, {depthFormat},
+		extent, targetUsage, {data.depthFormat},
 		vk::ImageAspectBits::depth);
 	target_ = {dev, *targetInfo};
 
@@ -132,12 +144,13 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	fbi.height = extent.height;
 	fbi.layers = 1u;
 	fbi.pAttachments = &target_.vkImageView();
-	fbi.renderPass = rp;
+	fbi.renderPass = data.rp;
 	fb_ = {dev, fbi};
 
 	// setup light ds and ubo
 	auto hostMem = dev.hostMemoryTypes();
-	auto lightUboSize = sizeof(nytl::Mat4f); // projection, view
+	auto lightUboSize = sizeof(nytl::Mat4f) + // projection, view
+		sizeof(this->data);
 	ds_ = {dev.descriptorAllocator(), dsLayout};
 	ubo_ = {dev.bufferAllocator(), lightUboSize,
 		vk::BufferUsageBits::uniformBuffer, 0, hostMem};
@@ -145,15 +158,17 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+	ldsu.imageSampler({{data.sampler, shadowMap(),
+		vk::ImageLayout::depthStencilReadOnlyOptimal}});
 	vpp::apply({ldsu});
 }
 
-void DirLight::render(vk::CommandBuffer cb, vk::PipelineLayout pl,
-		const ShadowData& data, const doi::Scene& scene) {
+void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
+		const doi::Scene& scene) {
 	vk::ClearValue clearValue {};
 	clearValue.depthStencil = {1.f, 0u};
 
-	// draw shadow map!
+	// render into shadow map
 	vk::cmdBeginRenderPass(cb, {
 		data.rp, fb_,
 		{0u, 0u, size_.x, size_.y},
@@ -165,12 +180,13 @@ void DirLight::render(vk::CommandBuffer cb, vk::PipelineLayout pl,
 	vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
 
 	// TODO: fine tune these values!
-	// maybe they should be scene dependent?
-	vk::cmdSetDepthBias(cb, 0.25, 0.f, 4.0);
+	// maybe they should be scene dependent? dependent on size/scale?
+	vk::cmdSetDepthBias(cb, 1.0, 0.f, 8.0);
 
+	auto pl = data.pl.vkHandle();
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pl, 3, {ds_}, {});
+		pl, 0, {ds_}, {});
 
 	scene.render(cb, pl);
 	vk::cmdEndRenderPass(cb);
@@ -192,4 +208,7 @@ void DirLight::updateDevice() {
 	auto map = ubo_.memoryMap();
 	auto span = map.span();
 	doi::write(span, lightMatrix());
+	doi::write(span, this->data);
 }
+
+} // namespace doi

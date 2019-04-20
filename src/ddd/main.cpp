@@ -1,5 +1,4 @@
 #include "skybox.hpp"
-#include "light.hpp"
 
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
@@ -11,6 +10,8 @@
 #include <stage/gltf.hpp>
 #include <stage/quaternion.hpp>
 #include <stage/scene/shape.hpp>
+#include <stage/scene/scene.hpp>
+#include <stage/scene/light.hpp>
 #include <argagg.hpp>
 
 #include <stage/scene/scene.hpp>
@@ -54,7 +55,6 @@ public:
 		}
 
 		// renderer already queried the best supported depth format
-		depthFormat_ = renderer().depthFormat();
 		camera_.perspective.far = 100.f;
 
 		// === Init pipeline ===
@@ -85,9 +85,6 @@ public:
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
-			vpp::descriptorBinding(
-				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment),
 		};
 
 		sceneDsLayout_ = {dev, sceneBindings};
@@ -110,10 +107,14 @@ public:
 		pcr.stageFlags = vk::ShaderStageBits::fragment;
 
 		// per light
+		// TODO: statically use shadow data sampler here?
 		auto lightBindings = {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::vertex),
+				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
+			vpp::descriptorBinding(
+				vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment),
 		};
 
 		lightDsLayout_ = {dev, lightBindings};
@@ -204,26 +205,23 @@ public:
 
 		// == ubo and stuff ==
 		auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
-			+ maxLightSize * sizeof(Light) // lights
-			+ sizeof(nytl::Vec3f) // viewPos
-			+ sizeof(std::uint32_t); // numLights
+			+ sizeof(nytl::Vec3f); // viewPos
 		sceneDs_ = {dev.descriptorAllocator(), sceneDsLayout_};
 		sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
 		// == example light ==
-		shadowData_ = initShadowData(dev, pipeLayout_, depthFormat_);
-		light_ = {dev, lightDsLayout_, depthFormat_, shadowData_.rp};
+		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
+			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
+			doi::Material::pcr());
+		light_ = {dev, lightDsLayout_, shadowData_};
 		light_.data.pd = {5.8f, 12.0f, 4.f};
-		light_.data.type = Light::Type::point;
-		updateLights_ = true;
+		light_.data.type = doi::Light::Type::point;
+		updateLight_ = true;
 
 		// descriptors
 		vpp::DescriptorSetUpdate sdsu(sceneDs_);
 		sdsu.uniform({{sceneUbo_.buffer(), sceneUbo_.offset(), sceneUbo_.size()}});
-		sdsu.imageSampler({{shadowData_.sampler,
-			light_.shadowMap(),
-			vk::ImageLayout::depthStencilReadOnlyOptimal}});
 		vpp::apply({sdsu});
 
 		return true;
@@ -259,7 +257,7 @@ public:
 
 	void beforeRender(vk::CommandBuffer cb) override {
 		App::beforeRender(cb);
-		light_.render(cb, pipeLayout_, shadowData_, *scene_);
+		light_.render(cb, shadowData_, *scene_);
 	}
 
 	void render(vk::CommandBuffer cb) override {
@@ -286,10 +284,10 @@ public:
 		if(moveLight_) {
 			light_.data.pd.x = 7.0 * std::cos(0.2 * time_);
 			light_.data.pd.z = 7.0 * std::sin(0.2 * time_);
-			updateLights_ = true;
+			updateLight_ = true;
 		}
 
-		if(moveLight_ || camera_.update || updateLights_) {
+		if(moveLight_ || camera_.update || updateLight_) {
 			App::scheduleRedraw();
 		}
 	}
@@ -307,14 +305,14 @@ public:
 			case ny::Keycode::m: // move light here
 				moveLight_ = false;
 				light_.data.pd = camera_.pos;
-				updateLights_ = true;
+				updateLight_ = true;
 				return true;
 			case ny::Keycode::l:
 				moveLight_ ^= true;
 				return true;
 			case ny::Keycode::p:
 				light_.data.pcf = 1 - light_.data.pcf;
-				updateLights_ = true;
+				updateLight_ = true;
 				return true;
 			default:
 				break;
@@ -346,7 +344,7 @@ public:
 
 	void updateDevice() override {
 		// update scene ubo
-		if(camera_.update || updateLights_) {
+		if(camera_.update) {
 			camera_.update = false;
 			// updateLights_ set to false below
 
@@ -354,16 +352,7 @@ public:
 			auto span = map.span();
 
 			doi::write(span, matrix(camera_));
-
-			// lights
-			{
-				auto lspan = span;
-				doi::write(lspan, light_.data);
-			}
-
-			doi::skip(span, sizeof(Light) * maxLightSize);
 			doi::write(span, camera_.pos);
-			doi::write(span, std::uint32_t(1)); // 1 light
 
 			skybox_.updateDevice(fixedMatrix(camera_));
 
@@ -379,9 +368,9 @@ public:
 			lightBall_->updateDevice();
 		}
 
-		if(updateLights_) {
+		if(updateLight_) {
 			light_.updateDevice();
-			updateLights_ = false;
+			updateLight_ = false;
 		}
 	}
 
@@ -413,26 +402,22 @@ protected:
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
 
-	// std::vector<Light> lights_;
-	bool updateLights_ {true};
-
 	std::unique_ptr<doi::Scene> scene_; // no default constructor
 	doi::Camera camera_ {};
 
-	// shadow
-	vk::Format depthFormat_;
-	ShadowData shadowData_;
-	DirLight light_;
+	// light and shadow
+	doi::ShadowData shadowData_;
+	doi::DirLight light_;
+	bool updateLight_ {true};
+	// light ball
+	std::optional<doi::Material> lightMaterial_;
+	std::optional<doi::Primitive> lightBall_;
 
 	Skybox skybox_;
 
 	// args
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
-
-	// light ball
-	std::optional<doi::Material> lightMaterial_;
-	std::optional<doi::Primitive> lightBall_;
 };
 
 int main(int argc, const char** argv) {
