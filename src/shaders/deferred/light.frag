@@ -237,8 +237,8 @@ void main() {
 
 	// ambient always added, indepdnent from shadow
 	lfac += ambientFac;
-
 	fragColor = vec4(lfac * light.color * albedo, 1.0);
+
 	// fragColor.rgb += lightScatterShadow(pos) * light.color;
 	fragColor.rgb += lightScatterDepth(pos) * light.color;
 }

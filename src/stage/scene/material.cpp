@@ -141,12 +141,13 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		if(alphaMode == "BLEND") {
 			// NOTE: sorting and stuff is required for that to work...
 			dlg_warn("BLEND alphaMode not yet fully supported");
-			alphaCutoff_ = 0.f;
+			alphaCutoff_ = 0.0001f; // TODO
 		} else if(alphaMode == "MASK") {
 			alphaCutoff_ = 0.5; // default per gltf
 			if(auto m = add.find("alphaCutoff"); m != add.end()) {
 				dlg_assert(m->second.has_number_value);
 				alphaCutoff_ = m->second.number_value;
+				dlg_info("{}", alphaCutoff_);
 			}
 		}
 	}
@@ -184,7 +185,7 @@ void Material::bind(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 		albedo_,
 		roughness_,
 		metalness_,
-		flags_,
+		flags_.value(),
 		alphaCutoff_
 	};
 
