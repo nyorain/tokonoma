@@ -24,9 +24,10 @@
 #include <vpp/bufferOps.hpp>
 #include <vpp/imageOps.hpp>
 
+#include <shaders/fullscreen.vert.h>
 #include <shaders/deferred.gbuf.vert.h>
 #include <shaders/deferred.gbuf.frag.h>
-#include <shaders/fullscreen.vert.h>
+#include <shaders/deferred.pp.frag.h>
 #include <shaders/deferred.light.frag.h>
 
 #include <cstdlib>
@@ -41,9 +42,18 @@
 
 class GRenderer : public doi::Renderer {
 public:
+	vpp::Sampler depthSampler_;
+
+public:
 	GRenderer(const doi::RendererCreateInfo& ri);
+
+	// for g buffers
 	const auto& inputDs() const { return inputDs_; }
 	const auto& inputDsLayout() const { return inputDsLayout_; }
+
+	// for light buffer
+	const auto& lightInputDs() const { return lightInputDs_; }
+	const auto& lightInputDsLayout() const { return lightInputDsLayout_; }
 
 protected:
 	void createRenderPass() override;
@@ -51,13 +61,17 @@ protected:
 	std::vector<vk::ClearValue> clearValues() override;
 
 protected:
-	vpp::TrDsLayout inputDsLayout_;
-	vpp::TrDs inputDs_;
-
-	// additional render targets
+	// targets of first pass (+ depth)
 	vpp::ViewableImage pos_;
 	vpp::ViewableImage albedo_;
 	vpp::ViewableImage normal_;
+	vpp::TrDsLayout inputDsLayout_;
+	vpp::TrDs inputDs_;
+
+	// target of second pass, hdr
+	vpp::ViewableImage light_;
+	vpp::TrDsLayout lightInputDsLayout_;
+	vpp::TrDs lightInputDs_;
 };
 
 class ViewApp : public doi::App {
@@ -76,6 +90,7 @@ public:
 		auto hostMem = dev.hostMemoryTypes();
 
 		// renderer already queried the best supported depth format
+		camera_.perspective.near = 0.1f;
 		camera_.perspective.far = 100.f;
 
 		// tex sampler
@@ -90,8 +105,9 @@ public:
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
 		sampler_ = {dev, sci};
 
-		initGPipe();
-		initLPipe();
+		initGPipe(); // subpass 0
+		initLPipe(); // subpass 1
+		initPPipe(); // subpass 2
 
 		// dummy texture for materials that don't have a texture
 		std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
@@ -110,6 +126,7 @@ public:
 
 		// ubo and stuff
 		auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
+			+ sizeof(nytl::Mat4f) // inv proj
 			+ sizeof(nytl::Vec3f); // viewPos
 		sceneDs_ = {dev.descriptorAllocator(), sceneDsLayout_};
 		sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
@@ -120,17 +137,26 @@ public:
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
 		auto& l = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
-		l.data.pd = {5.8f, 12.0f, 4.f};
-		l.data.color = {0.5f, 0.5f, 0.5f};
+		l.data.pd = {-5.8f, 12.0f, -4.f};
+		l.data.color = {1.f, 1.f, 1.f};
 		l.data.type = doi::Light::Type::point;
 		l.updateDevice();
 
 		auto& l2 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
 		l2.data.pd = {-1.0, 8.0f, -1.0};
-		l2.data.color = {0.5f, 0.4f, 0.05f};
+		l2.data.color = {0.9f, 0.7f, 0.1f};
 		l2.data.type = doi::Light::Type::point;
 		l2.data.pcf = 1u;
 		l2.updateDevice();
+
+		auto& l3 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
+		l3.data.pd = {-5.8f, 12.0f, -10.f};
+		l3.data.color = {1.f, 1.f, 0.8f};
+		l3.data.type = doi::Light::Type::point;
+		l3.updateDevice();
+
+		// TODO: hack
+		// renderer().depthSampler_ = shadowData_.sampler;
 
 		// descriptors
 		vpp::DescriptorSetUpdate sdsu(sceneDs_);
@@ -177,7 +203,7 @@ public:
 		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), gPipeLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
-		}}, 0, renderer().samples()};
+		}}, 0};
 
 		constexpr auto stride = sizeof(Vertex);
 		vk::VertexInputBindingDescription bufferBindings[2] = {
@@ -268,7 +294,7 @@ public:
 		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), lPipeLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
-		}}, 1, renderer().samples()};
+		}}, 1u};
 
 		gpi.depthStencil.depthTestEnable = false;
 		gpi.depthStencil.depthWriteEnable = false;
@@ -296,13 +322,48 @@ public:
 		lPipe_ = {dev, vkpipe};
 	}
 
+	// TODO: use push constant range or ubo to select
+	// different tonemapping algorithms
+	void initPPipe() {
+		auto& dev = vulkanDevice();
+
+		// input ds
+		pp_.pipeLayout = {dev, {renderer().lightInputDsLayout()}, {}};
+
+		vpp::ShaderModule vertShader(dev, fullscreen_vert_data);
+		vpp::ShaderModule fragShader(dev, deferred_pp_frag_data);
+		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), pp_.pipeLayout, {{
+			{vertShader, vk::ShaderStageBits::vertex},
+			{fragShader, vk::ShaderStageBits::fragment},
+		}}, 2};
+
+		gpi.depthStencil.depthTestEnable = false;
+		gpi.depthStencil.depthWriteEnable = false;
+		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
+
+		vk::Pipeline vkpipe;
+		vk::createGraphicsPipelines(dev, {},
+			1, gpi.info(), NULL, vkpipe);
+
+		pp_.pipe = {dev, vkpipe};
+	}
+
 	argagg::parser argParser() const override {
+		// msaa not supported in deferred renderer
 		auto parser = App::argParser();
-		parser.definitions.push_back({
+		auto& defs = parser.definitions;
+		auto it = std::find_if(defs.begin(), defs.end(),
+			[](const argagg::definition& def){
+				return def.name == "multisamples";
+		});
+		dlg_assert(it != defs.end());
+		defs.erase(it);
+
+		defs.push_back({
 			"model", {"--model"},
 			"Path of the gltf model to load (dir must contain scene.gltf)", 1
 		});
-		parser.definitions.push_back({
+		defs.push_back({
 			"scale", {"--scale"},
 			"Apply scale to whole scene", 1
 		});
@@ -356,8 +417,15 @@ public:
 		for(auto& light : lights_) {
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 				lPipeLayout_, 2, {light.ds()}, {});
-			vk::cmdDraw(cb, 4, 1, 0, 0);
+			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		}
+
+		// post process
+		vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+			pp_.pipeLayout, 0, {renderer().lightInputDs()}, {});
+		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 	}
 
 	void update(double dt) override {
@@ -397,6 +465,10 @@ public:
 				show_ = (show_ + 1) % 7;
 				App::scheduleRerecord();
 				return true;
+			case ny::Keycode::l:
+				show_ = (show_ + 7 - 1) % 7;
+				App::scheduleRerecord();
+				return true;
 			default:
 				break;
 		}
@@ -431,7 +503,9 @@ public:
 			camera_.update = false;
 			auto map = sceneUbo_.memoryMap();
 			auto span = map.span();
-			doi::write(span, matrix(camera_));
+			auto mat = matrix(camera_);
+			doi::write(span, mat);
+			doi::write(span, nytl::Mat4f(nytl::inverse(mat)));
 			doi::write(span, camera_.pos);
 		}
 
@@ -487,11 +561,19 @@ protected:
 	bool rotateView_ {false}; // mouseLeft down
 	doi::Camera camera_ {};
 	bool updateLights_ = true;
+
+	// post processing
+	struct {
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+	} pp_;
 };
 
 // GRenderer impl
 GRenderer::GRenderer(const doi::RendererCreateInfo& ri) :
 		doi::Renderer(ri.present) {
+	dlg_assert(ri.samples == vk::SampleCountBits::e1);
+
 	// gbuffer input ds
 	auto inputBindings = {
 		vpp::descriptorBinding( // pos
@@ -503,25 +585,50 @@ GRenderer::GRenderer(const doi::RendererCreateInfo& ri) :
 		vpp::descriptorBinding( // albedo
 			vk::DescriptorType::inputAttachment,
 			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // depth
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment),
 	};
 
 	inputDsLayout_ = {ri.dev, inputBindings};
 	inputDs_ = {device().descriptorAllocator(), inputDsLayout_};
 
+	auto lightInputBindings = {
+		vpp::descriptorBinding(
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+	};
+
+	lightInputDsLayout_ = {ri.dev, lightInputBindings};
+	lightInputDs_ = {device().descriptorAllocator(), lightInputDsLayout_};
+
 	init(ri);
+
+	// TODO: duplication with shadow sampler in doi/scene/light.cpp
+	// depth sampler
+	vk::SamplerCreateInfo sci {};
+	sci.addressModeU = vk::SamplerAddressMode::clampToBorder;
+	sci.addressModeV = vk::SamplerAddressMode::clampToBorder;
+	sci.addressModeW = vk::SamplerAddressMode::clampToBorder;
+	sci.borderColor = vk::BorderColor::floatOpaqueWhite;
+	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
+	// sci.compareEnable = true;
+	// sci.compareOp = vk::CompareOp::less;
+	sci.magFilter = vk::Filter::linear;
+	sci.minFilter = vk::Filter::linear;
+	sci.minLod = 0.0;
+	sci.maxLod = 0.25;
+	depthSampler_ = {ri.dev, sci};
 }
 
 void GRenderer::createRenderPass() {
-	// TODO: do we need a dependency for msaa?
-	// see stage/render.cpp:createRenderPass
+	dlg_assert(sampleCount_ == vk::SampleCountBits::e1);
 
-	vk::AttachmentDescription attachments[5] {};
-	auto msaa = sampleCount_ != vk::SampleCountBits::e1;
+	vk::AttachmentDescription attachments[6] {};
 
-	auto aid = 0u;
-	auto depthid = -1;
-	auto resolveid = -1;
-	auto colorid = -1;
+	std::uint32_t aid = 0u;
+	std::uint32_t depthid = 0xFFFFFFFFu;
+	std::uint32_t colorid = 0xFFFFFFFFu;
 
 	// swapchain color attachments
 	// msaa: we resolve to this
@@ -533,13 +640,8 @@ void GRenderer::createRenderPass() {
 	attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
 	attachments[aid].initialLayout = vk::ImageLayout::undefined;
 	attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
-	if(msaa) {
-		attachments[aid].loadOp = vk::AttachmentLoadOp::dontCare;
-		resolveid = aid;
-	} else {
-		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
-		colorid = aid;
-	}
+	attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+	colorid = aid;
 	++aid;
 
 	// depth target
@@ -555,29 +657,13 @@ void GRenderer::createRenderPass() {
 	depthid = aid;
 	++aid;
 
-	// optiontal multisampled render target
-	if(msaa) {
-		// multisample color attachment
-		attachments[aid].format = scInfo_.imageFormat;
-		attachments[aid].samples = sampleCount_;
-		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
-		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
-		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-		attachments[aid].initialLayout = vk::ImageLayout::undefined;
-		attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
-
-		colorid = aid;
-		++aid;
-	}
-
 	// gbuffer targets
 	auto gbufid = aid;
-	auto addgbuf = [&](vk::Format format) {
+	auto addBuf = [&](vk::Format format) {
 		attachments[aid].format = format;
 		attachments[aid].samples = sampleCount_;
 		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
-		attachments[aid].storeOp = vk::AttachmentStoreOp::store;
+		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
 		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
 		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
 		attachments[aid].initialLayout = vk::ImageLayout::undefined;
@@ -585,13 +671,16 @@ void GRenderer::createRenderPass() {
 		++aid;
 	};
 
-	addgbuf(vk::Format::r16g16b16a16Sfloat); // pos
-	addgbuf(vk::Format::r8g8b8a8Snorm); // normal
-	addgbuf(vk::Format::r8g8b8a8Unorm); // albedo
+	addBuf(vk::Format::r16g16b16a16Sfloat); // pos
+	addBuf(vk::Format::r8g8b8a8Snorm); // normal
+	addBuf(vk::Format::r8g8b8a8Unorm); // albedo
 
-	vk::SubpassDescription subpasses[2] {};
+	auto lightid = aid;
+	addBuf(vk::Format::r16g16b16a16Sfloat); // light
 
-	// TODO: better layouts...
+	vk::SubpassDescription subpasses[3] {};
+
+	// TODO: better layouts, don't just use general
 	// subpass 0: render geometry into gbuffers
 	vk::AttachmentReference gbufs[3];
 	gbufs[0].attachment = gbufid + 0;
@@ -603,50 +692,79 @@ void GRenderer::createRenderPass() {
 
 	vk::AttachmentReference depthReference;
 	depthReference.attachment = depthid;
-	depthReference.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
+	// depthReference.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
+	depthReference.layout = vk::ImageLayout::general;
 
 	subpasses[0].pipelineBindPoint = vk::PipelineBindPoint::graphics;
 	subpasses[0].colorAttachmentCount = 3;
 	subpasses[0].pColorAttachments = gbufs;
 	subpasses[0].pDepthStencilAttachment = &depthReference;
 
-	// subpass 1: use gbuffers and lights to render final image
+	// subpass 1: use gbuffers and lights to render light image
+	vk::AttachmentReference lightReference;
+	lightReference.attachment = lightid;
+	lightReference.layout = vk::ImageLayout::colorAttachmentOptimal;
+
+	subpasses[1].pipelineBindPoint = vk::PipelineBindPoint::graphics;
+	subpasses[1].colorAttachmentCount = 1;
+	subpasses[1].pColorAttachments = &lightReference;
+	subpasses[1].inputAttachmentCount = 3;
+	subpasses[1].pInputAttachments = gbufs;
+	// TODO(depth): not sure if allowed at all/what i want
+	// we use it as sampled input
+	subpasses[1].preserveAttachmentCount = 1;
+	subpasses[1].pPreserveAttachments = &depthid;
+
+	// subpass 2: post processing, light -> swapchain
 	vk::AttachmentReference colorReference;
 	colorReference.attachment = colorid;
 	colorReference.layout = vk::ImageLayout::colorAttachmentOptimal;
 
-	vk::AttachmentReference resolveReference;
-	resolveReference.attachment = resolveid;
-	resolveReference.layout = vk::ImageLayout::colorAttachmentOptimal;
+	vk::AttachmentReference lightInputReference;
+	lightInputReference.attachment = lightid;
+	lightInputReference.layout = vk::ImageLayout::shaderReadOnlyOptimal;
 
-	subpasses[1].pipelineBindPoint = vk::PipelineBindPoint::graphics;
-	subpasses[1].colorAttachmentCount = 1;
-	subpasses[1].pColorAttachments = &colorReference;
-	subpasses[1].inputAttachmentCount = 3;
-	subpasses[1].pInputAttachments = gbufs;
+	subpasses[2].pipelineBindPoint = vk::PipelineBindPoint::graphics;
+	subpasses[2].colorAttachmentCount = 1;
+	subpasses[2].pColorAttachments = &colorReference;
+	subpasses[2].inputAttachmentCount = 1;
+	subpasses[2].pInputAttachments = &lightInputReference;
 
-	if(sampleCount_ != vk::SampleCountBits::e1) {
-		subpasses[1].pResolveAttachments = &resolveReference;
-	}
-
+	// TODO: byRegion correct?
 	// dependency between subpasses
-	vk::SubpassDependency dependency;
-	dependency.dependencyFlags = vk::DependencyBits::byRegion; // TODO: correct?
-	dependency.srcSubpass = 0u;
-	dependency.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
-	dependency.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
-	dependency.dstSubpass = 1u;
-	dependency.dstAccessMask = vk::AccessBits::inputAttachmentRead;
-	dependency.dstStageMask = vk::PipelineStageBits::fragmentShader;
+	vk::SubpassDependency dependencies[3];
+	dependencies[0].dependencyFlags = vk::DependencyBits::byRegion;
+	dependencies[0].srcSubpass = 0u;
+	dependencies[0].srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+	dependencies[0].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+	dependencies[0].dstSubpass = 1u;
+	dependencies[0].dstAccessMask = vk::AccessBits::inputAttachmentRead;
+	dependencies[0].dstStageMask = vk::PipelineStageBits::fragmentShader;
+
+	dependencies[2].dependencyFlags = {};
+	dependencies[2].srcSubpass = 0u;
+	dependencies[2].srcAccessMask = vk::AccessBits::depthStencilAttachmentWrite;
+	dependencies[2].srcStageMask = vk::PipelineStageBits::allGraphics;
+	dependencies[2].dstSubpass = 1u;
+	dependencies[2].dstAccessMask = vk::AccessBits::shaderRead;
+	dependencies[2].dstStageMask = vk::PipelineStageBits::fragmentShader;
+
+	dependencies[1].dependencyFlags = vk::DependencyBits::byRegion;
+	dependencies[1].srcSubpass = 1u;
+	dependencies[1].srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+	dependencies[1].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+	dependencies[1].dstSubpass = 2u;
+	dependencies[1].dstAccessMask = vk::AccessBits::shaderRead;
+	dependencies[1].dstStageMask = vk::PipelineStageBits::fragmentShader;
 
 	// create rp
 	vk::RenderPassCreateInfo renderPassInfo;
 	renderPassInfo.attachmentCount = aid;
 	renderPassInfo.pAttachments = attachments;
-	renderPassInfo.subpassCount = 2;
+	renderPassInfo.subpassCount = 3;
 	renderPassInfo.pSubpasses = subpasses;
-	renderPassInfo.dependencyCount = 1;
-	renderPassInfo.pDependencies = &dependency;
+	renderPassInfo.dependencyCount = 3;
+	renderPassInfo.pDependencies = dependencies;
 
 	renderPass_ = {device(), renderPassInfo};
 }
@@ -659,12 +777,6 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 	// depth
 	createDepthTarget(scInfo_.imageExtent);
 	attachments.push_back(depthTarget_.vkImageView());
-
-	// msaa
-	if(sampleCount_ != vk::SampleCountBits::e1) {
-		createMultisampleTarget(scInfo_.imageExtent);
-		attachments.push_back(multisampleTarget_.vkImageView());
-	}
 
 	// gbufs
 	auto initBuf = [&](vpp::ViewableImage& img, vk::Format format) {
@@ -683,6 +795,7 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 	initBuf(pos_, vk::Format::r16g16b16a16Sfloat);
 	initBuf(normal_, vk::Format::r8g8b8a8Snorm);
 	initBuf(albedo_, vk::Format::r8g8b8a8Unorm);
+	initBuf(light_, vk::Format::r16g16b16a16Sfloat);
 
 	for(auto& buf : bufs) {
 		attachments[scPos] = buf.imageView;
@@ -696,11 +809,23 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 		buf.framebuffer = {device(), info};
 	}
 
-	// update descriptor set
+	// update descriptor sets
 	vpp::DescriptorSetUpdate dsu(inputDs_);
 	dsu.inputAttachment({{{}, pos_.vkImageView(), vk::ImageLayout::general}});
 	dsu.inputAttachment({{{}, normal_.vkImageView(), vk::ImageLayout::general}});
 	dsu.inputAttachment({{{}, albedo_.vkImageView(), vk::ImageLayout::general}});
+
+	// TODO: depthSampler_ hack
+	if(depthSampler_) {
+		dsu.imageSampler({{depthSampler_, depthTarget_.vkImageView(),
+			vk::ImageLayout::general}});
+	}
+
+	vpp::DescriptorSetUpdate ldsu(lightInputDs_);
+	ldsu.inputAttachment({{{}, light_.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+
+	vpp::apply({dsu, ldsu});
 }
 
 std::vector<vk::ClearValue> GRenderer::clearValues() {
@@ -708,7 +833,7 @@ std::vector<vk::ClearValue> GRenderer::clearValues() {
 
 	// gbuffers
 	vk::ClearValue c {{0.f, 0.f, 0.f, 0.f}};
-	for(auto i = 0u; i < 3; ++i) {
+	for(auto i = 0u; i < 4; ++i) {
 		cv.push_back(c);
 	}
 	return cv;

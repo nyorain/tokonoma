@@ -108,6 +108,7 @@ shaders_src = [
 	['deferred_shaders', [
 	  ['deferred/gbuf.vert', include_glsl],
 	  ['deferred/gbuf.frag', include_glsl],
+	  ['deferred/pp.frag', include_glsl],
 	  ['deferred/light.frag', include_glsl],
 	]],
 ]
