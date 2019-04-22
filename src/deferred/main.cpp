@@ -137,22 +137,22 @@ public:
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
 		auto& l = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
-		l.data.pd = {-5.8f, 12.0f, -4.f};
+		// l.data.dir = {-5.8f, -12.0f, -4.f};
+		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {1.f, 1.f, 1.f};
-		l.data.type = doi::Light::Type::point;
 		l.updateDevice();
 
 		auto& l2 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
-		l2.data.pd = {-1.0, 8.0f, -1.0};
+		// l2.data.dir = {-1.0, -8.0f, -1.0};
+		l2.data.position = {-1.0, 5.0f, -1.0};
 		l2.data.color = {0.9f, 0.7f, 0.1f};
-		l2.data.type = doi::Light::Type::point;
-		l2.data.pcf = 1u;
+		l2.data.pcf = 1.f;
 		l2.updateDevice();
 
 		auto& l3 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
-		l3.data.pd = {-5.8f, 12.0f, -10.f};
+		// l3.data.dir = {-5.8f, -12.0f, -10.f};
+		l3.data.position = {1.f, 3.0f, -1.f};
 		l3.data.color = {1.f, 1.f, 0.8f};
-		l3.data.type = doi::Light::Type::point;
 		l3.updateDevice();
 
 		// TODO: hack
@@ -454,11 +454,12 @@ public:
 
 		switch(ev.keycode) {
 			case ny::Keycode::m: // move light here
-				lights_[0].data.pd = camera_.pos;
+				// lights_[0].data.dir = -camera_.pos;
+				lights_[0].data.position = camera_.pos;
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::p:
-				lights_[0].data.pcf = 1 - lights_[0].data.pcf;
+				lights_[0].data.pcf = 1.f - lights_[0].data.pcf;
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::n:
@@ -540,7 +541,8 @@ protected:
 
 	// shadow
 	doi::ShadowData shadowData_;
-	std::vector<doi::DirLight> lights_;
+	// std::vector<doi::DirLight> lights_;
+	std::vector<doi::PointLight> lights_;
 
 	vpp::PipelineLayout gPipeLayout_; // gbuf
 	vpp::PipelineLayout lPipeLayout_; // light

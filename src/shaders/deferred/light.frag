@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "noise.glsl"
+#include "scene.glsl"
 
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
@@ -24,123 +25,71 @@ layout(set = 1, binding = 2, input_attachment_index = 2)
 // layout(set = 1, binding = 3) uniform sampler2DShadow depthTex;
 layout(set = 1, binding = 3) uniform sampler2D depthTex;
 
-layout(set = 2, binding = 0, row_major) uniform Light {
-	mat4 matrix; // from global to light space
-	vec3 pd; // position for point light, direction of dir light
-	uint type; // point or dir
-	vec3 color;
-	uint pcf;
-} light;
-
-layout(set = 2, binding = 1) uniform sampler2DShadow shadowTex;
+layout(set = 2, binding = 0, row_major) uniform LightBuf {
+	// DirLight light;
+	PointLight light;
+};
+// layout(set = 2, binding = 1) uniform sampler2DShadow shadowTex;
+layout(set = 2, binding = 1) uniform samplerCubeShadow shadowTex;
 
 layout(push_constant) uniform Show {
 	uint mode;
 } show;
 
-const uint pointLight = 1;
-const uint dirLight = 2;
-
-// samples the shadow texture multiple times to get smoother shadow
-// pos: position in light space
-// returns (1 - shadow), i.e. the light factor
-float shadowpcf(vec3 pos, int range) {
-	if(pos.z > 1.0) {
-		return 1.0;
-	}
-
-	vec2 texelSize = 1.f / textureSize(shadowTex, 0);
-	float sum = 0.f;
-	for(int x = -range; x <= range; ++x) {
-		for(int y = -range; y <= range; ++y) {
-			// sampler has builtin comparison
-			vec3 off = vec3(texelSize * vec2(x, y),  0);
-			sum += texture(shadowTex, pos + off).r;
-		}
-	}
-
-	float total = ((2 * range + 1) * (2 * range + 1));
-	return sum / total;
-}
-
-float lightScatterShadow(vec3 pos) {
-	// NOTE: first attempt at light scattering
-	// http://www.alexandre-pestana.com/volumetric-lights/
-	// problem with this is that it doesn't work if background
-	// is clear.
-	vec3 rayStart = scene.viewPos;
-	vec3 rayEnd = pos;
-	vec3 ray = rayEnd - rayStart;
-
-	float rayLength = length(ray);
-	vec3 rayDir = ray / rayLength;
-	rayLength = min(rayLength, 4.f);
-	ray = rayDir * rayLength;
-
-	vec3 lrdir = (light.type == pointLight) ?
-		light.pd - scene.viewPos :
-		-light.pd;
-	float fac = dot(normalize(lrdir), rayDir);
-
-	// offset slightly for smoother but noisy results
-	// TODO: instead use per-pixel dither pattern and smooth out
-	// in pp pass. Needs additional scattering attachment though
-	rayStart += 0.1 * random(rayEnd) * rayDir;
-
-	const uint steps = 25u;
-	vec3 step = ray / steps;
-	float accum = 0.0;
-	pos = rayStart;
-	for(uint i = 0u; i < steps; ++i) {
-		// position in light space
-		vec4 pls = light.matrix * vec4(pos, 1.0);
-		pls.xyz /= pls.w;
-		pls.y *= -1; // invert y
-		pls.xy = 0.5 + 0.5 * pls.xy; // normalize for texture access
-		// float fac = max(dot(normalize(light.pd - pos), rayDir), 0.0); // TODO: light.position
-		// accum += fac * texture(shadowTex, pls.xyz).r;
-		// TODO: implement/use mie scattering function
-		accum += texture(shadowTex, pls.xyz).r;
-		pos += step;
-	}
-
-	// 0.25: random factor, should be configurable
-	accum *= 0.25 * fac;
-	accum /= steps;
-	accum = clamp(accum, 0.0, 1.0);
-	return accum;
-}
-
-vec3 sceneMap(vec3 pos) {
-	vec4 pos4 = scene.proj * vec4(pos, 1.0);
-	vec3 mapped = pos4.xyz / pos4.w;
-	mapped.y *= -1; // invert y
-	mapped.xy = 0.5 + 0.5 * mapped.xy; // normalize for texture access
-	return mapped;
+// TODO: move to scene.glsl
+// ripped from http://www.alexandre-pestana.com/volumetric-lights/
+float mieScattering(float lightDotView, float gs) {
+	float result = 1.0f - gs * gs;
+	result /= (4.0f * 3.141 * pow(1.0f + gs * gs - (2.0f * gs) * lightDotView, 1.5f));
+	return result;
 }
 
 // purely screen space old-school light scattering rays
 // couldn't we do something like this in light/shadow space as well?
 float lightScatterDepth(vec3 pos) {
-	vec3 lrdir = (light.type == pointLight) ?
-		light.pd - scene.viewPos :
-		-light.pd;
-	float fac = dot(normalize(pos - scene.viewPos), normalize(lrdir));
-	if(fac < 0) {
+	vec3 lrdir = light.pos.xyz - scene.viewPos;
+	// float div = pow(dot(lrdir, lrdir), 0.6);
+	// float div = length(lrdir);
+	float div = 1.f;
+	vec3 rayDir = normalize(pos - scene.viewPos);
+	float ldv = dot(normalize(lrdir), rayDir);
+	float fac = mieScattering(ldv, 0.01) / div;
+
+	// vec3 lrdir = -normalize(light.dir.xyz);
+	// float fac = dot(normalize(pos - scene.viewPos), normalize(lrdir));
+	// float fac = mieScattering(dot(normalize(lrdir), rayDir), 0.95);
+	// fac *= fac;
+
+	vec2 rayStart = sceneMap(scene.proj, pos).xy;
+	// vec3 rayEnd = sceneMap(scene.proj, light.dir.xyz); // TODO: light.position
+	// vec3 rayEnd = sceneMap(scene.proj, -light.dir.xyz); // TODO: bad
+	vec3 rayEnd = sceneMap(scene.proj, light.pos.xyz); // TODO: bad
+	// if(rayEnd.xy != clamp(rayEnd.xy, 0.0, 1.0)) { // check if light is in screen
+		// return 0.f;
+	// }
+	
+	// only really have an effect if light is in center
+	// also makes sure that light oustide of view doesn't have effect
+	vec2 drayEnd = clamp(rayEnd.xy, 0.0, 1.0);
+	if(drayEnd != rayEnd.xy) {
 		return 0.f;
 	}
 
-	// fac *= fac;
+	// fac *= ldv;
+	fac *= pow(drayEnd.x * (1 - drayEnd.x), 0.5);
+	fac *= pow(drayEnd.y * (1 - drayEnd.y), 0.5);
 
-	vec2 rayStart = sceneMap(pos).xy;
-	vec3 rayEnd = sceneMap(light.pd); // TODO: light.position
-	// rayEnd.xy = clamp(rayEnd.xy, 0.0, 1.0);
 	float accum = 0.f;
-	uint steps = 25u;
+	uint steps = 20u;
 	vec2 ray = rayEnd.xy - rayStart;
 	vec2 step = ray / steps;
 
+	// TODO: instead use per-pixel dither pattern and smooth out
+	// in pp pass. Needs additional scattering attachment though
+	step += 0.05 * (2 * random(step) - 1) * step;
+	rayStart += 0.1 * (2 * random(rayStart) - 1) * step;
 	vec2 ipos = rayStart;
+
 	for(uint i = 0u; i < steps; ++i) {
 		// the z value of the lookup position is the value we compare with
 		// accum += texture(depthTex, vec3(ipos, rayEnd.z)).r;
@@ -153,8 +102,73 @@ float lightScatterDepth(vec3 pos) {
 	}
 
 	// accum *= 0.25 * fac;
-	accum *= 0.1 * fac;
-	accum /= steps; // only done steps?
+	accum *= fac;
+	accum /= steps; // only count completed steps?
+	accum = clamp(accum, 0.0, 1.0);
+	return accum;
+}
+
+// TODO: fix. Needs some serious changes for point lights
+
+float lightScatterShadow(vec3 pos) {
+	// NOTE: first attempt at light scattering
+	// http://www.alexandre-pestana.com/volumetric-lights/
+	// problem with this is that it doesn't work if background
+	// is clear.
+	vec3 rayStart = scene.viewPos;
+	vec3 rayEnd = pos;
+	vec3 ray = rayEnd - rayStart;
+
+	float rayLength = length(ray);
+	vec3 rayDir = ray / rayLength;
+	rayLength = min(rayLength, 8.f);
+	ray = rayDir * rayLength;
+
+	// float fac = 1 / dot(normalize(-ldir), rayDir);
+	// TODO
+	vec3 lrdir = light.pos.xyz - scene.viewPos;
+	// float div = pow(dot(lrdir, lrdir), 0.6);
+	// float div = length(lrdir);
+	float div = 1.f;
+	float fac = mieScattering(dot(normalize(lrdir), rayDir), 0.01) / div;
+
+	const uint steps = 20u;
+	vec3 step = ray / steps;
+	// offset slightly for smoother but noisy results
+	// TODO: instead use per-pixel dither pattern and smooth out
+	// in pp pass. Needs additional scattering attachment though
+	// rayStart += 0.1 * random(rayEnd) * rayDir;
+	step += 0.01 * random(step) * step;
+	rayStart += 0.01 * random(rayEnd) * step;
+
+	float accum = 0.0;
+	pos = rayStart;
+
+	// TODO: falloff over time
+	// float ffac = 1.f;
+	// float falloff = 0.9;
+	for(uint i = 0u; i < steps; ++i) {
+		/*
+		// position in light space
+		vec4 pls = light.proj * vec4(pos, 1.0);
+		pls.xyz /= pls.w;
+		pls.y *= -1; // invert y
+		pls.xy = 0.5 + 0.5 * pls.xy; // normalize for texture access
+
+		// float fac = max(dot(normalize(light.pd - pos), rayDir), 0.0); // TODO: light.position
+		// accum += fac * texture(shadowTex, pls.xyz).r;
+		// TODO: implement/use mie scattering function
+		accum += texture(shadowTex, pls.xyz).r;
+		*/
+
+		accum += pointShadow(shadowTex, light.pos, pos);
+		pos += step;
+	}
+
+	// 0.25: random factor, should be configurable
+	// accum *= 0.25 * fac;
+	accum *= fac;
+	accum /= steps;
 	accum = clamp(accum, 0.0, 1.0);
 	return accum;
 }
@@ -215,10 +229,8 @@ void main() {
 
 	// position of texel in light space
 	float lfac = 0.0;
-	vec3 ldir = (light.type == pointLight) ?
-		pos - light.pd :
-		light.pd;
-	ldir = normalize(ldir);
+	// vec3 ldir = normalize(light.dir.xyz);
+	vec3 ldir = normalize(pos - light.pos.xyz);
 
 	// diffuse
 	lfac += diffuseFac * max(dot(normal, -ldir), 0.0);
@@ -229,16 +241,26 @@ void main() {
 	lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
 
 	// shadow
-	vec4 lsPos = light.matrix * vec4(pos, 1.0);
-	lsPos.xyz /= lsPos.w;
-	lsPos.y *= -1; // invert y
-	lsPos.xy = 0.5 + 0.5 * lsPos.xy; // normalize for texture access
-	lfac *= shadowpcf(lsPos.xyz, int(light.pcf));
+	// vec4 lsPos = light.proj * vec4(pos, 1.0);
+	// lsPos.xyz /= lsPos.w;
+	// lsPos.y *= -1; // invert y
+	// lsPos.xy = 0.5 + 0.5 * lsPos.xy; // normalize for texture access
+
+	int pcf = int(light.color.w);
+	// lfac *= dirShadow(shadowTex, lsPos.xyz, pcf);
+	if(pcf > 0) {
+		float viewDistance = length(scene.viewPos - pos);
+		// TODO: make radius dependent on difference between
+		// closest and current in (0, 0) sample? mimic GI
+		float radius = (1.0 + viewDistance) / 500.0; 
+		lfac *= pointShadowSmooth(shadowTex, light.pos, pos, radius);
+	} else {
+		lfac *= pointShadow(shadowTex, light.pos, pos);
+	}
 
 	// ambient always added, indepdnent from shadow
 	lfac += ambientFac;
-	fragColor = vec4(lfac * light.color * albedo, 1.0);
-
-	// fragColor.rgb += lightScatterShadow(pos) * light.color;
-	fragColor.rgb += lightScatterDepth(pos) * light.color;
+	fragColor = vec4(lfac * light.color.rgb * albedo, 1.0);
+	// fragColor.rgb += lightScatterDepth(pos) * light.color.rgb;
+	fragColor.rgb += lightScatterShadow(pos) * light.color.rgb;
 }

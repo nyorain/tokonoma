@@ -6,11 +6,21 @@
 #include <vpp/vk.hpp>
 #include <vpp/pipelineInfo.hpp>
 #include <vpp/formats.hpp>
+#include <vpp/imageOps.hpp>
+#include <vpp/device.hpp>
+#include <vpp/queue.hpp>
 
 #include <shaders/shadowmap.vert.h>
 #include <shaders/shadowmap.frag.h>
+#include <shaders/shadowmapCube.vert.h>
+#include <shaders/shadowmapCube.frag.h>
+
+// TODO: some duplication between dir and point light
 
 namespace doi {
+
+// needs to be the same as in shadowmapCube.vert
+constexpr auto pcrOffsetFaceID = 32u;
 
 ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		vk::DescriptorSetLayout lightDsLayout,
@@ -60,18 +70,26 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	data.sampler = {dev, sci};
 
 	// pipeline layout
+	dlg_assert(materialPcr.size == pcrOffsetFaceID);
+	vk::PushConstantRange cubemapPcr;
+	cubemapPcr.offset = pcrOffsetFaceID;
+	cubemapPcr.stageFlags = vk::ShaderStageBits::vertex;
+	cubemapPcr.size = 4u;
+
 	data.pl = {dev,
 		{lightDsLayout, materialDsLayout, primitiveDsLayout},
-		{materialPcr}};
+		{materialPcr, cubemapPcr}};
 
 	// pipeline
 	vpp::ShaderModule vertShader(dev, shadowmap_vert_data);
 	vpp::ShaderModule fragShader(dev, shadowmap_frag_data);
-
 	vpp::GraphicsPipelineInfo gpi {data.rp, data.pl, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
 	}}, 0, vk::SampleCountBits::e1};
+
+	// see cubemap pipeline below
+	gpi.flags(vk::PipelineCreateBits::allowDerivatives);
 
 	constexpr auto stride = sizeof(doi::Primitive::Vertex);
 	vk::VertexInputBindingDescription bufferBindings[2] = {
@@ -122,9 +140,35 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		1, gpi.info(), NULL, vkpipe);
 
 	data.pipe = {dev, vkpipe};
+
+	// cubemap pipe
+	// TODO: we could alternatively always use a uniform buffer with
+	// dynamic offset for the light view projection... but then we
+	// might have to pad that buffer (since vulkan has an alignment
+	// requirement there) which adds complexity as well
+	vpp::ShaderModule cubeVertShader(dev, shadowmapCube_vert_data);
+	vpp::ShaderModule cubeFragShader(dev, shadowmapCube_frag_data);
+	vpp::GraphicsPipelineInfo cgpi {data.rp, data.pl, {{
+		{cubeVertShader, vk::ShaderStageBits::vertex},
+		{cubeFragShader, vk::ShaderStageBits::fragment},
+	}}, 0, vk::SampleCountBits::e1};
+
+	cgpi.dynamic = gpi.dynamic;
+	cgpi.blend = gpi.blend;
+	cgpi.rasterization = gpi.rasterization;
+	cgpi.depthStencil = gpi.depthStencil;
+	cgpi.assembly = gpi.assembly;
+	cgpi.vertex = gpi.vertex;
+	cgpi.base(data.pipe); // basically the same, except vertex shader
+
+	vk::createGraphicsPipelines(dev, {},
+		1, cgpi.info(), NULL, vkpipe);
+	data.pipeCube = {dev, vkpipe};
+
 	return data;
 }
 
+// DirLight
 DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		const ShadowData& data) {
 	auto extent = vk::Extent3D{size_.x, size_.y, 1u};
@@ -149,8 +193,8 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 
 	// setup light ds and ubo
 	auto hostMem = dev.hostMemoryTypes();
-	auto lightUboSize = sizeof(nytl::Mat4f) + // projection, view
-		sizeof(this->data);
+	auto lightUboSize = sizeof(this->data) +
+		sizeof(nytl::Mat4f); // projection, view
 	ds_ = {dev.descriptorAllocator(), dsLayout};
 	ubo_ = {dev.bufferAllocator(), lightUboSize,
 		vk::BufferUsageBits::uniformBuffer, 0, hostMem};
@@ -196,9 +240,8 @@ nytl::Mat4f DirLight::lightMatrix() const {
 	// TODO: not correct, just for testing.
 	// TODO: sizes should be configurable; depend on scene size
 	auto mat = doi::ortho3Sym(8.f, 8.f, 0.5f, 100.f);
-	// auto mat = doi::perspective3RH<float>
-	// 	(0.25 * nytl::constants::pi, 1.f, 0.01f, 30.f);
-	mat = mat * doi::lookAtRH(this->data.pd,
+	// TODO: position should be dependent on viewPosition...
+	mat = mat * doi::lookAtRH(-this->data.dir, // TODO!
 		{0.f, 0.f, 0.f}, // always looks at center
 		{0.f, 1.f, 0.f});
 	return mat;
@@ -207,8 +250,249 @@ nytl::Mat4f DirLight::lightMatrix() const {
 void DirLight::updateDevice() {
 	auto map = ubo_.memoryMap();
 	auto span = map.span();
-	doi::write(span, lightMatrix());
 	doi::write(span, this->data);
+	doi::write(span, lightMatrix());
+}
+
+// PointLight
+// implementors NOTE: this way of rendering the shadow map seemed *really*
+// inefficient to me first (6 seperate render passes with copies in between)
+// but it probably is the best we can get with vulkan... We can't create a
+// render pass with 6 subpasses (one for each surface) since which subpassIndex
+// specify in the depth pipeline then? we'd need 6 pipelines which seems
+// unrealistic. For rendering directly into the cube map we'd need 6
+// framebuffers which may also waste resources (but that may be an alternative
+// worth investigating... we'd still need 6 seperate renderpasses though)
+PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
+		const ShadowData& data) {
+	auto extent = vk::Extent3D{size_.x, size_.y, 1u};
+
+	// target
+	auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
+		vk::ImageUsageBits::transferSrc;
+	auto targetInfo = vpp::ViewableImageCreateInfo::general(dev,
+		extent, targetUsage, {data.depthFormat},
+		vk::ImageAspectBits::depth);
+	target_ = {dev, *targetInfo};
+
+	// framebuffer
+	vk::FramebufferCreateInfo fbi {};
+	fbi.attachmentCount = 1;
+	fbi.width = extent.width;
+	fbi.height = extent.height;
+	fbi.layers = 1u;
+	fbi.pAttachments = &target_.vkImageView();
+	fbi.renderPass = data.rp;
+	fb_ = {dev, fbi};
+
+	// shadow map
+	targetInfo->img.arrayLayers = 6u;
+	targetInfo->img.flags = vk::ImageCreateBits::cubeCompatible;
+	targetInfo->img.usage = vk::ImageUsageBits::sampled |
+		vk::ImageUsageBits::transferDst;
+	targetInfo->view.subresourceRange.layerCount = 6u;
+	targetInfo->view.components = {};
+	targetInfo->view.viewType = vk::ImageViewType::cube;
+	shadowMap_ = {dev, *targetInfo};
+
+	// initial layout change
+	auto cb = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
+	vk::beginCommandBuffer(cb, {});
+	vpp::changeLayout(cb, shadowMap_.image(),
+		vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::topOfPipe, {},
+		{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
+	vk::endCommandBuffer(cb);
+
+	// TODO: don't wait here... batch that work
+	vk::SubmitInfo submission;
+	submission.commandBufferCount = 1;
+	submission.pCommandBuffers = &cb.vkHandle();
+	dev.queueSubmitter().add(submission);
+	dev.queueSubmitter().wait(dev.queueSubmitter().current());
+
+	// setup light ds and ubo
+	auto hostMem = dev.hostMemoryTypes();
+	auto lightUboSize = 6 * sizeof(nytl::Mat4f) + // 6 * projection;view
+		sizeof(this->data);
+	ds_ = {dev.descriptorAllocator(), dsLayout};
+	ubo_ = {dev.bufferAllocator(), lightUboSize,
+		vk::BufferUsageBits::uniformBuffer, 0, hostMem};
+	updateDevice();
+
+	vpp::DescriptorSetUpdate ldsu(ds_);
+	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+	ldsu.imageSampler({{data.sampler, shadowMap(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	vpp::apply({ldsu});
+}
+
+nytl::Mat4f PointLight::lightMatrix(unsigned i) const {
+	// https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
+	// NOTE: we can't use y inversion in the vertex shader since that
+	// produce wrong results for the +y and -y faces.
+	// we instead flip up for all other faces
+	static constexpr struct {
+		nytl::Vec3f normal;
+		nytl::Vec3f up;
+	} views[6] = {
+		{{1.f, 0.f, 0.f}, {0.f, -1.f, 0.f}},
+		{{-1.f, 0.f, 0.f}, {0.f, -1.f, 0.f}},
+		{{0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}},
+		{{0.f, -1.f, 0.f}, {0.f, 0.f, -1.f}},
+		{{0.f, 0.f, 1.f}, {0.f, -1.f, 0.f}},
+		{{0.f, 0.f, -1.f}, {0.f, -1.f, 0.f}},
+	};
+
+	// NOTE: we could also just generate matrix once and then rotate
+	auto fov = 0.5 * nytl::constants::pi;
+	auto aspect = 1.f;
+	auto np = 0.1f;
+	auto fp = this->data.farPlane;
+	auto mat = doi::perspective3RH<float>(fov, aspect, np, fp);
+	mat = mat * doi::lookAtRH(this->data.position,
+		this->data.position + views[i].normal,
+		views[i].up);
+	return mat;
+
+	/*
+	// alternative implementation that uses manual rotations (and translation)
+	// instead lookAt
+	// in parts from
+	// https://github.com/SaschaWillems/Vulkan/blob/master/examples/shadowmappingomni/shadowmappingomni.cpp
+	auto pi = float(nytl::constants::pi);
+	auto fov = 0.5 * pi;
+	auto aspect = 1.f;
+	auto np = 0.1f;
+	auto fp = this->data.farPlane;
+	auto mat = doi::perspective3RH<float>(fov, aspect, np, fp);
+	auto viewMat = nytl::identity<4, float>();
+
+	switch(i) {
+	case 0:
+		// viewMat = doi::rotateMat({1.f, 0.f, 0.f}, pi)
+		viewMat = doi::rotateMat({0.f, 1.f, 0.f}, pi / 2);
+		break;
+	case 1:	// NEGATIVE_X
+		// viewMat = doi::rotateMat({1.f, 0.f, 0.f}, pi)
+		viewMat = doi::rotateMat({0.f, 1.f, 0.f}, -pi / 2);
+		break;
+	case 2:	// POSITIVE_Y
+		viewMat = doi::rotateMat({1.f, 0.f, 0.f}, pi / 2);
+		break;
+	case 3:	// NEGATIVE_Y
+		viewMat = doi::rotateMat({1.f, 0.f, 0.f}, -pi / 2);
+		break;
+	case 4:	// POSITIVE_Z
+		viewMat = doi::rotateMat({1.f, 0.f, 0.f}, pi);
+		break;
+	case 5:	// NEGATIVE_Z
+		viewMat = doi::rotateMat({0.f, 0.f, 1.f}, pi);
+		break;
+	}
+
+	return mat * viewMat * doi::translateMat({-this->data.position});
+	*/
+}
+
+void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
+		const Scene& scene) {
+	// TODO: fine tune these values!
+	// maybe they should be scene dependent? dependent on size/scale?
+	// TODO: not sure if this has an effect here. Read up in vulkan spec
+	// if applied even when fragment shader sets gl_FragDepth manually
+	vk::cmdSetDepthBias(cb, 1.0, 0.f, 8.0);
+
+	auto pl = data.pl.vkHandle();
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipeCube);
+	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+		pl, 0, {ds_}, {});
+
+	vpp::changeLayout(cb, shadowMap_.image(),
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::allGraphics,
+		vk::AccessBits::shaderRead,
+		vk::ImageLayout::transferDstOptimal,
+		vk::PipelineStageBits::transfer,
+		vk::AccessBits::transferWrite,
+		{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
+
+	// for(auto& normal : normals) {
+	for(std::uint32_t i = 0u; i < 6u; ++i) {
+		vk::ClearValue clearValue {};
+		clearValue.depthStencil = {1.f, 0u};
+
+		// render into shadow map
+		vk::cmdBeginRenderPass(cb, {
+			data.rp, fb_,
+			{0u, 0u, size_.x, size_.y},
+			1, &clearValue
+		}, {});
+
+		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
+		vk::cmdSetViewport(cb, 0, 1, vp);
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
+
+		// needed so vertex shader knows which projection matrix to use
+		vk::cmdPushConstants(cb, data.pl, vk::ShaderStageBits::vertex,
+			pcrOffsetFaceID, 4u, &i);
+		scene.render(cb, pl);
+		vk::cmdEndRenderPass(cb);
+
+		// TODO: transitions could be done in extra render pass
+		// copy from render target to shadow cube map
+		vpp::changeLayout(cb, target_.image(),
+			vk::ImageLayout::depthStencilReadOnlyOptimal,
+			vk::PipelineStageBits::allGraphics, {},
+			vk::ImageLayout::transferSrcOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferRead,
+			{vk::ImageAspectBits::depth, 0, 1, 0, 1});
+		vk::ImageCopy copy {};
+		copy.extent = {size_.x, size_.y, 1};
+		copy.dstOffset = {0u, 0u, 0u};
+		copy.srcOffset = {0u, 0u, 0u};
+		copy.srcSubresource.aspectMask = vk::ImageAspectBits::depth;
+		copy.srcSubresource.layerCount = 1u;
+		copy.srcSubresource.baseArrayLayer = 0u;
+		copy.dstSubresource.aspectMask = vk::ImageAspectBits::depth;
+		copy.dstSubresource.baseArrayLayer = i;
+		copy.dstSubresource.layerCount = 1u;
+		vk::cmdCopyImage(cb, target_.vkImage(),
+			vk::ImageLayout::transferSrcOptimal,
+			shadowMap_.vkImage(), vk::ImageLayout::transferDstOptimal,
+			{copy});
+		// TODO: needed?
+		vpp::changeLayout(cb, target_.image(),
+			vk::ImageLayout::transferSrcOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferRead,
+			vk::ImageLayout::depthStencilAttachmentOptimal,
+			vk::PipelineStageBits::allGraphics,
+			vk::AccessBits::depthStencilAttachmentWrite |
+				vk::AccessBits::depthStencilAttachmentRead,
+			{vk::ImageAspectBits::depth, 0, 1, 0, 1});
+	}
+
+	// TODO
+	vpp::changeLayout(cb, shadowMap_.image(),
+		vk::ImageLayout::transferDstOptimal,
+		vk::PipelineStageBits::transfer,
+		vk::AccessBits::transferWrite,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::allGraphics,
+		vk::AccessBits::shaderRead,
+		{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
+}
+
+void PointLight::updateDevice() {
+	auto map = ubo_.memoryMap();
+	auto span = map.span();
+	doi::write(span, this->data);
+	for(auto i = 0u; i < 6u; ++i) {
+		doi::write(span, lightMatrix(i));
+	}
 }
 
 } // namespace doi

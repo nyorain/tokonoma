@@ -43,6 +43,9 @@
 #include <vector>
 #include <string>
 
+// TODO: lightBall visualization really bad idea for
+// directional light...
+
 class ViewApp : public doi::App {
 public:
 	static constexpr auto maxLightSize = 8u;
@@ -215,8 +218,9 @@ public:
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
 		light_ = {dev, lightDsLayout_, shadowData_};
-		light_.data.pd = {5.8f, 12.0f, 4.f};
-		light_.data.type = doi::Light::Type::point;
+		// light_.data.dir = {5.8f, -12.0f, 4.f};
+		light_.data.position = {0.f, 5.0f, 0.f};
+		light_.data.farPlane = 10.f;
 		updateLight_ = true;
 
 		// descriptors
@@ -282,8 +286,10 @@ public:
 		}
 
 		if(moveLight_) {
-			light_.data.pd.x = 7.0 * std::cos(0.2 * time_);
-			light_.data.pd.z = 7.0 * std::sin(0.2 * time_);
+			// light_.data.dir.x = 7.0 * std::cos(0.2 * time_);
+			// light_.data.dir.z = 7.0 * std::sin(0.2 * time_);
+			light_.data.position.x = 7.0 * std::cos(0.2 * time_);
+			light_.data.position.z = 7.0 * std::sin(0.2 * time_);
 			updateLight_ = true;
 		}
 
@@ -304,14 +310,14 @@ public:
 		switch(ev.keycode) {
 			case ny::Keycode::m: // move light here
 				moveLight_ = false;
-				light_.data.pd = camera_.pos;
+				light_.data.position = camera_.pos;
 				updateLight_ = true;
 				return true;
 			case ny::Keycode::l:
 				moveLight_ ^= true;
 				return true;
 			case ny::Keycode::p:
-				light_.data.pcf = 1 - light_.data.pcf;
+				light_.data.pcf = 1.f - light_.data.pcf;
 				updateLight_ = true;
 				return true;
 			default:
@@ -359,7 +365,8 @@ public:
 			// light ball
 			// offset slightly from real light position so the geometry
 			// itself gets light
-			auto off = light_.data.pd;
+			// auto off = -light_.data.dir;
+			auto off = light_.data.position;
 			off.y -= 0.1;
 			off.x -= 0.1;
 			off.z -= 0.1;
@@ -407,7 +414,9 @@ protected:
 
 	// light and shadow
 	doi::ShadowData shadowData_;
-	doi::DirLight light_;
+	// doi::DirLight light_;
+	doi::PointLight light_;
+	// doi::PointLight light_;
 	bool updateLight_ {true};
 	// light ball
 	std::optional<doi::Material> lightMaterial_;

@@ -80,10 +80,10 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 	}
 
 	// TODO(tmp)
-	// auto cube = doi::Cube{{}, {100.f, 100.f, 100.f}};
+	// auto cube = doi::Cube{{}, {10.f, 10.f, 10.f}};
 	// auto shape = doi::generate(cube);
 	// primitives_.emplace_back(dev, shape, ri.primitiveDsLayout,
-	// 	materials_.back(), nytl::identity<4, float>());
+		// materials_.back(), nytl::identity<4, float>());
 }
 
 void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,

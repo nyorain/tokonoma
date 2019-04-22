@@ -1,5 +1,9 @@
 #version 450
 
+#extension GL_GOOGLE_include_directive : enable
+#include "scene.glsl"
+#include "scene.frag.glsl"
+
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
@@ -14,40 +18,19 @@ layout(set = 1, binding = 1) uniform sampler2D metalRoughTex;
 layout(set = 1, binding = 2) uniform sampler2D normalTex;
 layout(set = 1, binding = 3) uniform sampler2D occlusionTex;
 
-// factors
-layout(push_constant) uniform materialPC {
-	vec4 albedo;
-	float roughness;
-	float metallic;
-	uint flags;
-	float alphaCutoff;
-} material;
-
-// flags
-const uint normalmap = (1u << 0);
-const uint doubleSided = (1u << 1);
+layout(push_constant) uniform MaterialPcrBuf {
+	MaterialPcr material;
+};
 
 
 // NOTE: tangent and bitangent could also be passed in for each vertex
 vec3 getNormal() {
 	vec3 n = normalize(inNormal);
-	if((material.flags & normalmap) == 0u) {
+	if((material.flags & normalMap) == 0u) {
 		return n;
 	}
 
-	// http://www.thetenthplanet.de/archives/1180
-	vec3 q1 = dFdx(inPos);
-	vec3 q2 = dFdy(inPos);
-	vec2 st1 = dFdx(inUV);
-	vec2 st2 = dFdy(inUV);
-
-	vec3 t = normalize(q1 * st2.t - q2 * st1.t);
-	vec3 b = -normalize(cross(n, t));
-
-	// texture contains normal in tangent space
-	// we could also just use a signed format here i guess
-	vec3 tn = texture(normalTex, inUV).xyz * 2.0 - 1.0;
-	return normalize(mat3(t, b, n) * tn);
+	return tbnNormal(n, inPos, inUV, normalTex);
 }
 
 void main() {
