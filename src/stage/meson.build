@@ -44,6 +44,8 @@ stage_src = [
 	'scene/primitive.cpp',
 	'scene/shape.cpp',
 	'scene/light.cpp',
+
+	stage_shaders,
 ]
 
 stage_lib = library('stage',
