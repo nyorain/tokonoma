@@ -16,6 +16,7 @@ include_glsl = files(
 )
 
 scene_glsl = files(
+	'include/pbr.glsl',
 	'include/scene.glsl',
 	'include/scene.frag.glsl',
 )

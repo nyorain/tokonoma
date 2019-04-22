@@ -170,7 +170,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 
 // DirLight
 DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
-		const ShadowData& data) {
+		const ShadowData& data, nytl::Vec3f viewPos) {
 	auto extent = vk::Extent3D{size_.x, size_.y, 1u};
 
 	// target
@@ -198,7 +198,7 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	ds_ = {dev.descriptorAllocator(), dsLayout};
 	ubo_ = {dev.bufferAllocator(), lightUboSize,
 		vk::BufferUsageBits::uniformBuffer, 0, hostMem};
-	updateDevice();
+	updateDevice(viewPos);
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
@@ -225,7 +225,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 
 	// TODO: fine tune these values!
 	// maybe they should be scene dependent? dependent on size/scale?
-	vk::cmdSetDepthBias(cb, 1.0, 0.f, 8.0);
+	vk::cmdSetDepthBias(cb, 1.0, 0.f, 4.0);
 
 	auto pl = data.pl.vkHandle();
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
@@ -236,22 +236,21 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	vk::cmdEndRenderPass(cb);
 }
 
-nytl::Mat4f DirLight::lightMatrix() const {
-	// TODO: not correct, just for testing.
+nytl::Mat4f DirLight::lightMatrix(nytl::Vec3f viewPos) const {
 	// TODO: sizes should be configurable; depend on scene size
-	auto mat = doi::ortho3Sym(8.f, 8.f, 0.5f, 100.f);
-	// TODO: position should be dependent on viewPosition...
-	mat = mat * doi::lookAtRH(-this->data.dir, // TODO!
-		{0.f, 0.f, 0.f}, // always looks at center
+	auto mat = doi::ortho3Sym(8.f, 8.f, 0.5f, 30.f);
+	auto ndir = nytl::normalized(this->data.dir);
+	mat = mat * doi::lookAtRH(viewPos - 10 * ndir,
+		viewPos,
 		{0.f, 1.f, 0.f});
 	return mat;
 }
 
-void DirLight::updateDevice() {
+void DirLight::updateDevice(nytl::Vec3f viewPos) {
 	auto map = ubo_.memoryMap();
 	auto span = map.span();
 	doi::write(span, this->data);
-	doi::write(span, lightMatrix());
+	doi::write(span, lightMatrix(viewPos));
 }
 
 // PointLight

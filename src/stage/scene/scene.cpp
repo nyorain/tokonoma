@@ -189,7 +189,7 @@ std::unique_ptr<Scene> loadGltf(nytl::StringParam at, vpp::Device& dev,
 				path = at.substr(0, i + 1);
 				file = at.substr(i + 1);
 			}
-		} else if(has_suffix(at, ".gltb")) {
+		} else if(has_suffix(at, ".gltb") || has_suffix(at, ".glb")) {
 			binary = true;
 			auto i = at.find_last_of('/');
 			if(i == std::string::npos) {

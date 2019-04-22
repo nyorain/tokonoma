@@ -31,33 +31,15 @@ struct ShadowData {
 	vpp::Pipeline pipeCube;
 };
 
-// note that Light does NOT have a virtual constructor,
-// so std::unique_ptr<Light> to abstract over DirLight and PointLight
-// is not allowed.
-/*
-struct Light {
-	enum class Type : std::uint32_t {
-		point = 1u,
-		dir = 2u,
-	};
-
-	// data written to device
-	struct {
-		nytl::Vec3f pd {1.f, 1.f, 1.f}; // position/direction
-		Type type {Type::point};
-		nytl::Vec3f color {1.f, 1.f, 1.f};
-		std::uint32_t pcf {0};
-	} data;
-};
-*/
-
-// static_assert(sizeof(Light) == sizeof(float) * 8);
+// TODO: enum or something?
+constexpr std::uint32_t lightFlagDir = (1u << 0);
+constexpr std::uint32_t lightFlagPcf = (1u << 1);
 
 class DirLight {
 public:
 	struct {
 		nytl::Vec3f color {1.f, 1.f, 1.f};
-		float pcf {0};
+		std::uint32_t flags {lightFlagDir};
 		nytl::Vec3f dir {1.f, 1.f, 1.f};
 		float _ {}; // padding
 	} data;
@@ -65,12 +47,12 @@ public:
 public:
 	DirLight() = default;
 	DirLight(const vpp::Device&, const vpp::TrDsLayout&,
-		const ShadowData& data);
+		const ShadowData& data, nytl::Vec3f viewPos);
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
-	void updateDevice();
-	nytl::Mat4f lightMatrix() const;
+	void updateDevice(nytl::Vec3f viewPos);
+	nytl::Mat4f lightMatrix(nytl::Vec3f viewPos) const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
 
@@ -86,7 +68,7 @@ class PointLight {
 public:
 	struct {
 		nytl::Vec3f color {1.f, 1.f, 1.f};
-		float pcf {0};
+		std::uint32_t flags {0};
 		nytl::Vec3f position {1.f, 1.f, 1.f};
 		float farPlane {30.f};
 	} data;
