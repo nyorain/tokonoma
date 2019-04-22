@@ -4,6 +4,7 @@
 
 #include "noise.glsl"
 #include "scene.glsl"
+#include "pbr.glsl"
 
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
@@ -17,20 +18,24 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 
 // gbuffer
 layout(set = 1, binding = 0, input_attachment_index = 0)
-	uniform subpassInput inPos;
+	uniform subpassInput inPos; // TODO: remove
 layout(set = 1, binding = 1, input_attachment_index = 1)
 	uniform subpassInput inNormal;
 layout(set = 1, binding = 2, input_attachment_index = 2)
 	uniform subpassInput inAlbedo;
+
 // layout(set = 1, binding = 3) uniform sampler2DShadow depthTex;
 layout(set = 1, binding = 3) uniform sampler2D depthTex;
 
-layout(set = 2, binding = 0, row_major) uniform LightBuf {
-	// DirLight light;
-	PointLight light;
+layout(set = 2, binding = 0, row_major) uniform PointLightBuf {
+	PointLight pointLight;
 };
-// layout(set = 2, binding = 1) uniform sampler2DShadow shadowTex;
-layout(set = 2, binding = 1) uniform samplerCubeShadow shadowTex;
+layout(set = 2, binding = 0, row_major) uniform DirLightBuf {
+	DirLight dirLight;
+};
+
+layout(set = 2, binding = 1) uniform sampler2DShadow shadowMap;
+layout(set = 2, binding = 1) uniform samplerCubeShadow shadowCube;
 
 layout(push_constant) uniform Show {
 	uint mode;
@@ -44,6 +49,7 @@ float mieScattering(float lightDotView, float gs) {
 	return result;
 }
 
+/*
 // purely screen space old-school light scattering rays
 // couldn't we do something like this in light/shadow space as well?
 float lightScatterDepth(vec3 pos) {
@@ -148,18 +154,16 @@ float lightScatterShadow(vec3 pos) {
 	// float ffac = 1.f;
 	// float falloff = 0.9;
 	for(uint i = 0u; i < steps; ++i) {
-		/*
 		// position in light space
-		vec4 pls = light.proj * vec4(pos, 1.0);
-		pls.xyz /= pls.w;
-		pls.y *= -1; // invert y
-		pls.xy = 0.5 + 0.5 * pls.xy; // normalize for texture access
-
-		// float fac = max(dot(normalize(light.pd - pos), rayDir), 0.0); // TODO: light.position
-		// accum += fac * texture(shadowTex, pls.xyz).r;
-		// TODO: implement/use mie scattering function
-		accum += texture(shadowTex, pls.xyz).r;
-		*/
+		// vec4 pls = light.proj * vec4(pos, 1.0);
+		// pls.xyz /= pls.w;
+		// pls.y *= -1; // invert y
+		// pls.xy = 0.5 + 0.5 * pls.xy; // normalize for texture access
+// 
+		// // float fac = max(dot(normalize(light.pd - pos), rayDir), 0.0); // TODO: light.position
+		// // accum += fac * texture(shadowTex, pls.xyz).r;
+		// // TODO: implement/use mie scattering function
+		// accum += texture(shadowTex, pls.xyz).r;
 
 		accum += pointShadow(shadowTex, light.pos, pos);
 		pos += step;
@@ -172,6 +176,7 @@ float lightScatterShadow(vec3 pos) {
 	accum = clamp(accum, 0.0, 1.0);
 	return accum;
 }
+*/
 
 void main() {
 	vec2 suv = 2 * uv - 1;
@@ -181,7 +186,7 @@ void main() {
 	vec3 pos = pos4.xyz / pos4.w;
 	// TODO: we can skip light (but not scattering) if depth == 1
 
-	// vec4 sPos = subpassLoad(inPos);
+	vec4 sPos = subpassLoad(inPos);
 	vec4 sNormal = subpassLoad(inNormal);
 	vec4 sAlbedo = subpassLoad(inAlbedo);
 
@@ -189,8 +194,8 @@ void main() {
 	vec3 normal = sNormal.xyz;
 	vec3 albedo = sAlbedo.xyz;
 
-	// float roughness = sPos.w;
-	float roughness = 1.f; // TODO!
+	float roughness = sPos.w; // TODO!
+	// float roughness = 1.f; // TODO!
 	float metallic = sNormal.w;
 	float occlusion = sAlbedo.w;
 
@@ -223,44 +228,55 @@ void main() {
 
 	// TODO: remove random factors, implement pbr
 	float ambientFac = 0.1 * occlusion; // TODO
-	float diffuseFac = 0.5f;
-	float specularFac = 0.5f;
-	float shininess = 64.f;
+	// float diffuseFac = 0.5f;
+	// float specularFac = 0.5f;
+	// float shininess = 64.f;
 
-	// position of texel in light space
-	float lfac = 0.0;
-	// vec3 ldir = normalize(light.dir.xyz);
-	vec3 ldir = normalize(pos - light.pos.xyz);
+	float shadow;
+	vec3 ldir;
 
+	bool pcf = (dirLight.flags & lightPcf) != 0;
+	if((dirLight.flags & lightDir) != 0) {
+		// position on light tex
+		vec4 lsPos = dirLight.proj * vec4(pos, 1.0);
+		lsPos.xyz /= lsPos.w;
+		lsPos.y *= -1; // invert y
+		lsPos.xy = 0.5 + 0.5 * lsPos.xy; // normalize for texture access
+
+		shadow = dirShadow(shadowMap, lsPos.xyz, int(pcf));
+		ldir = normalize(dirLight.dir); // TODO: norm could be done on cpu
+	} else {
+		ldir = normalize(pos - pointLight.pos);
+		if(pcf) {
+			float radius = 0.005;
+			shadow = pointShadowSmooth(shadowCube, pointLight.pos,
+				pointLight.farPlane, pos, radius);
+		} else {
+			shadow = pointShadow(shadowCube, pointLight.pos,
+				pointLight.farPlane, pos);
+		}
+	}
+
+	/*
 	// diffuse
+	float lfac = 0.0;
 	lfac += diffuseFac * max(dot(normal, -ldir), 0.0);
 
 	// blinn-phong specular
 	vec3 vdir = normalize(pos - scene.viewPos);
 	vec3 halfway = normalize(-ldir - vdir);
 	lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
+	*/
 
-	// shadow
-	// vec4 lsPos = light.proj * vec4(pos, 1.0);
-	// lsPos.xyz /= lsPos.w;
-	// lsPos.y *= -1; // invert y
-	// lsPos.xy = 0.5 + 0.5 * lsPos.xy; // normalize for texture access
+	vec3 v = normalize(scene.viewPos - pos);
+	vec3 light = cookTorrance(normal, -ldir, v, roughness, metallic,
+		albedo);
 
-	int pcf = int(light.color.w);
-	// lfac *= dirShadow(shadowTex, lsPos.xyz, pcf);
-	if(pcf > 0) {
-		float viewDistance = length(scene.viewPos - pos);
-		// TODO: make radius dependent on difference between
-		// closest and current in (0, 0) sample? mimic GI
-		float radius = (1.0 + viewDistance) / 500.0; 
-		lfac *= pointShadowSmooth(shadowTex, light.pos, pos, radius);
-	} else {
-		lfac *= pointShadow(shadowTex, light.pos, pos);
-	}
+	// TODO: attenuation
+	vec3 color = max(shadow * light * dirLight.color, 0.0);
+	color += ambientFac * albedo * dirLight.color;
 
-	// ambient always added, indepdnent from shadow
-	lfac += ambientFac;
-	fragColor = vec4(lfac * light.color.rgb * albedo, 1.0);
+	fragColor = vec4(color, 1.0);
 	// fragColor.rgb += lightScatterDepth(pos) * light.color.rgb;
-	fragColor.rgb += lightScatterShadow(pos) * light.color.rgb;
+	// fragColor.rgb += lightScatterShadow(pos) * light.color.rgb;
 }

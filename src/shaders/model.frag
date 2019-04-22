@@ -6,7 +6,7 @@
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
-// layout(location = 2) in vec3 inLightPos; // position from pov light; for shadow
+layout(location = 2) in vec3 inLightPos; // position from pov light; for shadow
 layout(location = 3) in vec2 inUV;
 
 layout(location = 0) out vec4 outCol;
@@ -22,17 +22,16 @@ layout(set = 1, binding = 1) uniform sampler2D metalRoughTex;
 layout(set = 1, binding = 2) uniform sampler2D normalTex;
 layout(set = 1, binding = 3) uniform sampler2D occlusionTex;
 
-// light
-// layout(set = 3, binding = 0, row_major) uniform LightBuf {
-// 	DirLight light;
-// };
-layout(set = 3, binding = 0, row_major) uniform LightBuf {
-	PointLight light;
+// alias for different light types
+layout(set = 3, binding = 0, row_major) uniform DirLightBuf {
+	DirLight dirLight;
+};
+layout(set = 3, binding = 0, row_major) uniform PointLightBuf {
+	PointLight pointLight;
 };
 
-// layout(set = 3, binding = 1) uniform sampler2DShadow shadowTex;
-layout(set = 3, binding = 1) uniform samplerCubeShadow shadowTex;
-// layout(set = 3, binding = 1) uniform samplerCube shadowTex;
+layout(set = 3, binding = 1) uniform sampler2DShadow shadowMap;
+layout(set = 3, binding = 1) uniform samplerCubeShadow shadowCube;
 
 // factors
 layout(push_constant) uniform MaterialPcrBuf {
@@ -65,12 +64,6 @@ void main() {
 		normal *= -1;
 	}
 
-	// TODO
-	// vec3 dist = inPos - light.pos.xyz;
-	// float closest = texture(shadowTex, dist).r;
-	// outCol = vec4(closest, closest, closest, 1.0);
-	// return;
-
 	// TODO: actually use them...
 	// vec2 mr = texture(metalRoughTex, inUV).rg;
 	// float metalness = material.matallic * mr.b;
@@ -81,34 +74,38 @@ void main() {
 	float specularFac = 0.5f;
 	float shininess = 64.f;
 
-	vec4 col = vec4(0.0);
-	vec3 ldir = normalize(inPos - light.pos.xyz);
-	// ldir = normalize(light.dir.xyz); // TODO: norm could be done on cpu
+	float shadow;
+	vec3 ldir;
 
+	bool pcf = (dirLight.flags & lightPcf) != 0;
+	if((dirLight.flags & lightDir) != 0) {
+		shadow = dirShadow(shadowMap, inLightPos, int(pcf));
+		ldir = normalize(dirLight.dir); // TODO: norm could be done on cpu
+	} else {
+		ldir = normalize(inPos - pointLight.pos);
+		if(pcf) {
+			float radius = 0.005;
+			shadow = pointShadowSmooth(shadowCube, pointLight.pos,
+				pointLight.farPlane, inPos, radius);
+		} else {
+			shadow = pointShadow(shadowCube, pointLight.pos,
+				pointLight.farPlane, inPos);
+		}
+	}
+
+	// diffuse
+	vec4 col = vec4(0.0);
 	float lfac = diffuseFac * max(dot(normal, -ldir), 0.0); // diffuse
 
-	// specular
+	// specular, blinn phong
 	vec3 vdir = normalize(inPos - scene.viewPos);
-
-	// blinn-phong
 	vec3 halfway = normalize(-ldir - vdir);
 	lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
 
-	// shadow
-	int pcf = int(light.color.w);
-	// lfac *= dirShadow(shadowTex, inLightPos, pcf);
-	if(pcf > 0) {
-		float radius = 0.01;
-		lfac *= pointShadowSmooth(shadowTex, light.pos, inPos, radius);
-	} else {
-		lfac *= pointShadow(shadowTex, light.pos, inPos);
-	}
+	lfac *= shadow;
+	lfac += ambientFac; // ambient always added, doesn't care for shadow
 
-	// ambient, always added, even in shadow
-	lfac += ambientFac;
-
-	// combine
-	col += vec4(lfac * light.color.rgb, 1.0) * albedo;
+	col += vec4(lfac * dirLight.color, 1.0) * albedo;
 
 	outCol = col;
 	if(material.alphaCutoff == -1.f) { // alphaMode opque

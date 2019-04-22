@@ -136,17 +136,19 @@ public:
 		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
-		auto& l = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
-		// l.data.dir = {-5.8f, -12.0f, -4.f};
-		l.data.position = {-1.8f, 6.0f, -2.f};
+		auto& l = lights_.emplace_back(dev, lightDsLayout_, shadowData_,
+			camera_.pos);
+		l.data.dir = {-5.8f, -12.0f, -4.f};
+		// l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {1.f, 1.f, 1.f};
-		l.updateDevice();
+		l.updateDevice(camera_.pos);
 
+		/*
 		auto& l2 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
 		// l2.data.dir = {-1.0, -8.0f, -1.0};
 		l2.data.position = {-1.0, 5.0f, -1.0};
 		l2.data.color = {0.9f, 0.7f, 0.1f};
-		l2.data.pcf = 1.f;
+		l2.data.flags |= doi::lightFlagPcf;
 		l2.updateDevice();
 
 		auto& l3 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
@@ -154,6 +156,7 @@ public:
 		l3.data.position = {1.f, 3.0f, -1.f};
 		l3.data.color = {1.f, 1.f, 0.8f};
 		l3.updateDevice();
+		*/
 
 		// TODO: hack
 		// renderer().depthSampler_ = shadowData_.sampler;
@@ -454,12 +457,12 @@ public:
 
 		switch(ev.keycode) {
 			case ny::Keycode::m: // move light here
-				// lights_[0].data.dir = -camera_.pos;
-				lights_[0].data.position = camera_.pos;
+				lights_[0].data.dir = -camera_.pos;
+				// lights_[0].data.position = camera_.pos;
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::p:
-				lights_[0].data.pcf = 1.f - lights_[0].data.pcf;
+				lights_[0].data.flags ^= doi::lightFlagPcf;
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::n:
@@ -508,11 +511,14 @@ public:
 			doi::write(span, mat);
 			doi::write(span, nytl::Mat4f(nytl::inverse(mat)));
 			doi::write(span, camera_.pos);
+
+			// depend on camera position
+			updateLights_ = true;
 		}
 
 		if(updateLights_) {
 			for(auto& l : lights_) {
-				l.updateDevice();
+				l.updateDevice(camera_.pos);
 			}
 			updateLights_ = false;
 		}
@@ -541,8 +547,8 @@ protected:
 
 	// shadow
 	doi::ShadowData shadowData_;
-	// std::vector<doi::DirLight> lights_;
-	std::vector<doi::PointLight> lights_;
+	std::vector<doi::DirLight> lights_;
+	// std::vector<doi::PointLight> lights_;
 
 	vpp::PipelineLayout gPipeLayout_; // gbuf
 	vpp::PipelineLayout lPipeLayout_; // light
@@ -674,8 +680,9 @@ void GRenderer::createRenderPass() {
 	};
 
 	addBuf(vk::Format::r16g16b16a16Sfloat); // pos
-	addBuf(vk::Format::r8g8b8a8Snorm); // normal
-	addBuf(vk::Format::r8g8b8a8Unorm); // albedo
+	// addBuf(vk::Format::r8g8b8a8Snorm); // normal
+	addBuf(vk::Format::r16g16b16a16Snorm); // normal, or use float?
+	addBuf(vk::Format::r8g8b8a8Srgb); // albedo
 
 	auto lightid = aid;
 	addBuf(vk::Format::r16g16b16a16Sfloat); // light
@@ -793,10 +800,14 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 		attachments.push_back(img.vkImageView());
 	};
 
+	// TODO: srgb or unorm space for albedo?
+	//   i fell like srgb makes more sense, otherwise
+	//   we might lose precision since original textures are srgb
 	// TODO: maybe use 16f buffers for normal as well?
 	initBuf(pos_, vk::Format::r16g16b16a16Sfloat);
-	initBuf(normal_, vk::Format::r8g8b8a8Snorm);
-	initBuf(albedo_, vk::Format::r8g8b8a8Unorm);
+	// initBuf(normal_, vk::Format::r8g8b8a8Snorm);
+	initBuf(normal_, vk::Format::r16g16b16a16Snorm);
+	initBuf(albedo_, vk::Format::r8g8b8a8Srgb);
 	initBuf(light_, vk::Format::r16g16b16a16Sfloat);
 
 	for(auto& buf : bufs) {

@@ -21,5 +21,6 @@ vec3 tonemap(vec3 x) {
 
 void main() {
 	vec4 color = subpassLoad(inLight);
+	color.rgb = pow(color.rgb, vec3(1.0 / 2.2));
 	fragColor = vec4(tonemap(color.rgb), 1.0);
 }

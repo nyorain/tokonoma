@@ -1,6 +1,6 @@
-// Light.type
-// const uint pointLight = 1;
-// const uint dirLight = 2;
+// Light.flags
+const uint lightDir = (1u << 0); // otherwise point
+const uint lightPcf = (1u << 1); // use pcf
 
 // MaterialPcr.flags
 const uint normalMap = (1u << 0);
@@ -14,14 +14,18 @@ const uint doubleSided = (1u << 1);
 // };
 
 struct DirLight {
-	vec4 color; // w: pcf
-	vec4 dir; // w: farPlane
+	vec3 color; // w: pcf
+	uint flags;
+	vec3 dir;
+	float _; // unused padding
 	mat4 proj; // global -> light space
 };
 
 struct PointLight {
-	vec4 color; // w: pcf
-	vec4 pos; // w: farPlane
+	vec3 color;
+	uint flags;
+	vec3 pos;
+	float farPlane;
 	mat4 proj[6]; // global -> cubemap [side i] light space
 };
 
@@ -63,16 +67,17 @@ vec3 pointShadowOffsets[20] = vec3[](
    vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
 );
 
-float pointShadow(samplerCubeShadow shadowCube, vec4 lightPos, vec3 fragPos) {
-	vec3 dist = fragPos - lightPos.xyz;
-	float d = length(dist) / lightPos.w;
+float pointShadow(samplerCubeShadow shadowCube, vec3 lightPos,
+		float lightFarPlane, vec3 fragPos) {
+	vec3 dist = fragPos - lightPos;
+	float d = length(dist) / lightFarPlane;
 	return texture(shadowCube, vec4(dist, d)).r;
 }
 
-float pointShadowSmooth(samplerCubeShadow shadowCube, vec4 lightPos,
-		vec3 fragPos, float radius) {
-	vec3 dist = fragPos - lightPos.xyz;
-	float d = length(dist) / lightPos.w;
+float pointShadowSmooth(samplerCubeShadow shadowCube, vec3 lightPos,
+		float lightFarPlane, vec3 fragPos, float radius) {
+	vec3 dist = fragPos - lightPos;
+	float d = length(dist) / lightFarPlane;
 	uint sampleCount = 20u;
 	float accum = 0.f;
 	for(uint i = 0; i < sampleCount; ++i) {
@@ -84,10 +89,11 @@ float pointShadowSmooth(samplerCubeShadow shadowCube, vec4 lightPos,
 }
 	
 // manual comparison
-float pointShadow(samplerCube shadowCube, vec4 lightPos, vec3 fragPos) {
-	vec3 dist = fragPos - lightPos.xyz;
-	float d = length(dist) / lightPos.w;
-	float closest = texture(shadowCube, dist).r * lightPos.w;
+float pointShadow(samplerCube shadowCube, vec3 lightPos, 
+		float lightFarPlane, vec3 fragPos) {
+	vec3 dist = fragPos - lightPos;
+	float d = length(dist) / lightFarPlane;
+	float closest = texture(shadowCube, dist).r * lightFarPlane;
 	float current = length(dist);
 	// const float bias = 0.01f;
 	const float bias = 0.f;

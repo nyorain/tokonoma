@@ -31,8 +31,8 @@ void main() {
 	}
 
 	// store depth: distance from light to pixel in that direction
-	float farPlane = light.pos.w;
-    float dist = length(inPos - light.pos.xyz);
+	float farPlane = light.farPlane;
+    float dist = length(inPos - light.pos);
 
 	// depth bias, roughly like vkCmdSetDepthBias
 	// TODO: should be configurable, e.g. use push constant
