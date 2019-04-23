@@ -33,6 +33,8 @@ shaders_src = [
 		['shadowmap.frag', scene_glsl],
 		['shadowmapCube.vert', scene_glsl],
 		['shadowmapCube.frag', scene_glsl],
+		['skybox.vert'],
+		['skybox.frag'],
 	]],
 	['common_shaders', [
 		['fullscreen.vert'],
@@ -91,8 +93,6 @@ shaders_src = [
 	['ddd_shaders', [
 		['model.vert', scene_glsl],
 		['model.frag', scene_glsl],
-		['skybox.vert'],
-		['skybox.frag'],
 	]],
 	['iro_shaders', [
 		['iro.vert', include_glsl],

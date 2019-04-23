@@ -1,4 +1,4 @@
-#include "skybox.hpp"
+#include <stage/scene/skybox.hpp>
 #include <stage/bits.hpp>
 
 #include <vpp/bufferOps.hpp>
@@ -13,23 +13,28 @@
 #include <shaders/skybox.vert.h>
 #include <shaders/skybox.frag.h>
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wcast-align"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#define STB_IMAGE_IMPLEMENTATION
+// implementation in texture.cpp
+// #pragma GCC diagnostic push
+// #pragma GCC diagnostic ignored "-Wcast-align"
+// #pragma GCC diagnostic ignored "-Wunused-parameter"
+// #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
-#pragma GCC diagnostic pop
+// #pragma GCC diagnostic pop
 
+// TODO: allow reusing sampler (if passing in init method)
+// TODO: allow passing filename/base/something...
 // TODO: allow loading panorama data
 // https://stackoverflow.com/questions/29678510/convert-21-equirectangular-panorama-to-cube-map
 // load cubemap
+
+namespace doi {
 
 // XXX: the way vulkan handles cubemap samplers and image coorindates,
 // top and bottom usually have to be rotated 180 degrees (or at least
 // from the skybox set i tested with, see /assets/skyboxset1, those
 // were rotated manually to fit)
 void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
-		vk::SampleCountBits samples) {
+		unsigned subpass, vk::SampleCountBits samples) {
 	// ds layout
 	auto bindings = {
 		vpp::descriptorBinding(
@@ -48,14 +53,27 @@ void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 	vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
-	}}, 0, samples};
+	}}, subpass, samples};
 
-	// depth test disabled by default
-	gpi.depthStencil.depthTestEnable = false;
+	gpi.depthStencil.depthTestEnable = true;
+	gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 	gpi.depthStencil.depthWriteEnable = false;
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 	// gpi.rasterization.cullMode = vk::CullModeBits::back;
 	// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+
+	// TODO: testing deferred renderer with light scattering
+	vk::PipelineColorBlendAttachmentState blendAttachment;
+	blendAttachment.blendEnable = true;
+	blendAttachment.colorBlendOp = vk::BlendOp::add;
+	blendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
+	blendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
+	blendAttachment.colorWriteMask =
+			vk::ColorComponentBits::r |
+			vk::ColorComponentBits::g |
+			vk::ColorComponentBits::b |
+			vk::ColorComponentBits::a;
+	gpi.blend.pAttachments = &blendAttachment;
 
 	vk::Pipeline vkpipe;
 	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), NULL, vkpipe);
@@ -75,6 +93,7 @@ void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 	};
 	vpp::writeStaging430(indices_, vpp::raw(*indices.data(), 36u));
 
+	// TODO: move loading to texture.cpp
 	auto base = std::string("../assets/skyboxset1/SunSet/SunSet");
 	// https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
 	const char* names[] = {
@@ -219,3 +238,5 @@ void Skybox::updateDevice(const nytl::Mat4f& viewProj) {
 	auto span = map.span();
 	doi::write(span, viewProj);
 }
+
+} // namespace doi

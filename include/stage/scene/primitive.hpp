@@ -29,6 +29,7 @@ public:
 	nytl::Mat4f matrix = nytl::identity<4, float>();
 
 public:
+	Primitive() = default;
 	Primitive(const vpp::Device& dev, const Shape& shape,
 		const vpp::TrDsLayout& dsLayout, const Material& material,
 		const nytl::Mat4f& matrix);

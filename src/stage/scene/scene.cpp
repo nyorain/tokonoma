@@ -1,7 +1,6 @@
 #include <stage/scene/scene.hpp>
 #include <stage/scene/primitive.hpp>
 #include <stage/scene/material.hpp>
-#include <stage/scene/shape.hpp> // TODO(tmp)
 #include <stage/quaternion.hpp>
 #include <stage/transform.hpp>
 #include <stage/texture.hpp>
@@ -62,10 +61,6 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 		materials_.push_back(std::move(m));
 	}
 
-	// TODO(tmp)
-	materials_.emplace_back(dev, ri.materialDsLayout, ri.dummyTex,
-		nytl::Vec4f {1.f, 1.f, 1.f, 1.f}, 1.f, 1.f, true);
-
 	// we need at least one material (see primitive creation)
 	// if there is none, add dummy
 	if(materials_.empty()) {
@@ -78,12 +73,6 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 		auto& node = model.nodes[nodeid];
 		loadNode(dev, model, node, ri, matrix);
 	}
-
-	// TODO(tmp)
-	// auto cube = doi::Cube{{}, {10.f, 10.f, 10.f}};
-	// auto shape = doi::generate(cube);
-	// primitives_.emplace_back(dev, shape, ri.primitiveDsLayout,
-		// materials_.back(), nytl::identity<4, float>());
 }
 
 void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,
@@ -145,7 +134,7 @@ void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,
 			if(primitive.material < 0) {
 				// there is always at least one material, see material
 				// loading section. May be dummy material
-				mat = &materials_[0];
+				mat = &materials_.back();
 			} else {
 				auto mid = unsigned(primitive.material);
 				dlg_assert(mid <= materials_.size());
@@ -256,8 +245,14 @@ std::unique_ptr<Scene> loadGltf(nytl::StringParam at, vpp::Device& dev,
 	dlg_info(">> Parsing Succesful...");
 
 	// traverse nodes
+	if(model.scenes.empty()) {
+		dlg_fatal(">> Model has no scenes");
+		return {};
+	}
+
 	dlg_info("Found {} scenes", model.scenes.size());
-	auto& sc = model.scenes[model.defaultScene];
+	auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
+	auto& sc = model.scenes[scene];
 	return std::make_unique<Scene>(dev, path, model, sc, matrix, ri);
 }
 

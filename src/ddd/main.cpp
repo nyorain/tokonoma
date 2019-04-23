@@ -1,5 +1,3 @@
-#include "skybox.hpp"
-
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
 #include <stage/render.hpp>
@@ -12,6 +10,7 @@
 #include <stage/scene/shape.hpp>
 #include <stage/scene/scene.hpp>
 #include <stage/scene/light.hpp>
+#include <stage/scene/skybox.hpp>
 #include <argagg.hpp>
 
 #include <stage/scene/scene.hpp>
@@ -63,7 +62,7 @@ public:
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
 		auto hostMem = dev.hostMemoryTypes();
-		skybox_.init(dev, renderer().renderPass(), renderer().samples());
+		skybox_.init(dev, renderer().renderPass(), 0, renderer().samples());
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -199,12 +198,6 @@ public:
 		// add light primitive
 		lightMaterial_.emplace(vulkanDevice(), materialDsLayout_,
 			dummyTex_.vkImageView(), nytl::Vec{1.f, 1.f, 0.4f, 1.f});
-		auto sphere = doi::Sphere{{}, {0.1f, 0.1f, 0.1f}};
-		auto shape = doi::generateUV(sphere);
-		// auto cube = doi::Cube{{}, {0.1f, 0.1f, 0.1f}};
-		// auto shape = doi::generate(cube);
-		lightBall_.emplace(vulkanDevice(), shape, primitiveDsLayout_,
-			*lightMaterial_, nytl::identity<4, float>());
 
 		// == ubo and stuff ==
 		auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
@@ -217,7 +210,8 @@ public:
 		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
-		light_ = {dev, lightDsLayout_, shadowData_};
+		light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_,
+			camera_.pos, *lightMaterial_};
 		light_.data.dir = {5.8f, -12.0f, 4.f};
 		// light_.data.position = {0.f, 5.0f, 0.f};
 		updateLight_ = true;
@@ -264,14 +258,14 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		skybox_.render(cb);
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {sceneDs_}, {});
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 3, {light_.ds()}, {});
 		scene_->render(cb, pipeLayout_);
-		lightBall_->render(cb, pipeLayout_);
+		light_.lightBall().render(cb, pipeLayout_);
+		skybox_.render(cb);
 	}
 
 	void update(double dt) override {
@@ -362,21 +356,11 @@ public:
 
 			skybox_.updateDevice(fixedMatrix(camera_));
 
-			// light ball
-			// offset slightly from real light position so the geometry
-			// itself gets light
-			auto off = -light_.data.dir;
-			// auto off = light_.data.position;
-			off.y -= 0.1;
-			off.x -= 0.1;
-			off.z -= 0.1;
-			auto mat = doi::translateMat(off);
-			lightBall_->matrix = mat;
-			lightBall_->updateDevice();
+			updateLight_ = true;
 		}
 
 		if(updateLight_) {
-			light_.updateDevice();
+			light_.updateDevice(camera_.pos);
 			updateLight_ = false;
 		}
 	}
@@ -419,9 +403,8 @@ protected:
 	bool updateLight_ {true};
 	// light ball
 	std::optional<doi::Material> lightMaterial_;
-	std::optional<doi::Primitive> lightBall_;
 
-	Skybox skybox_;
+	doi::Skybox skybox_;
 
 	// args
 	std::string modelname_ {};

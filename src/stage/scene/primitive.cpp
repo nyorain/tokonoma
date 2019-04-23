@@ -97,13 +97,19 @@ Primitive::Primitive(const vpp::Device& dev,
 
 	auto ip = primitive.attributes.find("POSITION");
 	auto in = primitive.attributes.find("NORMAL");
-	auto iuv = primitive.attributes.find("TEXCOORD_0"); // TODO: more coords
+	auto iuv = primitive.attributes.find("TEXCOORD_0"); // TODO: support more coords
 	if(ip == primitive.attributes.end() || in == primitive.attributes.end()) {
 		throw std::runtime_error("primitve doesn't have POSITION or NORMAL");
 	}
 
 	auto& pa = model.accessors[ip->second];
 	auto& na = model.accessors[in->second];
+
+	// TODO: fix that by inserting simple indices or set local flag
+	// to jsut use vkcmddraw
+	if(primitive.indices < 0) {
+		throw std::runtime_error("Only models with indices supported");
+	}
 	auto& ia = model.accessors[primitive.indices];
 
 	auto* uva = iuv == primitive.attributes.end() ?

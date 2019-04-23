@@ -44,6 +44,7 @@ stage_src = [
 	'scene/primitive.cpp',
 	'scene/shape.cpp',
 	'scene/light.cpp',
+	'scene/skybox.cpp',
 
 	stage_shaders,
 ]
