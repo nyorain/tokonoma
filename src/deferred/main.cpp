@@ -10,6 +10,7 @@
 #include <stage/scene/shape.hpp>
 #include <stage/scene/light.hpp>
 #include <stage/scene/scene.hpp>
+#include <stage/scene/skybox.hpp>
 #include <argagg.hpp>
 
 #include <ny/appContext.hpp>
@@ -62,9 +63,9 @@ protected:
 
 protected:
 	// targets of first pass (+ depth)
-	vpp::ViewableImage pos_;
-	vpp::ViewableImage albedo_;
 	vpp::ViewableImage normal_;
+	vpp::ViewableImage albedo_;
+	vpp::ViewableImage emission_;
 	vpp::TrDsLayout inputDsLayout_;
 	vpp::TrDs inputDs_;
 
@@ -92,6 +93,8 @@ public:
 		// renderer already queried the best supported depth format
 		camera_.perspective.near = 0.1f;
 		camera_.perspective.far = 100.f;
+
+		skybox_.init(dev, renderer().renderPass(), 3u, renderer().samples());
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -133,29 +136,28 @@ public:
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
 		// example light
+		lightMaterial_.emplace(vulkanDevice(), materialDsLayout_,
+			dummyTex_.vkImageView(), nytl::Vec{1.f, 1.f, 0.4f, 1.f});
+
 		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
-		auto& l = lights_.emplace_back(dev, lightDsLayout_, shadowData_,
-			camera_.pos);
-		l.data.dir = {-5.8f, -12.0f, -4.f};
-		// l.data.position = {-1.8f, 6.0f, -2.f};
-		l.data.color = {1.f, 1.f, 1.f};
-		l.updateDevice(camera_.pos);
+		{
+			auto& l = dirLights_.emplace_back(dev, lightDsLayout_, primitiveDsLayout_,
+				shadowData_, camera_.pos, *lightMaterial_);
+			l.data.dir = {2.6f, -0.2f, -1.2f};
+			l.data.color = {1.f, 1.f, 1.f};
+			l.updateDevice(camera_.pos);
+		}
 
 		/*
-		auto& l2 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
-		// l2.data.dir = {-1.0, -8.0f, -1.0};
-		l2.data.position = {-1.0, 5.0f, -1.0};
-		l2.data.color = {0.9f, 0.7f, 0.1f};
-		l2.data.flags |= doi::lightFlagPcf;
-		l2.updateDevice();
-
-		auto& l3 = lights_.emplace_back(dev, lightDsLayout_, shadowData_);
-		// l3.data.dir = {-5.8f, -12.0f, -10.f};
-		l3.data.position = {1.f, 3.0f, -1.f};
-		l3.data.color = {1.f, 1.f, 0.8f};
-		l3.updateDevice();
+		{
+			auto& l = pointLights_.emplace_back(dev, lightDsLayout_, primitiveDsLayout_,
+				shadowData_, *lightMaterial_);
+			l.data.position = {-1.8f, 6.0f, -2.f};
+			l.data.color = {1.f, 1.f, 1.f};
+			l.updateDevice();
+		}
 		*/
 
 		// TODO: hack
@@ -398,7 +400,10 @@ public:
 		App::beforeRender(cb);
 
 		// render shadow maps
-		for(auto& light : lights_) {
+		for(auto& light : pointLights_) {
+			light.render(cb, shadowData_, *scene_);
+		}
+		for(auto& light : dirLights_) {
 			light.render(cb, shadowData_, *scene_);
 		}
 	}
@@ -410,6 +415,14 @@ public:
 			gPipeLayout_, 0, {sceneDs_}, {});
 		scene_->render(cb, gPipeLayout_);
 
+		// NOTE: ideally, don't render these in gbuffer pass...
+		// for(auto& l : pointLights_) {
+		// 	l.lightBall().render(cb, gPipeLayout_);
+		// }
+		// for(auto& l : dirLights_) {
+		// 	l.lightBall().render(cb, gPipeLayout_);
+		// }
+
 		// render lights
 		vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
 		vk::cmdPushConstants(cb, lPipeLayout_, vk::ShaderStageBits::fragment,
@@ -417,7 +430,12 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, lPipe_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			lPipeLayout_, 0, {sceneDs_, renderer().inputDs()}, {});
-		for(auto& light : lights_) {
+		for(auto& light : pointLights_) {
+			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+				lPipeLayout_, 2, {light.ds()}, {});
+			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
+		}
+		for(auto& light : dirLights_) {
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 				lPipeLayout_, 2, {light.ds()}, {});
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
@@ -429,6 +447,11 @@ public:
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pp_.pipeLayout, 0, {renderer().lightInputDs()}, {});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
+
+		// NOTE: skybox isn't tonemapped or anything, remember that
+		// screen space stuff; skybox
+		vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
+		skybox_.render(cb);
 	}
 
 	void update(double dt) override {
@@ -457,12 +480,14 @@ public:
 
 		switch(ev.keycode) {
 			case ny::Keycode::m: // move light here
-				lights_[0].data.dir = -camera_.pos;
-				// lights_[0].data.position = camera_.pos;
+				dirLights_[0].data.dir = -camera_.pos;
+				dlg_info(camera_.pos);
+				// pointLights_[0].data.position = camera_.pos;
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::p:
-				lights_[0].data.flags ^= doi::lightFlagPcf;
+				dirLights_[0].data.flags ^= doi::lightFlagPcf;
+				// pointLights_[0].data.flags ^= doi::lightFlagPcf;
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::n:
@@ -512,12 +537,17 @@ public:
 			doi::write(span, nytl::Mat4f(nytl::inverse(mat)));
 			doi::write(span, camera_.pos);
 
+			skybox_.updateDevice(fixedMatrix(camera_));
+
 			// depend on camera position
 			updateLights_ = true;
 		}
 
 		if(updateLights_) {
-			for(auto& l : lights_) {
+			for(auto& l : pointLights_) {
+				l.updateDevice();
+			}
+			for(auto& l : dirLights_) {
 				l.updateDevice(camera_.pos);
 			}
 			updateLights_ = false;
@@ -547,8 +577,8 @@ protected:
 
 	// shadow
 	doi::ShadowData shadowData_;
-	std::vector<doi::DirLight> lights_;
-	// std::vector<doi::PointLight> lights_;
+	std::vector<doi::DirLight> dirLights_;
+	std::vector<doi::PointLight> pointLights_;
 
 	vpp::PipelineLayout gPipeLayout_; // gbuf
 	vpp::PipelineLayout lPipeLayout_; // light
@@ -560,6 +590,7 @@ protected:
 
 	vpp::ViewableImage dummyTex_;
 	std::unique_ptr<doi::Scene> scene_;
+	std::optional<doi::Material> lightMaterial_;
 
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
@@ -569,6 +600,8 @@ protected:
 	bool rotateView_ {false}; // mouseLeft down
 	doi::Camera camera_ {};
 	bool updateLights_ = true;
+
+	doi::Skybox skybox_;
 
 	// post processing
 	struct {
@@ -679,15 +712,14 @@ void GRenderer::createRenderPass() {
 		++aid;
 	};
 
-	addBuf(vk::Format::r16g16b16a16Sfloat); // pos
-	// addBuf(vk::Format::r8g8b8a8Snorm); // normal
-	addBuf(vk::Format::r16g16b16a16Snorm); // normal, or use float?
-	addBuf(vk::Format::r8g8b8a8Srgb); // albedo
+	addBuf(vk::Format::r16g16b16a16Snorm); // normal, matID, occlusion
+	addBuf(vk::Format::r8g8b8a8Srgb); // albedo, roughness
+	addBuf(vk::Format::r8g8b8a8Unorm); // emission, metallic
 
 	auto lightid = aid;
 	addBuf(vk::Format::r16g16b16a16Sfloat); // light
 
-	vk::SubpassDescription subpasses[3] {};
+	std::array<vk::SubpassDescription, 4> subpasses {};
 
 	// TODO: better layouts, don't just use general
 	// subpass 0: render geometry into gbuffers
@@ -739,9 +771,15 @@ void GRenderer::createRenderPass() {
 	subpasses[2].inputAttachmentCount = 1;
 	subpasses[2].pInputAttachments = &lightInputReference;
 
+	// render pass for skybox and screen space stuff
+	subpasses[3].pipelineBindPoint = vk::PipelineBindPoint::graphics;
+	subpasses[3].colorAttachmentCount = 1;
+	subpasses[3].pColorAttachments = &colorReference;
+	subpasses[3].pDepthStencilAttachment = &depthReference;
+
 	// TODO: byRegion correct?
 	// dependency between subpasses
-	vk::SubpassDependency dependencies[3];
+	std::array<vk::SubpassDependency, 4> dependencies;
 	dependencies[0].dependencyFlags = vk::DependencyBits::byRegion;
 	dependencies[0].srcSubpass = 0u;
 	dependencies[0].srcAccessMask = vk::AccessBits::colorAttachmentWrite;
@@ -766,14 +804,22 @@ void GRenderer::createRenderPass() {
 	dependencies[1].dstAccessMask = vk::AccessBits::shaderRead;
 	dependencies[1].dstStageMask = vk::PipelineStageBits::fragmentShader;
 
+	dependencies[3].dependencyFlags = {};
+	dependencies[3].srcSubpass = 2u;
+	dependencies[3].srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+	dependencies[3].srcStageMask = vk::PipelineStageBits::allGraphics;
+	dependencies[3].dstSubpass = 3u;
+	dependencies[3].dstAccessMask = vk::AccessBits::colorAttachmentWrite;
+	dependencies[3].dstStageMask = vk::PipelineStageBits::allGraphics;
+
 	// create rp
 	vk::RenderPassCreateInfo renderPassInfo;
 	renderPassInfo.attachmentCount = aid;
 	renderPassInfo.pAttachments = attachments;
-	renderPassInfo.subpassCount = 3;
-	renderPassInfo.pSubpasses = subpasses;
-	renderPassInfo.dependencyCount = 3;
-	renderPassInfo.pDependencies = dependencies;
+	renderPassInfo.subpassCount = subpasses.size();
+	renderPassInfo.pSubpasses = subpasses.data();
+	renderPassInfo.dependencyCount = dependencies.size();
+	renderPassInfo.pDependencies = dependencies.data();
 
 	renderPass_ = {device(), renderPassInfo};
 }
@@ -800,15 +846,11 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 		attachments.push_back(img.vkImageView());
 	};
 
-	// TODO: srgb or unorm space for albedo?
-	//   i fell like srgb makes more sense, otherwise
-	//   we might lose precision since original textures are srgb
-	// TODO: maybe use 16f buffers for normal as well?
-	initBuf(pos_, vk::Format::r16g16b16a16Sfloat);
-	// initBuf(normal_, vk::Format::r8g8b8a8Snorm);
-	initBuf(normal_, vk::Format::r16g16b16a16Snorm);
-	initBuf(albedo_, vk::Format::r8g8b8a8Srgb);
-	initBuf(light_, vk::Format::r16g16b16a16Sfloat);
+	initBuf(normal_, vk::Format::r16g16b16a16Snorm); // normal
+	initBuf(albedo_, vk::Format::r8g8b8a8Srgb); // albedo
+	initBuf(emission_, vk::Format::r8g8b8a8Unorm); // emission
+
+	initBuf(light_, vk::Format::r16g16b16a16Sfloat); // light
 
 	for(auto& buf : bufs) {
 		attachments[scPos] = buf.imageView;
@@ -824,9 +866,9 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 
 	// update descriptor sets
 	vpp::DescriptorSetUpdate dsu(inputDs_);
-	dsu.inputAttachment({{{}, pos_.vkImageView(), vk::ImageLayout::general}});
 	dsu.inputAttachment({{{}, normal_.vkImageView(), vk::ImageLayout::general}});
 	dsu.inputAttachment({{{}, albedo_.vkImageView(), vk::ImageLayout::general}});
+	dsu.inputAttachment({{{}, emission_.vkImageView(), vk::ImageLayout::general}});
 
 	// TODO: depthSampler_ hack
 	if(depthSampler_) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stage/scene/primitive.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/mat.hpp>
 #include <vpp/framebuffer.hpp>
@@ -46,15 +47,18 @@ public:
 
 public:
 	DirLight() = default;
-	DirLight(const vpp::Device&, const vpp::TrDsLayout&,
-		const ShadowData& data, nytl::Vec3f viewPos);
+	DirLight(const vpp::Device&, const vpp::TrDsLayout& matDsLayout,
+		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
+		nytl::Vec3f viewPos, const Material& lightBallMat);
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
 	void updateDevice(nytl::Vec3f viewPos);
 	nytl::Mat4f lightMatrix(nytl::Vec3f viewPos) const;
+	nytl::Mat4f lightBallMatrix(nytl::Vec3f viewPos) const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
+	const Primitive& lightBall() const { return lightBall_; }
 
 protected:
 	nytl::Vec2ui size_ {2048u, 2048u};
@@ -62,6 +66,7 @@ protected:
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
 	vpp::TrDs ds_;
+	Primitive lightBall_;
 };
 
 class PointLight {
@@ -75,15 +80,18 @@ public:
 
 public:
 	PointLight() = default;
-	PointLight(const vpp::Device&, const vpp::TrDsLayout&,
-		const ShadowData& data);
+	PointLight(const vpp::Device&, const vpp::TrDsLayout& matLayout,
+		const vpp::TrDsLayout& primitiveLayout, const ShadowData& data,
+		const Material& lightBallMat);
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
 	void updateDevice();
 	nytl::Mat4f lightMatrix(unsigned) const;
+	nytl::Mat4f lightBallMatrix() const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return shadowMap_.vkImageView(); }
+	const Primitive& lightBall() const { return lightBall_; }
 
 protected:
 	nytl::Vec2ui size_ {512u, 512u}; // per side
@@ -92,6 +100,7 @@ protected:
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
 	vpp::TrDs ds_;
+	Primitive lightBall_;
 };
 
 ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,

@@ -2,7 +2,6 @@
 
 #extension GL_GOOGLE_include_directive : enable
 
-#include "noise.glsl"
 #include "scene.glsl"
 #include "pbr.glsl"
 
@@ -18,11 +17,13 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 
 // gbuffer
 layout(set = 1, binding = 0, input_attachment_index = 0)
-	uniform subpassInput inPos; // TODO: remove
-layout(set = 1, binding = 1, input_attachment_index = 1)
 	uniform subpassInput inNormal;
-layout(set = 1, binding = 2, input_attachment_index = 2)
+layout(set = 1, binding = 1, input_attachment_index = 1)
 	uniform subpassInput inAlbedo;
+
+// NOTE: emission not supported yet
+layout(set = 1, binding = 2, input_attachment_index = 2)
+	uniform subpassInput inEmission;
 
 // layout(set = 1, binding = 3) uniform sampler2DShadow depthTex;
 layout(set = 1, binding = 3) uniform sampler2D depthTex;
@@ -41,81 +42,8 @@ layout(push_constant) uniform Show {
 	uint mode;
 } show;
 
-// TODO: move to scene.glsl
-// ripped from http://www.alexandre-pestana.com/volumetric-lights/
-float mieScattering(float lightDotView, float gs) {
-	float result = 1.0f - gs * gs;
-	result /= (4.0f * 3.141 * pow(1.0f + gs * gs - (2.0f * gs) * lightDotView, 1.5f));
-	return result;
-}
-
 /*
-// purely screen space old-school light scattering rays
-// couldn't we do something like this in light/shadow space as well?
-float lightScatterDepth(vec3 pos) {
-	vec3 lrdir = light.pos.xyz - scene.viewPos;
-	// float div = pow(dot(lrdir, lrdir), 0.6);
-	// float div = length(lrdir);
-	float div = 1.f;
-	vec3 rayDir = normalize(pos - scene.viewPos);
-	float ldv = dot(normalize(lrdir), rayDir);
-	float fac = mieScattering(ldv, 0.01) / div;
-
-	// vec3 lrdir = -normalize(light.dir.xyz);
-	// float fac = dot(normalize(pos - scene.viewPos), normalize(lrdir));
-	// float fac = mieScattering(dot(normalize(lrdir), rayDir), 0.95);
-	// fac *= fac;
-
-	vec2 rayStart = sceneMap(scene.proj, pos).xy;
-	// vec3 rayEnd = sceneMap(scene.proj, light.dir.xyz); // TODO: light.position
-	// vec3 rayEnd = sceneMap(scene.proj, -light.dir.xyz); // TODO: bad
-	vec3 rayEnd = sceneMap(scene.proj, light.pos.xyz); // TODO: bad
-	// if(rayEnd.xy != clamp(rayEnd.xy, 0.0, 1.0)) { // check if light is in screen
-		// return 0.f;
-	// }
-	
-	// only really have an effect if light is in center
-	// also makes sure that light oustide of view doesn't have effect
-	vec2 drayEnd = clamp(rayEnd.xy, 0.0, 1.0);
-	if(drayEnd != rayEnd.xy) {
-		return 0.f;
-	}
-
-	// fac *= ldv;
-	fac *= pow(drayEnd.x * (1 - drayEnd.x), 0.5);
-	fac *= pow(drayEnd.y * (1 - drayEnd.y), 0.5);
-
-	float accum = 0.f;
-	uint steps = 20u;
-	vec2 ray = rayEnd.xy - rayStart;
-	vec2 step = ray / steps;
-
-	// TODO: instead use per-pixel dither pattern and smooth out
-	// in pp pass. Needs additional scattering attachment though
-	step += 0.05 * (2 * random(step) - 1) * step;
-	rayStart += 0.1 * (2 * random(rayStart) - 1) * step;
-	vec2 ipos = rayStart;
-
-	for(uint i = 0u; i < steps; ++i) {
-		// the z value of the lookup position is the value we compare with
-		// accum += texture(depthTex, vec3(ipos, rayEnd.z)).r;
-		float depth = texture(depthTex, ipos).r;
-		accum += depth <= rayEnd.z ? 0.f : 1.f;
-		ipos += step;
-		if(ipos != clamp(ipos, 0, 1)) {
-			break;
-		}
-	}
-
-	// accum *= 0.25 * fac;
-	accum *= fac;
-	accum /= steps; // only count completed steps?
-	accum = clamp(accum, 0.0, 1.0);
-	return accum;
-}
-
 // TODO: fix. Needs some serious changes for point lights
-
 float lightScatterShadow(vec3 pos) {
 	// NOTE: first attempt at light scattering
 	// http://www.alexandre-pestana.com/volumetric-lights/
@@ -186,18 +114,17 @@ void main() {
 	vec3 pos = pos4.xyz / pos4.w;
 	// TODO: we can skip light (but not scattering) if depth == 1
 
-	vec4 sPos = subpassLoad(inPos);
 	vec4 sNormal = subpassLoad(inNormal);
 	vec4 sAlbedo = subpassLoad(inAlbedo);
+	vec4 sEmission = subpassLoad(inEmission);
 
-	// vec3 pos = sPos.xyz;
-	vec3 normal = sNormal.xyz;
+	vec3 normal = decodeNormal(sNormal.xy);
+	// vec3 normal = sNormal.xyz;
 	vec3 albedo = sAlbedo.xyz;
 
-	float roughness = sPos.w; // TODO!
-	// float roughness = 1.f; // TODO!
-	float metallic = sNormal.w;
-	float occlusion = sAlbedo.w;
+	float occlusion = sNormal.w;
+	float roughness = sAlbedo.w;
+	float metallic = sEmission.w;
 
 	// debug modes
 	switch(show.mode) {
@@ -226,14 +153,12 @@ void main() {
 		break;
 	}
 
-	// TODO: remove random factors, implement pbr
-	float ambientFac = 0.1 * occlusion; // TODO
-	// float diffuseFac = 0.5f;
-	// float specularFac = 0.5f;
-	// float shininess = 64.f;
+	// TODO: where does this factor come from? make variable
+	float ambientFac = 0.1 * occlusion;
 
 	float shadow;
 	vec3 ldir;
+	vec3 mappedLightPos; // xy is screenspace, z is depth
 
 	bool pcf = (dirLight.flags & lightPcf) != 0;
 	if((dirLight.flags & lightDir) != 0) {
@@ -245,8 +170,17 @@ void main() {
 
 		shadow = dirShadow(shadowMap, lsPos.xyz, int(pcf));
 		ldir = normalize(dirLight.dir); // TODO: norm could be done on cpu
+
+		// TODO: could be done on cpu!
+		// mapped position of a directional light
+		// manually depth clamp
+		mappedLightPos = sceneMap(scene.proj, scene.viewPos - ldir);
+		if(mappedLightPos.z != clamp(mappedLightPos.z, 0, 1)) {
+			mappedLightPos.xy = vec2(0.0);
+		}
+
+		mappedLightPos.z = 1.f; // on far plane
 	} else {
-		ldir = normalize(pos - pointLight.pos);
 		if(pcf) {
 			float radius = 0.005;
 			shadow = pointShadowSmooth(shadowCube, pointLight.pos,
@@ -255,18 +189,10 @@ void main() {
 			shadow = pointShadow(shadowCube, pointLight.pos,
 				pointLight.farPlane, pos);
 		}
+
+		ldir = normalize(pos - pointLight.pos);
+		mappedLightPos = sceneMap(scene.proj, pointLight.pos);
 	}
-
-	/*
-	// diffuse
-	float lfac = 0.0;
-	lfac += diffuseFac * max(dot(normal, -ldir), 0.0);
-
-	// blinn-phong specular
-	vec3 vdir = normalize(pos - scene.viewPos);
-	vec3 halfway = normalize(-ldir - vdir);
-	lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
-	*/
 
 	vec3 v = normalize(scene.viewPos - pos);
 	vec3 light = cookTorrance(normal, -ldir, v, roughness, metallic,
@@ -277,6 +203,9 @@ void main() {
 	color += ambientFac * albedo * dirLight.color;
 
 	fragColor = vec4(color, 1.0);
-	// fragColor.rgb += lightScatterDepth(pos) * light.color.rgb;
-	// fragColor.rgb += lightScatterShadow(pos) * light.color.rgb;
+
+	vec2 mappedFragPos = sceneMap(scene.proj, pos).xy;
+	float scatter = lightScatterDepth(mappedFragPos, mappedLightPos.xy,
+		mappedLightPos.z, ldir, -v, depthTex);
+	fragColor.rgb += scatter * dirLight.color.rgb;
 }

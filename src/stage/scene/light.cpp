@@ -1,6 +1,7 @@
 #include <stage/scene/light.hpp>
 #include <stage/scene/primitive.hpp>
 #include <stage/scene/scene.hpp>
+#include <stage/scene/shape.hpp>
 #include <stage/bits.hpp>
 #include <stage/transform.hpp>
 #include <vpp/vk.hpp>
@@ -170,7 +171,8 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 
 // DirLight
 DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
-		const ShadowData& data, nytl::Vec3f viewPos) {
+		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
+		nytl::Vec3f viewPos, const Material& mat) {
 	auto extent = vk::Extent3D{size_.x, size_.y, 1u};
 
 	// target
@@ -198,13 +200,20 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	ds_ = {dev.descriptorAllocator(), dsLayout};
 	ubo_ = {dev.bufferAllocator(), lightUboSize,
 		vk::BufferUsageBits::uniformBuffer, 0, hostMem};
-	updateDevice(viewPos);
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	ldsu.imageSampler({{data.sampler, shadowMap(),
 		vk::ImageLayout::depthStencilReadOnlyOptimal}});
 	vpp::apply({ldsu});
+
+	// light ball
+	auto cube = doi::Cube{{}, {1.f, 1.f, 1.f}};
+	auto shape = doi::generate(cube);
+	lightBall_ = {dev, shape, primitiveDsLayout,
+		mat, lightBallMatrix(viewPos)};
+
+	updateDevice(viewPos);
 }
 
 void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
@@ -236,9 +245,13 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	vk::cmdEndRenderPass(cb);
 }
 
+nytl::Mat4f DirLight::lightBallMatrix(nytl::Vec3f viewPos) const {
+	return translateMat(viewPos - 25.f * nytl::normalized(this->data.dir));
+}
+
 nytl::Mat4f DirLight::lightMatrix(nytl::Vec3f viewPos) const {
 	// TODO: sizes should be configurable; depend on scene size
-	auto mat = doi::ortho3Sym(8.f, 8.f, 0.5f, 30.f);
+	auto mat = doi::ortho3Sym(12.f, 12.f, 0.5f, 30.f);
 	auto ndir = nytl::normalized(this->data.dir);
 	mat = mat * doi::lookAtRH(viewPos - 10 * ndir,
 		viewPos,
@@ -251,6 +264,9 @@ void DirLight::updateDevice(nytl::Vec3f viewPos) {
 	auto span = map.span();
 	doi::write(span, this->data);
 	doi::write(span, lightMatrix(viewPos));
+
+	lightBall_.matrix = lightBallMatrix(viewPos);
+	lightBall_.updateDevice();
 }
 
 // PointLight
@@ -263,7 +279,8 @@ void DirLight::updateDevice(nytl::Vec3f viewPos) {
 // framebuffers which may also waste resources (but that may be an alternative
 // worth investigating... we'd still need 6 seperate renderpasses though)
 PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
-		const ShadowData& data) {
+		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
+		const Material& mat) {
 	auto extent = vk::Extent3D{size_.x, size_.y, 1u};
 
 	// target
@@ -318,13 +335,26 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	ds_ = {dev.descriptorAllocator(), dsLayout};
 	ubo_ = {dev.bufferAllocator(), lightUboSize,
 		vk::BufferUsageBits::uniformBuffer, 0, hostMem};
-	updateDevice();
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	ldsu.imageSampler({{data.sampler, shadowMap(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	vpp::apply({ldsu});
+
+	// primitive
+	auto sphere = doi::Sphere{{}, {0.1f, 0.1f, 0.1f}};
+	auto shape = doi::generateUV(sphere);
+	lightBall_ = {dev, shape, primitiveDsLayout,
+		mat, lightBallMatrix()};
+
+	updateDevice();
+}
+
+nytl::Mat4f PointLight::lightBallMatrix() const {
+	// slight offset since otherwise we end up in ball after
+	// setting it to current position
+	return translateMat(this->data.position + nytl::Vec3f{0.2, 0.2, 0.2});
 }
 
 nytl::Mat4f PointLight::lightMatrix(unsigned i) const {
@@ -492,6 +522,9 @@ void PointLight::updateDevice() {
 	for(auto i = 0u; i < 6u; ++i) {
 		doi::write(span, lightMatrix(i));
 	}
+
+	lightBall_.matrix = lightBallMatrix();
+	lightBall_.updateDevice();
 }
 
 } // namespace doi

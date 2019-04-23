@@ -7,10 +7,12 @@
 #include <vpp/pipeline.hpp>
 #include <nytl/mat.hpp>
 
+namespace doi {
+
 class Skybox {
 public:
 	void init(vpp::Device& dev, vk::RenderPass rp,
-		vk::SampleCountBits samples);
+		unsigned subpass, vk::SampleCountBits samples);
 	void updateDevice(const nytl::Mat4f& viewProj);
 	void render(vk::CommandBuffer cb);
 
@@ -26,3 +28,5 @@ protected:
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
 };
+
+} // namespace doi
