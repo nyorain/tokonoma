@@ -46,6 +46,7 @@ stage_src = [
 	'scene/light.cpp',
 	'scene/skybox.cpp',
 
+	common_shaders,
 	stage_shaders,
 ]
 

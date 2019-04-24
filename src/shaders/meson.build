@@ -39,6 +39,7 @@ shaders_src = [
 	['common_shaders', [
 		['fullscreen.vert'],
 		['fullscreen_transform.vert'],
+		['equirectToCube.frag'],
 		['incolor.frag'],
 		['texture.frag'],
 		['simple.vert'],

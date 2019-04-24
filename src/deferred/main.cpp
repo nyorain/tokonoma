@@ -33,13 +33,17 @@
 
 #include <cstdlib>
 
-// TODO: no hdr at the moment. Will look shitty for multiple full lights
-//   add post processing step
 // TODO(optimization): we could theoretically just use one shadow map at all.
-// TODO(optimization): position gbuffer probably not needed, can be
-//   reconstructed from depth buffer and xy coord in light stage
-//
-// deferred lightning? http://gameangst.com/?p=141
+//   requires splitting the light passes though (rendering with light pipe)
+//   so might have disadvantage. so not high prio
+// TODO; we could reuse float gbuffers for later hdr rendering
+//   not that easy though since normal buffer has snorm format...
+//   attachments can be used as color *and* input attachments in a
+//   subpass.
+// NOTE: investigate/compare deferred lightning? http://gameangst.com/?p=141
+
+// TODO: hack
+vk::Sampler globalSampler;
 
 class GRenderer : public doi::Renderer {
 public:
@@ -94,7 +98,8 @@ public:
 		camera_.perspective.near = 0.1f;
 		camera_.perspective.far = 100.f;
 
-		skybox_.init(dev, renderer().renderPass(), 3u, renderer().samples());
+		skybox_.init(dev, "../assets/kloofendal8k.hdr",
+			renderer().renderPass(), 3u, renderer().samples());
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -107,6 +112,7 @@ public:
 		sci.maxLod = 0.25;
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
 		sampler_ = {dev, sci};
+		globalSampler = sampler_;
 
 		initGPipe(); // subpass 0
 		initLPipe(); // subpass 1
@@ -142,23 +148,23 @@ public:
 		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
+#if 0
 		{
 			auto& l = dirLights_.emplace_back(dev, lightDsLayout_, primitiveDsLayout_,
 				shadowData_, camera_.pos, *lightMaterial_);
-			l.data.dir = {2.6f, -0.2f, -1.2f};
-			l.data.color = {1.f, 1.f, 1.f};
+			l.data.dir = {-3.8f, -9.2f, -5.2f};
+			l.data.color = {5.f, 4.f, 2.f};
 			l.updateDevice(camera_.pos);
 		}
-
-		/*
+#else
 		{
 			auto& l = pointLights_.emplace_back(dev, lightDsLayout_, primitiveDsLayout_,
 				shadowData_, *lightMaterial_);
 			l.data.position = {-1.8f, 6.0f, -2.f};
-			l.data.color = {1.f, 1.f, 1.f};
+			l.data.color = {5.f, 4.f, 2.f};
 			l.updateDevice();
 		}
-		*/
+#endif
 
 		// TODO: hack
 		// renderer().depthSampler_ = shadowData_.sampler;
@@ -311,6 +317,9 @@ public:
 		blendAttachment.colorBlendOp = vk::BlendOp::add;
 		blendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
 		blendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
+		blendAttachment.alphaBlendOp = vk::BlendOp::add;
+		blendAttachment.srcAlphaBlendFactor = vk::BlendFactor::one;
+		blendAttachment.dstAlphaBlendFactor = vk::BlendFactor::one;
 		blendAttachment.colorWriteMask =
 			vk::ColorComponentBits::r |
 			vk::ColorComponentBits::g |
@@ -416,12 +425,12 @@ public:
 		scene_->render(cb, gPipeLayout_);
 
 		// NOTE: ideally, don't render these in gbuffer pass...
-		// for(auto& l : pointLights_) {
-		// 	l.lightBall().render(cb, gPipeLayout_);
-		// }
-		// for(auto& l : dirLights_) {
-		// 	l.lightBall().render(cb, gPipeLayout_);
-		// }
+		for(auto& l : pointLights_) {
+			l.lightBall().render(cb, gPipeLayout_);
+		}
+		for(auto& l : dirLights_) {
+			l.lightBall().render(cb, gPipeLayout_);
+		}
 
 		// render lights
 		vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
@@ -480,14 +489,20 @@ public:
 
 		switch(ev.keycode) {
 			case ny::Keycode::m: // move light here
-				dirLights_[0].data.dir = -camera_.pos;
-				dlg_info(camera_.pos);
-				// pointLights_[0].data.position = camera_.pos;
+				if(!dirLights_.empty()) {
+					dirLights_[0].data.dir = -camera_.pos;
+				} else {
+					pointLights_[0].data.position = camera_.pos;
+				}
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::p:
-				dirLights_[0].data.flags ^= doi::lightFlagPcf;
-				// pointLights_[0].data.flags ^= doi::lightFlagPcf;
+				if(!dirLights_.empty()) {
+					dirLights_[0].data.flags ^= doi::lightFlagPcf;
+				} else {
+					pointLights_[0].data.flags ^= doi::lightFlagPcf;
+				}
+
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::n:
@@ -636,7 +651,8 @@ GRenderer::GRenderer(const doi::RendererCreateInfo& ri) :
 
 	auto lightInputBindings = {
 		vpp::descriptorBinding(
-			vk::DescriptorType::inputAttachment,
+			// vk::DescriptorType::inputAttachment,
+			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment),
 	};
 
@@ -665,7 +681,7 @@ GRenderer::GRenderer(const doi::RendererCreateInfo& ri) :
 void GRenderer::createRenderPass() {
 	dlg_assert(sampleCount_ == vk::SampleCountBits::e1);
 
-	vk::AttachmentDescription attachments[6] {};
+	vk::AttachmentDescription attachments[7] {};
 
 	std::uint32_t aid = 0u;
 	std::uint32_t depthid = 0xFFFFFFFFu;
@@ -744,7 +760,9 @@ void GRenderer::createRenderPass() {
 	// subpass 1: use gbuffers and lights to render light image
 	vk::AttachmentReference lightReference;
 	lightReference.attachment = lightid;
-	lightReference.layout = vk::ImageLayout::colorAttachmentOptimal;
+	// lightReference.layout = vk::ImageLayout::colorAttachmentOptimal;
+	// TODO: for next (preserve) pass...
+	lightReference.layout = vk::ImageLayout::general;
 
 	subpasses[1].pipelineBindPoint = vk::PipelineBindPoint::graphics;
 	subpasses[1].colorAttachmentCount = 1;
@@ -761,15 +779,21 @@ void GRenderer::createRenderPass() {
 	colorReference.attachment = colorid;
 	colorReference.layout = vk::ImageLayout::colorAttachmentOptimal;
 
-	vk::AttachmentReference lightInputReference;
-	lightInputReference.attachment = lightid;
-	lightInputReference.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	// vk::AttachmentReference lightInputReference;
+	// lightInputReference.attachment = lightid;
+	// lightInputReference.layout = vk::ImageLayout::shaderReadOnlyOptimal;
 
 	subpasses[2].pipelineBindPoint = vk::PipelineBindPoint::graphics;
 	subpasses[2].colorAttachmentCount = 1;
 	subpasses[2].pColorAttachments = &colorReference;
-	subpasses[2].inputAttachmentCount = 1;
-	subpasses[2].pInputAttachments = &lightInputReference;
+
+	// NOTE: currently sampling from lightid for light scattering
+	// has the limit that scattering is only supported for one
+	// light
+	// subpasses[2].inputAttachmentCount = 1;
+	// subpasses[2].pInputAttachments = &lightInputReference;
+	subpasses[2].preserveAttachmentCount = 1;
+	subpasses[2].pPreserveAttachments = &lightid;
 
 	// render pass for skybox and screen space stuff
 	subpasses[3].pipelineBindPoint = vk::PipelineBindPoint::graphics;
@@ -876,11 +900,15 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 			vk::ImageLayout::general}});
 	}
 
-	vpp::DescriptorSetUpdate ldsu(lightInputDs_);
-	ldsu.inputAttachment({{{}, light_.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+	if(globalSampler) {
+		vpp::DescriptorSetUpdate ldsu(lightInputDs_);
+		// ldsu.inputAttachment({{{}, light_.vkImageView(),
+		// 	vk::ImageLayout::shaderReadOnlyOptimal}});
+		ldsu.imageSampler({{globalSampler, light_.vkImageView(),
+			vk::ImageLayout::general}});
+		vpp::apply({dsu, ldsu});
+	}
 
-	vpp::apply({dsu, ldsu});
 }
 
 std::vector<vk::ClearValue> GRenderer::clearValues() {
