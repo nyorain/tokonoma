@@ -423,7 +423,7 @@ public:
 
 	void update(double delta) override {
 		App::update(delta);
-		App::redraw();
+		App::scheduleRedraw();
 
 		if(socket_ && !paused_) {
 			auto r = socket_->update([&](auto p, auto& recv){
@@ -546,7 +546,7 @@ public:
 			reloadPipes_ = false;
 			initGfxPipe(true);
 			initCompPipe(true);
-			rerecord();
+			scheduleRerecord();
 			createComputeCb();
 		}
 

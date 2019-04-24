@@ -179,7 +179,7 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	float fac = mieScattering(ldv, 0.05);
 	fac *= 35.0 * ldv;
 
-	// nice small sun
+	// nice small "sun" in addition to the all around scattering
 	fac += mieScattering(ldv, 0.95);
 
 	// Make sure light gradually fades when light gets outside of screen
@@ -187,22 +187,39 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	fac *= pow(lightPos.x * (1 - lightPos.x), 0.9);
 	fac *= pow(lightPos.y * (1 - lightPos.y), 0.9);
 
-	uint steps = 35u;
 	vec2 ray = lightPos - fragPos;
+
+	// NOTE: making the number of steps dependent on the ray length
+	// is probably a bad idea. When light an pixel (geometry) are close, the
+	// chance for artefacts is the highest i guess
+	// float l = dot(ray, ray); // max: 2
+	// uint steps = uint(clamp(10 * l, 5, 15));
+
+	uint steps = 10;
 	vec2 step = ray / steps;
 	float accum = 0.f;
 	vec2 ipos = fragPos;
 
-	// TODO: instead of random, use per-pixel dither pattern and smooth out
-	// in pp pass. Needs additional scattering attachment though
-	// step += 0.05 * (2 * random(step) - 1) * step;
-	ipos += 0.1 * (2 * random(fragPos) - 1) * step;
+	vec2 ppixel = mod(fragPos * textureSize(depthTex, 0), vec2(4, 4));
+	const float ditherPattern[4][4] = {
+		{ 0.0f, 0.5f, 0.125f, 0.625f},
+		{ 0.75f, 0.22f, 0.875f, 0.375f},
+		{ 0.1875f, 0.6875f, 0.0625f, 0.5625},
+		{ 0.9375f, 0.4375f, 0.8125f, 0.3125}};
+	float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
+	ipos += ditherValue * step;
+
+	// NOTE: instead of the dithering we could use a fully random
+	// offset. Doesn't seem to work as well though.
+	// Offset to step probably a bad idea
+	// ipos += 0.7 * random(fragPos) * step;
+	// step += 0.01 * (2 * random(step) - 1) * step;
 	for(uint i = 0u; i < steps; ++i) {
 		// sampler2DShadow: z value is the value we compare with
 		// accum += texture(depthTex, vec3(ipos, rayEnd.z)).r;
 
 		float depth = texture(depthTex, ipos).r;
-		accum += depth < lightDepth ? 0.f : 1.f;
+		accum += (depth < lightDepth ? 0.f : 1.f);
 		ipos += step;
 		if(ipos != clamp(ipos, 0, 1)) {
 			break;

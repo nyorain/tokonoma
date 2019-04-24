@@ -129,25 +129,25 @@ void main() {
 	// debug modes
 	switch(show.mode) {
 	case 1:
-		fragColor = vec4(albedo, 1.0);
+		fragColor = vec4(albedo, 0.0);
 		return;
 	case 2:
-		fragColor = vec4(normal, 1.0);
+		fragColor = vec4(normal, 0.0);
 		return;
 	case 3:
-		fragColor = vec4(pos, 1.0);
+		fragColor = vec4(pos, 0.0);
 		return;
 	case 4:
-		fragColor = vec4(vec3(pow(depth, 15)), 1.0);
+		fragColor = vec4(vec3(pow(depth, 15)), 0.0);
 		return;
 	case 5:
-		fragColor = vec4(vec3(occlusion), 1.0);
+		fragColor = vec4(vec3(occlusion), 0.0);
 		return;
 	case 6:
-		fragColor = vec4(vec3(metallic), 1.0);
+		fragColor = vec4(vec3(metallic), 0.0);
 		return;
 	case 7:
-		fragColor = vec4(vec3(roughness), 1.0);
+		fragColor = vec4(vec3(roughness), 0.0);
 		return;
 	default:
 		break;
@@ -158,6 +158,7 @@ void main() {
 
 	float shadow;
 	vec3 ldir;
+	vec3 lightToView;
 	vec3 mappedLightPos; // xy is screenspace, z is depth
 
 	bool pcf = (dirLight.flags & lightPcf) != 0;
@@ -170,6 +171,7 @@ void main() {
 
 		shadow = dirShadow(shadowMap, lsPos.xyz, int(pcf));
 		ldir = normalize(dirLight.dir); // TODO: norm could be done on cpu
+		lightToView = ldir;
 
 		// TODO: could be done on cpu!
 		// mapped position of a directional light
@@ -191,6 +193,7 @@ void main() {
 		}
 
 		ldir = normalize(pos - pointLight.pos);
+		lightToView = normalize(scene.viewPos - pointLight.pos);
 		mappedLightPos = sceneMap(scene.proj, pointLight.pos);
 	}
 
@@ -201,11 +204,11 @@ void main() {
 	// TODO: attenuation
 	vec3 color = max(shadow * light * dirLight.color, 0.0);
 	color += ambientFac * albedo * dirLight.color;
-
 	fragColor = vec4(color, 1.0);
 
 	vec2 mappedFragPos = sceneMap(scene.proj, pos).xy;
 	float scatter = lightScatterDepth(mappedFragPos, mappedLightPos.xy,
-		mappedLightPos.z, ldir, -v, depthTex);
-	fragColor.rgb += scatter * dirLight.color.rgb;
+		mappedLightPos.z, lightToView, -v, depthTex);
+	fragColor.a = scatter;
+	// fragColor.rgb += scatter * dirLight.color.rgb;
 }
