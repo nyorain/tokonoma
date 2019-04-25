@@ -55,8 +55,8 @@ void main() {
 		normal *= -1;
 	}
 
-	outNormal.xy = encodeNormal(normal);
-	// outNormal.xyz = normal;
+	// outNormal.xy = encodeNormal(normal);
+	outNormal.xyz = normal;
 	outAlbedo.rgb = albedo.rgb;
 	outEmission.xyz = vec3(0.0); // TODO!
 

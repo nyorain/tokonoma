@@ -10,6 +10,8 @@
 namespace doi {
 namespace gltf = tinygltf;
 
+struct SceneImage;
+
 class Material {
 public:
 	// See flags in model.frag
@@ -30,7 +32,8 @@ public:
 		float roughness = 1.f, float metalness = 1.f, bool doubleSided = false);
 	Material(const vpp::Device& dev, const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& layout,
-		vk::ImageView dummy, nytl::Span<const vpp::ViewableImage> images);
+		vk::ImageView dummy, nytl::StringParam path,
+		nytl::Span<SceneImage> images);
 
 	// Returns true if this material has *any* texture
 	bool hasTexture() const;

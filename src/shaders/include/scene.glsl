@@ -230,3 +230,68 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	accum = clamp(accum, 0.0, 1.0);
 	return accum;
 }
+
+/*
+// TODO: fix. Needs some serious changes for point lights
+float lightScatterShadow(vec3 pos) {
+	// NOTE: first attempt at light scattering
+	// http://www.alexandre-pestana.com/volumetric-lights/
+	// problem with this is that it doesn't work if background
+	// is clear.
+	vec3 rayStart = scene.viewPos;
+	vec3 rayEnd = pos;
+	vec3 ray = rayEnd - rayStart;
+
+	float rayLength = length(ray);
+	vec3 rayDir = ray / rayLength;
+	rayLength = min(rayLength, 8.f);
+	ray = rayDir * rayLength;
+
+	// float fac = 1 / dot(normalize(-ldir), rayDir);
+	// TODO
+	vec3 lrdir = light.pos.xyz - scene.viewPos;
+	// float div = pow(dot(lrdir, lrdir), 0.6);
+	// float div = length(lrdir);
+	float div = 1.f;
+	float fac = mieScattering(dot(normalize(lrdir), rayDir), 0.01) / div;
+
+	const uint steps = 20u;
+	vec3 step = ray / steps;
+	// offset slightly for smoother but noisy results
+	// TODO: instead use per-pixel dither pattern and smooth out
+	// in pp pass. Needs additional scattering attachment though
+	// rayStart += 0.1 * random(rayEnd) * rayDir;
+	step += 0.01 * random(step) * step;
+	rayStart += 0.01 * random(rayEnd) * step;
+
+	float accum = 0.0;
+	pos = rayStart;
+
+	// TODO: falloff over time
+	// float ffac = 1.f;
+	// float falloff = 0.9;
+	for(uint i = 0u; i < steps; ++i) {
+		// position in light space
+		// vec4 pls = light.proj * vec4(pos, 1.0);
+		// pls.xyz /= pls.w;
+		// pls.y *= -1; // invert y
+		// pls.xy = 0.5 + 0.5 * pls.xy; // normalize for texture access
+// 
+		// // float fac = max(dot(normalize(light.pd - pos), rayDir), 0.0); // TODO: light.position
+		// // accum += fac * texture(shadowTex, pls.xyz).r;
+		// // TODO: implement/use mie scattering function
+		// accum += texture(shadowTex, pls.xyz).r;
+
+		accum += pointShadow(shadowTex, light.pos, pos);
+		pos += step;
+	}
+
+	// 0.25: random factor, should be configurable
+	// accum *= 0.25 * fac;
+	accum *= fac;
+	accum /= steps;
+	accum = clamp(accum, 0.0, 1.0);
+	return accum;
+}
+*/
+

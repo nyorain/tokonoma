@@ -8,56 +8,25 @@
 #include <dlg/dlg.hpp>
 
 namespace doi {
-namespace {
-
-vpp::ViewableImage loadImage(const vpp::Device& dev, const gltf::Image& tex,
-		nytl::StringParam path) {
-	// TODO: simplifying assumptions atm
-	// at least support other formast (r8, r8g8, r8g8b8, r32, r32g32b32,
-	// maybe laso 16-bit formats)
-	if(!tex.uri.empty()) {
-		auto full = std::string(path);
-		full += tex.uri;
-		return doi::loadTexture(dev, full);
-	}
-
-	dlg_assert(tex.component == 4);
-	dlg_assert(!tex.as_is);
-
-	vk::Extent3D extent;
-	extent.width = tex.width;
-	extent.height = tex.height;
-	extent.depth = 1;
-
-	auto format = vk::Format::r8g8b8a8Srgb;
-	auto dataSize = extent.width * extent.height * 4u;
-	auto ptr = reinterpret_cast<const std::byte*>(tex.image.data());
-	auto data = nytl::Span<const std::byte>(ptr, dataSize);
-
-	return doi::loadTexture(dev, extent, format, data);
-}
-
-} // anon namespace
 
 Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 		const tinygltf::Model& model, const tinygltf::Scene& scene,
 		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
-	// TODO: lazy image loading? we currently load all, even when
-	// maybe not needed. not a huge optimization though, most scenes
-	// are probably optimized
-	// load images
-	dlg_info("Found {} images", model.materials.size());
-	for(auto& img : model.images) {
-		dlg_info("  Loading image '{}'...", img.name);
-		images_.push_back(loadImage(dev, img, path));
-	}
 
 	// load materials
+	// will lazily load images and store them into the passed images_
+	// lazy loading isn't really important here, but just from reading
+	// model.images we can't know what they are going to be used for
+	// and that's important for knowing the image format.
+	// if an image is used as albedo or emission texture, the data is in
+	// srgb space, otherwise in rgb space. That's why we also store
+	// Image::srgb to check that this is always handled correctly.
+	images_.resize(model.images.size());
 	dlg_info("Found {} materials", model.materials.size());
 	for(auto& material : model.materials) {
 		dlg_info("  Loading material '{}'...", material.name);
 		auto m = Material(dev, model, material,
-			ri.materialDsLayout, ri.dummyTex, images_);
+			ri.materialDsLayout, ri.dummyTex, path, images_);
 		materials_.push_back(std::move(m));
 	}
 

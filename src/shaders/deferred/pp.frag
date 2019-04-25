@@ -40,7 +40,7 @@ void main() {
 
 	int total = ((2 * range + 1) * (2 * range + 1));
 	scatter /= total;
-	color.rgb += scatter * vec3(2.0, 1.5, 1.0); // TODO: should be light color
+	color.rgb += scatter * vec3(4.0, 3.5, 2.0); // TODO: should be light color
 
 	// NOTE: not sure if needed. We have an srgb framebuffer
 	// color.rgb = pow(color.rgb, vec3(1.0 / 2.2));

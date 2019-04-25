@@ -1,9 +1,41 @@
 #include <stage/scene/material.hpp>
+#include <stage/scene/scene.hpp>
 #include <dlg/dlg.hpp>
 #include <vpp/vk.hpp>
 #include <stage/texture.hpp>
 
 namespace doi {
+namespace {
+
+vpp::ViewableImage loadImage(const vpp::Device& dev, const gltf::Image& tex,
+		nytl::StringParam path, bool srgb) {
+	// TODO: simplifying assumptions atm
+	// at least support other formast (r8, r8g8, r8g8b8, r32, r32g32b32,
+	// maybe also 16-bit formats)
+	if(!tex.uri.empty()) {
+		auto full = std::string(path);
+		full += tex.uri;
+		return doi::loadTexture(dev, full, false, srgb);
+	}
+
+	dlg_assert(tex.component == 4);
+	dlg_assert(!tex.as_is);
+
+	vk::Extent3D extent;
+	extent.width = tex.width;
+	extent.height = tex.height;
+	extent.depth = 1;
+
+	auto format = srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
+	auto dataSize = extent.width * extent.height * 4u;
+	auto ptr = reinterpret_cast<const std::byte*>(tex.image.data());
+	auto data = nytl::Span<const std::byte>(ptr, dataSize);
+
+	return doi::loadTexture(dev, extent, format, data);
+}
+
+} // anon namespace
+
 
 vk::PushConstantRange Material::pcr() {
 	vk::PushConstantRange pcr;
@@ -61,7 +93,8 @@ Material::Material(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 
 Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& dsLayout,
-		vk::ImageView dummyView, nytl::Span<const vpp::ViewableImage> images) {
+		vk::ImageView dummyView, nytl::StringParam path,
+		nytl::Span<SceneImage> images) {
 	auto& pbr = material.values;
 	auto& add = material.additionalValues;
 	if(auto color = pbr.find("baseColorFactor"); color != pbr.end()) {
@@ -86,13 +119,28 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 	// TODO: repsect texture (sampler) parameters
 	// TODO: we really should allocate textures at once, using
 	// deferred initialization
+	// TODO: loading images like that prevents us from parallalizing
+	// image loading. Work on that. Maybe first make a list
+	// of what images are needed, then parallalize loading (from disk),
+	// then submit and wait for command buffers, then finish initialization
+	// materials (i.e. write descriptor sets)
+	auto getImage = [&](unsigned id, bool srgb) {
+		dlg_assert(id < images.size());
+		if(images[id].image.vkImageView()) {
+			dlg_assert(images[id].srgb == srgb);
+			return images[id].image.vkImageView();
+		}
+
+		images[id].image = loadImage(dev, model.images[id], path, srgb);
+		images[id].srgb = srgb;
+		return images[id].image.vkImageView();
+	};
 
 	if(auto color = pbr.find("baseColorTexture"); color != pbr.end()) {
 		auto tex = color->second.TextureIndex();
 		dlg_assert(tex != -1);
 		unsigned src = model.textures[tex].source;
-		dlg_assert(src < images.size());
-		albedoTex_ = images[src].vkImageView();
+		albedoTex_ = getImage(src, true);
 		flags_ |= Flags::textured;
 	} else {
 		albedoTex_ = dummyView;
@@ -102,8 +150,7 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
 		unsigned src = model.textures[tex].source;
-		dlg_assert(src < images.size());
-		metalnessRoughnessTex_ = images[src].vkImageView();
+		metalnessRoughnessTex_ = getImage(src, false);
 		flags_ |= Flags::textured;
 	} else {
 		metalnessRoughnessTex_ = dummyView;
@@ -115,8 +162,7 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
 		unsigned src = model.textures[tex].source;
-		dlg_assert(src < images.size());
-		normalTex_ = images[src].vkImageView();
+		normalTex_ = getImage(src, false);
 		flags_ |= Flags::textured;
 		flags_ |= Flags::normalMap;
 	} else {
@@ -127,8 +173,7 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
 		unsigned src = model.textures[tex].source;
-		dlg_assert(src < images.size());
-		occlusionTex_ = images[src].vkImageView();
+		occlusionTex_ = getImage(src, false);
 		flags_ |= Flags::textured;
 	} else {
 		occlusionTex_ = dummyView;

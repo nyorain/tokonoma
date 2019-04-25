@@ -1,7 +1,7 @@
 #pragma once
 
-#include "material.hpp"
-#include "primitive.hpp"
+#include <stage/scene/material.hpp>
+#include <stage/scene/primitive.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/nonCopyable.hpp>
@@ -17,6 +17,11 @@ struct SceneRenderInfo {
 	const vpp::TrDsLayout& primitiveDsLayout;
 	vk::PipelineLayout pipeLayout;
 	vk::ImageView dummyTex; // 1 pixel rgba white
+};
+
+struct SceneImage {
+	vpp::ViewableImage image;
+	bool srgb;
 };
 
 // TODO: make movable. Requires to remove reference from
@@ -48,7 +53,7 @@ protected:
 	void loadNode(vpp::Device&, const gltf::Model&, const gltf::Node&,
 		const SceneRenderInfo&, nytl::Mat4f matrix);
 
-	std::vector<vpp::ViewableImage> images_;
+	std::vector<SceneImage> images_;
 	std::vector<Material> materials_;
 	std::vector<Primitive> primitives_;
 

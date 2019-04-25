@@ -32,7 +32,14 @@
 #include <shaders/deferred.light.frag.h>
 
 #include <cstdlib>
+#include <random>
 
+// TODO: mipmapping, anisotropic filtering
+// TODO: split in multiple render passes.
+//  currently using undefined behavior (sampling attachments)
+// TODO: only use ssao when a model has no occlusion texture?
+//   or use both then? but we should probably normalize in that case,
+//   otherwise we apply ao twice
 // TODO(optimization): we could theoretically just use one shadow map at all.
 //   requires splitting the light passes though (rendering with light pipe)
 //   so might have disadvantage. so not high prio
@@ -41,8 +48,11 @@
 //   attachments can be used as color *and* input attachments in a
 //   subpass.
 // NOTE: investigate/compare deferred lightning? http://gameangst.com/?p=141
+// TODO(optimization): more efficient point light shadow cube map
+//   rendering: only render those sides that we can actually see...
 
-// TODO: hack
+// TODO: hack (renderpass sampling)
+// rework App, Renderer handling
 vk::Sampler globalSampler;
 
 class GRenderer : public doi::Renderer {
@@ -98,7 +108,7 @@ public:
 		camera_.perspective.near = 0.1f;
 		camera_.perspective.far = 100.f;
 
-		skybox_.init(dev, "../assets/kloofendal8k.hdr",
+		skybox_.init(dev, "../assets/kloofendal2k.hdr",
 			renderer().renderPass(), 3u, renderer().samples());
 
 		// tex sampler
@@ -148,7 +158,7 @@ public:
 		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
-#if 0
+#if 1
 		{
 			auto& l = dirLights_.emplace_back(dev, lightDsLayout_, primitiveDsLayout_,
 				shadowData_, camera_.pos, *lightMaterial_);
@@ -289,13 +299,25 @@ public:
 
 		lightDsLayout_ = {dev, lightBindings};
 
+		auto ssaoBindings = {
+			vpp::descriptorBinding(
+				vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::fragment),
+			vpp::descriptorBinding(
+				vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+		};
+
+		ssaoDsLayout_ = {dev, ssaoBindings};
+
 		// light pipe
 		vk::PushConstantRange pcr {};
 		pcr.size = 4;
 		pcr.stageFlags = vk::ShaderStageBits::fragment;
 
 		auto& ids = renderer().inputDsLayout();
-		lPipeLayout_ = {dev, {sceneDsLayout_, ids, lightDsLayout_}, {pcr}};
+		lPipeLayout_ = {dev, {sceneDsLayout_, ids, lightDsLayout_,
+			ssaoDsLayout_}, {pcr}};
 
 		// TODO: don't use fullscreen here. Only render the areas of the screen
 		// that are effected by the light (huge, important optimization
@@ -334,6 +356,58 @@ public:
 			1, gpi.info(), NULL, vkpipe);
 
 		lPipe_ = {dev, vkpipe};
+
+		// ssao
+		std::default_random_engine rndEngine;
+		std::uniform_real_distribution<float> rndDist(0.0f, 1.0f);
+
+		// Sample kernel
+		std::vector<nytl::Vec4f> ssaoKernel(SSAO_SAMPLE_COUNT);
+		for(auto i = 0u; i < SSAO_SAMPLE_COUNT; ++i) {
+			nytl::Vec3f sample{
+				2.f * rndDist(rndEngine) - 1.f,
+				2.f * rndDist(rndEngine) - 1.f,
+				rndDist(rndEngine)};
+			sample = normalized(sample);
+			sample *= rndDist(rndEngine);
+			float scale = float(i) / float(SSAO_SAMPLE_COUNT);
+			scale = nytl::mix(0.1f, 1.0f, scale * scale);
+			ssaoKernel[i] = nytl::Vec4f(scale * sample);
+		}
+
+		// ubo
+		auto devMem = dev.deviceMemoryTypes();
+		auto size = sizeof(nytl::Vec4f) * SSAO_SAMPLE_COUNT;
+		auto usage = vk::BufferUsageBits::transferDst |
+			vk::BufferUsageBits::uniformBuffer;
+		ssaoSamples_ = {dev.bufferAllocator(), size, usage, 0, devMem};
+		vpp::writeStaging140(ssaoSamples_, vpp::raw(*ssaoKernel.data(),
+				ssaoKernel.size()));
+
+		// NOTE: we could use a r32g32f format, would be more efficent
+		// might not be supported though... we could pack it into somehow
+		auto ssaoNoiseDim = 4u;
+		std::vector<nytl::Vec4f> ssaoNoise(ssaoNoiseDim * ssaoNoiseDim);
+		for(auto i = 0u; i < static_cast<uint32_t>(ssaoNoise.size()); i++) {
+			ssaoNoise[i] = nytl::Vec4f{
+				rndDist(rndEngine) * 2.f - 1.f,
+				rndDist(rndEngine) * 2.f - 1.f,
+				0.0f, 0.0f
+			};
+		}
+
+		auto ptr = reinterpret_cast<const std::byte*>(ssaoNoise.data());
+		auto ptrSize = ssaoNoise.size() * sizeof(ssaoNoise[0]);
+		ssaoNoise_ = doi::loadTexture(dev, {ssaoNoiseDim, ssaoNoiseDim, 1u},
+			vk::Format::r32g32b32a32Sfloat, {ptr, ptrSize});
+
+		// ds
+		ssaoDs_ = {dev.descriptorAllocator(), ssaoDsLayout_};
+		vpp::DescriptorSetUpdate dsu(ssaoDs_);
+		dsu.uniform({{ssaoSamples_.buffer(), ssaoSamples_.offset(),
+			ssaoSamples_.size()}});
+		dsu.imageSampler({{{}, ssaoNoise_.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
 	}
 
 	// TODO: use push constant range or ubo to select
@@ -425,14 +499,18 @@ public:
 		scene_->render(cb, gPipeLayout_);
 
 		// NOTE: ideally, don't render these in gbuffer pass...
+		/*
 		for(auto& l : pointLights_) {
 			l.lightBall().render(cb, gPipeLayout_);
 		}
 		for(auto& l : dirLights_) {
 			l.lightBall().render(cb, gPipeLayout_);
 		}
+		*/
 
 		// render lights
+		// TODO: bad pipe/ds layout, ssaoDs always the same but
+		// rebinding it
 		vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
 		vk::cmdPushConstants(cb, lPipeLayout_, vk::ShaderStageBits::fragment,
 			0, 4, &show_);
@@ -441,12 +519,12 @@ public:
 			lPipeLayout_, 0, {sceneDs_, renderer().inputDs()}, {});
 		for(auto& light : pointLights_) {
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-				lPipeLayout_, 2, {light.ds()}, {});
+				lPipeLayout_, 2, {light.ds(), ssaoDs_}, {});
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		}
 		for(auto& light : dirLights_) {
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-				lPipeLayout_, 2, {light.ds()}, {});
+				lPipeLayout_, 2, {light.ds(), ssaoDs_}, {});
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		}
 
@@ -476,6 +554,9 @@ public:
 		if(camera_.update || updateLights_) {
 			App::scheduleRedraw();
 		}
+
+		// TODO: this is only here for fps testing
+		App::scheduleRedraw();
 	}
 
 	bool key(const ny::KeyEvent& ev) override {
@@ -487,6 +568,7 @@ public:
 			return false;
 		}
 
+		auto numModes = 9u;
 		switch(ev.keycode) {
 			case ny::Keycode::m: // move light here
 				if(!dirLights_.empty()) {
@@ -506,11 +588,11 @@ public:
 				updateLights_ = true;
 				return true;
 			case ny::Keycode::n:
-				show_ = (show_ + 1) % 7;
+				show_ = (show_ + 1) % numModes;
 				App::scheduleRerecord();
 				return true;
 			case ny::Keycode::l:
-				show_ = (show_ + 7 - 1) % 7;
+				show_ = (show_ + numModes - 1) % numModes;
 				App::scheduleRerecord();
 				return true;
 			default:
@@ -589,6 +671,7 @@ protected:
 	vpp::TrDsLayout primitiveDsLayout_;
 	vpp::TrDsLayout materialDsLayout_;
 	vpp::TrDsLayout lightDsLayout_;
+	vpp::TrDsLayout ssaoDsLayout_;
 
 	// shadow
 	doi::ShadowData shadowData_;
@@ -602,6 +685,11 @@ protected:
 	vpp::TrDs sceneDs_;
 	vpp::Pipeline gPipe_; // gbuf
 	vpp::Pipeline lPipe_; // light
+
+	static const unsigned SSAO_SAMPLE_COUNT = 32u;
+	vpp::TrDs ssaoDs_;
+	vpp::ViewableImage ssaoNoise_;
+	vpp::SubBuffer ssaoSamples_;
 
 	vpp::ViewableImage dummyTex_;
 	std::unique_ptr<doi::Scene> scene_;

@@ -38,93 +38,77 @@ layout(set = 2, binding = 0, row_major) uniform DirLightBuf {
 layout(set = 2, binding = 1) uniform sampler2DShadow shadowMap;
 layout(set = 2, binding = 1) uniform samplerCubeShadow shadowCube;
 
+const uint SSAO_SAMPLE_COUNT = 32u; // NOTE: sync with deferred/main
+layout(set = 3, binding = 0) uniform SSAOSamplerBuf {
+	vec4 samples[SSAO_SAMPLE_COUNT];
+} ssao;
+layout(set = 3, binding = 1) uniform sampler2D ssaoNoiseTex;
+
 layout(push_constant) uniform Show {
 	uint mode;
 } show;
 
-/*
-// TODO: fix. Needs some serious changes for point lights
-float lightScatterShadow(vec3 pos) {
-	// NOTE: first attempt at light scattering
-	// http://www.alexandre-pestana.com/volumetric-lights/
-	// problem with this is that it doesn't work if background
-	// is clear.
-	vec3 rayStart = scene.viewPos;
-	vec3 rayEnd = pos;
-	vec3 ray = rayEnd - rayStart;
+// TODO: should be in extra pass, blurred afterwards...
+float computeSSAO(vec3 pos, vec3 normal) {
+	// TODO: easier when using repeated texture sampler
+	vec2 noiseSize = textureSize(ssaoNoiseTex, 0);
+	vec2 nuv = mod(uv * textureSize(depthTex, 0), noiseSize) / noiseSize;
+	vec3 randomVec = texture(ssaoNoiseTex, nuv).xyz;  
 
-	float rayLength = length(ray);
-	vec3 rayDir = ray / rayLength;
-	rayLength = min(rayLength, 8.f);
-	ray = rayDir * rayLength;
+	vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
+	vec3 bitangent = cross(normal, tangent);
+	mat3 TBN = mat3(tangent, bitangent, normal); 
 
-	// float fac = 1 / dot(normalize(-ldir), rayDir);
-	// TODO
-	vec3 lrdir = light.pos.xyz - scene.viewPos;
-	// float div = pow(dot(lrdir, lrdir), 0.6);
-	// float div = length(lrdir);
-	float div = 1.f;
-	float fac = mieScattering(dot(normalize(lrdir), rayDir), 0.01) / div;
+	float occlusion = 0.0;
+	float radius = 0.5f;
+	for(int i = 0; i < SSAO_SAMPLE_COUNT; ++i) {
+		vec3 mapped = TBN * ssao.samples[i].xyz; // From tangent to view-space
+		mapped = pos + mapped * radius; 
+		mapped = sceneMap(scene.proj, mapped);
+		float sampleDepth = texture(depthTex, mapped.xy).r;
+		
+		// const float bias = 0.025;
+		const float bias = 0.0;
+		occlusion += (sampleDepth + bias >= mapped.z ? 1.0 : 0.0);  
 
-	const uint steps = 20u;
-	vec3 step = ray / steps;
-	// offset slightly for smoother but noisy results
-	// TODO: instead use per-pixel dither pattern and smooth out
-	// in pp pass. Needs additional scattering attachment though
-	// rayStart += 0.1 * random(rayEnd) * rayDir;
-	step += 0.01 * random(step) * step;
-	rayStart += 0.01 * random(rayEnd) * step;
+		// TODO: range check
+	}  
 
-	float accum = 0.0;
-	pos = rayStart;
-
-	// TODO: falloff over time
-	// float ffac = 1.f;
-	// float falloff = 0.9;
-	for(uint i = 0u; i < steps; ++i) {
-		// position in light space
-		// vec4 pls = light.proj * vec4(pos, 1.0);
-		// pls.xyz /= pls.w;
-		// pls.y *= -1; // invert y
-		// pls.xy = 0.5 + 0.5 * pls.xy; // normalize for texture access
-// 
-		// // float fac = max(dot(normalize(light.pd - pos), rayDir), 0.0); // TODO: light.position
-		// // accum += fac * texture(shadowTex, pls.xyz).r;
-		// // TODO: implement/use mie scattering function
-		// accum += texture(shadowTex, pls.xyz).r;
-
-		accum += pointShadow(shadowTex, light.pos, pos);
-		pos += step;
-	}
-
-	// 0.25: random factor, should be configurable
-	// accum *= 0.25 * fac;
-	accum *= fac;
-	accum /= steps;
-	accum = clamp(accum, 0.0, 1.0);
-	return accum;
+	occlusion = occlusion / SSAO_SAMPLE_COUNT;
+	return occlusion;
 }
-*/
 
 void main() {
 	vec2 suv = 2 * uv - 1;
 	suv.y *= -1.f; // flip y
 	float depth = texture(depthTex, uv).r;
+	// we can skip light (but not scattering) if depth == 1
+	// TODO: currently scattered over main...
+	// if(depth == 1) {
+	// 	fragColor = vec4(0.0);
+	// 	return; // ignore, cleared
+	// }
+
 	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
 	vec3 pos = pos4.xyz / pos4.w;
-	// TODO: we can skip light (but not scattering) if depth == 1
 
 	vec4 sNormal = subpassLoad(inNormal);
 	vec4 sAlbedo = subpassLoad(inAlbedo);
 	vec4 sEmission = subpassLoad(inEmission);
 
-	vec3 normal = decodeNormal(sNormal.xy);
-	// vec3 normal = sNormal.xyz;
+	// vec3 normal = decodeNormal(sNormal.xy);
+	vec3 normal = sNormal.xyz;
 	vec3 albedo = sAlbedo.xyz;
 
 	float occlusion = sNormal.w;
 	float roughness = sAlbedo.w;
 	float metallic = sEmission.w;
+
+	// ssao
+	float ao = 0.0;
+	if(depth != 1.f) {
+		ao = computeSSAO(pos, normal);
+	}
 
 	// debug modes
 	switch(show.mode) {
@@ -149,14 +133,17 @@ void main() {
 	case 7:
 		fragColor = vec4(vec3(roughness), 0.0);
 		return;
+	case 8:
+		fragColor = vec4(vec3(ao), 0.0);
+		return;
 	default:
 		break;
 	}
 
 	// TODO: where does this factor come from? make variable
-	float ambientFac = 0.1 * occlusion;
+	float ambientFac = 0.5 * occlusion;
 
-	float shadow;
+	float shadow = 0;
 	vec3 ldir;
 	vec3 lightToView;
 	vec3 mappedLightPos; // xy is screenspace, z is depth
@@ -169,7 +156,10 @@ void main() {
 		lsPos.y *= -1; // invert y
 		lsPos.xy = 0.5 + 0.5 * lsPos.xy; // normalize for texture access
 
-		shadow = dirShadow(shadowMap, lsPos.xyz, int(pcf));
+		if(depth != 1.f) {
+			shadow = dirShadow(shadowMap, lsPos.xyz, int(pcf));
+		}
+
 		ldir = normalize(dirLight.dir); // TODO: norm could be done on cpu
 		lightToView = ldir;
 
@@ -183,13 +173,16 @@ void main() {
 
 		mappedLightPos.z = 1.f; // on far plane
 	} else {
-		if(pcf) {
-			float radius = 0.005;
-			shadow = pointShadowSmooth(shadowCube, pointLight.pos,
-				pointLight.farPlane, pos, radius);
-		} else {
-			shadow = pointShadow(shadowCube, pointLight.pos,
-				pointLight.farPlane, pos);
+		if(depth != 1.f){ 
+			if(pcf) {
+				float viewDistance = length(scene.viewPos - pos);
+				float radius = (1.0 + (viewDistance / 30.0)) / 25.0;  
+				shadow = pointShadowSmooth(shadowCube, pointLight.pos,
+					pointLight.farPlane, pos, radius);
+			} else {
+				shadow = pointShadow(shadowCube, pointLight.pos,
+					pointLight.farPlane, pos);
+			}
 		}
 
 		ldir = normalize(pos - pointLight.pos);
@@ -198,13 +191,17 @@ void main() {
 	}
 
 	vec3 v = normalize(scene.viewPos - pos);
-	vec3 light = cookTorrance(normal, -ldir, v, roughness, metallic,
-		albedo);
+	vec3 light = dot(normal, -ldir) * albedo; // diffuse only
+	// vec3 light = cookTorrance(normal, -ldir, v, roughness, metallic,
+		// albedo);
 
 	// TODO: attenuation
 	vec3 color = max(shadow * light * dirLight.color, 0.0);
-	color += ambientFac * albedo * dirLight.color;
-	fragColor = vec4(color, 1.0);
+	ambientFac *= ao;
+	// TODO: somehow include light color in ssao?
+	// color += ambientFac * albedo * normalize(dirLight.color);
+	color += ambientFac * albedo;
+	fragColor = vec4(color, 0.0);
 
 	vec2 mappedFragPos = sceneMap(scene.proj, pos).xy;
 	float scatter = lightScatterDepth(mappedFragPos, mappedLightPos.xy,

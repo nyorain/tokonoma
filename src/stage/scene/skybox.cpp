@@ -40,8 +40,7 @@ void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 	initPipeline(dev, rp, subpassID, samples);
 	// TODO: maybe host visible is better here, we only read from it
 	// once anyways. Add option to loadTexture to allow that
-	// TODO: remove global
-	auto equirectImg = doi::loadTexture(dev, hdrFile, true);
+	auto equirectImg = doi::loadTexture(dev, hdrFile, true, false);
 
 	// convert equirectangular to cubemap
 	// renderpass
@@ -198,7 +197,7 @@ void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 	initPipeline(dev, rp, subpass, samples);
 
 	// https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
-	auto base = std::string("../assets/skyboxset1/SunSet/SunSet");
+	auto base = std::string("../assets/skyboxset1/SunSet");
 	auto suffix = std::string("2048.png");
 	std::string names[] = {
 		base + "Right" + suffix,
