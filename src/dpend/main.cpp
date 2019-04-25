@@ -224,7 +224,7 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
-		App::redraw();
+		App::scheduleRedraw();
 
 		// input
 		// auto& kc = *appContext().keyboardContext();

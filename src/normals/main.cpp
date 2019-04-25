@@ -94,7 +94,7 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
-		App::redraw();
+		App::scheduleRedraw();
 
 		auto fac = dt;
 		auto kc = appContext().keyboardContext();
@@ -102,27 +102,27 @@ public:
 		// we don't use a transform matrix here, so origin is top left
 		if(kc->pressed(ny::Keycode::d)) {
 			lightPos_ += nytl::Vec {fac, 0.f, 0.f};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::a)) {
 			lightPos_ += nytl::Vec {-fac, 0.f, 0.f};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::w)) {
 			lightPos_ += nytl::Vec {0.f, -fac, 0.f};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::s)) {
 			lightPos_ += nytl::Vec {0.f, fac, 0.f};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::q)) {
 			lightPos_ += nytl::Vec {0.f, 0.f, fac};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::e)) {
 			lightPos_ += nytl::Vec {0.f, 0.f, -fac};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 
 		time_ += dt;

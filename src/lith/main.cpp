@@ -474,23 +474,23 @@ public:
 
 		if(ev.keycode == ny::Keycode::k0) {
 			renderMode_ = 0;
-			rerecord();
+			App::scheduleRerecord();
 			return true;
 		} else if(ev.keycode == ny::Keycode::k1) {
 			renderMode_ = 1;
-			rerecord();
+			App::scheduleRerecord();
 			return true;
 		} else if(ev.keycode == ny::Keycode::k2) {
 			renderMode_ = 2;
-			rerecord();
+			App::scheduleRerecord();
 			return true;
 		} else if(ev.keycode == ny::Keycode::k3) {
 			renderMode_ = 3;
-			rerecord();
+			App::scheduleRerecord();
 			return true;
 		} else if(ev.keycode == ny::Keycode::r) {
 			renderMode_ = (renderMode_ + 1) % 4;
-			rerecord();
+			App::scheduleRerecord();
 			return true;
 		} else if(ev.keycode == ny::Keycode::l) {
 			camera_.update = true; // updates ubo
@@ -510,7 +510,7 @@ public:
 
 	void update(double delta) override {
 		App::update(delta);
-		App::redraw(); // TODO: can be optimized
+		App::scheduleRedraw(); // TODO: can be optimized
 		time_ += delta;
 
 		// movement

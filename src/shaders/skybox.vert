@@ -13,4 +13,11 @@ void main() {
 	uvw = pos;
 	gl_Position = ubo.transform * vec4(pos, 1.0);
 	gl_Position.y = -gl_Position.y;
+
+	// Requires pipeline to have lessOrEqual as depth test
+	// will always project vertices on the far plane, behind
+	// all other geometry, allowing to render the skybox *after*
+	// the scene (small optimization but e.g. required for a deferred
+	// renderer).
+	gl_Position = gl_Position.xyww;
 }

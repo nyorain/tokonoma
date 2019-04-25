@@ -158,7 +158,7 @@ struct App::Impl {
 	std::optional<vpp::DebugCallback> debugCallback;
 
 	std::optional<MainWindow> window;
-	std::optional<Renderer> renderer;
+	std::unique_ptr<Renderer> renderer;
 
 	std::optional<rvg::Context> rvgContext;
 	rvg::Transform windowTransform;
@@ -362,7 +362,7 @@ bool App::init(const AppSettings& settings) {
 		impl_->samples, args_.vsync, clearColor, needsDepth()
 	};
 
-	impl_->renderer.emplace(renderInfo);
+	impl_->renderer = createRenderer(renderInfo);
 	renderer().beforeRender = [&](auto cb) {
 		beforeRender(cb);
 	};
@@ -374,24 +374,27 @@ bool App::init(const AppSettings& settings) {
 	};
 
 	// additional stuff
-	rvg::ContextSettings rvgcs {renderer().renderPass(), 0u};
-	rvgcs.samples = samples();
-	rvgcs.clipDistanceEnable = impl_->clipDistance;
+	if(settings.rvgSubpass) {
+		rvg::ContextSettings rvgcs {renderer().renderPass(),
+			*settings.rvgSubpass};
+		rvgcs.samples = samples();
+		rvgcs.clipDistanceEnable = impl_->clipDistance;
 
-	impl_->rvgContext.emplace(vulkanDevice(), rvgcs);
-	impl_->windowTransform = {rvgContext()};
-	impl_->fontAtlas.emplace(rvgContext());
+		impl_->rvgContext.emplace(vulkanDevice(), rvgcs);
+		impl_->windowTransform = {rvgContext()};
+		impl_->fontAtlas.emplace(rvgContext());
 
-	std::string fontPath = baseResPath;
-	fontPath += "assets/Roboto-Regular.ttf";
-	// fontPath += "assets/OpenSans-Light.ttf";
-	// fontPath += "build/Lucida-Grande.ttf"; // nonfree
-	impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath, fontHeight);
-	impl_->fontAtlas->bake(rvgContext());
+		std::string fontPath = baseResPath;
+		fontPath += "assets/Roboto-Regular.ttf";
+		// fontPath += "assets/OpenSans-Light.ttf";
+		// fontPath += "build/Lucida-Grande.ttf"; // nonfree
+		impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath, fontHeight);
+		impl_->fontAtlas->bake(rvgContext());
 
-	// gui
-	impl_->guiListener.app(*this);
-	impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
+		// gui
+		impl_->guiListener.app(*this);
+		impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
+	}
 
 	return true;
 }
@@ -399,28 +402,22 @@ bool App::init(const AppSettings& settings) {
 argagg::parser App::argParser() const {
 	return {{
 		{
-			"help",
-			{"-h", "--help"},
+			"help", {"-h", "--help"},
 			"Displays help information", 0
 		}, {
-			"no-validation",
-			{"--no-validation"},
+			"no-validation", {"--no-validation"},
 			"Disabled layer validation", 0
 		}, {
-			"renderdoc",
-			{"-r", "--renderdoc"},
+			"renderdoc", {"-r", "--renderdoc"},
 			"Load the renderdoc vulkan layer", 0
 		}, {
-			"no-vsync",
-			{"--no-vsync"},
+			"no-vsync", {"--no-vsync"},
 			"Disable vsync", 0
 		}, {
-			"multisamples",
-			{"--multisamples", "-m"},
+			"multisamples", {"--multisamples", "-m"},
 			"Sets the samples to use", 1
 		}, {
-			"phdev",
-			{"--phdev"},
+			"phdev", {"--phdev"},
 			"Sets the physical device id to use."
 			"Can be id, name or {igpu, dgpu, auto}", 1
 		}
@@ -431,7 +428,10 @@ bool App::handleArgs(const argagg::parser_results& result) {
 	args_.layers = !result["no-validation"];
 	args_.vsync = !result["no-vsync"];
 	args_.renderdoc = result["renderdoc"];
-	args_.samples = result["multisamples"].as<unsigned>(1);
+
+	if(result.has_option("multisamples") > 0) {
+		args_.samples = result["multisamples"].as<unsigned>(1);
+	}
 
 	auto& phdev = result["phdev"];
 	if(phdev.count() > 0) {
@@ -605,20 +605,22 @@ void App::callUpdate() {
 }
 
 void App::update(double dt) {
-	// TODO: few things still missing
-	// no one supports it :(
-	// App::redraw();
-
 	if(!appContext().pollEvents()) {
 		dlg_info("update: events returned false");
 		run_ = false;
 		return;
 	}
 
-	redraw_ |= gui().update(dt);
+	if(impl_->gui) {
+		redraw_ |= gui().update(dt);
+	}
 }
 
 void App::updateDevice() {
+	if(!impl_->rvgContext) {
+		return;
+	}
+
 	auto [rec, seph] = rvgContext().upload();
 	if(seph) {
 		impl_->nextFrameWait.push_back({seph,
@@ -636,21 +638,23 @@ void App::addSemaphore(vk::Semaphore seph, vk::PipelineStageFlags waitDst) {
 void App::resize(const ny::SizeEvent& ev) {
 	resize_ = true;
 
-	// TODO: probably best to remove this completetly
-	// NOTE: currently top left (for mists)
-	// window-coords, origin bottom left
-	auto s = nytl::Vec{ 2.f / ev.size.x, 2.f / ev.size.y, 1};
-	auto transform = nytl::identity<4, float>();
-	scale(transform, s);
-	translate(transform, {-1, -1, 0});
-	impl_->windowTransform.matrix(transform);
+	if(impl_->gui) {
+		// TODO: probably best to remove this completetly
+		// NOTE: currently top left (for mists)
+		// window-coords, origin bottom left
+		auto s = nytl::Vec{ 2.f / ev.size.x, 2.f / ev.size.y, 1};
+		auto transform = nytl::identity<4, float>();
+		scale(transform, s);
+		translate(transform, {-1, -1, 0});
+		impl_->windowTransform.matrix(transform);
 
-	// window-coords, origin top left
-	s = nytl::Vec{ 2.f / ev.size.x, 2.f / ev.size.y, 1};
-	transform = nytl::identity<4, float>();
-	scale(transform, s);
-	translate(transform, {-1, -1, 0});
-	gui().transform(transform);
+		// window-coords, origin top left
+		s = nytl::Vec{2.f / ev.size.x, 2.f / ev.size.y, 1};
+		transform = nytl::identity<4, float>();
+		scale(transform, s);
+		translate(transform, {-1, -1, 0});
+		gui().transform(transform);
+	}
 }
 
 void App::close(const ny::CloseEvent&) {
@@ -658,6 +662,10 @@ void App::close(const ny::CloseEvent&) {
 }
 
 bool App::key(const ny::KeyEvent& ev) {
+	if(!impl_->gui) {
+		return false;
+	}
+
 	auto ret = false;
 	auto vev = vui::KeyEvent {};
 	vev.key = static_cast<vui::Key>(ev.keycode); // both modeled after linux
@@ -676,25 +684,39 @@ bool App::key(const ny::KeyEvent& ev) {
 }
 
 bool App::mouseButton(const ny::MouseButtonEvent& ev) {
-	auto p = static_cast<nytl::Vec2f>(ev.position);
-	auto b = static_cast<vui::MouseButton>(ev.button);
-	return gui().mouseButton({ev.pressed, b, p});
+	if(impl_->gui) {
+		auto p = static_cast<nytl::Vec2f>(ev.position);
+		auto b = static_cast<vui::MouseButton>(ev.button);
+		return gui().mouseButton({ev.pressed, b, p});
+	}
+
+	return false;
 }
 
 void App::mouseMove(const ny::MouseMoveEvent& ev) {
-	gui().mouseMove({static_cast<nytl::Vec2f>(ev.position)});
+	if(impl_->gui) {
+		gui().mouseMove({static_cast<nytl::Vec2f>(ev.position)});
+	}
 }
 
 bool App::mouseWheel(const ny::MouseWheelEvent& ev) {
-	return gui().mouseWheel({ev.value, nytl::Vec2f(ev.position)});
+	if(impl_->gui) {
+		return gui().mouseWheel({ev.value, nytl::Vec2f(ev.position)});
+	}
+
+	return false;
 }
 
 void App::mouseCross(const ny::MouseCrossEvent& ev) {
-	gui().mouseOver(ev.entered);
+	if(impl_->gui) {
+		gui().mouseOver(ev.entered);
+	}
 }
 
 void App::focus(const ny::FocusEvent& ev) {
-	gui().focus(ev.gained);
+	if(impl_->gui) {
+		gui().focus(ev.gained);
+	}
 }
 
 ny::AppContext& App::appContext() const {
@@ -716,10 +738,12 @@ vpp::Device& App::vulkanDevice() const {
 }
 
 rvg::Context& App::rvgContext() const {
+	dlg_assert(impl_->rvgContext);
 	return *impl_->rvgContext;
 }
 
 vui::Gui& App::gui() const {
+	dlg_assert(impl_->gui);
 	return *impl_->gui;
 }
 
@@ -729,6 +753,11 @@ rvg::Transform& App::windowTransform() const {
 
 vk::SampleCountBits App::samples() const {
 	return impl_->samples;
+}
+
+std::unique_ptr<Renderer>
+App::createRenderer(const RendererCreateInfo& ri) {
+	return std::make_unique<Renderer>(ri);
 }
 
 // free util

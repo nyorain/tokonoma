@@ -10,6 +10,8 @@
 #include <vpp/fwd.hpp>
 #include <functional>
 
+namespace doi {
+
 // Represents the main rendering window.
 class MainWindow : public ny::WindowListener {
 public:
@@ -60,3 +62,5 @@ protected:
 	bool focus_ {};
 	bool mouseOver_ {};
 };
+
+} // namespace doi

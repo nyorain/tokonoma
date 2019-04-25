@@ -4,13 +4,16 @@
 #include <cstdint>
 #include <nytl/vec.hpp>
 
-// various gltf helpers (currently using tinygltf)
+// intended for general gltf helpers
+// gltf accessor iterator
 
 namespace doi {
 
+namespace gltf = tinygltf;
+
 /// Throws std::runtime_error if componentType is not a valid gltf component type
 /// Does not check for bounds of address
-inline double read(const tinygltf::Buffer& buf, unsigned address,
+inline double read(const gltf::Buffer& buf, unsigned address,
 		unsigned componentType) {
 	double v;
 	auto t = componentType;
@@ -39,13 +42,13 @@ inline double read(const tinygltf::Buffer& buf, unsigned address,
 
 // Reads as array
 template<std::size_t N, typename T = float>
-auto read(const tinygltf::Buffer& buf, unsigned address, unsigned type,
+auto read(const gltf::Buffer& buf, unsigned address, unsigned type,
 		unsigned componentType, T fill = T(0)) {
 	std::array<T, N> vals;
 
 	// NOTE: not really bytes though
-	unsigned components = tinygltf::GetTypeSizeInBytes(type);
-	unsigned valSize = tinygltf::GetComponentSizeInBytes(componentType);
+	unsigned components = gltf::GetTypeSizeInBytes(type);
+	unsigned valSize = gltf::GetComponentSizeInBytes(componentType);
 	for(auto i = 0u; i < components; ++i) {
 		if(i < components) {
 			vals[i] = read(buf, address, componentType);
@@ -63,14 +66,14 @@ struct AccessorIterator {
 	static_assert(N > 0);
 	using Value = std::conditional_t<N == 1, T, nytl::Vec<N, T>>;
 
-	const tinygltf::Buffer* buffer {};
+	const gltf::Buffer* buffer {};
 	std::size_t address {};
 	std::size_t stride {};
 	unsigned type {};
 	unsigned componentType {};
 
-	AccessorIterator(const tinygltf::Model& model,
-			const tinygltf::Accessor& accessor) {
+	AccessorIterator(const gltf::Model& model,
+			const gltf::Accessor& accessor) {
 		auto& bv = model.bufferViews[accessor.bufferView];
 		buffer = &model.buffers[bv.buffer];
 		address = accessor.byteOffset + bv.byteOffset;
@@ -136,8 +139,8 @@ struct AccessorIterator {
 template<std::size_t N, typename T>
 struct AccessorRange {
 	using Iterator = AccessorIterator<N, T>;
-	const tinygltf::Model& model;
-	const tinygltf::Accessor& accessor;
+	const gltf::Model& model;
+	const gltf::Accessor& accessor;
 
 	Iterator begin() const {
 		return {model, accessor};
@@ -159,8 +162,8 @@ struct AccessorRange {
 // and this iterator allows easy access in the required type, independent
 // from the real type of the gltf data.
 template<std::size_t N, typename T>
-AccessorRange<N, T> range(const tinygltf::Model& model,
-		const tinygltf::Accessor& accessor) {
+AccessorRange<N, T> range(const gltf::Model& model,
+		const gltf::Accessor& accessor) {
 	return {model, accessor};
 }
 
@@ -176,3 +179,4 @@ bool operator!=(const AccessorIterator<N, T>& a, const AccessorIterator<N, T>& b
 }
 
 } // namespace doi
+

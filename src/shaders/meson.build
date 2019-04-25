@@ -15,6 +15,12 @@ include_glsl = files(
   'include/ray.glsl',
 )
 
+scene_glsl = files(
+	'include/pbr.glsl',
+	'include/scene.glsl',
+	'include/scene.frag.glsl',
+)
+
 # TODO: can probably be simplified with new meson dictionary feature
 # shader specifications
 # contains multiple shader groups, specified like this:
@@ -22,9 +28,18 @@ include_glsl = files(
 # a variable named <group var> will afterwards contain the compiled
 # shader headers
 shaders_src = [
+	['stage_shaders', [
+		['shadowmap.vert', scene_glsl],
+		['shadowmap.frag', scene_glsl],
+		['shadowmapCube.vert', scene_glsl],
+		['shadowmapCube.frag', scene_glsl],
+		['skybox.vert'],
+		['skybox.frag'],
+	]],
 	['common_shaders', [
 		['fullscreen.vert'],
 		['fullscreen_transform.vert'],
+		['equirectToCube.frag'],
 		['incolor.frag'],
 		['texture.frag'],
 		['simple.vert'],
@@ -77,11 +92,8 @@ shaders_src = [
 		['sss_shadow.frag'],
 	]],
 	['ddd_shaders', [
-		['model.vert'],
-		['model.frag'],
-		['shadowmap.vert'],
-		['skybox.vert'],
-		['skybox.frag'],
+		['model.vert', scene_glsl],
+		['model.frag', scene_glsl],
 	]],
 	['iro_shaders', [
 		['iro.vert', include_glsl],
@@ -104,6 +116,12 @@ shaders_src = [
 	  ['lith.vert'],
 	  ['lith.comp', include_glsl],
 	]],
+	['deferred_shaders', [
+	  ['deferred/gbuf.vert', include_glsl + scene_glsl],
+	  ['deferred/gbuf.frag', include_glsl + scene_glsl],
+	  ['deferred/pp.frag', include_glsl + scene_glsl],
+	  ['deferred/light.frag', include_glsl + scene_glsl],
+	]],
 ]
 
 # build them
@@ -117,6 +135,9 @@ foreach shader_group : shaders_src
 		file = shader[0]
 		name = shader.get(2, file)
 
+		# name.replace('/', '.')
+		name = '.'.join(name.split('/'))
+
 		data_name = name.underscorify() + '_data'
 		args = [glslang, '-V', '@INPUT@',
 			'-o', '@OUTPUT@',
@@ -128,7 +149,7 @@ foreach shader_group : shaders_src
 		header = custom_target(
 			name + '_spv',
 			output: name + '.h',
-			input: file,
+			input: files(file),
 			depend_files: shader.get(1, []),
 			command: args)
 

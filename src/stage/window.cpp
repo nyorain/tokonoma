@@ -17,6 +17,8 @@
 #include <nytl/vecOps.hpp>
 #include <dlg/dlg.hpp>
 
+namespace doi {
+
 MainWindow::MainWindow(ny::AppContext& ac, vk::Instance ini) : ac_(ac) {
 	auto ws = ny::WindowSettings {};
 	ws.surface = ny::SurfaceType::vulkan;
@@ -189,3 +191,5 @@ void MainWindow::surfaceCreated(const ny::SurfaceCreatedEvent& ev) {
 		onSurfaceCreated(surface_);
 	}
 }
+
+} // namespace doi

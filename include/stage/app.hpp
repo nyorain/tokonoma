@@ -13,10 +13,6 @@
 #include <string>
 #include <optional>
 
-// fwd
-class MainWindow;
-class Renderer;
-
 namespace argagg {
 	struct parser;
 	struct parser_results;
@@ -24,9 +20,19 @@ namespace argagg {
 
 namespace doi {
 
+// fwd
+class MainWindow;
+class Renderer;
+struct RendererCreateInfo;
+
 struct AppSettings {
-	const char* name;
-	nytl::Span<const char*> args;
+	const char* name; // name of app
+	nytl::Span<const char*> args; // cmd line args
+
+	// if none, will not create rvg and vui contexts.
+	// otherwise will create them for the given subpass of the renderers
+	// render pass.
+	std::optional<unsigned> rvgSubpass {{0}};
 };
 
 /// Implements basic setup and main loop.
@@ -57,6 +63,9 @@ protected:
 	// framebuffer and renderpass with a depth buffer as attachment 1
 	virtual bool needsDepth() const { return false; }
 
+	// Can be overriden to use custom renderer implementation
+	virtual std::unique_ptr<Renderer> createRenderer(const RendererCreateInfo&);
+
 	// argument parsing
 	virtual argagg::parser argParser() const;
 	virtual bool handleArgs(const argagg::parser_results&);
@@ -74,9 +83,9 @@ protected:
 	virtual void updateDevice();
 	virtual void frameFinished() {}
 
-	// better names would be scheduleRerecord, scheduleRedraw
-	void rerecord() { rerecord_ = true; }
-	void redraw() { redraw_ = true; }
+	void scheduleRerecord() { rerecord_ = true; }
+	void scheduleRedraw() { redraw_ = true; }
+
 	void addSemaphore(vk::Semaphore, vk::PipelineStageFlags waitDst);
 	void callUpdate();
 

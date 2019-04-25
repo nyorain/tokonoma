@@ -14,7 +14,8 @@
 #include <vpp/queue.hpp>
 #include <vpp/vk.hpp>
 #include <nytl/vec.hpp>
-#include <nytl/callback.hpp>
+
+namespace doi {
 
 struct RendererCreateInfo {
 	const vpp::Device& dev;
@@ -28,7 +29,9 @@ struct RendererCreateInfo {
 	bool depth = false;
 };
 
-class Renderer : public vpp::DefaultRenderer {
+// Fairly simple renderer implementation that supports one pass,
+// optionally with depth and/or mutlisample target.
+class Renderer : public vpp::Renderer {
 public:
 	std::function<void(vk::CommandBuffer)> beforeRender;
 	std::function<void(vk::CommandBuffer)> onRender;
@@ -38,17 +41,28 @@ public:
 	Renderer(const RendererCreateInfo& info);
 	~Renderer() = default;
 
-	void resize(nytl::Vec2ui size);
-	void samples(vk::SampleCountBits);
-	void clearColor(std::array<float, 4> newColor) { clearColor_ = newColor; }
+	virtual void resize(nytl::Vec2ui size);
+	virtual void samples(vk::SampleCountBits);
+
+	// Sets the new clear color.
+	// Note that the new color will only be used on next rerecord.
+	virtual void clearColor(std::array<float, 4> newColor) {
+		clearColor_ = newColor;
+	}
 
 	vk::RenderPass renderPass() const { return renderPass_; }
 	vk::SampleCountBits samples() const { return sampleCount_; }
 	vk::Format depthFormat() const { return depthFormat_; }
 
 protected:
-	void createMultisampleTarget(const vk::Extent2D& size);
-	void createDepthTarget(const vk::Extent2D& size);
+	// for deriving:
+	Renderer(const vpp::Queue& present);
+	virtual void init(const RendererCreateInfo& info);
+	virtual void createRenderPass();
+	virtual std::vector<vk::ClearValue> clearValues();
+
+	virtual void createMultisampleTarget(const vk::Extent2D& size);
+	virtual void createDepthTarget(const vk::Extent2D& size);
 	void record(const RenderBuffer&) override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
 
@@ -61,3 +75,5 @@ protected:
 	std::array<float, 4> clearColor_;
 	vk::Format depthFormat_;
 };
+
+} // namespace doi
