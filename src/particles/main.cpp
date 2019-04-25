@@ -329,7 +329,7 @@ public:
 
 	void update(double delta) override {
 		App::update(delta);
-		App::redraw();
+		App::scheduleRedraw();
 		delta_ = delta;
 	}
 

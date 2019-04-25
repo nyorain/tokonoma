@@ -408,7 +408,7 @@ public:
 	void update(double delta) override {
 		if(oneStep_) {
 			oneStep_ = false;
-			rerecord();
+			App::scheduleRerecord();
 		}
 
 		App::update(delta);
@@ -416,7 +416,7 @@ public:
 
 		// TODO: we sometimes need this even when paused
 		if(!paused_) {
-			App::redraw();
+			App::scheduleRedraw();
 		}
 	}
 
@@ -436,7 +436,7 @@ public:
 		doi::translate(mat_, d);
 
 		automaton_.transform(mat_);
-		App::redraw();
+		App::scheduleRedraw();
 		return true;
 	}
 
@@ -444,7 +444,7 @@ public:
 		App::updateDevice();
 		auto [rec, sem] = automaton_.updateDevice();
 		if(rec) {
-			rerecord();
+			App::scheduleRerecord();
 		}
 
 		if(sem) {
@@ -473,7 +473,7 @@ public:
 				p = 2 * p - nytl::Vec2f {1.f, 1.f};
 				auto world = nytl::Vec2f(i * nytl::Vec4f{p.x, p.y, 0.f, 1.f});
 				automaton_.worldClick(world);
-				App::redraw();
+				App::scheduleRedraw();
 			}
 
 			dragged_ = {};
@@ -503,7 +503,7 @@ public:
 
 		doi::translate(mat_, normed);
 		automaton_.transform(mat_);
-		App::redraw();
+		App::scheduleRedraw();
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -522,13 +522,13 @@ public:
 
 		if(ev.pressed && ev.keycode == ny::Keycode::p) {
 			paused_ ^= true;
-			rerecord();
+			App::scheduleRerecord();
 		} else if(paused_ && ev.pressed && ev.keycode == ny::Keycode::n) {
 			oneStep_ = true;
-			rerecord();
+			App::scheduleRerecord();
 		} else if(ev.pressed && ev.keycode == ny::Keycode::l) {
 			automaton_.hexLines(!automaton_.hexLines());
-			rerecord();
+			App::scheduleRerecord();
 		} else {
 			return false;
 		}

@@ -24,7 +24,7 @@ public:
 		auto& cp = gui.create<vui::ColorPicker>(bounds);
 		cp.onChange = [&](auto& cp){
 			bgPaint_.paint(rvg::colorPaint(cp.picked()));
-			redraw();
+			App::scheduleRedraw();
 		};
 
 		bounds.position = {100, 600};

@@ -99,33 +99,33 @@ public:
 	void update(double dt) override {
 		time_ += dt;
 		App::update(dt);
-		App::redraw(); // we always redraw; shaders are usually dynamic
+		App::scheduleRedraw(); // we always redraw; shaders are usually dynamic
 
 		auto kc = appContext().keyboardContext();
 		auto fac = dt;
 		if(kc->pressed(ny::Keycode::d)) {
 			camPos_ += nytl::Vec {fac, 0.f, 0.f};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::a)) {
 			camPos_ += nytl::Vec {-fac, 0.f, 0.f};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::w)) {
 			camPos_ += nytl::Vec {0.f, 0.f, -fac};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::s)) {
 			camPos_ += nytl::Vec {0.f, 0.f, fac};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::q)) { // up
 			camPos_ += nytl::Vec {0.f, fac, 0.f};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 		if(kc->pressed(ny::Keycode::e)) { // down
 			camPos_ += nytl::Vec {0.f, -fac, 0.f};
-			App::redraw();
+			App::scheduleRedraw();
 		}
 	}
 
@@ -140,7 +140,7 @@ public:
 
 		if(reload_) {
 			initPipe(glsl_);
-			rerecord();
+			App::scheduleRerecord();
 			reload_ = false;
 		}
 	}

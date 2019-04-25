@@ -253,7 +253,7 @@ public:
 
 		// frame_ = false;
 		system_->update(dt);
-		App::redraw();
+		App::scheduleRedraw();
 	}
 
 	bool key(const ny::KeyEvent& ev) override {
