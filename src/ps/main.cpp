@@ -312,7 +312,7 @@ public:
 
 	void update(double delta) override {
 		App::update(delta);
-		App::redraw();
+		App::scheduleRedraw();
 		delta_ = delta;
 	}
 
@@ -323,13 +323,13 @@ public:
 		if(reload_) {
 			system_.reloadShader();
 			reload_ = false;
-			rerecord();
+			App::scheduleRerecord();
 		}
 
 		if(changeCount_) {
 			system_.count(*changeCount_);
 			changeCount_ = {};
-			rerecord();
+			App::scheduleRerecord();
 		}
 	}
 

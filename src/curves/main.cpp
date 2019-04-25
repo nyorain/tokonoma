@@ -46,7 +46,7 @@ public:
 
 	void update(double delta) override {
 		App::update(delta);
-		App::redraw();
+		App::scheduleRedraw();
 
 		time_ += delta;
 		// amp_ *= std::exp(-0.2 * delta);

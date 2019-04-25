@@ -605,10 +605,6 @@ void App::callUpdate() {
 }
 
 void App::update(double dt) {
-	// TODO: few things still missing
-	// no one supports it :(
-	// App::redraw();
-
 	if(!appContext().pollEvents()) {
 		dlg_info("update: events returned false");
 		run_ = false;

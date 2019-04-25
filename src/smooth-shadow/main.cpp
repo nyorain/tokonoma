@@ -221,7 +221,7 @@ public:
 			}
 		}
 
-		App::redraw();
+		App::scheduleRedraw();
 	}
 
 	void refreshMatrices() {
@@ -255,7 +255,7 @@ public:
 		for(auto& light : lightSystem().lights()) {
 			if(contains(light, pos)) {
 				currentLight_ = &light;
-				rerecord();
+				App::scheduleRerecord();
 				refreshMatrices();
 				return true;
 			}

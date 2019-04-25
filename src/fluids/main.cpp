@@ -558,7 +558,7 @@ public:
 	}
 
 	void update(double dt) override {
-		App::redraw();
+		App::scheduleRedraw();
 		App::update(dt);
 		dt_ = dt;
 	}
@@ -572,7 +572,7 @@ public:
 			vpp::DescriptorSetUpdate update(ds_);
 			update.imageSampler({{{}, changeView_, vk::ImageLayout::general}});
 			changeView_ = {};
-			rerecord();
+			App::scheduleRerecord();
 		}
 	}
 
