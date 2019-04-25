@@ -63,11 +63,11 @@ void main() {
 	if(!gl_FrontFacing) { // flip normal, see gltf spec
 		normal *= -1;
 	}
-
 	// TODO: actually use them...
 	// vec2 mr = texture(metalRoughTex, inUV).rg;
 	// float metalness = material.matallic * mr.b;
 	// float roughness = material.roughness * mr.g;
+
 	// TODO: remove random factors, implement pbr
 	float ambientFac = 0.1 * texture(occlusionTex, inUV).r;
 	float diffuseFac = 0.5f;
@@ -106,7 +106,6 @@ void main() {
 	lfac += ambientFac; // ambient always added, doesn't care for shadow
 
 	col += vec4(lfac * dirLight.color, 1.0) * albedo;
-
 	outCol = col;
 	if(material.alphaCutoff == -1.f) { // alphaMode opque
 		outCol.a = 1.f;

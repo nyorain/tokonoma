@@ -59,11 +59,12 @@ public:
 		// renderer already queried the best supported depth format
 		camera_.perspective.far = 100.f;
 
+
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
 		auto hostMem = dev.hostMemoryTypes();
 		skybox_.init(dev, renderer().renderPass(), 0, renderer().samples());
-
+    
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
 		sci.addressModeU = vk::SamplerAddressMode::repeat;
@@ -392,7 +393,7 @@ protected:
 
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
-
+  
 	std::unique_ptr<doi::Scene> scene_; // no default constructor
 	doi::Camera camera_ {};
 
