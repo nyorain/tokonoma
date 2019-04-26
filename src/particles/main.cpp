@@ -17,9 +17,9 @@
 #include <dlg/dlg.hpp>
 #include <random>
 
-#include <shaders/particle.comp.h>
-#include <shaders/particle.frag.h>
-#include <shaders/particle.vert.h>
+#include <shaders/particles.particle.comp.h>
+#include <shaders/particles.particle.frag.h>
+#include <shaders/particles.particle.vert.h>
 
 constexpr auto compUboSize = (2 + 4 * 5) * 4;
 constexpr auto gfxUboSize = 2 * 4;
@@ -53,8 +53,8 @@ public:
 		auto mem = dev.memoryTypeBits(vk::MemoryPropertyBits::hostVisible);
 		gfxUbo_ = {device().bufferAllocator(), gfxUboSize, usage, 0u, mem};
 
-		vpp::ShaderModule vertShader(device(), particle_vert_data);
-		vpp::ShaderModule fragShader(device(), particle_frag_data);
+		vpp::ShaderModule vertShader(device(), particles_particle_vert_data);
+		vpp::ShaderModule fragShader(device(), particles_particle_frag_data);
 		vpp::GraphicsPipelineInfo gpi {rp, gfxPipelineLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
@@ -99,7 +99,7 @@ public:
 		compPipelineLayout_ = {dev, {compDsLayout_}, {}};
 
 		vk::ComputePipelineCreateInfo cpi;
-		vpp::ShaderModule compShader(device(), particle_comp_data);
+		vpp::ShaderModule compShader(device(), particles_particle_comp_data);
 
 		vk::ComputePipelineCreateInfo info;
 		info.layout = compPipelineLayout_;

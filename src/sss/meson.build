@@ -1,8 +1,8 @@
 sss_src = [
 	'light.cpp',
 	'main.cpp',
-	common_shaders,
 	sss_shaders,
+	smooth_shadow_shaders, # TODO: multiple shaders shared
 ]
 
 executable('sss',

@@ -19,8 +19,9 @@
 #include <optional>
 #include <random>
 
-#include <shaders/fullscreen.vert.h>
-#include <shaders/light_pp.frag.h>
+#include <shaders/stage.fullscreen.vert.h>
+// TODO: currently shared with smooth_shadow
+#include <shaders/smooth_shadow.light_pp.frag.h>
 
 class SSSApp : public doi::App {
 public:
@@ -121,8 +122,10 @@ public:
 		plInfo.pSetLayouts = pipeSets.begin();
 		pp_.pipeLayout = {device, plInfo};
 
-		auto combineVertex = vpp::ShaderModule(device, fullscreen_vert_data);
-		auto combineFragment = vpp::ShaderModule(device, light_pp_frag_data);
+		auto combineVertex = vpp::ShaderModule(device,
+			stage_fullscreen_vert_data);
+		auto combineFragment = vpp::ShaderModule(device,
+			smooth_shadow_light_pp_frag_data);
 
 		vpp::GraphicsPipelineInfo combinePipeInfo(renderer().renderPass(),
 			pp_.pipeLayout, vpp::ShaderProgram({

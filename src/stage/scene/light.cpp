@@ -11,10 +11,10 @@
 #include <vpp/device.hpp>
 #include <vpp/queue.hpp>
 
-#include <shaders/shadowmap.vert.h>
-#include <shaders/shadowmap.frag.h>
-#include <shaders/shadowmapCube.vert.h>
-#include <shaders/shadowmapCube.frag.h>
+#include <shaders/stage.shadowmap.vert.h>
+#include <shaders/stage.shadowmap.frag.h>
+#include <shaders/stage.shadowmapCube.vert.h>
+#include <shaders/stage.shadowmapCube.frag.h>
 
 // TODO: some duplication between dir and point light
 
@@ -47,11 +47,21 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	vk::SubpassDescription subpass {};
 	subpass.pDepthStencilAttachment = &depthRef;
 
+	vk::SubpassDependency dependency;
+	dependency.srcSubpass = 0u; // last
+	dependency.srcStageMask = vk::PipelineStageBits::allGraphics;
+	dependency.srcAccessMask = vk::AccessBits::depthStencilAttachmentWrite;
+	dependency.dstSubpass = vk::subpassExternal;
+	dependency.dstStageMask = vk::PipelineStageBits::allGraphics;
+	dependency.dstAccessMask = vk::AccessBits::memoryRead;
+
 	vk::RenderPassCreateInfo rpi {};
 	rpi.attachmentCount = 1;
 	rpi.pAttachments = &depth;
 	rpi.subpassCount = 1;
 	rpi.pSubpasses = &subpass;
+	rpi.pDependencies = &dependency;
+	rpi.dependencyCount = 1u;
 
 	data.rp = {dev, rpi};
 
@@ -82,8 +92,8 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		{materialPcr, cubemapPcr}};
 
 	// pipeline
-	vpp::ShaderModule vertShader(dev, shadowmap_vert_data);
-	vpp::ShaderModule fragShader(dev, shadowmap_frag_data);
+	vpp::ShaderModule vertShader(dev, stage_shadowmap_vert_data);
+	vpp::ShaderModule fragShader(dev, stage_shadowmap_frag_data);
 	vpp::GraphicsPipelineInfo gpi {data.rp, data.pl, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
@@ -147,8 +157,8 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	// dynamic offset for the light view projection... but then we
 	// might have to pad that buffer (since vulkan has an alignment
 	// requirement there) which adds complexity as well
-	vpp::ShaderModule cubeVertShader(dev, shadowmapCube_vert_data);
-	vpp::ShaderModule cubeFragShader(dev, shadowmapCube_frag_data);
+	vpp::ShaderModule cubeVertShader(dev, stage_shadowmapCube_vert_data);
+	vpp::ShaderModule cubeFragShader(dev, stage_shadowmapCube_frag_data);
 	vpp::GraphicsPipelineInfo cgpi {data.rp, data.pl, {{
 		{cubeVertShader, vk::ShaderStageBits::vertex},
 		{cubeFragShader, vk::ShaderStageBits::fragment},

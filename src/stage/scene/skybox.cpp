@@ -13,10 +13,10 @@
 #include <dlg/dlg.hpp>
 #include <nytl/scope.hpp>
 
-#include <shaders/fullscreen.vert.h>
-#include <shaders/equirectToCube.frag.h>
-#include <shaders/skybox.vert.h>
-#include <shaders/skybox.frag.h>
+#include <shaders/stage.fullscreen.vert.h>
+#include <shaders/stage.equirectToCube.frag.h>
+#include <shaders/stage.skybox.vert.h>
+#include <shaders/stage.skybox.frag.h>
 
 // implementation in texture.cpp
 // #pragma GCC diagnostic push
@@ -40,7 +40,7 @@ void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 	initPipeline(dev, rp, subpassID, samples);
 	// TODO: maybe host visible is better here, we only read from it
 	// once anyways. Add option to loadTexture to allow that
-	auto equirectImg = doi::loadTexture(dev, hdrFile, true, false);
+	auto equirectImg = doi::loadTexture(dev, hdrFile, false, true);
 
 	// convert equirectangular to cubemap
 	// renderpass
@@ -74,8 +74,8 @@ void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 	// we just reuse our ds, pipeline layouts and ubo buffer, they are good
 	// enough and we don't waste additional resources...
 	// pipeline
-	vpp::ShaderModule vertShader(dev, fullscreen_vert_data);
-	vpp::ShaderModule fragShader(dev, equirectToCube_frag_data);
+	vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
+	vpp::ShaderModule fragShader(dev, stage_equirectToCube_frag_data);
 	vpp::GraphicsPipelineInfo gpi {renderPass, pipeLayout_, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
@@ -217,7 +217,7 @@ void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 		names[5],
 	};
 
-	cubemap_ = doi::loadTextureArray(dev, params, true, false);
+	cubemap_ = doi::loadTextureArray(dev, params, true, true);
 	writeDs();
 }
 
@@ -248,8 +248,8 @@ void Skybox::initPipeline(vpp::Device& dev, vk::RenderPass rp,
 	dsLayout_ = {dev, bindings};
 	pipeLayout_ = {dev, {dsLayout_}, {}};
 
-	vpp::ShaderModule vertShader(dev, skybox_vert_data);
-	vpp::ShaderModule fragShader(dev, skybox_frag_data);
+	vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);
+	vpp::ShaderModule fragShader(dev, stage_skybox_frag_data);
 	vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},

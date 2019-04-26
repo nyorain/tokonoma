@@ -12,11 +12,11 @@
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
 
-#include <shaders/hex.vert.h>
-#include <shaders/hex_line.vert.h>
-#include <shaders/fullscreen_transform.vert.h>
-#include <shaders/incolor.frag.h>
-#include <shaders/texture.frag.h>
+#include <shaders/automaton.hex.vert.h>
+#include <shaders/automaton.hex_line.vert.h>
+#include <shaders/stage.fullscreen_transform.vert.h>
+#include <shaders/stage.incolor.frag.h>
+#include <shaders/stage.texture.frag.h>
 
 constexpr float cospi6 = 0.86602540378; // cos(pi/6) or sqrt(3)/2
 
@@ -317,17 +317,17 @@ void Automaton::initGfxPipe(vk::RenderPass renderPass,
 
 	if(vert.empty()) {
 		if(gridType_ == GridType::hex) {
-			vert = hex_vert_data;
+			vert = automaton_hex_vert_data;
 		} else {
-			vert = fullscreen_transform_vert_data;
+			vert = stage_fullscreen_transform_vert_data;
 		}
 	}
 
 	if(frag.empty()) {
 		if(gridType_ == GridType::hex) {
-			frag = incolor_frag_data;
+			frag = stage_incolor_frag_data;
 		} else {
-			frag = texture_frag_data;
+			frag = stage_texture_frag_data;
 		}
 	}
 
@@ -343,7 +343,7 @@ void Automaton::initGfxPipe(vk::RenderPass renderPass,
 	std::optional<vpp::GraphicsPipelineInfo> lineInfo;
 	vpp::ShaderModule lineVertShader;
 	if(gridType_ == GridType::hex) {
-		lineVertShader = {device(), hex_line_vert_data};
+		lineVertShader = {device(), automaton_hex_line_vert_data};
 		lineInfo = {renderPass,
 			gfxPipeLayout_, {{
 				{lineVertShader, vk::ShaderStageBits::vertex},

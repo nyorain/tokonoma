@@ -23,12 +23,12 @@
 #include <ny/keyboardContext.hpp>
 #include <ny/appContext.hpp>
 
-#include <shaders/fullscreen.vert.h>
-#include <shaders/sen.frag.h>
-#include <shaders/senpt.frag.h>
-#include <shaders/senr.vert.h>
-#include <shaders/senr.frag.h>
-#include <shaders/sen.comp.h>
+#include <shaders/stage.fullscreen.vert.h>
+#include <shaders/sen.sen.frag.h>
+#include <shaders/sen.senpt.frag.h>
+#include <shaders/sen.senr.vert.h>
+#include <shaders/sen.senr.frag.h>
+#include <shaders/sen.sen.comp.h>
 
 #include "render.hpp"
 
@@ -93,7 +93,7 @@ public:
 		comp_.dsLayout = {dev, dsBindings};
 		comp_.pipeLayout = {dev, {comp_.dsLayout}, {}};
 
-		vpp::ShaderModule compShader(dev, sen_comp_data);
+		vpp::ShaderModule compShader(dev, sen_sen_comp_data);
 		vk::ComputePipelineCreateInfo cpi;
 		cpi.layout = comp_.pipeLayout;
 		cpi.stage.module = compShader;
@@ -128,8 +128,8 @@ public:
 		pt_.dsLayout = {dev, dsBindings};
 		pt_.pipeLayout = {dev, {pt_.dsLayout}, {}};
 
-		vpp::ShaderModule fullscreenShader(dev, fullscreen_vert_data);
-		vpp::ShaderModule textureShader(dev, senpt_frag_data);
+		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
+		vpp::ShaderModule textureShader(dev, sen_senpt_frag_data);
 		auto rp = renderer().renderPass();
 		vpp::GraphicsPipelineInfo pipeInfo(rp, pt_.pipeLayout, {{
 			{fullscreenShader, vk::ShaderStageBits::vertex},
@@ -223,8 +223,8 @@ public:
 		plInfo.pSetLayouts = pipeSets.begin();
 		pipeLayout_ = {dev, {dsLayout_}, {{vk::ShaderStageBits::fragment, 0, 4u}}};
 
-		vpp::ShaderModule fullscreenShader(dev, fullscreen_vert_data);
-		vpp::ShaderModule textureShader(dev, sen_frag_data);
+		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
+		vpp::ShaderModule textureShader(dev, sen_sen_frag_data);
 		auto rp = renderer().renderPass();
 		vpp::GraphicsPipelineInfo pipeInfo(rp, pipeLayout_, {{
 			{fullscreenShader, vk::ShaderStageBits::vertex},
@@ -293,8 +293,8 @@ public:
 		rasterPipeLayout_ = {dev, {rasterSceneDsLayout_, rasterObjectDsLayout_}, {}};
 
 		// pipe
-		vpp::ShaderModule vertShader(dev, senr_vert_data);
-		vpp::ShaderModule fragShader(dev, senr_frag_data);
+		vpp::ShaderModule vertShader(dev, sen_senr_vert_data);
+		vpp::ShaderModule fragShader(dev, sen_senr_frag_data);
 		vpp::GraphicsPipelineInfo gpi(rp, rasterPipeLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment}

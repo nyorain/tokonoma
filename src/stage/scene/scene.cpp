@@ -24,7 +24,10 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 	images_.resize(model.images.size());
 	dlg_info("Found {} materials", model.materials.size());
 	for(auto& material : model.materials) {
-		dlg_info("  Loading material '{}'...", material.name);
+		auto name = material.name.empty() ?
+			material.name :
+			"'" + material.name + "'";
+		dlg_info("  Loading material {}", name);
 		auto m = Material(dev, model, material,
 			ri.materialDsLayout, ri.dummyTex, path, images_);
 		materials_.push_back(std::move(m));
@@ -97,7 +100,10 @@ void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,
 
 	if(node.mesh != -1) {
 		auto& mesh = model.meshes[node.mesh];
-		dlg_info("  Loading mesh '{}'...", mesh.name);
+		auto name = mesh.name.empty() ?
+			mesh.name :
+			"'" + mesh.name + "'";
+		dlg_info("  Loading mesh {}", name);
 		for(auto& primitive : mesh.primitives) {
 			Material* mat;
 			if(primitive.material < 0) {

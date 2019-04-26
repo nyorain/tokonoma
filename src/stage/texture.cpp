@@ -16,22 +16,25 @@
 #include "stb_image.h"
 #pragma GCC diagnostic pop
 
-// TODO: we can't really know the stages and bits of the dependencies
-//   for first access of the textures. We currently assume it's
-//   shader read but could be copy or something.
-//   Read vulkan spec again, is it enough that we wait for the command buffer
-//   to complete?
 // TODO(optimization): we could compare requested format with formats supported
 //   by stbi instead of blitting even e.g. for r8 formats (which are supported
 //   by stbi by passing channels=1)
-// TODO: mipmaps
+// TODO: support for compressed formats, low priority for now
+//   supporit ktx and dds formats, shouldn't be too hard
+// TODO: check if blit is supported in format flags
+
+// NOTE: we currently require a blit by default for hdr images (since
+// we read rgba32f values but store the texture in rgba16f).
+// This is more expensive than simply uploading the data but saves
+// a lot of memory (half the memory needed!) and most hdr images really
+// only need 16 bit precision.
 
 namespace doi {
 
 std::tuple<std::byte*, vk::Extent3D> loadImage(nytl::StringParam filename,
 		unsigned channels, bool hdr) {
-	dlg_assertlm(dlg_level_debug, stbi_is_hdr(filename.c_str()) != hdr,
-		"stbi hdr conversion");
+	dlg_assertlm(dlg_level_debug, stbi_is_hdr(filename.c_str()) == hdr,
+		"texture '{}' requires stbi hdr conversion", filename);
 
 	int width, height, ch;
 	std::byte* data;
@@ -63,51 +66,67 @@ std::tuple<std::byte*, vk::Extent3D> loadImage(nytl::StringParam filename,
 }
 
 vpp::ViewableImage loadTexture(const vpp::Device& dev,
-		nytl::StringParam filename, bool srgb, bool hdr) {
+		nytl::StringParam filename, bool srgb, bool hdr, bool mipmap) {
 	dlg_assert(!hdr || !srgb);
 	auto [data, extent] = loadImage(filename, 4, hdr);
 	auto format = vk::Format::r8g8b8a8Unorm;
 	auto dataFormat = vk::Format::r8g8b8a8Unorm;
 	if(hdr) {
-		// NOTE: when these two are different, we will blit
-		// in the function called below. So this is more expensive
-		// than using rgba32f as target texture format.
-		// but most hdr images really only need 16 bit precision.
 		format = vk::Format::r16g16b16a16Sfloat;
 		dataFormat = vk::Format::r32g32b32a32Sfloat;
 	} else if(srgb) {
 		dataFormat = format = vk::Format::r8g8b8a8Srgb;
 	}
 
-	auto dataSize = extent.width * extent.height * vpp::formatSize(format);
+	auto dataSize = extent.width * extent.height * vpp::formatSize(dataFormat);
 	auto dspan = nytl::Span<const std::byte>(data, dataSize);
-	auto img = loadTexture(dev, extent, format, dspan, dataFormat);
+	auto img = loadTexture(dev, extent, format, dspan, dataFormat, mipmap);
 	::free(data);
 	return img;
 }
 
 vpp::ViewableImage loadTexture(const vpp::Device& dev,
-		nytl::StringParam filename, vk::Format, bool inputSrgb) {
-	if(stbi_is_hdr(filename.c_str())) {
-	}
+		nytl::StringParam filename, vk::Format format, bool inputSrgb,
+		bool mipmap) {
+	auto hdr = isHDR(format);
+	dlg_assert(!hdr || !inputSrgb);
+	auto dataFormat = hdr ?
+		vk::Format::r32g32b32a32Sfloat :
+		inputSrgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
+
+	auto [data, extent] = loadImage(filename, 4, hdr);
+	auto dataSize = extent.width * extent.height * vpp::formatSize(dataFormat);
+	auto dspan = nytl::Span<const std::byte>(data, dataSize);
+	auto img = loadTexture(dev, extent, format, dspan, dataFormat, mipmap);
+	::free(data);
+	return img;
 }
 
 vpp::ViewableImage loadTexture(const vpp::Device& dev, vk::Extent3D extent,
 		vk::Format format, nytl::Span<const std::byte> data,
-		vk::Format dataFormat) {
+		vk::Format dataFormat, bool mipmap) {
 	if(dataFormat == vk::Format::undefined) {
 		dataFormat = format;
+	}
+
+	auto usage = vk::ImageUsageBits::transferDst | vk::ImageUsageBits::sampled;
+	auto levels = 1u;
+	if(mipmap) {
+		// opengl uses this formula to determine the number of mip levels
+		// opengl ARB_texture_non_power_of_two.txt
+		levels += std::floor(std::log2(std::max(extent.width, extent.height)));
+		usage |= vk::ImageUsageBits::transferSrc;
 	}
 
 	vpp::ViewableImageCreateInfo info;
 	auto devMem = dev.deviceMemoryTypes();
 	auto hostMem = dev.hostMemoryTypes();
-	auto usage = vk::ImageUsageBits::transferDst | vk::ImageUsageBits::sampled;
 	info = vpp::ViewableImageCreateInfo::color(dev, extent, usage,
 		{format}).value();
-
 	info.img.imageType = vk::ImageType::e2d;
 	info.view.viewType = vk::ImageViewType::e2d;
+	info.img.mipLevels = levels;
+	info.view.subresourceRange.levelCount = levels;
 	vpp::ViewableImage image = {dev, info, devMem};
 
 	auto cb = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
@@ -116,7 +135,7 @@ vpp::ViewableImage loadTexture(const vpp::Device& dev, vk::Extent3D extent,
 		vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
 		vk::ImageLayout::transferDstOptimal, vk::PipelineStageBits::transfer,
 		vk::AccessBits::transferWrite,
-		{vk::ImageAspectBits::color, 0, 1, 0, 1});
+		{vk::ImageAspectBits::color, 0, levels, 0, 1});
 
 	// to make sure it doesn't go out of scope
 	std::variant<vpp::SubBuffer, vpp::Image> stage;
@@ -159,13 +178,74 @@ vpp::ViewableImage loadTexture(const vpp::Device& dev, vk::Extent3D extent,
 		stage = std::move(stageImage);
 	}
 
-	vpp::changeLayout(cb, image.image(),
-		vk::ImageLayout::transferDstOptimal, vk::PipelineStageBits::transfer,
-		vk::AccessBits::transferWrite,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::allGraphics,
-		vk::AccessBits::shaderRead,
-		{vk::ImageAspectBits::color, 0, 1, 0, 1});
+	// create mipmaps
+	if(levels == 1) {
+		vpp::changeLayout(cb, image.image(),
+			vk::ImageLayout::transferDstOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferWrite,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::allCommands | vk::PipelineStageBits::topOfPipe,
+			vk::AccessBits::shaderRead,
+			{vk::ImageAspectBits::color, 0, 1, 0, 1});
+	} else {
+		// bring mip0 into transferSrc layout and set a barrier for initial
+		// data transfer to complete
+		vpp::changeLayout(cb, image.image(),
+			vk::ImageLayout::transferDstOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferWrite,
+			vk::ImageLayout::transferSrcOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferRead,
+			{vk::ImageAspectBits::color, 0, 1, 0, 1});
+
+		for(auto i = 1u; i < levels; ++i) {
+			// std::max needed for end offsets when the texture is not
+			// quadratic: then we would get 0 there although the mipmap
+			// still has size 1
+			vk::ImageBlit blit;
+			blit.srcSubresource.layerCount = 1;
+			blit.srcSubresource.mipLevel = i - 1;
+			blit.srcSubresource.aspectMask = vk::ImageAspectBits::color;
+			blit.srcOffsets[1].x = std::max(extent.width >> (i - 1), 1u);
+			blit.srcOffsets[1].y = std::max(extent.height >> (i - 1), 1u);
+			blit.srcOffsets[1].z = 1u;
+
+			blit.dstSubresource.layerCount = 1;
+			blit.dstSubresource.mipLevel = i;
+			blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
+			blit.dstOffsets[1].x = std::max(extent.width >> i, 1u);
+			blit.dstOffsets[1].y = std::max(extent.height >> i, 1u);
+			blit.dstOffsets[1].z = 1u;
+
+			vk::cmdBlitImage(cb, image.image(), vk::ImageLayout::transferSrcOptimal,
+				image.image(), vk::ImageLayout::transferDstOptimal, {blit},
+				vk::Filter::linear);
+
+			// change layout of current mip level to transferSrc for next
+			// mip level
+			vpp::changeLayout(cb, image.image(),
+				vk::ImageLayout::transferDstOptimal,
+				vk::PipelineStageBits::transfer,
+				vk::AccessBits::transferWrite,
+				vk::ImageLayout::transferSrcOptimal,
+				vk::PipelineStageBits::transfer,
+				vk::AccessBits::transferRead,
+				{vk::ImageAspectBits::color, i, 1, 0, 1});
+		}
+
+		// transfer all mip levels to readable layout and set barrier to
+		// wait for transfer to complete
+		vpp::changeLayout(cb, image.image(),
+			vk::ImageLayout::transferSrcOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferRead,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::allCommands | vk::PipelineStageBits::topOfPipe,
+			vk::AccessBits::shaderRead,
+			{vk::ImageAspectBits::color, 0, levels, 0, 1});
+	}
 
 	vk::endCommandBuffer(cb);
 
@@ -265,7 +345,8 @@ vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 		{vk::ImageAspectBits::color, 0, 1, 0, layerCount});
 	std::variant<vpp::SubBuffer, vpp::Image> stage; // keep in scope
 	if(format == dataFormat) {
-		auto totalSize = files.size() * width * height * vpp::formatSize(format);
+		auto totalSize = files.size() * width * height *
+			vpp::formatSize(dataFormat);
 		auto stageBuf = vpp::SubBuffer(dev.bufferAllocator(), totalSize,
 			vk::BufferUsageBits::transferSrc, 0u, dev.hostMemoryTypes());
 
@@ -359,7 +440,7 @@ vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 	vpp::changeLayout(cb, image.image(), vk::ImageLayout::transferDstOptimal,
 		vk::PipelineStageBits::transfer, vk::AccessBits::transferWrite,
 		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::fragmentShader,
+		vk::PipelineStageBits::allCommands | vk::PipelineStageBits::topOfPipe,
 		vk::AccessBits::shaderRead,
 		{vk::ImageAspectBits::color, 0, 1, 0, layerCount});
 	vk::endCommandBuffer(cb);
@@ -373,8 +454,12 @@ vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 }
 
 vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
-		nytl::Span<const nytl::StringParam> files, bool srgb,
-		bool hdr, bool cubemap) {
+		nytl::Span<const nytl::StringParam> files, bool cubemap,
+		bool srgb, bool hdr) {
+	auto format = hdr ?
+		vk::Format::r32g32b32a32Sfloat :
+		srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
+	return loadTextureArray(dev, files, format, cubemap, srgb);
 }
 
 bool isHDR(vk::Format format) {

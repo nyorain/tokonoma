@@ -175,6 +175,8 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 		return 0.f;
 	}
 
+	// NOTE: random factors (especially the 35 seems weird...)
+	// currently tuned for directional light
 	float ldv = -dot(lightDir, viewDir);
 	float fac = mieScattering(ldv, 0.05);
 	fac *= 35.0 * ldv;
@@ -208,6 +210,9 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 		{ 0.9375f, 0.4375f, 0.8125f, 0.3125}};
 	float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
 	ipos += ditherValue * step;
+
+	// TODO: atm, light can shine through completely closed wall...
+	// idea: make samples near the light more important.
 
 	// NOTE: instead of the dithering we could use a fully random
 	// offset. Doesn't seem to work as well though.

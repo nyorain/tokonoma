@@ -25,7 +25,7 @@
 #include <vpp/bufferOps.hpp>
 #include <vpp/imageOps.hpp>
 
-#include <shaders/fullscreen.vert.h>
+#include <shaders/stage.fullscreen.vert.h>
 #include <shaders/deferred.gbuf.vert.h>
 #include <shaders/deferred.gbuf.frag.h>
 #include <shaders/deferred.pp.frag.h>
@@ -34,7 +34,6 @@
 #include <cstdlib>
 #include <random>
 
-// TODO: mipmapping, anisotropic filtering
 // TODO: split in multiple render passes.
 //  currently using undefined behavior (sampling attachments)
 // TODO: only use ssao when a model has no occlusion texture?
@@ -70,10 +69,14 @@ public:
 	const auto& lightInputDs() const { return lightInputDs_; }
 	const auto& lightInputDsLayout() const { return lightInputDsLayout_; }
 
+	const auto& depthImage() const { return depthTarget_.image(); }
+	auto depthLevels() const { return depthLevels_; }
+
 protected:
 	void createRenderPass() override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
 	std::vector<vk::ClearValue> clearValues() override;
+	void createDepthTarget(const vk::Extent2D& size) override;
 
 protected:
 	// targets of first pass (+ depth)
@@ -82,11 +85,14 @@ protected:
 	vpp::ViewableImage emission_;
 	vpp::TrDsLayout inputDsLayout_;
 	vpp::TrDs inputDs_;
+	vpp::ImageView depthMipView_;
 
 	// target of second pass, hdr
 	vpp::ViewableImage light_;
 	vpp::TrDsLayout lightInputDsLayout_;
 	vpp::TrDs lightInputDs_;
+
+	unsigned depthLevels_ {};
 };
 
 class ViewApp : public doi::App {
@@ -119,8 +125,17 @@ public:
 		sci.magFilter = vk::Filter::linear;
 		sci.minFilter = vk::Filter::linear;
 		sci.minLod = 0.0;
-		sci.maxLod = 0.25;
+		sci.maxLod = 10u; // TODO?
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
+
+		// TODO: enable anisotropy that even for normals and such?
+		// probably doesn't have a huge runtime overhead but not sure
+		// if really needed for anything besides color
+		if(anisotropy_) {
+			sci.anisotropyEnable = true;
+			sci.maxAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
+		}
+
 		sampler_ = {dev, sci};
 		globalSampler = sampler_;
 
@@ -158,7 +173,7 @@ public:
 		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
-#if 1
+#if 0
 		{
 			auto& l = dirLights_.emplace_back(dev, lightDsLayout_, primitiveDsLayout_,
 				shadowData_, camera_.pos, *lightMaterial_);
@@ -322,7 +337,7 @@ public:
 		// TODO: don't use fullscreen here. Only render the areas of the screen
 		// that are effected by the light (huge, important optimization
 		// when there are many lights in the scene!)
-		vpp::ShaderModule vertShader(dev, fullscreen_vert_data);
+		vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
 		vpp::ShaderModule fragShader(dev, deferred_light_frag_data);
 		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), lPipeLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
@@ -418,7 +433,7 @@ public:
 		// input ds
 		pp_.pipeLayout = {dev, {renderer().lightInputDsLayout()}, {}};
 
-		vpp::ShaderModule vertShader(dev, fullscreen_vert_data);
+		vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
 		vpp::ShaderModule fragShader(dev, deferred_pp_frag_data);
 		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), pp_.pipeLayout, {{
 			{vertShader, vk::ShaderStageBits::vertex},
@@ -434,6 +449,17 @@ public:
 			1, gpi.info(), NULL, vkpipe);
 
 		pp_.pipe = {dev, vkpipe};
+	}
+
+	// enable anisotropy if possible
+	bool features(vk::PhysicalDeviceFeatures& enable,
+			const vk::PhysicalDeviceFeatures& supported) override {
+		if(supported.samplerAnisotropy) {
+			anisotropy_ = true;
+			enable.samplerAnisotropy = true;
+		}
+
+		return true;
 	}
 
 	argagg::parser argParser() const override {
@@ -507,6 +533,17 @@ public:
 			l.lightBall().render(cb, gPipeLayout_);
 		}
 		*/
+
+		// create depth mipmaps
+		// TODO: not allowed during renderpass, as are our
+		// image accesses overall...
+		// auto& depthImage = renderer().depthImage();
+		// auto depthLevels = renderer().depthLevels();
+		// vpp::changeLayout(cb, depthImage,
+		// 	vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
+		// 	vk::ImageLayout::transferDstOptimal, vk::PipelineStageBits::transfer,
+		// 	vk::AccessBits::transferWrite,
+		// 	{vk::ImageAspectBits::color, 0, depthLevels, 0, 1});
 
 		// render lights
 		// TODO: bad pipe/ds layout, ssaoDs always the same but
@@ -697,6 +734,7 @@ protected:
 
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
+	bool anisotropy_ {};
 
 	std::uint32_t show_ {}; // what to show
 	float time_ {};
@@ -936,6 +974,49 @@ void GRenderer::createRenderPass() {
 	renderPass_ = {device(), renderPassInfo};
 }
 
+void GRenderer::createDepthTarget(const vk::Extent2D& size) {
+	auto width = size.width;
+	auto height = size.height;
+	// auto levels = 1 + std::floor(std::log2(std::max(width, height)));
+	auto levels = 1;
+
+	// img
+	vk::ImageCreateInfo img;
+	img.imageType = vk::ImageType::e2d;
+	img.format = depthFormat_;
+	img.extent.width = width;
+	img.extent.height = height;
+	img.extent.depth = 1;
+	img.mipLevels = levels;
+	img.arrayLayers = 1;
+	img.sharingMode = vk::SharingMode::exclusive;
+	img.tiling = vk::ImageTiling::optimal;
+	img.samples = sampleCount_;
+	img.usage = vk::ImageUsageBits::depthStencilAttachment |
+		vk::ImageUsageBits::sampled |
+		vk::ImageUsageBits::transferSrc |
+		vk::ImageUsageBits::transferDst;
+	img.initialLayout = vk::ImageLayout::undefined;
+
+	// view
+	vk::ImageViewCreateInfo view;
+	view.viewType = vk::ImageViewType::e2d;
+	view.format = img.format;
+	view.components = {};
+	view.subresourceRange.aspectMask = vk::ImageAspectBits::depth;
+	view.subresourceRange.levelCount = 1;
+	view.subresourceRange.layerCount = 1;
+
+	// create the viewable image
+	// will set the created image in the view info for us
+	depthTarget_ = {device(), img, view};
+
+	view.subresourceRange.levelCount = levels;
+	view.image = depthTarget_.image();
+	depthMipView_ = {device(), view};
+	depthLevels_ = levels;
+}
+
 void GRenderer::initBuffers(const vk::Extent2D& size,
 		nytl::Span<RenderBuffer> bufs) {
 	std::vector<vk::ImageView> attachments {vk::ImageView {}};
@@ -984,7 +1065,9 @@ void GRenderer::initBuffers(const vk::Extent2D& size,
 
 	// TODO: depthSampler_ hack
 	if(depthSampler_) {
-		dsu.imageSampler({{depthSampler_, depthTarget_.vkImageView(),
+		// dsu.imageSampler({{depthSampler_, depthTarget_.vkImageView(),
+		// 	vk::ImageLayout::general}});
+		dsu.imageSampler({{depthSampler_, depthMipView_,
 			vk::ImageLayout::general}});
 	}
 

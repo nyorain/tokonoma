@@ -27,15 +27,15 @@
 #include <optional>
 #include <cstddef>
 
-#include <shaders/iro.vert.h>
-#include <shaders/iro.frag.h>
-#include <shaders/iro_building.vert.h>
-#include <shaders/iro_texture.frag.h>
+#include <shaders/iro.iro.vert.h>
+#include <shaders/iro.iro.frag.h>
+#include <shaders/iro.iro_building.vert.h>
+#include <shaders/iro.iro_texture.frag.h>
 // #include <shaders/simple.vert.h>
 // #include <shaders/texture.frag.h>
 // #include <shaders/iro_outline.vert.h>
 // #include <shaders/iro_outline.frag.h>
-#include <shaders/iro.comp.h>
+#include <shaders/iro.iro.comp.h>
 
 using namespace doi::types;
 
@@ -853,8 +853,8 @@ public:
 			modv = std::move(*omodv);
 			modf = std::move(*omodf);
 		} else {
-			modv = {dev, iro_vert_data};
-			modf = {dev, iro_frag_data};
+			modv = {dev, iro_iro_vert_data};
+			modf = {dev, iro_iro_frag_data};
 		}
 
 		auto&& rp = renderer().renderPass();
@@ -916,7 +916,7 @@ public:
 
 			mod = std::move(*omod);
 		} else {
-			mod = {dev, iro_comp_data};
+			mod = {dev, iro_iro_comp_data};
 		}
 
 		vk::ComputePipelineCreateInfo info;

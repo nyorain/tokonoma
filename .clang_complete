@@ -21,4 +21,4 @@
 -Wpedantic
 -Wno-missing-braces
 -Wno-unused-const-variable
--DDOI_SHADER_SRC="something"
+-DDOI_SRC_DIR="something"

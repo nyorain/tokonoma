@@ -10,11 +10,11 @@
 #include <nytl/tmpUtil.hpp>
 #include <nytl/vecOps.hpp>
 
-#include <shaders/light.frag.h>
-#include <shaders/light.vert.h>
+#include <shaders/smooth_shadow.light.frag.h>
+#include <shaders/smooth_shadow.light.vert.h>
 
-#include <shaders/shadow.frag.h>
-#include <shaders/shadow.vert.h>
+#include <shaders/smooth_shadow.shadow.frag.h>
+#include <shaders/smooth_shadow.shadow.vert.h>
 
 constexpr auto lightUboSize = sizeof(float) * (4 + 2 + 1 + 1 + 1);
 constexpr auto shadowFormat = vk::Format::r8Unorm;
@@ -343,11 +343,13 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		lightPipeLayout_ = {dev, plInfo};
 
 		// pipeline
-		auto shadowVertex = vpp::ShaderModule(dev, shadow_vert_data);
-		auto shadowFragment = vpp::ShaderModule(dev, shadow_frag_data);
+		auto shadowVertex = vpp::ShaderModule(dev, smooth_shadow_shadow_vert_data);
+		auto shadowFragment = vpp::ShaderModule(dev,
+			smooth_shadow_shadow_frag_data);
 
-		auto lightVertex = vpp::ShaderModule(dev, light_vert_data);
-		auto lightFragment = vpp::ShaderModule(dev, light_frag_data);
+		auto lightVertex = vpp::ShaderModule(dev, smooth_shadow_light_vert_data);
+		auto lightFragment = vpp::ShaderModule(dev,
+			smooth_shadow_light_frag_data);
 
 		vpp::GraphicsPipelineInfo shadowInfo(shadowPass_,
 				shadowPipeLayout_, vpp::ShaderProgram({

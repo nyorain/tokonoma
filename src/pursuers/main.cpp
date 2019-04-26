@@ -15,8 +15,8 @@
 #include <cstring>
 #include <random>
 
-#include <shaders/line.vert.h>
-#include <shaders/line.frag.h>
+#include <shaders/pursuers.line.vert.h>
+#include <shaders/pursuers.line.frag.h>
 
 constexpr auto pointCount = 128; // needs to be updated in line.vert
 constexpr auto particleCount = 2000;
@@ -165,8 +165,8 @@ public:
 			0u, sizeof(nytl::Vec4f)};
 		particlePipeLayout_ = {dev, {}, {range}};
 
-		auto lineVert = vpp::ShaderModule(dev, line_vert_data);
-		auto lineFrag = vpp::ShaderModule(dev, line_frag_data);
+		auto lineVert = vpp::ShaderModule(dev, pursuers_line_vert_data);
+		auto lineFrag = vpp::ShaderModule(dev, pursuers_line_frag_data);
 
 		vpp::GraphicsPipelineInfo pipeInfo(renderer().renderPass(),
 			particlePipeLayout_, vpp::ShaderProgram({

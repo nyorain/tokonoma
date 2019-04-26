@@ -1,18 +1,12 @@
-# NOTE: the shaders in the sviewer/ subfolder are not compiled here,
-# but dynamically loaded (to allow reloading)
-add_project_arguments(
-	'-DDOI_SHADER_SRC="@0@"'.format(meson.current_source_dir()),
-	language: 'cpp')
-
 # common/shader glsl files
 include_glsl = files(
-  'include/geometry.glsl',
-  'include/util.glsl',
-  'include/hex.glsl',
-  'include/math.glsl',
-  'include/color.glsl',
-  'include/noise.glsl',
-  'include/ray.glsl',
+	'include/geometry.glsl',
+	'include/util.glsl',
+	'include/hex.glsl',
+	'include/math.glsl',
+	'include/color.glsl',
+	'include/noise.glsl',
+	'include/ray.glsl',
 )
 
 scene_glsl = files(
@@ -27,35 +21,33 @@ scene_glsl = files(
 # [ <group var>, [ <shader source>, { <dependencies> }], {...} ]
 # a variable named <group var> will afterwards contain the compiled
 # shader headers
-shaders_src = [
-	['stage_shaders', [
-		['shadowmap.vert', scene_glsl],
-		['shadowmap.frag', scene_glsl],
-		['shadowmapCube.vert', scene_glsl],
-		['shadowmapCube.frag', scene_glsl],
-		['skybox.vert'],
-		['skybox.frag'],
-	]],
-	['common_shaders', [
-		['fullscreen.vert'],
-		['fullscreen_transform.vert'],
-		['equirectToCube.frag'],
-		['incolor.frag'],
-		['texture.frag'],
-		['simple.vert'],
-	]],
-	['smooth_shadow_shaders', [
+shaders_src = {
+	'stage': [
+		['shaders/shadowmap.vert', scene_glsl],
+		['shaders/shadowmap.frag', scene_glsl],
+		['shaders/shadowmapCube.vert', scene_glsl],
+		['shaders/shadowmapCube.frag', scene_glsl],
+		['shaders/skybox.vert'],
+		['shaders/skybox.frag'],
+		['shaders/fullscreen.vert'],
+		['shaders/fullscreen_transform.vert'],
+		['shaders/equirectToCube.frag'],
+		['shaders/incolor.frag'],
+		['shaders/texture.frag'],
+		['shaders/simple.vert'],
+	],
+	'smooth_shadow': [
 		['light.vert'],
 		['light.frag', include_glsl],
 		['shadow.vert', include_glsl],
 		['shadow.frag', include_glsl],
 		['light_pp.frag'],
-	]],
-	['pursuers_shaders', [
+	],
+	'pursuers': [
 		['line.vert'],
 		['line.frag'],
-	]],
-	['fluid_shaders', [
+	],
+	'fluids': [
 		['advect.comp', [], 'advect.vel.comp', ['-DVELOCITY']],
 		['advect.comp', [], 'advect.dens.comp', ['-DDENSITY']],
 		['pressure.comp'],
@@ -63,39 +55,39 @@ shaders_src = [
 		['project.comp'],
 		['diffuse.comp', [], 'diffuse.dens.comp'],
 		['fluid_texture.frag'],
-	]],
-	['automaton_shaders', [
+	],
+	'automaton': [
 		['hex.vert', include_glsl],
 		['hex_line.vert', include_glsl],
 		['predprey.comp'],
 		['ant.comp'],
-	]],
-	['particle_shaders', [
+	],
+	'particles': [
 		['particle.vert'],
 		['particle.frag'],
 		['particle.comp'],
-	]],
-	['normals_shaders', [
+	],
+	'normals': [
 		['texn.frag'],
-	]],
-	['ps_shaders', [
+	],
+	'ps': [
 		['ps.vert'],
 		['ps.frag'],
 		# ['ps.comp'], # always dynamically compiled
-	]],
-	['sentient_shaders', [
+	],
+	'sentient': [
 		['sentient.vert'],
 		['sentient.frag'],
-	]],
-	['sss_shaders', [
+	],
+	'sss': [
 		['sss_shadow.vert'],
 		['sss_shadow.frag'],
-	]],
-	['ddd_shaders', [
+	],
+	'ddd': [
 		['model.vert', scene_glsl],
 		['model.frag', scene_glsl],
-	]],
-	['iro_shaders', [
+	],
+	'iro': [
 		['iro.vert', include_glsl],
 		['iro.frag'],
 		['iro_building.vert'],
@@ -103,42 +95,49 @@ shaders_src = [
 		['iro.comp', include_glsl],
 		['iro_outline.vert', include_glsl],
 		['iro_outline.frag', include_glsl],
-	]],
-	['sen_shaders', [
+	],
+	'sen': [
 	  ['sen.frag', include_glsl],
 	  ['senr.vert'],
 	  ['senr.frag'],
 	  ['senpt.frag', include_glsl],
 	  ['sen.comp', include_glsl],
-	]],
-	['lith_shaders', [
+	],
+	'lith': [
 	  ['lith.frag', include_glsl],
 	  ['lith.vert'],
 	  ['lith.comp', include_glsl],
-	]],
-	['deferred_shaders', [
-	  ['deferred/gbuf.vert', include_glsl + scene_glsl],
-	  ['deferred/gbuf.frag', include_glsl + scene_glsl],
-	  ['deferred/pp.frag', include_glsl + scene_glsl],
-	  ['deferred/light.frag', include_glsl + scene_glsl],
-	]],
-]
+	],
+	'deferred': [
+	  ['gbuf.vert', include_glsl + scene_glsl],
+	  ['gbuf.frag', include_glsl + scene_glsl],
+	  ['pp.frag', include_glsl + scene_glsl],
+	  ['light.frag', include_glsl + scene_glsl],
+	],
+}
 
 # build them
 shader_inc_dir = meson.current_source_dir() + '/include'
 glslang = find_program('glslangValidator')
-foreach shader_group : shaders_src
-	group_name = shader_group[0]
-	shaders = get_variable(group_name, [])
+foreach group, sources : shaders_src
+	shaders = get_variable(group + '_shaders', [])
 
-	foreach shader : shader_group[1]
-		file = shader[0]
-		name = shader.get(2, file)
+	foreach shader : sources
+		# file: full (relative) filename of shader
+		# name: name of output shader, defaults to input name
+		file = '../' + group + '/' + shader[0]
+		name = shader.get(2, shader[0])
 
-		# name.replace('/', '.')
-		name = '.'.join(name.split('/'))
+		# replace shaders/ dir if it exists in shader path
+		# allows projects to group shaders in a 'shader/' dir, like
+		# stage itself does it
+		name = ''.join(name.split('shaders/'))
 
-		data_name = name.underscorify() + '_data'
+		# if we allow additional subfolders in name we could add
+		# something that works like 'name.replace('/', '.')'
+		# name = '.'.join(name.split('/'))
+
+		data_name = group + '_' + name.underscorify() + '_data'
 		args = [glslang, '-V', '@INPUT@',
 			'-o', '@OUTPUT@',
 			'--target-env', 'vulkan1.1',
@@ -147,8 +146,8 @@ foreach shader_group : shaders_src
 		args += shader.get(3, [])
 
 		header = custom_target(
-			name + '_spv',
-			output: name + '.h',
+			group + '.' + name + '.spv',
+			output: group + '.' + name + '.h',
 			input: files(file),
 			depend_files: shader.get(1, []),
 			command: args)
@@ -156,5 +155,5 @@ foreach shader_group : shaders_src
 		shaders += [header]
 	endforeach
 
-	set_variable(group_name, shaders)
+	set_variable(group + '_shaders', shaders)
 endforeach

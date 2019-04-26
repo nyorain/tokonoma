@@ -9,15 +9,21 @@ namespace {
 
 vpp::ViewableImage loadImage(const vpp::Device& dev, const gltf::Image& tex,
 		nytl::StringParam path, bool srgb) {
-	// TODO: simplifying assumptions atm
-	// at least support other formast (r8, r8g8, r8g8b8, r32, r32g32b32,
-	// maybe also 16-bit formats)
+
+	auto name = tex.name.empty() ?
+		tex.name :
+		"'" + tex.name + "'";
+	dlg_info("  Loading image {}", name);
+
+	// TODO: we could support additional formats like r8 or r8g8.
+	// check tex.pixel_type. Also support other image parameters
 	if(!tex.uri.empty()) {
 		auto full = std::string(path);
 		full += tex.uri;
-		return doi::loadTexture(dev, full, false, srgb);
+		return doi::loadTexture(dev, full, srgb);
 	}
 
+	// TODO: simplifying assumptions that are usually met
 	dlg_assert(tex.component == 4);
 	dlg_assert(!tex.as_is);
 

@@ -13,8 +13,8 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipelineInfo.hpp>
 
-#include <shaders/sentient.frag.h>
-#include <shaders/sentient.vert.h>
+#include <shaders/sentient.sentient.frag.h>
+#include <shaders/sentient.sentient.vert.h>
 
 // generates the vertices to draw a circle with triangle strip, writing
 // them directly into the given data buffer (which must be large enough)
@@ -47,8 +47,8 @@ public:
 		pipeLayout_ = {dev, {}, {pcrange}};
 
 		// pipe
-		vpp::ShaderModule vert(dev, sentient_vert_data);
-		vpp::ShaderModule frag(dev, sentient_frag_data);
+		vpp::ShaderModule vert(dev, sentient_sentient_vert_data);
+		vpp::ShaderModule frag(dev, sentient_sentient_frag_data);
 		vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{
 			{vert, vk::ShaderStageBits::vertex},
 			{frag, vk::ShaderStageBits::fragment},

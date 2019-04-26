@@ -24,8 +24,8 @@
 #include <vui/gui.hpp>
 
 #include "automaton.hpp"
-#include <shaders/predprey.comp.h>
-#include <shaders/ant.comp.h>
+#include <shaders/automaton.predprey.comp.h>
+#include <shaders/automaton.ant.comp.h>
 
 #include <random>
 #include <optional>
@@ -83,7 +83,7 @@ PredPrey::PredPrey(vpp::Device& dev, vk::RenderPass rp) {
 
 void PredPrey::init(vpp::Device& dev, vk::RenderPass rp) {
 	auto size = nytl::Vec2ui {256, 256};
-	Automaton::init(dev, rp, predprey_comp_data, size,
+	Automaton::init(dev, rp, automaton_predprey_comp_data, size,
 		BufferMode::doubled, vk::Format::r32g32Sfloat,
 		{}, {}, {}, GridType::hex);
 	reset(false);
@@ -312,7 +312,7 @@ Ant::Ant(vpp::Device& dev, vk::RenderPass rp) {
 
 void Ant::init(vpp::Device& dev, vk::RenderPass rp) {
 	auto size = nytl::Vec2ui {256, 256};
-	Automaton::init(dev, rp, ant_comp_data, size, BufferMode::single,
+	Automaton::init(dev, rp, automaton_ant_comp_data, size, BufferMode::single,
 		vk::Format::r8Uint, {}, {}, {1}, GridType::hex);
 
 	// TODO

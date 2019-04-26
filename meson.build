@@ -1,7 +1,7 @@
 project('stage', ['cpp', 'c'],
 	license: 'BSD',
 	version: '0.1.0',
-	meson_version: '>=0.43',
+	meson_version: '>=0.47',
 	default_options: [
 		'cpp_std=c++1z',
 		'c_std=c99',
@@ -39,6 +39,12 @@ add_project_arguments(
 	cc.get_supported_arguments(warnings),
 	language: 'cpp')
 
+# mainly needed for shaders and assets and stuff
+src_dir = join_paths(meson.current_source_dir(), 'src')
+add_project_arguments(
+	'-DDOI_SRC_DIR="@0@"'.format(src_dir),
+	language: 'cpp')
+
 # project-specific stuff
 source_root = '/'.join(meson.source_root().split('\\'))
 flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
@@ -61,7 +67,7 @@ subdir('src/shaders')
 subdir('src/stage')
 
 # projects
-subdir('src/smooth-shadow')
+subdir('src/smooth_shadow')
 subdir('src/pursuers')
 subdir('src/fluids')
 subdir('src/mists')
@@ -96,25 +102,22 @@ executable('guitest',
 
 executable('particles', [
 		'src/particles/main.cpp',
-		particle_shaders,
+		particles_shaders,
 	], dependencies: stage_dep)
 
 executable('automaton', [
 	  'src/automaton/main.cpp',
 	  'src/automaton/automaton.cpp',
 	  automaton_shaders,
-	  common_shaders,
 	], dependencies: stage_dep)
 
 executable('normals', [
 		'src/normals/main.cpp',
-		common_shaders,
 		normals_shaders,
 	], dependencies: stage_dep)
 
 executable('sviewer', [
 		'src/sviewer/main.cpp',
-		common_shaders,
 	], dependencies: stage_dep)
 
 executable('curves', [
@@ -124,13 +127,11 @@ executable('curves', [
 executable('ps', [
 		'src/ps/main.cpp',
 		ps_shaders,
-		common_shaders,
 	], dependencies: stage_dep)
 
 executable('sen', [
 		'src/sen/main.cpp',
 		sen_shaders,
-		common_shaders,
 	], dependencies: stage_dep)
 
 # executable('pg',

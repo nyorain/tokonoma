@@ -35,8 +35,8 @@
 
 #include <tinygltf.hpp>
 
-#include <shaders/model.vert.h>
-#include <shaders/model.frag.h>
+#include <shaders/ddd.model.vert.h>
+#include <shaders/ddd.model.frag.h>
 
 #include <optional>
 #include <vector>
@@ -138,8 +138,8 @@ public:
 		fragSpec.mapEntryCount = 1;
 		fragSpec.pMapEntries = &maxLightsEntry;
 
-		vpp::ShaderModule vertShader(dev, model_vert_data);
-		vpp::ShaderModule fragShader(dev, model_frag_data);
+		vpp::ShaderModule vertShader(dev, ddd_model_vert_data);
+		vpp::ShaderModule fragShader(dev, ddd_model_frag_data);
 		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), pipeLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment, &fragSpec},

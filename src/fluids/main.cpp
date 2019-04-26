@@ -20,14 +20,14 @@
 #include <cstring>
 #include <random>
 
-#include <shaders/fullscreen.vert.h>
-#include <shaders/fluid_texture.frag.h>
-#include <shaders/advect.vel.comp.h>
-#include <shaders/advect.dens.comp.h>
-#include <shaders/divergence.comp.h>
-#include <shaders/pressure.comp.h>
-#include <shaders/project.comp.h>
-#include <shaders/diffuse.dens.comp.h>
+#include <shaders/stage.fullscreen.vert.h>
+#include <shaders/fluids.fluid_texture.frag.h>
+#include <shaders/fluids.advect.vel.comp.h>
+#include <shaders/fluids.advect.dens.comp.h>
+#include <shaders/fluids.divergence.comp.h>
+#include <shaders/fluids.pressure.comp.h>
+#include <shaders/fluids.project.comp.h>
+#include <shaders/fluids.diffuse.dens.comp.h>
 
 template<typename T>
 void write(nytl::Span<std::byte>& span, T&& data) {
@@ -132,12 +132,12 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 	plInfo.pSetLayouts = pipeSets.begin();
 	pipeLayout_ = {dev, plInfo};
 
-	auto advectVelShader = vpp::ShaderModule(dev, advect_vel_comp_data);
-	auto advectDensShader = vpp::ShaderModule(dev, advect_dens_comp_data);
-	auto divergenceShader = vpp::ShaderModule(dev, divergence_comp_data);
-	auto pressureShader = vpp::ShaderModule(dev, pressure_comp_data);
-	auto projectShader = vpp::ShaderModule(dev, project_comp_data);
-	auto diffuseDensShader = vpp::ShaderModule(dev, diffuse_dens_comp_data);
+	auto advectVelShader = vpp::ShaderModule(dev, fluids_advect_vel_comp_data);
+	auto advectDensShader = vpp::ShaderModule(dev, fluids_advect_dens_comp_data);
+	auto divergenceShader = vpp::ShaderModule(dev, fluids_divergence_comp_data);
+	auto pressureShader = vpp::ShaderModule(dev, fluids_pressure_comp_data);
+	auto projectShader = vpp::ShaderModule(dev, fluids_project_comp_data);
+	auto diffuseDensShader = vpp::ShaderModule(dev, fluids_diffuse_dens_comp_data);
 
 	vk::ComputePipelineCreateInfo advectInfoVel;
 	advectInfoVel.layout = pipeLayout_;
@@ -501,8 +501,8 @@ public:
 		plInfo.pSetLayouts = pipeSets.begin();
 		pipeLayout_ = {dev, {dsLayout_}, {{vk::ShaderStageBits::fragment, 0, 4u}}};
 
-		vpp::ShaderModule fullscreenShader(dev, fullscreen_vert_data);
-		vpp::ShaderModule textureShader(dev, fluid_texture_frag_data);
+		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
+		vpp::ShaderModule textureShader(dev, fluids_fluid_texture_frag_data);
 		auto rp = renderer().renderPass();
 
 		vpp::GraphicsPipelineInfo pipeInfo(rp, pipeLayout_, {{

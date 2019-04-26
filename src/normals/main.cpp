@@ -14,8 +14,8 @@
 #include <ny/keyboardContext.hpp>
 #include <ny/appContext.hpp>
 
-#include <shaders/fullscreen.vert.h>
-#include <shaders/texn.frag.h>
+#include <shaders/stage.fullscreen.vert.h>
+#include <shaders/normals.texn.frag.h>
 
 class DummyApp : public doi::App {
 public:
@@ -29,8 +29,9 @@ public:
 		ubo_ = {dev.bufferAllocator(), sizeof(float) * 4,
 			vk::BufferUsageBits::uniformBuffer, 0, mem};
 
+		// make sure to load the normal map in linear rgb space, *not* srgb
 		diffuse_ = doi::loadTexture(dev, "../assets/gravel_color.png");
-		normal_ = doi::loadTexture(dev, "../assets/gravel_normal.png");
+		normal_ = doi::loadTexture(dev, "../assets/gravel_normal.png", false);
 
 		// pipe
 		auto info = vk::SamplerCreateInfo {};
@@ -60,8 +61,8 @@ public:
 		plInfo.pSetLayouts = pipeSets.begin();
 		pipeLayout_ = {dev, {dsLayout_}, {{vk::ShaderStageBits::fragment, 0, 4u}}};
 
-		vpp::ShaderModule fullscreenShader(dev, fullscreen_vert_data);
-		vpp::ShaderModule textureShader(dev, texn_frag_data);
+		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
+		vpp::ShaderModule textureShader(dev, normals_texn_frag_data);
 		auto rp = renderer().renderPass();
 		vpp::GraphicsPipelineInfo pipeInfo(rp, pipeLayout_, {{
 			{fullscreenShader, vk::ShaderStageBits::vertex},

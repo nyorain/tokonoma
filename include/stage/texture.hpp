@@ -9,33 +9,6 @@
 
 namespace doi {
 
-// TODO: support for compressed formats, low priority for now
-
-// TODO: allow 8bit textures (r8)
-// TODO: use 16 bit float formats for images (requires blitting and stage images)
-// enum class TextureFormat {
-//  	r8,
-// 	rgba8,
-// 	rgba16f,
-// 	rgba32f
-// };
-//
-// struct TextureCreateInfo {
-// 	// will output warning if type and image data differ in significant ways,
-// 	// e.g. image data is hdr this is an ldr format or the other way around
-// 	TextureFormat format {TextureFormat::rgba8};
-//
-// 	// when format is hdr, this must be false
-// 	// for ldr formats, will create a unorm image if this is false (useful
-// 	// e.g. for normal textures)
-// 	bool srgb {true};
-//
-// 	// how many mipmap levels to create
-// 	// number of levels will be 1 + ceil(log2(max(width, height))),
-// 	// as used in opengl per default
-// 	bool mipap {true};
-// };
-
 // NOTE: stb offers a function to autodetect whether the image is hdr.
 // We don't use this here (e.g. use a optional<bool> hdr parameter)
 // since the caller knows what it wants the texture for and has to adapt
@@ -50,26 +23,32 @@ namespace doi {
 // Wrapper around stb load image function.
 // The returned datas format depends on the given channels and hdr but is
 // tightly packed. The depth component of the extent is always 1.
-// The returned data must be freed. TODO: we could use a custom unique_ptr
+// The returned data must be freed. TODO: we could return a custom unique_ptr
 std::tuple<std::byte*, vk::Extent3D> loadImage(nytl::StringParam filename,
 	unsigned channels = 4, bool hdr = false);
 
+// If an explicit format for the texture is given, it must be possible
+// to blit into it with vulkan (vulkan does not allow this for all
+// format conversions).
 vpp::ViewableImage loadTexture(const vpp::Device& dev, nytl::StringParam file,
-	bool srgb = true, bool hdr = false);
+	bool srgb = true, bool hdr = false, bool mipmap = true);
 vpp::ViewableImage loadTexture(const vpp::Device& dev, nytl::StringParam file,
-	vk::Format format, bool inputSrgb = false);
+	vk::Format format, bool inputSrgb = false, bool mipmap = true);
 vpp::ViewableImage loadTexture(const vpp::Device& dev, vk::Extent3D size,
 	vk::Format format, nytl::Span<const std::byte> data,
-	vk::Format dataFormat = {});
+	vk::Format dataFormat = {}, bool mipmap = true);
 
-// creates an array of textures
+// TODO: support mipmaps here as well
+// creates an array of textures/a cubemap
 vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
-	nytl::Span<const nytl::StringParam> files, bool srgb = true,
-	bool hdr = false, bool cubemap = false);
+	nytl::Span<const nytl::StringParam> files, bool cubemap = false,
+	bool srgb = true, bool hdr = false);
 vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 	nytl::Span<const nytl::StringParam> files, vk::Format format,
 	bool cubemap = false, bool inputSrgb = false);
 
+// returns whether the given format an hold high dynamic range data, i.e.
+// has a float format and can store values >1.0.
 bool isHDR(vk::Format);
 
 } // namespace doi

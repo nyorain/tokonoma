@@ -40,9 +40,8 @@ void main() {
 
 	int total = ((2 * range + 1) * (2 * range + 1));
 	scatter /= total;
-	color.rgb += scatter * vec3(4.0, 3.5, 2.0); // TODO: should be light color
+	color.rgb += scatter * vec3(1.0, 0.9, 0.4); // TODO: should be light color
 
-	// NOTE: not sure if needed. We have an srgb framebuffer
-	// color.rgb = pow(color.rgb, vec3(1.0 / 2.2));
+	// color.rgb = max(color.rgb, vec3(0.0));
 	fragColor = vec4(tonemap(color.rgb), 1.0);
 }

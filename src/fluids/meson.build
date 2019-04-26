@@ -7,8 +7,7 @@ executable('software',
 	dependencies: stage_dep)
 
 fluid_src = [
-	common_shaders,
-	fluid_shaders,
+	fluids_shaders,
 	'main.cpp'
 ]
 

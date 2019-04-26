@@ -769,17 +769,16 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 
 	// include dirs
 	cmd += " -I";
-	cmd += DOI_SHADER_SRC;
-
-	cmd += " -I";
-	cmd += DOI_SHADER_SRC;
-	cmd += "/include";
+	cmd += DOI_SRC_DIR;
+	cmd += "/shaders/include";
 
 	// input
+	auto fullPath = std::string(DOI_SRC_DIR);
+	fullPath += "/";
+	fullPath += glslPath;
+
 	cmd += " ";
-	cmd += DOI_SHADER_SRC;
-	cmd += "/";
-	cmd += glslPath;
+	cmd += fullPath;
 
 	dlg_debug(cmd);
 
@@ -797,7 +796,7 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 		dlg_reset_sequence);
 
 	if (WEXITSTATUS(ret) != 0) { // TODO: only working for posix
-		dlg_error("Failed to compile shader {}", glslPath);
+		dlg_error("Failed to compile shader {}", fullPath);
 		return {};
 	}
 

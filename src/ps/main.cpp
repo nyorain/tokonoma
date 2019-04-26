@@ -19,8 +19,8 @@
 #include <dlg/dlg.hpp>
 #include <random>
 
-#include <shaders/ps.frag.h>
-#include <shaders/ps.vert.h>
+#include <shaders/ps.ps.frag.h>
+#include <shaders/ps.ps.vert.h>
 
 // NOTE: derived from the original particles dummy app
 // to be a more general particle system
@@ -68,8 +68,8 @@ public:
 		auto mem = dev.memoryTypeBits(vk::MemoryPropertyBits::hostVisible);
 		gfxUbo_ = {device().bufferAllocator(), gfxUboSize, usage, 0u, mem};
 
-		vpp::ShaderModule vertShader(device(), ps_vert_data);
-		vpp::ShaderModule fragShader(device(), ps_frag_data);
+		vpp::ShaderModule vertShader(device(), ps_ps_vert_data);
+		vpp::ShaderModule fragShader(device(), ps_ps_frag_data);
 		vpp::GraphicsPipelineInfo gpi {rp, gfxPipelineLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
@@ -180,7 +180,7 @@ public:
 	// returning false signals an error
 	// must only be called during updateDevice
 	bool reloadShader() {
-		auto mod = doi::loadShader(device(), "ps.comp");
+		auto mod = doi::loadShader(device(), "ps/ps.comp");
 		if (!mod) { // error will be shown; continue with old module
 			return false;
 		}

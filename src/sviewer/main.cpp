@@ -23,7 +23,7 @@
 #include <cstdlib>
 #include <sys/wait.h>
 
-#include <shaders/fullscreen.vert.h>
+#include <shaders/stage.fullscreen.vert.h>
 
 // Specification of the frag shader ubo in ./spec.md
 
@@ -53,7 +53,7 @@ public:
 		plInfo.setLayoutCount = 1;
 		plInfo.pSetLayouts = pipeSets.begin();
 		pipeLayout_ = {dev, {dsLayout_}, {}};
-		vertShader_ = {dev, fullscreen_vert_data};
+		vertShader_ = {dev, stage_fullscreen_vert_data};
 
 		cache_ = {dev, cacheFile};
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
@@ -159,7 +159,7 @@ public:
 	}
 
 	bool initPipe(std::string_view glslFile) {
-		auto name = "sviewer/" + std::string(glslFile);
+		auto name = "sviewer/shaders/" + std::string(glslFile);
 		name += ".frag";
 		if(auto mod = doi::loadShader(vulkanDevice(), name)) {
 			initPipe(std::move(*mod));
@@ -199,7 +199,7 @@ public:
 	}
 
 protected:
-	const char* glsl_ = "svdummy";
+	const char* glsl_ = "dummy";
 	bool reload_ {};
 
 	// glsl ubo vars

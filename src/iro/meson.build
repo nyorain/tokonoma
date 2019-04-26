@@ -1,6 +1,5 @@
 iro_src = [
 	iro_shaders,
-	common_shaders,
 	'main.cpp',
 	'network.cpp',
 ]
