@@ -15,12 +15,16 @@ scene_glsl = files(
 	'include/scene.frag.glsl',
 )
 
-# TODO: can probably be simplified with new meson dictionary feature
+deferred_glsl = include_glsl + scene_glsl + files(
+	'../deferred/light.glsl'
+)
+
 # shader specifications
 # contains multiple shader groups, specified like this:
-# [ <group var>, [ <shader source>, { <dependencies> }], {...} ]
-# a variable named <group var> will afterwards contain the compiled
-# shader headers
+# { 'name': [['shader.vert', glsl_inc, 'outname.vert', ['-DDEF_STH']], ... ], ... }
+# everything but the shader source is optional. The last argument (array)
+# contains additional arguments for glslangValidator (like defines).
+# The shader will be looked for in '../<groupname>/<shadername>'
 shaders_src = {
 	'stage': [
 		['shaders/shadowmap.vert', scene_glsl],
@@ -112,7 +116,8 @@ shaders_src = {
 	  ['gbuf.vert', include_glsl + scene_glsl],
 	  ['gbuf.frag', include_glsl + scene_glsl],
 	  ['pp.frag', include_glsl + scene_glsl],
-	  ['light.frag', include_glsl + scene_glsl],
+	  ['pointLight.frag', include_glsl + scene_glsl],
+	  ['dirLight.frag', include_glsl + scene_glsl],
 	],
 }
 

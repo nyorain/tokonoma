@@ -29,13 +29,13 @@
 #include <shaders/deferred.gbuf.vert.h>
 #include <shaders/deferred.gbuf.frag.h>
 #include <shaders/deferred.pp.frag.h>
-#include <shaders/deferred.light.frag.h>
+#include <shaders/deferred.pointLight.frag.h>
+#include <shaders/deferred.dirLight.frag.h>
 
 #include <cstdlib>
 #include <random>
 
-// TODO: buffer binding aliasing as dont in light.frag
-// is not allowed...
+// TODO: re-implement ssao and light scattering
 
 // NOTE: we always use ssao, even when object/material has ao texture.
 // In that case both are multiplied. That's how its usually done, see
@@ -46,16 +46,18 @@
 //   in the shader via derivates
 
 // low prio optimizations:
-// TODO(optimization): we could theoretically just use one shadow map at all.
+// TODO(optimization?): we could theoretically just use one shadow map at all.
 //   requires splitting the light passes though (rendering with light pipe)
 //   so might have disadvantage. so not high prio
-// TODO(optimization) we could reuse float gbuffers for later hdr rendering
+// TODO(optimization?) we could reuse float gbuffers for later hdr rendering
 //   not that easy though since normal buffer has snorm format...
 //   attachments can be used as color *and* input attachments in a
 //   subpass.
-// NOTE: investigate/compare deferred lightning? http://gameangst.com/?p=141
 // TODO(optimization): more efficient point light shadow cube map
 //   rendering: only render those sides that we can actually see...
+//   -> nothing culling-related implement at all at the moment
+// NOTE: investigate/compare deferred lightning elements?
+//   http://gameangst.com/?p=141
 
 
 class ViewApp : public doi::App {
@@ -67,7 +69,7 @@ public:
 	static constexpr auto albedoFormat = vk::Format::r8g8b8a8Srgb;
 	static constexpr auto emissionFormat = vk::Format::r8g8b8a8Unorm;
 	static constexpr auto ssaoSampleCount = 64u;
-	static constexpr auto pointLight = true;
+	static constexpr auto pointLight = false;
 
 	// see pp.frag
 	struct PostProcessParams { // could name that PPP
@@ -105,10 +107,6 @@ public:
 	const char* name() const override { return "Deferred Renderer"; }
 
 protected:
-	// samples used to sample material textures
-	// allows all mip levels and uses max anisotropy device supports
-	vpp::Sampler matSampler_;
-
 	vpp::TrDsLayout sceneDsLayout_;
 	vpp::TrDsLayout primitiveDsLayout_;
 	vpp::TrDsLayout materialDsLayout_;
@@ -161,7 +159,8 @@ protected:
 		vpp::TrDsLayout dsLayout; // input
 		vpp::TrDs ds;
 		vpp::PipelineLayout pipeLayout;
-		vpp::Pipeline pipe;
+		vpp::Pipeline pointPipe;
+		vpp::Pipeline dirPipe;
 	} lpass_;
 
 	// post processing
@@ -207,10 +206,38 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	// Load Model
 	auto s = sceneScale_;
 	auto mat = doi::scaleMat<4, float>({s, s, s});
-	auto ri = doi::SceneRenderInfo{materialDsLayout_, primitiveDsLayout_,
-		gpass_.pipeLayout, dummyTex_.vkImageView()};
+	auto samplerAnisotropy = 1.f;
+	if(anisotropy_) {
+		samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
+	}
+
+	auto ri = doi::SceneRenderInfo{
+		materialDsLayout_,
+		primitiveDsLayout_,
+		dummyTex_.vkImageView(),
+		samplerAnisotropy
+	};
 	if(!(scene_ = doi::loadGltf(modelname_, dev, mat, ri))) {
 		return false;
+	}
+
+	lightMaterial_.emplace(materialDsLayout_,
+		dummyTex_.vkImageView(), scene_->defaultSampler(),
+		nytl::Vec{1.f, 1.f, 0.4f, 1.f});
+
+	if(pointLight) {
+		auto& l = pointLights_.emplace_back(dev, lightDsLayout_,
+			primitiveDsLayout_, shadowData_, *lightMaterial_);
+		l.data.position = {-1.8f, 6.0f, -2.f};
+		l.data.color = {5.f, 4.f, 2.f};
+		l.data.attenuation = {1.f, 0.4f, 0.2f};
+		l.updateDevice();
+	} else {
+		auto& l = dirLights_.emplace_back(dev, lightDsLayout_,
+			primitiveDsLayout_, shadowData_, camera_.pos, *lightMaterial_);
+		l.data.dir = {-3.8f, -9.2f, -5.2f};
+		l.data.color = {5.f, 4.f, 2.f};
+		l.updateDevice(camera_.pos);
 	}
 
 	return true;
@@ -218,25 +245,6 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 
 void ViewApp::initRenderData() {
 	auto& dev = vulkanDevice();
-
-	// tex sampler
-	vk::SamplerCreateInfo sci {};
-	sci.addressModeU = vk::SamplerAddressMode::repeat;
-	sci.addressModeV = vk::SamplerAddressMode::repeat;
-	sci.addressModeW = vk::SamplerAddressMode::repeat;
-	sci.magFilter = vk::Filter::linear;
-	sci.minFilter = vk::Filter::linear;
-	sci.minLod = 0.0;
-	sci.maxLod = 100u; // use all mipmap levels
-	sci.mipmapMode = vk::SamplerMipmapMode::linear;
-
-	// NOTE: we enable anisotropy even for normals and such
-	if(anisotropy_) {
-		sci.anisotropyEnable = true;
-		sci.maxAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
-	}
-
-	matSampler_ = {dev, sci};
 
 	initGPass(); // pass 0.0: geometry to g buffers
 	initLPass(); // pass 1.0: per light: using g buffers for shading
@@ -258,25 +266,9 @@ void ViewApp::initRenderData() {
 	sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
 		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
 
-	lightMaterial_.emplace(materialDsLayout_,
-		dummyTex_.vkImageView(), nytl::Vec{1.f, 1.f, 0.4f, 1.f});
-
 	shadowData_ = doi::initShadowData(dev, depthFormat(),
 		lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 		doi::Material::pcr());
-	if(pointLight) {
-		auto& l = pointLights_.emplace_back(dev, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, *lightMaterial_);
-		l.data.position = {-1.8f, 6.0f, -2.f};
-		l.data.color = {5.f, 4.f, 2.f};
-		l.updateDevice();
-	} else {
-		auto& l = dirLights_.emplace_back(dev, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, camera_.pos, *lightMaterial_);
-		l.data.dir = {-3.8f, -9.2f, -5.2f};
-		l.data.color = {5.f, 4.f, 2.f};
-		l.updateDevice(camera_.pos);
-	}
 
 	// scene descriptor, used for some pipelines as set 0 for camera
 	// matrix and view position
@@ -389,7 +381,7 @@ void ViewApp::initGPass() {
 
 	// per material
 	// push constant range for material
-	materialDsLayout_ = doi::Material::createDsLayout(dev, matSampler_);
+	materialDsLayout_ = doi::Material::createDsLayout(dev);
 	auto pcr = doi::Material::pcr();
 
 	gpass_.pipeLayout = {dev, {
@@ -557,8 +549,7 @@ void ViewApp::initLPass() {
 			vk::DescriptorType::inputAttachment,
 			vk::ShaderStageBits::fragment),
 		vpp::descriptorBinding( // depth
-			// vk::DescriptorType::inputAttachment,
-			vk::DescriptorType::combinedImageSampler,
+			vk::DescriptorType::inputAttachment,
 			vk::ShaderStageBits::fragment),
 	};
 
@@ -567,7 +558,8 @@ void ViewApp::initLPass() {
 
 	// light ds
 	// TODO: statically use shadow data sampler here?
-	// there is no real reason not to
+	// there is no real reason not to... expect maybe dir and point
+	// lights using different samplers? look into that
 	auto lightBindings = {
 		vpp::descriptorBinding(
 			vk::DescriptorType::uniformBuffer,
@@ -590,15 +582,15 @@ void ViewApp::initLPass() {
 	// when there are many lights in the scene!)
 	// Render simple box volume for best performance
 	vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
-	vpp::ShaderModule fragShader(dev, deferred_light_frag_data);
-	vpp::GraphicsPipelineInfo gpi {lpass_.pass, lpass_.pipeLayout, {{
+	vpp::ShaderModule pointFragShader(dev, deferred_pointLight_frag_data);
+	vpp::GraphicsPipelineInfo pgpi{lpass_.pass, lpass_.pipeLayout, {{
 		{vertShader, vk::ShaderStageBits::vertex},
-		{fragShader, vk::ShaderStageBits::fragment},
+		{pointFragShader, vk::ShaderStageBits::fragment},
 	}}};
 
-	gpi.depthStencil.depthTestEnable = false;
-	gpi.depthStencil.depthWriteEnable = false;
-	gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
+	pgpi.depthStencil.depthTestEnable = false;
+	pgpi.depthStencil.depthWriteEnable = false;
+	pgpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 
 	// additive blending
 	vk::PipelineColorBlendAttachmentState blendAttachment;
@@ -615,14 +607,30 @@ void ViewApp::initLPass() {
 		vk::ColorComponentBits::b |
 		vk::ColorComponentBits::a;
 
-	gpi.blend.attachmentCount = 1u;
-	gpi.blend.pAttachments = &blendAttachment;
+	pgpi.blend.attachmentCount = 1u;
+	pgpi.blend.pAttachments = &blendAttachment;
 
-	vk::Pipeline vkpipe;
+	// dir light
+	// here we can use a fullscreen shader pass since directional lights
+	// don't have a light volume
+	vpp::ShaderModule dirFragShader(dev, deferred_dirLight_frag_data);
+	vpp::GraphicsPipelineInfo lgpi{lpass_.pass, lpass_.pipeLayout, {{
+		{vertShader, vk::ShaderStageBits::vertex},
+		{dirFragShader, vk::ShaderStageBits::fragment},
+	}}};
+
+	lgpi.blend = pgpi.blend;
+	lgpi.depthStencil = pgpi.depthStencil;
+	lgpi.assembly = pgpi.assembly;
+
+	// create the pipes
+	vk::GraphicsPipelineCreateInfo infos[] = {pgpi.info(), lgpi.info()};
+	vk::Pipeline vkpipes[2];
 	vk::createGraphicsPipelines(dev, {},
-		1, gpi.info(), NULL, vkpipe);
+		2, *infos, NULL, *vkpipes);
 
-	lpass_.pipe = {dev, vkpipe};
+	lpass_.pointPipe = {dev, vkpipes[0]};
+	lpass_.dirPipe = {dev, vkpipes[1]};
 }
 void ViewApp::initPPass() {
 	auto& dev = vulkanDevice();
@@ -685,11 +693,8 @@ void ViewApp::initPPass() {
 
 	// pipe
 	auto lightInputBindings = {
-		// vpp::descriptorBinding(
-		// 	vk::DescriptorType::inputAttachment,
-		// 	vk::ShaderStageBits::fragment), // light output
 		vpp::descriptorBinding(
-			vk::DescriptorType::combinedImageSampler,
+			vk::DescriptorType::inputAttachment,
 			vk::ShaderStageBits::fragment), // light output
 		vpp::descriptorBinding(
 			vk::DescriptorType::inputAttachment,
@@ -896,15 +901,11 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.inputAttachment({{{}, gpass_.emission.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	// dsu.inputAttachment({{{}, depthMipView_,
-	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{matSampler_, depthMipView_,
+	dsu.inputAttachment({{{}, depthMipView_,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	vpp::DescriptorSetUpdate ldsu(pp_.ds);
-	// ldsu.inputAttachment({{{}, lpass_.light.vkImageView(),
-	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.imageSampler({{matSampler_, lpass_.light.vkImageView(),
+	ldsu.inputAttachment({{{}, lpass_.light.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	ldsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
@@ -1087,14 +1088,16 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdPushConstants(cb, lpass_.pipeLayout,
 			vk::ShaderStageBits::fragment, 0, 4, &show_);
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, lpass_.pipe);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			lpass_.pipeLayout, 0, {sceneDs_, lpass_.ds}, {});
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, lpass_.pointPipe);
 		for(auto& light : pointLights_) {
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 				lpass_.pipeLayout, 2, {light.ds()}, {});
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		}
+
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, lpass_.dirPipe);
 		for(auto& light : dirLights_) {
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 				lpass_.pipeLayout, 2, {light.ds()}, {});
@@ -1172,7 +1175,6 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			} else {
 				pointLights_[0].data.flags ^= doi::lightFlagPcf;
 			}
-
 			updateLights_ = true;
 			return true;
 		case ny::Keycode::n:
@@ -1182,6 +1184,18 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		case ny::Keycode::l:
 			show_ = (show_ + numModes - 1) % numModes;
 			App::scheduleRerecord();
+			return true;
+		case ny::Keycode::i:
+			pp_.params.ssaoFactor = 1.f - pp_.params.ssaoFactor;
+			pp_.updateParams = true;
+			return true;
+		case ny::Keycode::equals:
+			pp_.params.exposure *= 1.1f;
+			pp_.updateParams = true;
+			return true;
+		case ny::Keycode::minus:
+			pp_.params.exposure /= 1.1f;
+			pp_.updateParams = true;
 			return true;
 		default:
 			break;

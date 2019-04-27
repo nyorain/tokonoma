@@ -3,9 +3,8 @@
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
 
-// layout(set = 0, binding = 0, input_attachment_index = 0)
-// 	uniform subpassInput inLight;
-layout(set = 0, binding = 0) uniform sampler2D lightTex;
+layout(set = 0, binding = 0, input_attachment_index = 0)
+	uniform subpassInput inLight;
 layout(set = 0, binding = 1, input_attachment_index = 1)
 	uniform subpassInput inAlbedo;
 layout(set = 0, binding = 2) uniform UBO {
@@ -46,9 +45,12 @@ vec3 tonemap(vec3 x) {
 }
 
 // TODO: better blurring/filter for ssao/scattering
+//  or move at least light scattering to light shader? that would
+//  allow it for multiple light sources (using natural hdr) as
+//  well as always using the correct light color and attenuation
+//  and such
 void main() {
-	// vec4 color = subpassLoad(inLight);
-	vec4 color = texture(lightTex, uv);
+	vec4 color = subpassLoad(inLight);
 
 	/*
 	// scattering
@@ -68,21 +70,6 @@ void main() {
 		color.rgb += scatter * ubo.scatterLightColor;
 	}
 	*/
-
-	// TODO
-	float scatter = 0.f;
-	int range = 2;
-	vec2 texelSize = 1.f / textureSize(lightTex, 0);
-	for(int x = -range; x <= range; ++x) {
-		for(int y = -range; y <= range; ++y) {
-			vec2 off = texelSize * vec2(x, y);
-			scatter += texture(lightTex, uv + off).a;
-		}
-	}
-
-	int total = ((2 * range + 1) * (2 * range + 1));
-	scatter /= total;
-	color.rgb += scatter * vec3(1.0, 0.9, 0.4); // TODO: should be light color
 
 	/*
 	// ssao
@@ -108,6 +95,11 @@ void main() {
 		color.rgb += ao * albedo.rgb;
 	}
 	*/
+
+	// TODO: simple ao, remove when we have ssao
+	float ao = 0.2f * ubo.ssaoFactor;
+	vec4 albedo = subpassLoad(inAlbedo);
+	color.rgb += ao * albedo.rgb;
 
 	fragColor = vec4(tonemap(color.rgb), 1.0);
 }

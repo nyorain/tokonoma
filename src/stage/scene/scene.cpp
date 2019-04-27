@@ -5,6 +5,7 @@
 #include <stage/transform.hpp>
 #include <stage/texture.hpp>
 #include <vpp/vk.hpp>
+#include <vpp/image.hpp>
 #include <dlg/dlg.hpp>
 
 namespace doi {
@@ -12,6 +13,27 @@ namespace doi {
 Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 		const tinygltf::Model& model, const tinygltf::Scene& scene,
 		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
+	// load samplers
+	// TODO: optimization, low prio
+	// check for duplicate samplers. But then also change how materials
+	// access samplers, can't happen simply by id anymore.
+	for(auto& sampler : model.samplers) {
+		samplers_.emplace_back(dev, sampler, ri.samplerAnisotropy);
+	}
+
+	// init default sampler as specified in gltf
+	vk::SamplerCreateInfo sci;
+	sci.addressModeU = vk::SamplerAddressMode::repeat;
+	sci.addressModeV = vk::SamplerAddressMode::repeat;
+	sci.addressModeW = vk::SamplerAddressMode::repeat;
+	sci.magFilter = vk::Filter::linear;
+	sci.minFilter = vk::Filter::linear;
+	sci.mipmapMode = vk::SamplerMipmapMode::linear;
+	sci.minLod = 0.0;
+	sci.maxLod = 100.f; // use all mipmap levels
+	sci.anisotropyEnable = ri.samplerAnisotropy != 1.f;
+	sci.maxAnisotropy = ri.samplerAnisotropy;
+	defaultSampler_ = {dev, sci};
 
 	// load materials
 	// will lazily load images and store them into the passed images_
@@ -29,14 +51,15 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 			"'" + material.name + "'";
 		dlg_info("  Loading material {}", name);
 		auto m = Material(model, material, ri.materialDsLayout, ri.dummyTex,
-			path, images_);
+			defaultSampler_, path, images_, samplers_);
 		materials_.push_back(std::move(m));
 	}
 
 	// we need at least one material (see primitive creation)
 	// if there is none, add dummy
 	if(materials_.empty()) {
-		materials_.emplace_back(ri.materialDsLayout, ri.dummyTex);
+		materials_.emplace_back(ri.materialDsLayout, ri.dummyTex,
+			defaultSampler_);
 	}
 
 	// load nodes tree recursively
@@ -100,9 +123,7 @@ void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,
 
 	if(node.mesh != -1) {
 		auto& mesh = model.meshes[node.mesh];
-		auto name = mesh.name.empty() ?
-			mesh.name :
-			"'" + mesh.name + "'";
+		auto name = mesh.name.empty() ?  mesh.name : "'" + mesh.name + "'";
 		dlg_info("  Loading mesh {}", name);
 		for(auto& primitive : mesh.primitives) {
 			Material* mat;
@@ -230,6 +251,91 @@ std::unique_ptr<Scene> loadGltf(nytl::StringParam at, vpp::Device& dev,
 	auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
 	auto& sc = model.scenes[scene];
 	return std::make_unique<Scene>(dev, path, model, sc, matrix, ri);
+}
+
+// Sampler
+SamplerInfo::SamplerInfo(const gltf::Sampler& sampler) {
+	// minFilter
+	mipmapMode = vk::SamplerMipmapMode::linear;
+	switch(sampler.minFilter) {
+		case TINYGLTF_TEXTURE_FILTER_LINEAR:
+			minFilter = vk::Filter::linear;
+			break;
+		case TINYGLTF_TEXTURE_FILTER_NEAREST:
+			minFilter = vk::Filter::linear;
+			break;
+		case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
+			minFilter = vk::Filter::linear;
+			mipmapMode = vk::SamplerMipmapMode::linear;
+			break;
+		case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
+			minFilter = vk::Filter::nearest;
+			mipmapMode = vk::SamplerMipmapMode::linear;
+			break;
+		case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
+			minFilter = vk::Filter::linear;
+			mipmapMode = vk::SamplerMipmapMode::nearest;
+			break;
+		default:
+			minFilter = vk::Filter::linear;
+			mipmapMode = vk::SamplerMipmapMode::linear;
+			dlg_warn("Unknown gltf sampler.minFilter {}", sampler.minFilter);
+			break;
+	}
+
+	// magFilter
+	if(sampler.magFilter == TINYGLTF_TEXTURE_FILTER_LINEAR) {
+		magFilter = vk::Filter::linear;
+	} else if(sampler.magFilter == TINYGLTF_TEXTURE_FILTER_NEAREST) {
+		magFilter = vk::Filter::nearest;
+	} else {
+		magFilter = vk::Filter::linear;
+		dlg_warn("Unknown gltf sampler.magFilter {}", sampler.magFilter);
+	}
+
+	auto translateAddressMode = [&](auto mode) {
+		if(mode == TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT) {
+			return vk::SamplerAddressMode::mirroredRepeat;
+		} else if(mode == TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE) {
+			return vk::SamplerAddressMode::clampToEdge;
+		} else if(mode == TINYGLTF_TEXTURE_WRAP_REPEAT) {
+			return vk::SamplerAddressMode::repeat;
+		} else {
+			dlg_warn("Unknown gltf sampler address mode {}", mode);
+			return vk::SamplerAddressMode::repeat;
+		}
+	};
+
+	addressModeU = translateAddressMode(sampler.wrapS);
+	addressModeV = translateAddressMode(sampler.wrapT);
+}
+
+bool operator==(const SamplerInfo& a, const SamplerInfo& b) {
+	return std::memcmp(&a, &b, sizeof(a)) == 0;
+}
+
+bool operator!=(const SamplerInfo& a, const SamplerInfo& b) {
+	return std::memcmp(&a, &b, sizeof(a)) != 0;
+}
+
+Sampler::Sampler(const vpp::Device& dev, const gltf::Sampler& sampler,
+		float maxAnisotropy) {
+	info = {sampler};
+
+	vk::SamplerCreateInfo sci;
+	sci.addressModeU = info.addressModeU;
+	sci.addressModeV = info.addressModeV;
+	sci.minFilter = info.minFilter;
+	sci.magFilter = info.magFilter;
+	sci.mipmapMode = info.mipmapMode;
+	sci.minLod = 0.f;
+	sci.maxLod = 100.f; // all levels
+	sci.anisotropyEnable = maxAnisotropy != 1.f;
+	sci.maxAnisotropy = maxAnisotropy;
+	sci.mipLodBias = 0.f;
+	sci.compareEnable = false;
+	sci.borderColor = vk::BorderColor::floatOpaqueWhite;
+	this->sampler = {dev, sci};
 }
 
 } // namespace doi
