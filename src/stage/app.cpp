@@ -1,5 +1,4 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 
 #include <rvg/context.hpp>
@@ -8,7 +7,10 @@
 #include <vui/gui.hpp>
 #include <vpp/device.hpp>
 #include <vpp/physicalDevice.hpp>
+#include <vpp/renderPass.hpp>
 #include <vpp/instance.hpp>
+#include <vpp/formats.hpp>
+#include <vpp/vk.hpp>
 #include <vpp/debug.hpp>
 #include <ny/appContext.hpp>
 #include <ny/asyncRequest.hpp>
@@ -145,6 +147,30 @@ protected:
 
 } // anon namespace
 
+// RenderImpl
+struct App::RenderImpl : public vpp::Renderer {
+	App& app_;
+
+	RenderImpl(App& app, const vpp::Queue& presentQueue,
+		const vk::SwapchainCreateInfoKHR& sci) : vpp::Renderer(presentQueue),
+			app_(app) {
+		// avoid initial record
+		mode_ = RecordMode::onDemand;
+		vpp::Renderer::init(sci);
+		mode_ = RecordMode::all;
+	}
+	void record(const RenderBuffer& rb) override {
+		app_.record(rb);
+	}
+	void initBuffers(const vk::Extent2D& extent,
+			nytl::Span<RenderBuffer> bufs) override {
+		app_.initBuffers(extent, bufs);
+	}
+	auto& buffers() {
+		return renderBuffers_;
+	}
+};
+
 using Clock = std::chrono::high_resolution_clock;
 using Secf = std::chrono::duration<float, std::ratio<1, 1>>;
 
@@ -158,8 +184,15 @@ struct App::Impl {
 	std::optional<vpp::DebugCallback> debugCallback;
 
 	std::optional<MainWindow> window;
-	std::unique_ptr<Renderer> renderer;
+	std::optional<RenderImpl> renderer;
 
+	vpp::RenderPass renderPass;
+	vpp::ViewableImage multisampleTarget;
+	vpp::ViewableImage depthTarget;
+	vk::Format depthFormat {vk::Format::undefined};
+	vk::SwapchainCreateInfoKHR scInfo;
+
+	// rvg
 	std::optional<rvg::Context> rvgContext;
 	rvg::Transform windowTransform;
 	std::optional<rvg::FontAtlas> fontAtlas;
@@ -178,11 +211,10 @@ struct App::Impl {
 App::App() = default;
 App::~App() = default;
 
-bool App::init(const AppSettings& settings) {
+bool App::init(nytl::Span<const char*> args) {
 	impl_ = std::make_unique<Impl>();
 
 	// arguments
-	auto& args = settings.args;
 	if(!args.empty()) {
 		auto parser = argParser();
 		auto usage = std::string("Usage: ") + args[0] + " [options]\n\n";
@@ -219,8 +251,8 @@ bool App::init(const AppSettings& settings) {
 	iniExtensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
 
 	// TODO: don't require 1.1 since it's not really needed for any app
-	// (just some tests with it in sen)
-	vk::ApplicationInfo appInfo(settings.name, 1, "doi", 1, VK_API_VERSION_1_1);
+	// (just some tests with it in sen). Also not supported in vkpp yet
+	vk::ApplicationInfo appInfo(this->name(), 1, "doi", 1, VK_API_VERSION_1_1);
 	vk::InstanceCreateInfo instanceInfo;
 	instanceInfo.pApplicationInfo = &appInfo;
 
@@ -357,26 +389,51 @@ bool App::init(const AppSettings& settings) {
 			return false;
 	}
 
-	auto renderInfo = RendererCreateInfo {
-		vulkanDevice(), vkSurf, window().size(), *presentQueue,
-		impl_->samples, args_.vsync, clearColor, needsDepth()
-	};
+	vpp::SwapchainPreferences prefs {};
+	if(args_.vsync) {
+		prefs.presentMode = vk::PresentModeKHR::fifo; // vsync
+	}
+	auto size = window().size();
+	impl_->scInfo = vpp::swapchainCreateInfo(vulkanDevice(), vkSurf,
+		{size.x, size.y}, prefs);
 
-	impl_->renderer = createRenderer(renderInfo);
-	renderer().beforeRender = [&](auto cb) {
-		beforeRender(cb);
-	};
-	renderer().onRender = [&](auto cb) {
-		render(cb);
-	};
-	renderer().afterRender = [&](auto cb) {
-		afterRender(cb);
-	};
+	impl_->depthFormat = vk::Format::undefined;
+	if(needsDepth()) {
+		// find supported depth format
+		vk::ImageCreateInfo img; // dummy for property checking
+		img.extent = {1, 1, 1};
+		img.mipLevels = 1;
+		img.arrayLayers = 1;
+		img.imageType = vk::ImageType::e2d;
+		img.sharingMode = vk::SharingMode::exclusive;
+		img.tiling = vk::ImageTiling::optimal;
+		img.samples = samples();
+		img.usage = vk::ImageUsageBits::depthStencilAttachment;
+		img.initialLayout = vk::ImageLayout::undefined;
+
+		auto fmts = {
+			vk::Format::d32Sfloat,
+			vk::Format::d32SfloatS8Uint,
+			vk::Format::d24UnormS8Uint,
+			vk::Format::d16Unorm,
+			vk::Format::d16UnormS8Uint,
+		};
+		auto features = vk::FormatFeatureBits::depthStencilAttachment |
+			vk::FormatFeatureBits::sampledImage;
+		impl_->depthFormat = vpp::findSupported(vulkanDevice(), fmts,
+			img, features);
+		if(impl_->depthFormat == vk::Format::undefined) {
+			throw std::runtime_error("No depth format supported");
+		}
+	}
+
+	initRenderData();
+	impl_->renderPass = createRenderPass();
+	impl_->renderer.emplace(*this, *presentQueue, impl_->scInfo);
 
 	// additional stuff
-	if(settings.rvgSubpass) {
-		rvg::ContextSettings rvgcs {renderer().renderPass(),
-			*settings.rvgSubpass};
+	if(auto subpass = rvgSubpass(); subpass) {
+		rvg::ContextSettings rvgcs {renderPass(), *subpass};
 		rvgcs.samples = samples();
 		rvgcs.clipDistanceEnable = impl_->clipDistance;
 
@@ -465,14 +522,293 @@ bool App::features(vk::PhysicalDeviceFeatures& enable,
 	return true;
 }
 
-void App::render(vk::CommandBuffer) {
+void App::record(const RenderBuffer& buf) {
+	const auto width = impl_->scInfo.imageExtent.width;
+	const auto height = impl_->scInfo.imageExtent.height;
+
+	auto cb = buf.commandBuffer;
+	vk::beginCommandBuffer(cb, {});
+	beforeRender(cb);
+
+	auto cv = clearValues();
+	vk::cmdBeginRenderPass(cb, {
+		renderPass(),
+		buf.framebuffer,
+		{0u, 0u, width, height},
+		std::uint32_t(cv.size()), cv.data()
+	}, {});
+
+	vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
+	vk::cmdSetViewport(cb, 0, 1, vp);
+	vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
+
+	render(cb);
+	vk::cmdEndRenderPass(cb);
+	afterRender(cb);
+	vk::endCommandBuffer(cb);
 }
-void App::beforeRender(vk::CommandBuffer) {
+
+vpp::ViewableImage App::createDepthTarget(const vk::Extent2D& size) {
+	auto width = size.width;
+	auto height = size.height;
+
+	// img
+	vk::ImageCreateInfo img;
+	img.imageType = vk::ImageType::e2d;
+	img.format = depthFormat();
+	img.extent.width = width;
+	img.extent.height = height;
+	img.extent.depth = 1;
+	img.mipLevels = 1;
+	img.arrayLayers = 1;
+	img.sharingMode = vk::SharingMode::exclusive;
+	img.tiling = vk::ImageTiling::optimal;
+	img.samples = samples();
+	img.usage = vk::ImageUsageBits::depthStencilAttachment |
+		vk::ImageUsageBits::sampled;
+	img.initialLayout = vk::ImageLayout::undefined;
+
+	// view
+	vk::ImageViewCreateInfo view;
+	view.viewType = vk::ImageViewType::e2d;
+	view.format = img.format;
+	view.components = {};
+	view.subresourceRange.aspectMask = vk::ImageAspectBits::depth;
+	view.subresourceRange.levelCount = 1;
+	view.subresourceRange.layerCount = 1;
+
+	// create the viewable image
+	// will set the created image in the view info for us
+	return {vulkanDevice(), img, view};
 }
-void App::afterRender(vk::CommandBuffer) {
+
+vpp::ViewableImage App::createMultisampleTarget(const vk::Extent2D& size) {
+	auto width = size.width;
+	auto height = size.height;
+
+	// img
+	vk::ImageCreateInfo img;
+	img.imageType = vk::ImageType::e2d;
+	img.format = impl_->scInfo.imageFormat;
+	img.extent.width = width;
+	img.extent.height = height;
+	img.extent.depth = 1;
+	img.mipLevels = 1;
+	img.arrayLayers = 1;
+	img.sharingMode = vk::SharingMode::exclusive;
+	img.tiling = vk::ImageTiling::optimal;
+	img.samples = samples();
+	img.usage = vk::ImageUsageBits::transientAttachment | vk::ImageUsageBits::colorAttachment;
+	img.initialLayout = vk::ImageLayout::undefined;
+
+	// view
+	vk::ImageViewCreateInfo view;
+	view.viewType = vk::ImageViewType::e2d;
+	view.format = img.format;
+	view.components.r = vk::ComponentSwizzle::r;
+	view.components.g = vk::ComponentSwizzle::g;
+	view.components.b = vk::ComponentSwizzle::b;
+	view.components.a = vk::ComponentSwizzle::a;
+	view.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+	view.subresourceRange.levelCount = 1;
+	view.subresourceRange.layerCount = 1;
+
+	// create the viewable image
+	// will set the created image in the view info for us
+	return {vulkanDevice(), img, view};
+}
+
+std::vector<vk::ClearValue> App::clearValues() {
+	std::vector<vk::ClearValue> clearValues;
+	clearValues.reserve(3);
+	vk::ClearValue c {{0.f, 0.f, 0.f, 0.f}};
+
+	clearValues.push_back(c); // clearColor
+	if(samples() != vk::SampleCountBits::e1) { // msaa attachment
+		clearValues.push_back({c});
+	}
+
+	if(depthFormat() != vk::Format::undefined) {
+		clearValues.emplace_back(c).depthStencil = {1.f, 0u};
+	}
+
+	return clearValues;
+}
+
+void App::initBuffers(const vk::Extent2D& size, nytl::Span<RenderBuffer> bufs) {
+	std::vector<vk::ImageView> attachments {vk::ImageView {}};
+	auto scPos = 0u; // attachments[scPos]: swapchain image
+
+	if(samples() != vk::SampleCountBits::e1) {
+		impl_->multisampleTarget = createMultisampleTarget(size);
+		attachments.push_back(impl_->multisampleTarget.vkImageView());
+	}
+
+	if(depthFormat() != vk::Format::undefined) {
+		impl_->depthTarget = createDepthTarget(size);
+		attachments.push_back(impl_->depthTarget.vkImageView());
+	}
+
+	for(auto& buf : bufs) {
+		attachments[scPos] = buf.imageView;
+		vk::FramebufferCreateInfo info ({},
+			renderPass(),
+			attachments.size(),
+			attachments.data(),
+			size.width,
+			size.height,
+			1);
+		buf.framebuffer = {vulkanDevice(), info};
+	}
+}
+
+vpp::RenderPass App::createRenderPass() {
+	vk::AttachmentDescription attachments[3] {};
+	auto msaa = samples() != vk::SampleCountBits::e1;
+
+	auto aid = 0u;
+	auto depthid = 0u;
+	auto resolveid = 0u;
+	auto colorid = 0u;
+
+	// swapchain color attachments
+	// msaa: we resolve to this
+	// otherwise this is directly rendered
+	attachments[aid].format = swapchainInfo().imageFormat;
+	attachments[aid].samples = vk::SampleCountBits::e1;
+	attachments[aid].storeOp = vk::AttachmentStoreOp::store;
+	attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+	attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+	attachments[aid].initialLayout = vk::ImageLayout::undefined;
+	attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
+	if(msaa) {
+		attachments[aid].loadOp = vk::AttachmentLoadOp::dontCare;
+		resolveid = aid;
+	} else {
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		colorid = aid;
+	}
+	++aid;
+
+	// optiontal multisampled render target
+	if(msaa) {
+		// multisample color attachment
+		attachments[aid].format = swapchainInfo().imageFormat;
+		attachments[aid].samples = samples();
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].initialLayout = vk::ImageLayout::undefined;
+		attachments[aid].finalLayout = vk::ImageLayout::presentSrcKHR;
+
+		colorid = aid;
+		++aid;
+	}
+
+	// optional depth target
+	if(depthFormat() != vk::Format::undefined) {
+		// depth attachment
+		attachments[aid].format = depthFormat();
+		attachments[aid].samples = samples();
+		attachments[aid].loadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].storeOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].stencilLoadOp = vk::AttachmentLoadOp::clear;
+		attachments[aid].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+		attachments[aid].initialLayout = vk::ImageLayout::undefined;
+		attachments[aid].finalLayout = vk::ImageLayout::depthStencilAttachmentOptimal;
+
+		depthid = aid;
+		++aid;
+	}
+
+	// refs
+	vk::AttachmentReference colorReference;
+	colorReference.attachment = colorid;
+	colorReference.layout = vk::ImageLayout::colorAttachmentOptimal;
+
+	vk::AttachmentReference resolveReference;
+	resolveReference.attachment = resolveid;
+	resolveReference.layout = vk::ImageLayout::colorAttachmentOptimal;
+
+	vk::AttachmentReference depthReference;
+	depthReference.attachment = depthid;
+	depthReference.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
+
+	// deps
+	std::vector<vk::SubpassDependency> dependencies;
+
+	// TODO: do we really need this? isn't this detected by default?
+	if(msaa) {
+		dependencies.resize(2);
+
+		dependencies[0].srcSubpass = vk::subpassExternal;
+		dependencies[0].dstSubpass = 0;
+		dependencies[0].srcStageMask = vk::PipelineStageBits::bottomOfPipe;
+		dependencies[0].dstStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+		dependencies[0].srcAccessMask = vk::AccessBits::memoryRead;
+		dependencies[0].dstAccessMask = vk::AccessBits::colorAttachmentRead |
+			vk::AccessBits::colorAttachmentWrite;
+		dependencies[0].dependencyFlags = vk::DependencyBits::byRegion;
+
+		dependencies[1].srcSubpass = 0;
+		dependencies[1].dstSubpass = vk::subpassExternal;
+		dependencies[1].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+		dependencies[1].dstStageMask = vk::PipelineStageBits::bottomOfPipe;
+		dependencies[1].srcAccessMask = vk::AccessBits::colorAttachmentRead |
+			vk::AccessBits::colorAttachmentWrite;
+		dependencies[1].dstAccessMask = vk::AccessBits::memoryRead;
+		dependencies[1].dependencyFlags = vk::DependencyBits::byRegion;
+	}
+
+	// only subpass
+	vk::SubpassDescription subpass {};
+	subpass.pipelineBindPoint = vk::PipelineBindPoint::graphics;
+	subpass.colorAttachmentCount = 1;
+	subpass.pColorAttachments = &colorReference;
+	if(depthFormat() != vk::Format::undefined) {
+		subpass.pDepthStencilAttachment = &depthReference;
+	}
+
+	if(samples() != vk::SampleCountBits::e1) {
+		subpass.pResolveAttachments = &resolveReference;
+	}
+
+	// most general dependency
+	// should cover almost all cases of external access to data that
+	// is read during a render pass (host, transfer, compute shader)
+	vk::SubpassDependency dependency;
+	dependency.srcSubpass = vk::subpassExternal;
+	dependency.srcStageMask =
+		vk::PipelineStageBits::host |
+		vk::PipelineStageBits::computeShader |
+		vk::PipelineStageBits::colorAttachmentOutput |
+		vk::PipelineStageBits::transfer;
+	dependency.srcAccessMask = vk::AccessBits::hostWrite |
+		vk::AccessBits::shaderWrite |
+		vk::AccessBits::transferWrite |
+		vk::AccessBits::colorAttachmentWrite;
+	dependency.dstSubpass = 0u;
+	dependency.dstStageMask = vk::PipelineStageBits::allGraphics;
+	dependency.dstAccessMask = vk::AccessBits::uniformRead |
+		vk::AccessBits::vertexAttributeRead |
+		vk::AccessBits::indirectCommandRead |
+		vk::AccessBits::shaderRead;
+	dependencies.push_back(dependency);
+
+	vk::RenderPassCreateInfo renderPassInfo;
+	renderPassInfo.attachmentCount = aid;
+	renderPassInfo.pAttachments = attachments;
+	renderPassInfo.subpassCount = 1;
+	renderPassInfo.pSubpasses = &subpass;
+	renderPassInfo.dependencyCount = dependencies.size();
+	renderPassInfo.pDependencies = dependencies.data();
+
+	return {vulkanDevice(), renderPassInfo};
 }
 
 void App::run() {
+	auto& renderer = *impl_->renderer;
 	run_ = true;
 	rerecord_ = true; // for initial recording
 	redraw_ = true; // for initial drawing
@@ -497,9 +833,10 @@ void App::run() {
 		// in which we must change rendering resources.
 		if(resize_) {
 			resize_ = {};
-			renderer().resize(window().size());
+			auto size = window().size();
+			renderer.recreate({size.x, size.y}, impl_->scInfo);
 		} else if(rerecord_) {
-			renderer().invalidate();
+			renderer.invalidate();
 		}
 
 		rerecord_ = false;
@@ -515,7 +852,7 @@ void App::run() {
 			// was submitted. Presenting might still have failed but we
 			// have to treat this as a regular frame (will just be skipped
 			// on output).
-			auto res = renderer().render(&submitID, {impl_->nextFrameWait});
+			auto res = renderer.render(&submitID, {impl_->nextFrameWait});
 			if(submitID) {
 				break;
 			}
@@ -555,7 +892,8 @@ void App::run() {
 			// loop iteration.
 			resize_ = {};
 			dlg_info("resize: {}", window().size());
-			renderer().resize(window().size());
+			auto size = window().size();
+			renderer.recreate({size.x, size.y}, impl_->scInfo);
 		}
 
 		impl_->nextFrameWait.clear();
@@ -566,7 +904,6 @@ void App::run() {
 		// rendering has finished
 		auto waiter = nytl::ScopeGuard {[&] {
 			submitter.wait(*submitID);
-			frameFinished();
 		}};
 
 		// - update logcial state -
@@ -657,6 +994,19 @@ void App::resize(const ny::SizeEvent& ev) {
 	}
 }
 
+void App::samples(vk::SampleCountBits newSamples) {
+	impl_->samples = newSamples;
+	if(samples() != vk::SampleCountBits::e1) {
+		createMultisampleTarget(swapchainInfo().imageExtent);
+	}
+
+	impl_->renderPass = createRenderPass();
+
+	auto& renderer = *impl_->renderer;
+	initBuffers(swapchainInfo().imageExtent, renderer.buffers());
+	renderer.invalidate();
+}
+
 void App::close(const ny::CloseEvent&) {
 	run_ = false;
 }
@@ -726,10 +1076,6 @@ ny::AppContext& App::appContext() const {
 MainWindow& App::window() const {
 	return *impl_->window;
 }
-Renderer& App::renderer() const {
-	return *impl_->renderer;
-}
-
 vpp::Instance& App::vulkanInstance() const {
 	return impl_->instance;
 }
@@ -755,9 +1101,24 @@ vk::SampleCountBits App::samples() const {
 	return impl_->samples;
 }
 
-std::unique_ptr<Renderer>
-App::createRenderer(const RendererCreateInfo& ri) {
-	return std::make_unique<Renderer>(ri);
+vpp::RenderPass& App::renderPass() const {
+	return impl_->renderPass;
+}
+
+vk::Format App::depthFormat() const {
+	return impl_->depthFormat;
+}
+
+vpp::ViewableImage& App::depthTarget() const {
+	return impl_->depthTarget;
+}
+
+vpp::ViewableImage& App::multisampleTarget() const {
+	return impl_->multisampleTarget;
+}
+
+const vk::SwapchainCreateInfoKHR& App::swapchainInfo() const {
+	return impl_->scInfo;
 }
 
 // free util

@@ -93,8 +93,8 @@ public:
 // PendulumApp
 class PendulumApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -267,6 +267,8 @@ public:
 		return true;
 	}
 
+	const char* name() const override { return "pendulum"; }
+
 protected:
 	Pendulum pendulum_;
 	rvg::Paint whitePaint_;
@@ -289,7 +291,7 @@ protected:
 // main
 int main(int argc, const char** argv) {
 	PendulumApp app;
-	if(!app.init({"pendulum", {*argv, std::size_t(argc)}})) {
+	if(!app.init({*argv, std::size_t(argc)})) {
 		return EXIT_FAILURE;
 	}
 

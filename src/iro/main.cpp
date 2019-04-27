@@ -108,8 +108,8 @@ public:
 	static constexpr auto size = 32u;
 
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -857,12 +857,12 @@ public:
 			modf = {dev, iro_iro_frag_data};
 		}
 
-		auto&& rp = renderer().renderPass();
+		auto&& rp = renderPass();
 		vpp::GraphicsPipelineInfo gpi(rp,
 			gfxPipeLayout_, {{
 				{modv, vk::ShaderStageBits::vertex},
 				{modf, vk::ShaderStageBits::fragment}}},
-			0, renderer().samples());
+			0, samples());
 
 		constexpr auto fieldStride = sizeof(Field);
 		vk::VertexInputBindingDescription bufferBinding {
@@ -930,6 +930,8 @@ public:
 
 		return true;
 	}
+
+	const char* name() const override { return "iro"; }
 
 protected:
 	// TODO: we could make storageOld_ device local and use yet another
@@ -1034,9 +1036,8 @@ protected:
 
 int main(int argc, const char** argv) {
 	HexApp app;
-	if(!app.init({"hex", {*argv, std::size_t(argc)}})) {
+	if(!app.init({*argv, std::size_t(argc)})) {
 		return EXIT_FAILURE;
 	}
-
 	app.run();
 }

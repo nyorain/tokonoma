@@ -15,7 +15,7 @@ namespace doi {
 // hard to factor out into one function though
 Primitive::Primitive(const vpp::Device& dev, const Shape& shape,
 		const vpp::TrDsLayout& dsLayout, const Material& material,
-		const nytl::Mat4f& mat) {
+		const nytl::Mat4f& mat, unsigned id) : id_(id) {
 	dlg_assert(shape.normals.size() == shape.positions.size());
 	this->matrix = mat;
 	this->material_ = &material;
@@ -91,7 +91,7 @@ Primitive::Primitive(const vpp::Device& dev, const Shape& shape,
 Primitive::Primitive(const vpp::Device& dev,
 		const tinygltf::Model& model, const tinygltf::Primitive& primitive,
 		const vpp::TrDsLayout& dsLayout, const Material& material,
-		const nytl::Mat4f& mat) {
+		const nytl::Mat4f& mat, unsigned id) : id_(id) {
 	this->matrix = mat;
 	this->material_ = &material;
 
@@ -106,7 +106,7 @@ Primitive::Primitive(const vpp::Device& dev,
 	auto& na = model.accessors[in->second];
 
 	// TODO: fix that by inserting simple indices or set local flag
-	// to jsut use vkcmddraw
+	// to just use vkcmddraw
 	if(primitive.indices < 0) {
 		throw std::runtime_error("Only models with indices supported");
 	}
@@ -247,6 +247,7 @@ void Primitive::updateDevice() {
 	doi::write(span, matrix);
 	auto normalMatrix = nytl::Mat4f(transpose(inverse(matrix)));
 	doi::write(span, normalMatrix);
+	doi::write(span, std::uint32_t(id_));
 }
 
 } // namespace gltf

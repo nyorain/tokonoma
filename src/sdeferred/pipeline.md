@@ -1,6 +1,4 @@
 doesn't handle transparency yet.
-
-# concept
 some passes are entirely optional (2 for bloom; 3+4 for ssao)
 
 - first renderpass: render all primitives into gbufs
@@ -26,11 +24,3 @@ some passes are entirely optional (2 for bloom; 3+4 for ssao)
 compute passes probably don't work as well for tiled renderers...
 when we disable ssao and bloom we could fit passes 1,5,7 into one
 renderpass.
-
-# notes
-
-- alpha channel of light pass currently unused
-	- 16f channel, expensive
-- only .w of inEmission used in light.frag
-	- we could put that in inNormal somehow and put objectID somewhere else...
-	  but inNormal has higher precision and need that for objectID (later on)

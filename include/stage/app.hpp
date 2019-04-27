@@ -5,6 +5,7 @@
 
 #include <ny/fwd.hpp>
 #include <vpp/fwd.hpp>
+#include <vpp/renderer.hpp>
 #include <rvg/fwd.hpp>
 #include <vui/fwd.hpp>
 
@@ -25,67 +26,129 @@ class MainWindow;
 class Renderer;
 struct RendererCreateInfo;
 
-struct AppSettings {
-	const char* name; // name of app
-	nytl::Span<const char*> args; // cmd line args
-
-	// if none, will not create rvg and vui contexts.
-	// otherwise will create them for the given subpass of the renderers
-	// render pass.
-	std::optional<unsigned> rvgSubpass {{0}};
-};
-
 /// Implements basic setup and main loop.
 class App : public nytl::NonMovable {
+public:
+	using RenderBuffer = vpp::Renderer::RenderBuffer;
+
 public:
 	App();
 	virtual ~App();
 
-	virtual bool init(const AppSettings& settings);
+	virtual bool init(nytl::Span<const char*> args);
 	virtual void run();
 
 	ny::AppContext& appContext() const;
 	MainWindow& window() const;
-	Renderer& renderer() const;
 
 	vpp::Instance& vulkanInstance() const;
 	vpp::Device& vulkanDevice() const;
+	vpp::Device& device() const { return vulkanDevice(); }
+	vpp::RenderPass& renderPass() const;
 
 	rvg::Context& rvgContext() const;
 	rvg::Transform& windowTransform() const;
 	vui::Gui& gui() const;
 
 	vk::SampleCountBits samples() const;
+	const vk::SwapchainCreateInfoKHR& swapchainInfo() const;
+
+	// might be invalid, depends on settings
+	vpp::ViewableImage& depthTarget() const;
+	vpp::ViewableImage& multisampleTarget() const;
+	vk::Format depthFormat() const;
 
 protected:
-	// info
+	// == Information methods: must return constant values ==
 	// If overwritten by derived class to return true, will create default
 	// framebuffer and renderpass with a depth buffer as attachment 1
 	virtual bool needsDepth() const { return false; }
 
-	// Can be overriden to use custom renderer implementation
-	virtual std::unique_ptr<Renderer> createRenderer(const RendererCreateInfo&);
+	// Should be overwritten to return the name of this app.
+	virtual const char* name() const { return "doi app"; }
+
+	// Should return nullopt if rvg (and vui) are not needed, otherwise
+	// the subpass they are used in. Will use the render pass returned
+	// from createRenderPass for rvg and vui.
+	// TODO: might be a limitation for some apps to only use rvg and vui
+	// in one subpass, needs fixing in rvg.
+	virtual std::optional<unsigned> rvgSubpass() const { return {0}; }
+
 
 	// argument parsing
 	virtual argagg::parser argParser() const;
 	virtual bool handleArgs(const argagg::parser_results&);
 
+	// Called before device creation with the supported features
+	// of the selected physical device (supported). Can be used to
+	// enable the supported ones.
 	virtual bool features(vk::PhysicalDeviceFeatures& enable,
 		const vk::PhysicalDeviceFeatures& supported);
 
-	// recording
-	virtual void render(vk::CommandBuffer);
-	virtual void beforeRender(vk::CommandBuffer);
-	virtual void afterRender(vk::CommandBuffer);
+	// == Render stuff ==
+	// Called after the vulkan device is initialized but before any
+	// rendering data will be initialized (render pass, buffers etc).
+	// Can be used to initialize static data such as layouts and samplers
+	// that may be used in functions like initBuffers.
+	virtual void initRenderData() {}
 
-	// frame
+	// Called on initialization to create the default render pass.
+	// The render pass will be used to optionally initialize rvg
+	// and vui (see rvgSubpass) and in the default record implementation.
+	// If neither are used, derived classes can return the empty render pass
+	// here.
+	virtual vpp::RenderPass createRenderPass();
+
+	// Called to recreate all framebuffers (e.g. after resize).
+	virtual void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>);
+
+	// Default implementation of depth/multisample target creation.
+	// Will be called by the default initBuffers implementation.
+	virtual vpp::ViewableImage createDepthTarget(const vk::Extent2D&);
+	virtual vpp::ViewableImage createMultisampleTarget(const vk::Extent2D&);
+
+	// Called for each buffer when rerecording.
+	// By default will call beforeRender, start a render pass instance with
+	// the created renderpass (see createRenderPass), call render, end
+	// the render pass and call afterRender.
+	virtual void record(const RenderBuffer&);
+
+	// Called by the default App::record implemention when starting
+	// the renderpass instance.
+	virtual std::vector<vk::ClearValue> clearValues();
+
+	// Called by the default App::record implementation during the
+	// renderpass instance.
+	virtual void render(vk::CommandBuffer) {}
+
+	// Called by the default App::record implementation before starting
+	// the renderpass instance.
+	virtual void beforeRender(vk::CommandBuffer) {}
+
+	// Called by the default App::record implementation after finishing
+	// the renderpass instance.
+	virtual void afterRender(vk::CommandBuffer) {}
+	virtual void samples(vk::SampleCountBits);
+
+	// == Frame logic ==
+	// Called every frame with the time since the last call to update
+	// in seconds.
 	virtual void update(double dt);
-	virtual void updateDevice();
-	virtual void frameFinished() {}
 
+	// Called every frame when the last frame has finished and device
+	// resources can therefore be accessed.
+	virtual void updateDevice();
+
+	// Schedules a rerecord. Will happen during the next updateDevice.
 	void scheduleRerecord() { rerecord_ = true; }
+
+	// Schedules a redraw. App will only redraw when this is called (or
+	// the window send a draw event). Should be called from the update
+	// method when it detects that new/changed content can be rendered.
 	void scheduleRedraw() { redraw_ = true; }
 
+	// Adds the given semaphore to the semaphores to wait for next frame
+	// (in the given stage).
 	void addSemaphore(vk::Semaphore, vk::PipelineStageFlags waitDst);
 	void callUpdate();
 
@@ -100,6 +163,7 @@ protected:
 	virtual void close(const ny::CloseEvent&);
 
 protected:
+	struct RenderImpl;
 	struct Impl;
 	std::unique_ptr<Impl> impl_;
 

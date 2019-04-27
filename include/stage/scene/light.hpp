@@ -10,12 +10,8 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 
-// TODO:
-// shadow mapping badly implemented. Still some artefacts, light matrix
-// and depth bias guessing, mixing up point and dir light;
-// no support for point light: shadow cube map
-// TODO: something about matrix configuration
-// TODO: light ball visualization (primitive)
+// TODO: we currently have a hardcoded depth bias guess
+// TODO: allow to configure dir light view frustum size
 // TODO: allow to configure/change size_
 //  probably based on light radius
 
@@ -76,6 +72,8 @@ public:
 		std::uint32_t flags {0};
 		nytl::Vec3f position {1.f, 1.f, 1.f};
 		float farPlane {30.f};
+		nytl::Vec3f attenuation {1.f, 0.1, 0.05};
+		float _ {}; // padding
 	} data;
 
 public:

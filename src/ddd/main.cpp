@@ -51,8 +51,8 @@ public:
 	using Vertex = doi::Primitive::Vertex;
 
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -62,7 +62,7 @@ public:
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
 		auto hostMem = dev.hostMemoryTypes();
-		skybox_.init(dev, renderer().renderPass(), 0, renderer().samples());
+		skybox_.init(dev, renderPass(), 0, samples());
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -140,10 +140,10 @@ public:
 
 		vpp::ShaderModule vertShader(dev, ddd_model_vert_data);
 		vpp::ShaderModule fragShader(dev, ddd_model_frag_data);
-		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), pipeLayout_, {{
+		vpp::GraphicsPipelineInfo gpi {renderPass(), pipeLayout_, {{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment, &fragSpec},
-		}}, 0, renderer().samples()};
+		}}, 0, samples()};
 
 		constexpr auto stride = sizeof(Vertex);
 		vk::VertexInputBindingDescription bufferBindings[2] = {
@@ -207,7 +207,7 @@ public:
 			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
 
 		// == example light ==
-		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
+		shadowData_ = doi::initShadowData(dev, depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
 		light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_,
@@ -371,9 +371,8 @@ public:
 		camera_.update = true;
 	}
 
-	bool needsDepth() const override {
-		return true;
-	}
+	bool needsDepth() const override { return true; }
+	const char* name() const override { return "3D Forward renderer"; }
 
 protected:
 	vpp::Sampler sampler_;
@@ -413,7 +412,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	ViewApp app;
-	if(!app.init({"3D View", {*argv, std::size_t(argc)}})) {
+	if(!app.init({*argv, std::size_t(argc)})) {
 		return EXIT_FAILURE;
 	}
 

@@ -16,7 +16,6 @@ namespace doi {
 // be unexpected).
 // If a pipeline supports and expects both hdr and ldr images properly,
 // the caller can still use stbi_is_hdr(filename) manually before calling this.
-//
 // The default format used when 'hdr = true' is passed is rgba16f, otherwise
 // will use rgba8.
 

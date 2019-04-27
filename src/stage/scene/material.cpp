@@ -56,22 +56,25 @@ vpp::TrDsLayout Material::createDsLayout(const vpp::Device& dev,
 	auto bindings = {
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, 0, 1, &sampler), // albedo
+			vk::ShaderStageBits::fragment, -1, 1, &sampler), // albedo
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, 1, 1, &sampler), // metalRough
+			vk::ShaderStageBits::fragment, -1, 1, &sampler), // metalRough
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, 2, 1, &sampler), // normal
+			vk::ShaderStageBits::fragment, -1, 1, &sampler), // normal
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, 3, 1, &sampler), // occlusion
+			vk::ShaderStageBits::fragment, -1, 1, &sampler), // occlusion
+		vpp::descriptorBinding(
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &sampler), // emission
 	};
 
 	return {dev, bindings};
 }
 
-Material::Material(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
+Material::Material(const vpp::TrDsLayout& dsLayout,
 		vk::ImageView dummy, nytl::Vec4f albedo, float roughness,
 		float metalness, bool doubleSided) {
 	albedo_ = albedo;
@@ -81,26 +84,20 @@ Material::Material(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		flags_ |= Flags::doubleSided;
 	}
 
-	// descriptor
-	ds_ = {dev.descriptorAllocator(), dsLayout};
-	vpp::DescriptorSetUpdate update(ds_);
-	auto imgLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-
 	albedoTex_ = dummy;
 	metalnessRoughnessTex_ = dummy;
 	normalTex_ = dummy;
 	occlusionTex_ = dummy;
+	emissionTex_ = dummy;
 
-	update.imageSampler({{{}, albedoTex_, imgLayout}});
-	update.imageSampler({{{}, metalnessRoughnessTex_, imgLayout}});
-	update.imageSampler({{{}, normalTex_, imgLayout}});
-	update.imageSampler({{{}, occlusionTex_, imgLayout}});
+	initDs(dsLayout);
 }
 
-Material::Material(const vpp::Device& dev, const gltf::Model& model,
+Material::Material(const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& dsLayout,
 		vk::ImageView dummyView, nytl::StringParam path,
 		nytl::Span<SceneImage> images) {
+	auto& dev = dsLayout.device();
 	auto& pbr = material.values;
 	auto& add = material.additionalValues;
 	if(auto color = pbr.find("baseColorFactor"); color != pbr.end()) {
@@ -143,6 +140,8 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 	};
 
 	if(auto color = pbr.find("baseColorTexture"); color != pbr.end()) {
+		dlg_assertm(color->second.TextureTexCoord() == 0,
+			"only one set of texture coordinates supported");
 		auto tex = color->second.TextureIndex();
 		dlg_assert(tex != -1);
 		unsigned src = model.textures[tex].source;
@@ -153,6 +152,8 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 	}
 
 	if(auto rm = pbr.find("metallicRoughnessTexture"); rm != pbr.end()) {
+		dlg_assertm(rm->second.TextureTexCoord() == 0,
+			"only one set of texture coordinates supported");
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
 		unsigned src = model.textures[tex].source;
@@ -163,8 +164,9 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 	}
 
 	// TODO: we could also respect the factors for normal (?) and occlusion
-	// we are completely ignoring emission atm
 	if(auto rm = add.find("normalTexture"); rm != add.end()) {
+		dlg_assertm(rm->second.TextureTexCoord() == 0,
+			"only one set of texture coordinates supported");
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
 		unsigned src = model.textures[tex].source;
@@ -176,6 +178,8 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 	}
 
 	if(auto rm = add.find("occlusionTexture"); rm != add.end()) {
+		dlg_assertm(rm->second.TextureTexCoord() == 0,
+			"only one set of texture coordinates supported");
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
 		unsigned src = model.textures[tex].source;
@@ -183,6 +187,18 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		flags_ |= Flags::textured;
 	} else {
 		occlusionTex_ = dummyView;
+	}
+
+	if(auto rm = add.find("emissionTexture"); rm != add.end()) {
+		dlg_assertm(rm->second.TextureTexCoord() == 0,
+			"only one set of texture coordinates supported");
+		auto tex = rm->second.TextureIndex();
+		dlg_assert(tex != -1);
+		unsigned src = model.textures[tex].source;
+		emissionTex_ = getImage(src, true);
+		flags_ |= Flags::textured;
+	} else {
+		emissionTex_ = dummyView;
 	}
 
 	// default is OPAQUE (alphaCutoff_ == -1.f);
@@ -210,8 +226,11 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		}
 	}
 
-	// descriptor
-	ds_ = {dev.descriptorAllocator(), dsLayout};
+	initDs(dsLayout);
+}
+
+void Material::initDs(const vpp::TrDsLayout& layout) {
+	ds_ = {layout.device().descriptorAllocator(), layout};
 	vpp::DescriptorSetUpdate update(ds_);
 	auto imgLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 
@@ -219,6 +238,7 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 	update.imageSampler({{{}, metalnessRoughnessTex_, imgLayout}});
 	update.imageSampler({{{}, normalTex_, imgLayout}});
 	update.imageSampler({{{}, occlusionTex_, imgLayout}});
+	update.imageSampler({{{}, emissionTex_, imgLayout}});
 }
 
 bool Material::hasTexture() const {

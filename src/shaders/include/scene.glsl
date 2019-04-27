@@ -28,6 +28,8 @@ struct PointLight {
 	uint flags;
 	vec3 pos;
 	float farPlane;
+	vec3 attenuation;
+	float _; // padding
 	mat4 proj[6]; // global -> cubemap [side i] light space
 };
 
@@ -223,7 +225,7 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 		// sampler2DShadow: z value is the value we compare with
 		// accum += texture(depthTex, vec3(ipos, rayEnd.z)).r;
 
-		float depth = texture(depthTex, ipos).r;
+		float depth = textureLod(depthTex, ipos, 0).r;
 		accum += (depth < lightDepth ? 0.f : 1.f);
 		ipos += step;
 		if(ipos != clamp(ipos, 0, 1)) {

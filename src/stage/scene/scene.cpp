@@ -28,15 +28,15 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 			material.name :
 			"'" + material.name + "'";
 		dlg_info("  Loading material {}", name);
-		auto m = Material(dev, model, material,
-			ri.materialDsLayout, ri.dummyTex, path, images_);
+		auto m = Material(model, material, ri.materialDsLayout, ri.dummyTex,
+			path, images_);
 		materials_.push_back(std::move(m));
 	}
 
 	// we need at least one material (see primitive creation)
 	// if there is none, add dummy
 	if(materials_.empty()) {
-		materials_.emplace_back(dev, ri.materialDsLayout, ri.dummyTex);
+		materials_.emplace_back(ri.materialDsLayout, ri.dummyTex);
 	}
 
 	// load nodes tree recursively
@@ -116,8 +116,9 @@ void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,
 				mat = &materials_[mid];
 			}
 
+			auto id = primitives_.size() + 1;
 			auto p = Primitive(dev, model, primitive,
-				ri.primitiveDsLayout, *mat, matrix);
+				ri.primitiveDsLayout, *mat, matrix, id);
 			primitives_.push_back(std::move(p));
 		}
 	}

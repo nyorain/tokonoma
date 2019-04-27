@@ -18,7 +18,8 @@ class Material; // stage/scene/material.hpp
 
 class Primitive {
 public:
-	static constexpr auto uboSize = 2 * sizeof(nytl::Mat4f);
+	static constexpr auto uboSize = 2 * sizeof(nytl::Mat4f) +
+		sizeof(std::uint32_t);
 	struct Vertex {
 		nytl::Vec3f pos;
 		nytl::Vec3f normal;
@@ -32,15 +33,17 @@ public:
 	Primitive() = default;
 	Primitive(const vpp::Device& dev, const Shape& shape,
 		const vpp::TrDsLayout& dsLayout, const Material& material,
-		const nytl::Mat4f& matrix);
+		const nytl::Mat4f& matrix, unsigned id);
 	Primitive(const vpp::Device& dev,
 		const gltf::Model& model, const gltf::Primitive& primitive,
 		const vpp::TrDsLayout& dsLayout, const Material& material,
-		const nytl::Mat4f& matrix);
+		const nytl::Mat4f& matrix, unsigned id);
 
 	void render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout) const;
 	void updateDevice();
+
 	const Material& material() const { return *material_; }
+	auto id() const { return id_; }
 
 protected:
 	unsigned indexCount_ {};
@@ -50,6 +53,7 @@ protected:
 	vpp::SubBuffer ubo_; // different buffer since on mappable mem
 	vpp::TrDs ds_;
 	const Material* material_;
+	unsigned id_;
 };
 
 } // namespace doi

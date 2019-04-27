@@ -47,6 +47,14 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	vk::SubpassDescription subpass {};
 	subpass.pDepthStencilAttachment = &depthRef;
 
+	// TODO: this barrier is too strict, we don't really need that!
+	// (mainly talking about deferred renderer but probably true for all)
+	// we don't need one shadow rendering to finish before another starts,
+	// they can run in parallel. Rather issue one (big) barrier before
+	// starting with the light render pass.
+	// We could also add an external -> subpass 0 dependency to the light
+	// render pass but we may issue additional commands before that
+	// render pass that we don't need to finish there i guess.
 	vk::SubpassDependency dependency;
 	dependency.srcSubpass = 0u; // last
 	dependency.srcStageMask = vk::PipelineStageBits::allGraphics;
@@ -221,7 +229,7 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	auto cube = doi::Cube{{}, {1.f, 1.f, 1.f}};
 	auto shape = doi::generate(cube);
 	lightBall_ = {dev, shape, primitiveDsLayout,
-		mat, lightBallMatrix(viewPos)};
+		mat, lightBallMatrix(viewPos), 0xFF}; // TODO: id
 
 	updateDevice(viewPos);
 }
@@ -356,7 +364,7 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	auto sphere = doi::Sphere{{}, {0.1f, 0.1f, 0.1f}};
 	auto shape = doi::generateUV(sphere);
 	lightBall_ = {dev, shape, primitiveDsLayout,
-		mat, lightBallMatrix()};
+		mat, lightBallMatrix(), 0xFF}; // TODO: id
 
 	updateDevice();
 }

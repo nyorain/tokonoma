@@ -112,8 +112,8 @@ vpp::ViewableImage loadTexture(const vpp::Device& dev, vk::Extent3D extent,
 	auto usage = vk::ImageUsageBits::transferDst | vk::ImageUsageBits::sampled;
 	auto levels = 1u;
 	if(mipmap) {
-		// opengl uses this formula to determine the number of mip levels
-		// opengl ARB_texture_non_power_of_two.txt
+		// complete mipmap chain as specified in
+		// https://www.khronos.org/registry/vulkan/specs/1.1-extensions/html/chap11.html#resources-image-miplevel-sizing
 		levels += std::floor(std::log2(std::max(extent.width, extent.height)));
 		usage |= vk::ImageUsageBits::transferSrc;
 	}

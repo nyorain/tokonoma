@@ -257,15 +257,14 @@ protected:
 
 class ParticlesApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(const nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
 		// system
 		auto initCount = 5000;
-		auto& r = renderer();
-		system_.init(vulkanDevice(), r.renderPass(), r.samples(), initCount);
+		system_.init(vulkanDevice(), renderPass(), samples(), initCount);
 
 		// gui
 		auto& panel = gui().create<vui::dat::Panel>(
@@ -358,6 +357,8 @@ public:
 		return true;
 	}
 
+	const char* name() const override { return "particle system"; }
+
 protected:
 	ParticleSystem system_;
 	double delta_ {};
@@ -369,7 +370,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	ParticlesApp app;
-	if(!app.init({"particles", {*argv, std::size_t(argc)}})) {
+	if(!app.init({*argv, std::size_t(argc)})) {
 		return EXIT_FAILURE;
 	}
 

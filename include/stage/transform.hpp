@@ -85,12 +85,12 @@ nytl::SquareMat<D, P> rotateMat(const nytl::Vec3<P>& vec, P angle) {
 
 template<size_t D, typename P>
 void rotate(nytl::SquareMat<D, P>& mat, P rot) {
-	mat = scaleMat<D, P>(rot) * mat;
+	mat = rotateMat<D, P>(rot) * mat;
 }
 
 template<size_t D, typename P>
 void rotate(nytl::SquareMat<D, P>& mat, const nytl::Vec3<P>& vec, P angle) {
-	mat = scaleMat<D, P>(vec, angle) * mat;
+	mat = rotateMat<D, P>(vec, angle) * mat;
 }
 
 template<size_t D, typename P, size_t R>

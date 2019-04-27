@@ -27,10 +27,10 @@ public:
 
 public:
 	// default, dummy material
-	Material(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
-		vk::ImageView dummy, nytl::Vec4f albedo = {1.f, 1.f, 1.f, 1.f},
+	Material(const vpp::TrDsLayout& dsLayout, vk::ImageView dummy,
+		nytl::Vec4f albedo = {1.f, 1.f, 1.f, 1.f},
 		float roughness = 1.f, float metalness = 1.f, bool doubleSided = false);
-	Material(const vpp::Device& dev, const gltf::Model& model,
+	Material(const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& layout,
 		vk::ImageView dummy, nytl::StringParam path,
 		nytl::Span<SceneImage> images);
@@ -38,6 +38,9 @@ public:
 	// Returns true if this material has *any* texture
 	bool hasTexture() const;
 	void bind(vk::CommandBuffer cb, vk::PipelineLayout) const;
+
+protected:
+	void initDs(const vpp::TrDsLayout& layout);
 
 protected:
 	// maps
@@ -51,6 +54,7 @@ protected:
 	vk::ImageView metalnessRoughnessTex_;
 	vk::ImageView normalTex_;
 	vk::ImageView occlusionTex_;
+	vk::ImageView emissionTex_;
 
 	vpp::TrDs ds_;
 	nytl::Flags<Flags> flags_;
