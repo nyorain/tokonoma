@@ -79,7 +79,7 @@ void main() {
 	// scattering
 	if((ubo.flags & flagScattering) != 0) {
 		float scatter = 0.f;
-		int range = 2;
+		int range = 3;
 		vec2 texelSize = 1.f / textureSize(scatterTex, 0);
 		for(int x = -range; x <= range; ++x) {
 			for(int y = -range; y <= range; ++y) {
@@ -112,7 +112,6 @@ void main() {
 
 		// TODO: what kind of filter to use?
 		// without gaussian it's a simple box filter
-		// gaussian vs box
 		// const float kernel[5][5] = {
 		// 	{0.003765,	0.015019,	0.023792,	0.015019,	0.003765},
 		// 	{0.015019,	0.059912,	0.094907,	0.059912,	0.015019},

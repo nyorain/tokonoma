@@ -93,7 +93,7 @@ public:
 	static constexpr auto ssaoFormat = vk::Format::r8Unorm;
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
 	static constexpr auto ssaoSampleCount = 32u;
-	static constexpr auto pointLight = true;
+	static constexpr auto pointLight = false;
 
 	// pp.frag
 	static constexpr unsigned flagSSAO = (1u << 0u);
@@ -1121,7 +1121,7 @@ void ViewApp::initScattering() {
 	vpp::ShaderModule dfragShader(dev, deferred_dirScatter_frag_data);
 	vpp::GraphicsPipelineInfo dgpi{scatter_.pass, scatter_.pipeLayout, {{
 		{vertShader, vk::ShaderStageBits::vertex},
-		{pfragShader, vk::ShaderStageBits::fragment},
+		{dfragShader, vk::ShaderStageBits::fragment},
 	}}};
 
 	dgpi.depthStencil = pgpi.depthStencil;
@@ -1353,7 +1353,7 @@ bool ViewApp::handleArgs(const argagg::parser_results& result) {
 	if(result.has_option("scale")) {
 		sceneScale_ = result["scale"].as<float>();
 	}
-	if(result.has_option("scale")) {
+	if(result.has_option("maxAniso")) {
 		maxAnisotropy_ = result["maxAniso"].as<float>();
 	}
 
