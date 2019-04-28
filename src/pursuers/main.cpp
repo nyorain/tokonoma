@@ -153,8 +153,8 @@ protected:
 
 class PursuersApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(const nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -276,6 +276,8 @@ public:
 		gui().draw(cb);
 	}
 
+	const char* name() const override { return "pursuers"; }
+
 protected:
 	vpp::PipelineLayout particlePipeLayout_;
 	vpp::Pipeline particlePipe_;
@@ -287,7 +289,7 @@ protected:
 // main
 int main(int argc, const char** argv) {
 	PursuersApp app;
-	if(!app.init({"pendulum", {*argv, std::size_t(argc)}})) {
+	if(!app.init({*argv, std::size_t(argc)})) {
 		return EXIT_FAILURE;
 	}
 

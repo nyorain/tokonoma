@@ -186,9 +186,9 @@ float mieScattering(float lightDotView, float gs) {
 }
 
 // fragPos and lightPos are in screen space
-// viewDir and lightDir must be normalized
+// ldv: dot(lightDir, viewDir)
 float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
-		vec3 lightDir, vec3 viewDir, sampler2D depthTex) {
+		float ldv, sampler2D depthTex) {
 	// if light position is outside of screen, we can't scatter since
 	// we can't track rays to the ray (since depth map only covers screen)
 	if(clamp(lightPos, 0.0, 1.0) != lightPos) {
@@ -207,6 +207,9 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	float accum = 0.f;
 	vec2 ipos = fragPos;
 
+	// TODO: maybe more efficient ot pass pattern as texture?
+	// or make global variable?
+	// might be useful in multiple functions
 	vec2 ppixel = mod(fragPos * textureSize(depthTex, 0), vec2(4, 4));
 	const float ditherPattern[4][4] = {
 		{ 0.0f, 0.5f, 0.125f, 0.625f},
@@ -227,11 +230,17 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	// closed walls (because there e.g. is only one sample in it)
 	float importance = 0.01;
 	float total = 0.f;
+
+	// like ssao: we manually choose the lod since the default
+	// derivative-based lod mechanisms aren't of much use here.
+	// the larger the step size is, the less detail with need,
+	// therefore larger step size -> high mipmap level
+	float lod = clamp(10 * dot(step, step), 0.0, 6.0);
 	for(uint i = 0u; i < steps; ++i) {
 		// sampler2DShadow: z value is the value we compare with
 		// accum += texture(depthTex, vec3(ipos, rayEnd.z)).r;
 
-		float depth = textureLod(depthTex, ipos, 0).r;
+		float depth = textureLod(depthTex, ipos, lod).r;
 		accum += importance * (depth < lightDepth ? 0.f : 1.f);
 		ipos += step;
 
@@ -246,7 +255,6 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 
 	// NOTE: random factors (especially the 35 seems weird...)
 	// currently tuned for directional light
-	float ldv = -dot(lightDir, viewDir);
 	float fac = 10 * mieScattering(ldv, 0.05);
 	fac *= ldv;
 

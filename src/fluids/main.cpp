@@ -471,8 +471,8 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 // == FluidApp ==
 class FluidApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!App::init(settings)) {
+	bool init(const nytl::Span<const char*> args) override {
+		if(!App::init(args)) {
 			return false;
 		}
 
@@ -623,6 +623,8 @@ public:
 		vk::cmdDraw(cb, 6, 1, 0, 0);
 	}
 
+	const char* name() const override { return "Fluids"; }
+
 protected:
 	std::optional<FluidSystem> system_;
 	float dt_ {};
@@ -642,7 +644,7 @@ protected:
 // main
 int main(int argc, const char** argv) {
 	FluidApp app;
-	if(!app.init({"fluids", {*argv, std::size_t(argc)}})) {
+	if(!app.init({*argv, std::size_t(argc)})) {
 		return EXIT_FAILURE;
 	}
 

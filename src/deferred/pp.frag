@@ -6,12 +6,16 @@
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
 
+const uint flagSSAO = (1u << 0u);
+const uint flagScattering = (1u << 1u);
+
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 _proj;
 	mat4 _invProj;
 	vec3 _viewPos;
 	float nearPlane;
 	float farPlane;
+	uint mode;
 } scene;
 
 layout(set = 1, binding = 0, input_attachment_index = 0)
@@ -24,6 +28,7 @@ layout(set = 1, binding = 2) uniform UBO {
 	float aoFactor;
 	float ssaoPow;
 	float exposure;
+	uint flags;
 } ubo;
 layout(set = 1, binding = 3) uniform sampler2D ssaoTex;
 layout(set = 1, binding = 4) uniform sampler2D depthTex;
@@ -64,9 +69,15 @@ vec3 tonemap(vec3 x) {
 //  and such
 void main() {
 	vec4 color = subpassLoad(inLight);
+	if(scene.mode >= 1 && scene.mode <= 6) {
+		// light shader rendered a debug view, don't modify
+		// it in any way. Just forward
+		fragColor = vec4(color.rgb, 1.0);
+		return;
+	}
 
 	// scattering
-	{
+	if((ubo.flags & flagScattering) != 0) {
 		float scatter = 0.f;
 		int range = 2;
 		vec2 texelSize = 1.f / textureSize(scatterTex, 0);
@@ -79,10 +90,16 @@ void main() {
 
 		int total = ((2 * range + 1) * (2 * range + 1));
 		scatter /= total;
-		color.rgb += scatter * ubo.scatterLightColor;
+		vec3 scatterColor = scatter * ubo.scatterLightColor;
+		if(scene.mode == 7) {
+			fragColor = vec4(scatterColor, 1.0);
+			return;
+		}
+
+		color.rgb += scatterColor;
 	}
 
-	{
+	if((ubo.flags & flagSSAO) != 0) {
 		const float near = scene.nearPlane;
 		const float far = scene.farPlane;
 
@@ -121,8 +138,19 @@ void main() {
 
 		// w component of albedo contains texture-based ao factor
 		ao /= total;
+		ao = pow(ao, ubo.ssaoPow) * ubo.aoFactor;
 		vec4 albedo = subpassLoad(inAlbedo);
-		color.rgb += pow(ao, ubo.ssaoPow) * ubo.aoFactor * albedo.rgb * albedo.w;
+		vec3 aoColor = ao * albedo.rgb * albedo.w;
+
+		if(scene.mode == 8) {
+			fragColor = vec4(vec3(ao), 1.0);
+			return;
+		} else if(scene.mode == 9) {
+			fragColor = vec4(aoColor, 1.0);
+			return;
+		}
+
+		color.rgb += aoColor;
 
 		// no blur variant
 		// float ao = textureLod(ssaoTex, uv, 0.0).r;

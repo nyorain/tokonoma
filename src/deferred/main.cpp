@@ -95,6 +95,10 @@ public:
 	static constexpr auto ssaoSampleCount = 32u;
 	static constexpr auto pointLight = true;
 
+	// pp.frag
+	static constexpr unsigned flagSSAO = (1u << 0u);
+	static constexpr unsigned flagScattering = (1u << 1u);
+
 	// see pp.frag
 	struct PostProcessParams { // could name that PPP
 		nytl::Vec3f scatterLightColor {1.f, 0.9f, 0.5f};
@@ -102,6 +106,7 @@ public:
 		float aoFactor {0.1f};
 		float ssaoPow {1.f};
 		float exposure {1.f};
+		std::uint32_t flags {flagSSAO | flagScattering};
 	};
 
 	static const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
@@ -114,6 +119,7 @@ public:
 	void initPPass();
 	void initSSAO();
 	void initScattering();
+	void updateDescriptors();
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
@@ -157,13 +163,15 @@ protected:
 
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
+	float maxAnisotropy_ {16.f};
 
 	bool anisotropy_ {}; // whether device supports anisotropy
-	std::uint32_t show_ {}; // what to show
+	std::uint32_t showMode_ {}; // what to show/debug views
 	float time_ {};
 	bool rotateView_ {}; // mouseLeft down
 	doi::Camera camera_ {};
 	bool updateLights_ {true};
+	bool updateDescriptors_ {false};
 
 	// doi::Skybox skybox_;
 
@@ -262,6 +270,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	auto samplerAnisotropy = 1.f;
 	if(anisotropy_) {
 		samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
+		samplerAnisotropy = std::max(samplerAnisotropy, maxAnisotropy_);
 	}
 
 	auto ri = doi::SceneRenderInfo{
@@ -329,6 +338,26 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	createValueTextfield(pp, "ssaoPow", pp_.params.ssaoPow, set);
 	createValueTextfield(pp, "tonemap", pp_.params.tonemap, set);
 
+	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
+	cb1.set(true);
+	cb1.onToggle = [&](auto&) {
+		dlg_info("toggled scattering");
+		pp_.params.flags ^= flagSSAO;
+		pp_.updateParams = true;
+		updateDescriptors_ = true;
+		App::scheduleRerecord();
+	};
+
+	auto& cb2 = pp.create<Checkbox>("scattering").checkbox();
+	cb2.set(true);
+	cb2.onToggle = [&](auto&) {
+		dlg_info("toggled scattering");
+		pp_.params.flags ^= flagScattering;
+		pp_.updateParams = true;
+		updateDescriptors_ = true;
+		App::scheduleRerecord();
+	};
+
 	return true;
 }
 
@@ -369,7 +398,8 @@ void ViewApp::initRenderData() {
 	auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
 		+ sizeof(nytl::Mat4f) // inv proj
 		+ sizeof(nytl::Vec3f) // viewPos
-		+ 2 * sizeof(float); // near, far plane
+		+ 2 * sizeof(float) // near, far plane
+		+ sizeof(std::uint32_t); // render/show buffer mode; flags
 	sceneDs_ = {dev.descriptorAllocator(), sceneDsLayout_};
 	sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
 		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
@@ -437,11 +467,6 @@ void ViewApp::initGPass() {
 	addGBuf(ids.albedo, albedoFormat);
 	addGBuf(ids.emission, emissionFormat);
 	addGBuf(ids.depth, depthFormat());
-
-	// NOTE: we do this here since after the gpass we first create mipmaps
-	// levels of the depth buffer since for the multiple algorithms that
-	// use it for sampling (ssao, light scattering, ssr)
-	attachments[ids.depth].finalLayout = vk::ImageLayout::transferSrcOptimal;
 
 	// subpass
 	vk::AttachmentReference gbufRefs[3];
@@ -581,8 +606,7 @@ void ViewApp::initGPass() {
 	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 	vk::Pipeline vkpipe;
-	vk::createGraphicsPipelines(dev, {},
-		1, gpi.info(), NULL, vkpipe);
+	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), nullptr, vkpipe);
 
 	gpass_.pipe = {dev, vkpipe};
 }
@@ -703,12 +727,8 @@ void ViewApp::initLPass() {
 	};
 	lightDsLayout_ = {dev, lightBindings};
 
-	// light pipe
-	vk::PushConstantRange pcr {};
-	pcr.size = 4;
-	pcr.stageFlags = vk::ShaderStageBits::fragment;
-	lpass_.pipeLayout = {dev, {sceneDsLayout_, lpass_.dsLayout, lightDsLayout_},
-		{pcr}};
+	lpass_.pipeLayout = {dev, {sceneDsLayout_, lpass_.dsLayout,
+		lightDsLayout_}, {}};
 
 	// TODO: don't use fullscreen here. Only render the areas of the screen
 	// that are effected by the light (huge, important optimization
@@ -761,8 +781,7 @@ void ViewApp::initLPass() {
 	// create the pipes
 	vk::GraphicsPipelineCreateInfo infos[] = {pgpi.info(), lgpi.info()};
 	vk::Pipeline vkpipes[2];
-	vk::createGraphicsPipelines(dev, {},
-		2, *infos, NULL, *vkpipes);
+	vk::createGraphicsPipelines(dev, {}, 2, *infos, nullptr, *vkpipes);
 
 	lpass_.pointPipe = {dev, vkpipes[0]};
 	lpass_.dirPipe = {dev, vkpipes[1]};
@@ -871,8 +890,7 @@ void ViewApp::initPPass() {
 	gpi.blend.pAttachments = &noBlendAttachment();
 
 	vk::Pipeline vkpipe;
-	vk::createGraphicsPipelines(dev, {},
-		1, gpi.info(), NULL, vkpipe);
+	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), nullptr, vkpipe);
 
 	pp_.pipe = {dev, vkpipe};
 }
@@ -977,8 +995,7 @@ void ViewApp::initSSAO() {
 	gpi.blend.pAttachments = &noBlendAttachment();
 
 	vk::Pipeline vkpipe;
-	vk::createGraphicsPipelines(dev, {},
-		1, gpi.info(), NULL, vkpipe);
+	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), nullptr, vkpipe);
 
 	ssao_.pipe = {dev, vkpipe};
 
@@ -1087,23 +1104,38 @@ void ViewApp::initScattering() {
 	// TODO: fullscreen shader used by multiple passes, don't reload
 	// it every time...
 	vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
-	vpp::ShaderModule fragShader(dev, deferred_pointScatter_frag_data);
-	vpp::GraphicsPipelineInfo gpi {scatter_.pass, scatter_.pipeLayout, {{
+	vpp::ShaderModule pfragShader(dev, deferred_pointScatter_frag_data);
+	vpp::GraphicsPipelineInfo pgpi{scatter_.pass, scatter_.pipeLayout, {{
 		{vertShader, vk::ShaderStageBits::vertex},
-		{fragShader, vk::ShaderStageBits::fragment},
+		{pfragShader, vk::ShaderStageBits::fragment},
 	}}};
 
-	gpi.depthStencil.depthTestEnable = false;
-	gpi.depthStencil.depthWriteEnable = false;
-	gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
-	gpi.blend.attachmentCount = 1u;
-	gpi.blend.pAttachments = &noBlendAttachment();
+	pgpi.flags(vk::PipelineCreateBits::allowDerivatives);
+	pgpi.depthStencil.depthTestEnable = false;
+	pgpi.depthStencil.depthWriteEnable = false;
+	pgpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
+	pgpi.blend.attachmentCount = 1u;
+	pgpi.blend.pAttachments = &noBlendAttachment();
 
-	vk::Pipeline vkpipe;
-	vk::createGraphicsPipelines(dev, {},
-		1, gpi.info(), NULL, vkpipe);
+	// directionoal
+	vpp::ShaderModule dfragShader(dev, deferred_dirScatter_frag_data);
+	vpp::GraphicsPipelineInfo dgpi{scatter_.pass, scatter_.pipeLayout, {{
+		{vertShader, vk::ShaderStageBits::vertex},
+		{pfragShader, vk::ShaderStageBits::fragment},
+	}}};
 
-	scatter_.pointPipe = {dev, vkpipe};
+	dgpi.depthStencil = pgpi.depthStencil;
+	dgpi.assembly = pgpi.assembly;
+	dgpi.blend = pgpi.blend;
+	dgpi.base(0);
+
+	vk::Pipeline vkpipes[2];
+	auto infos = {pgpi.info(), dgpi.info()};
+	vk::createGraphicsPipelines(dev, {}, infos.size(), *infos.begin(),
+		nullptr, *vkpipes);
+
+	scatter_.pointPipe = {dev, vkpipes[0]};
+	scatter_.dirPipe = {dev, vkpipes[1]};
 	scatter_.ds = {dev.descriptorAllocator(), scatter_.dsLayout};
 }
 
@@ -1220,7 +1252,12 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		buf.framebuffer = {dev, fbi};
 	}
 
-	// update descriptor sets
+	updateDescriptors();
+}
+
+void ViewApp::updateDescriptors() {
+	updateDescriptors_ = false;
+
 	vpp::DescriptorSetUpdate dsu(lpass_.ds);
 	dsu.inputAttachment({{{}, gpass_.normal.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
@@ -1231,17 +1268,24 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	dsu.inputAttachment({{{}, depthTarget().imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
+	auto ssaoView = (pp_.params.flags & flagSSAO) ?
+		ssao_.target.vkImageView() : dummyTex_.vkImageView();
+	auto scatterView = (pp_.params.flags & flagScattering) ?
+		scatter_.target.vkImageView() : dummyTex_.vkImageView();
+	auto depthView = (pp_.params.flags != 0) ?
+		depthMipView_ : depthTarget().vkImageView();
+
 	vpp::DescriptorSetUpdate ldsu(pp_.ds);
 	ldsu.inputAttachment({{{}, lpass_.light.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	ldsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	ldsu.uniform({{pp_.ubo.buffer(), pp_.ubo.offset(), pp_.ubo.size()}});
-	ldsu.imageSampler({{{}, ssao_.target.vkImageView(),
+	ldsu.imageSampler({{{}, ssaoView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.imageSampler({{{}, depthMipView_,
+	ldsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.imageSampler({{{}, scatter_.target.vkImageView(),
+	ldsu.imageSampler({{{}, scatterView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	vpp::DescriptorSetUpdate ssdsu(ssao_.ds);
@@ -1249,13 +1293,13 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		ssao_.samples.size()}});
 	ssdsu.imageSampler({{{}, ssao_.noise.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ssdsu.imageSampler({{{}, depthMipView_,
+	ssdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	ssdsu.inputAttachment({{{}, gpass_.normal.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	vpp::DescriptorSetUpdate sdsu(scatter_.ds);
-	sdsu.imageSampler({{{}, depthMipView_,
+	sdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	vpp::apply({dsu, ldsu, ssdsu, sdsu});
@@ -1291,6 +1335,10 @@ argagg::parser ViewApp::argParser() const {
 		"scale", {"--scale"},
 		"Apply scale to whole scene", 1
 	});
+	defs.push_back({
+		"maxAniso", {"--maxaniso", "--ani"},
+		"Maximum of anisotropy for samplers", 1
+	});
 	return parser;
 }
 
@@ -1304,6 +1352,9 @@ bool ViewApp::handleArgs(const argagg::parser_results& result) {
 	}
 	if(result.has_option("scale")) {
 		sceneScale_ = result["scale"].as<float>();
+	}
+	if(result.has_option("scale")) {
+		maxAnisotropy_ = result["maxAniso"].as<float>();
 	}
 
 	return true;
@@ -1360,65 +1411,77 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// create depth mipmaps
-	// the depth target already is in transferSrcOptimal layout
-	// from the last render pass
-	auto& depthImg = depthTarget().image();
-
-	// transition all but mipmap level 0 to transferDst
-	vpp::changeLayout(cb, depthImg,
-		vk::ImageLayout::undefined, // we don't need the content any more
-		vk::PipelineStageBits::topOfPipe, {},
-		vk::ImageLayout::transferDstOptimal,
-		vk::PipelineStageBits::transfer,
-		vk::AccessBits::transferWrite,
-		{vk::ImageAspectBits::depth, 1, depthMipLevels_ - 1, 0, 1});
-
-	for(auto i = 1u; i < depthMipLevels_; ++i) {
-		// std::max needed for end offsets when the texture is not
-		// quadratic: then we would get 0 there although the mipmap
-		// still has size 1
-		vk::ImageBlit blit;
-		blit.srcSubresource.layerCount = 1;
-		blit.srcSubresource.mipLevel = i - 1;
-		blit.srcSubresource.aspectMask = vk::ImageAspectBits::depth;
-		blit.srcOffsets[1].x = std::max(width >> (i - 1), 1u);
-		blit.srcOffsets[1].y = std::max(height >> (i - 1), 1u);
-		blit.srcOffsets[1].z = 1u;
-
-		blit.dstSubresource.layerCount = 1;
-		blit.dstSubresource.mipLevel = i;
-		blit.dstSubresource.aspectMask = vk::ImageAspectBits::depth;
-		blit.dstOffsets[1].x = std::max(width >> i, 1u);
-		blit.dstOffsets[1].y = std::max(height >> i, 1u);
-		blit.dstOffsets[1].z = 1u;
-
-		vk::cmdBlitImage(cb, depthImg, vk::ImageLayout::transferSrcOptimal,
-			depthImg, vk::ImageLayout::transferDstOptimal, {blit},
-			vk::Filter::nearest);
-
-		// change layout of current mip level to transferSrc for next mip level
+	if(pp_.params.flags != 0) {
+		auto& depthImg = depthTarget().image();
+		// transition mipmap level 0 transferSrc
 		vpp::changeLayout(cb, depthImg,
-			vk::ImageLayout::transferDstOptimal,
-			vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferWrite,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::allGraphics,
+			vk::AccessBits::depthStencilAttachmentWrite,
 			vk::ImageLayout::transferSrcOptimal,
 			vk::PipelineStageBits::transfer,
 			vk::AccessBits::transferRead,
-			{vk::ImageAspectBits::depth, i, 1, 0, 1});
+			{vk::ImageAspectBits::depth, 0, 1, 0, 1});
+
+		// transition all but mipmap level 0 to transferDst
+		vpp::changeLayout(cb, depthImg,
+			vk::ImageLayout::undefined, // we don't need the content any more
+			vk::PipelineStageBits::topOfPipe, {},
+			vk::ImageLayout::transferDstOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferWrite,
+			{vk::ImageAspectBits::depth, 1, depthMipLevels_ - 1, 0, 1});
+
+		for(auto i = 1u; i < depthMipLevels_; ++i) {
+			// std::max needed for end offsets when the texture is not
+			// quadratic: then we would get 0 there although the mipmap
+			// still has size 1
+			vk::ImageBlit blit;
+			blit.srcSubresource.layerCount = 1;
+			blit.srcSubresource.mipLevel = i - 1;
+			blit.srcSubresource.aspectMask = vk::ImageAspectBits::depth;
+			blit.srcOffsets[1].x = std::max(width >> (i - 1), 1u);
+			blit.srcOffsets[1].y = std::max(height >> (i - 1), 1u);
+			blit.srcOffsets[1].z = 1u;
+
+			blit.dstSubresource.layerCount = 1;
+			blit.dstSubresource.mipLevel = i;
+			blit.dstSubresource.aspectMask = vk::ImageAspectBits::depth;
+			blit.dstOffsets[1].x = std::max(width >> i, 1u);
+			blit.dstOffsets[1].y = std::max(height >> i, 1u);
+			blit.dstOffsets[1].z = 1u;
+
+			// TODO: really bad that only nearest filter mode is allowed
+			// probably better to use custom shader to generate mipmaps/
+			// use custom buffer
+			vk::cmdBlitImage(cb, depthImg, vk::ImageLayout::transferSrcOptimal,
+				depthImg, vk::ImageLayout::transferDstOptimal, {blit},
+				vk::Filter::nearest);
+
+			// change layout of current mip level to transferSrc for next mip level
+			vpp::changeLayout(cb, depthImg,
+				vk::ImageLayout::transferDstOptimal,
+				vk::PipelineStageBits::transfer,
+				vk::AccessBits::transferWrite,
+				vk::ImageLayout::transferSrcOptimal,
+				vk::PipelineStageBits::transfer,
+				vk::AccessBits::transferRead,
+				{vk::ImageAspectBits::depth, i, 1, 0, 1});
+		}
+
+		// transform all levels back to readonly
+		vpp::changeLayout(cb, depthImg,
+			vk::ImageLayout::transferSrcOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferRead,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::allCommands,
+			vk::AccessBits::shaderRead,
+			{vk::ImageAspectBits::depth, 0, depthMipLevels_, 0, 1});
 	}
 
-	// transform all levels back to readonly
-	vpp::changeLayout(cb, depthImg,
-		vk::ImageLayout::transferSrcOptimal,
-		vk::PipelineStageBits::transfer,
-		vk::AccessBits::transferRead,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::allCommands,
-		vk::AccessBits::shaderRead,
-		{vk::ImageAspectBits::depth, 0, depthMipLevels_, 0, 1});
-
 	// ssao
-	{
+	if(pp_.params.flags & flagSSAO) {
 		vk::cmdBeginRenderPass(cb, {
 			ssao_.pass,
 			ssao_.fb,
@@ -1439,7 +1502,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// scatter
-	{
+	if(pp_.params.flags & flagScattering) {
 		vk::cmdBeginRenderPass(cb, {
 			scatter_.pass,
 			scatter_.fb,
@@ -1452,12 +1515,14 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
 		// TODO: scatter support for multiple lights
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
-			scatter_.pointPipe);
 		vk::DescriptorSet lds;
 		if(!dirLights_.empty()) {
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
+				scatter_.dirPipe);
 			lds = dirLights_[0].ds();
 		} else {
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
+				scatter_.pointPipe);
 			lds = pointLights_[0].ds();
 		}
 
@@ -1481,10 +1546,6 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::Viewport vp{0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
-
-		// make make this a uniform buffer?
-		vk::cmdPushConstants(cb, lpass_.pipeLayout,
-			vk::ShaderStageBits::fragment, 0, 4, &show_);
 
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			lpass_.pipeLayout, 0, {sceneDs_, lpass_.ds}, {});
@@ -1563,7 +1624,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		return false;
 	}
 
-	auto numModes = 9u;
+	auto numModes = 10u;
 	switch(ev.keycode) {
 		case ny::Keycode::m: // move light here
 			if(!dirLights_.empty()) {
@@ -1582,12 +1643,12 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			updateLights_ = true;
 			return true;
 		case ny::Keycode::n:
-			show_ = (show_ + 1) % numModes;
-			App::scheduleRerecord();
+			showMode_ = (showMode_ + 1) % numModes;
+			camera_.update = true; // trigger update device
 			return true;
 		case ny::Keycode::l:
-			show_ = (show_ + numModes - 1) % numModes;
-			App::scheduleRerecord();
+			showMode_ = (showMode_ + numModes - 1) % numModes;
+			camera_.update = true; // trigger update device
 			return true;
 		case ny::Keycode::i:
 			pp_.params.aoFactor = 1.f - pp_.params.aoFactor;
@@ -1603,6 +1664,15 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			return true;
 		default:
 			break;
+	}
+
+	auto uk = static_cast<unsigned>(ev.keycode);
+	auto k1 = static_cast<unsigned>(ny::Keycode::k1);
+	auto k0 = static_cast<unsigned>(ny::Keycode::k0);
+	if(uk >= k1 && uk <= k0) {
+		auto diff = (1 + uk - k1) % numModes;
+		showMode_ = diff;
+		camera_.update = true;
 	}
 
 	return false;
@@ -1652,6 +1722,7 @@ void ViewApp::updateDevice() {
 		doi::write(span, camera_.pos);
 		doi::write(span, camera_.perspective.near);
 		doi::write(span, camera_.perspective.far);
+		doi::write(span, showMode_);
 
 		// skybox_.updateDevice(fixedMatrix(camera_));
 
@@ -1739,6 +1810,10 @@ void ViewApp::updateDevice() {
 		App::addSemaphore(selectionSemaphore_,
 			vk::PipelineStageBits::colorAttachmentOutput);
 		selectionPending_ = true;
+	}
+
+	if(updateDescriptors_) {
+		updateDescriptors();
 	}
 }
 

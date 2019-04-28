@@ -31,8 +31,8 @@ class ViewerApp : public doi::App {
 public:
 	static constexpr auto cacheFile = "sviewer.cache";
 
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(const nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -198,6 +198,8 @@ public:
 		return true;
 	}
 
+	const char* name() const override { return "Shader Viewer"; }
+
 protected:
 	const char* glsl_ = "dummy";
 	bool reload_ {};
@@ -219,7 +221,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	ViewerApp app;
-	if(!app.init({"shader-viewer", {*argv, std::size_t(argc)}})) {
+	if(!app.init({*argv, std::size_t(argc)})) {
 		return EXIT_FAILURE;
 	}
 

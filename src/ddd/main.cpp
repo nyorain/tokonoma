@@ -102,7 +102,7 @@ public:
 
 		// per material
 		// push constant range for material
-		materialDsLayout_ = doi::Material::createDsLayout(dev, sampler_);
+		materialDsLayout_ = doi::Material::createDsLayout(dev);
 		vk::PushConstantRange pcr;
 		pcr.offset = 0;
 		pcr.size = sizeof(float) * 8;
@@ -190,14 +190,15 @@ public:
 		auto s = sceneScale_;
 		auto mat = doi::scaleMat<4, float>({s, s, s});
 		auto ri = doi::SceneRenderInfo{materialDsLayout_, primitiveDsLayout_,
-			pipeLayout_, dummyTex_.vkImageView()};
+			dummyTex_.vkImageView(), 1.f};
 		if(!(scene_ = doi::loadGltf(modelname_, dev, mat, ri))) {
 			return false;
 		}
 
 		// add light primitive
-		lightMaterial_.emplace(vulkanDevice(), materialDsLayout_,
-			dummyTex_.vkImageView(), nytl::Vec{1.f, 1.f, 0.4f, 1.f});
+		lightMaterial_.emplace(materialDsLayout_,
+			dummyTex_.vkImageView(), scene_->defaultSampler(),
+			nytl::Vec{1.f, 1.f, 0.4f, 1.f});
 
 		// == ubo and stuff ==
 		auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
@@ -211,9 +212,11 @@ public:
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
 		light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_,
-			camera_.pos, *lightMaterial_};
-		light_.data.dir = {5.8f, -12.0f, 4.f};
-		// light_.data.position = {0.f, 5.0f, 0.f};
+			*lightMaterial_};
+		// light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_,
+		// 	camera_.pos, *lightMaterial_};
+		// light_.data.dir = {5.8f, -12.0f, 4.f};
+		light_.data.position = {0.f, 5.0f, 0.f};
 		updateLight_ = true;
 
 		// descriptors
@@ -279,10 +282,10 @@ public:
 		}
 
 		if(moveLight_) {
-			light_.data.dir.x = 7.0 * std::cos(0.2 * time_);
-			light_.data.dir.z = 7.0 * std::sin(0.2 * time_);
-			// light_.data.position.x = 7.0 * std::cos(0.2 * time_);
-			// light_.data.position.z = 7.0 * std::sin(0.2 * time_);
+			// light_.data.dir.x = 7.0 * std::cos(0.2 * time_);
+			// light_.data.dir.z = 7.0 * std::sin(0.2 * time_);
+			light_.data.position.x = 7.0 * std::cos(0.2 * time_);
+			light_.data.position.z = 7.0 * std::sin(0.2 * time_);
 			updateLight_ = true;
 		}
 
@@ -303,8 +306,8 @@ public:
 		switch(ev.keycode) {
 			case ny::Keycode::m: // move light here
 				moveLight_ = false;
-				light_.data.dir = -camera_.pos;
-				// light_.data.position = camera_.pos;
+				// light_.data.dir = -camera_.pos;
+				light_.data.position = camera_.pos;
 				updateLight_ = true;
 				return true;
 			case ny::Keycode::l:
@@ -360,7 +363,8 @@ public:
 		}
 
 		if(updateLight_) {
-			light_.updateDevice(camera_.pos);
+			// light_.updateDevice(camera_.pos);
+			light_.updateDevice();
 			updateLight_ = false;
 		}
 	}
@@ -397,8 +401,8 @@ protected:
 
 	// light and shadow
 	doi::ShadowData shadowData_;
-	doi::DirLight light_;
-	// doi::PointLight light_;
+	// doi::DirLight light_;
+	doi::PointLight light_;
 	bool updateLight_ {true};
 	// light ball
 	std::optional<doi::Material> lightMaterial_;

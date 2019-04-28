@@ -51,8 +51,8 @@ struct ContactListener : public b2ContactListener {
 
 class Mists : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!App::init(settings)) {
+	bool init(const nytl::Span<const char*> args) override {
+		if(!App::init(args)) {
 			return false;
 		}
 
@@ -340,6 +340,8 @@ public:
 		return physics_.world;
 	}
 
+	const char* name() const override { return "Mists"; }
+
 
 protected:
 	PhysicsSystem physics_;
@@ -410,7 +412,7 @@ void ContactListener::EndContact(b2Contact*) {
 
 int main(int argc, const char** argv) {
 	Mists app;
-	if(!app.init({"mists", {*argv, std::size_t(argc)}})) {
+	if(!app.init({*argv, std::size_t(argc)})) {
 		return EXIT_FAILURE;
 	}
 

@@ -21,6 +21,8 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj;
 	mat4 invProj;
 	vec3 viewPos;
+	float _near, _far;
+	uint mode;
 } scene;
 
 // gbuffers
@@ -32,10 +34,6 @@ layout(set = 1, binding = 2, input_attachment_index = 2)
 	uniform subpassInput inEmission;
 layout(set = 1, binding = 3, input_attachment_index = 3)
 	uniform subpassInput inDepth;
-
-layout(push_constant) uniform Show {
-	uint mode;
-} show;
 
 void main() {
 	float depth = subpassLoad(inDepth).r;
@@ -60,7 +58,8 @@ void main() {
 	float metallic = sEmission.w;
 
 	// debug output modes
-	switch(show.mode) {
+	switch(scene.mode) {
+	case 0: break; // normal rendering
 	case 1:
 		fragColor = vec4(albedo, 0.0);
 		return;
@@ -76,8 +75,12 @@ void main() {
 	case 5:
 		fragColor = vec4(vec3(roughness), 0.0);
 		return;
+	case 6:
+		fragColor = vec4(vec3(sEmission.rgb), 0.0);
+		return;
 	default:
-		break;
+		fragColor = vec4(0.0);
+		return;
 	}
 
 	vec3 lcolor;

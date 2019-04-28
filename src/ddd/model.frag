@@ -1,6 +1,7 @@
 #version 450
 
 #extension GL_GOOGLE_include_directive : enable
+#include "pbr.glsl"
 #include "scene.glsl"
 #include "scene.frag.glsl"
 
@@ -22,6 +23,7 @@ layout(set = 1, binding = 1) uniform sampler2D metalRoughTex;
 layout(set = 1, binding = 2) uniform sampler2D normalTex;
 layout(set = 1, binding = 3) uniform sampler2D occlusionTex;
 
+// TODO: not allowed by glsl, remove aliasing
 // alias for different light types
 layout(set = 3, binding = 0, row_major) uniform DirLightBuf {
 	DirLight dirLight;
@@ -65,22 +67,24 @@ void main() {
 	}
 
 	// TODO: actually use them...
-	// vec2 mr = texture(metalRoughTex, inUV).rg;
-	// float metalness = material.matallic * mr.b;
-	// float roughness = material.roughness * mr.g;
-	// TODO: remove random factors, implement pbr
+	vec4 mr = texture(metalRoughTex, inUV);
+	float metalness = material.metallic * mr.b;
+	float roughness = material.roughness * mr.g;
+
 	float ambientFac = 0.1 * texture(occlusionTex, inUV).r;
-	float diffuseFac = 0.5f;
-	float specularFac = 0.5f;
-	float shininess = 64.f;
+	// float diffuseFac = 0.5f;
+	// float specularFac = 0.5f;
+	// float shininess = 64.f;
 
 	float shadow;
 	vec3 ldir;
 
+	// TODO: some features missing, compare deferred renderer
+	// point light: attenuation no implemented here atm
 	bool pcf = (dirLight.flags & lightPcf) != 0;
 	if((dirLight.flags & lightDir) != 0) {
 		shadow = dirShadow(shadowMap, inLightPos, int(pcf));
-		ldir = normalize(dirLight.dir); // TODO: norm could be done on cpu
+		ldir = normalize(dirLight.dir);
 	} else {
 		ldir = normalize(inPos - pointLight.pos);
 		if(pcf) {
@@ -93,21 +97,14 @@ void main() {
 		}
 	}
 
-	// diffuse
-	vec4 col = vec4(0.0);
-	float lfac = diffuseFac * max(dot(normal, -ldir), 0.0); // diffuse
+	vec3 v = normalize(scene.viewPos - inPos);
+	vec3 light = cookTorrance(normal, -ldir, v, roughness, metalness,
+		albedo.xyz);
+	light *= shadow;
+	outCol.rgb = dirLight.color * light;
+	outCol.rgb += ambientFac * albedo.rgb;
 
-	// specular, blinn phong
-	vec3 vdir = normalize(inPos - scene.viewPos);
-	vec3 halfway = normalize(-ldir - vdir);
-	lfac += specularFac * pow(max(dot(normal, halfway), 0.0), shininess);
-
-	lfac *= shadow;
-	lfac += ambientFac; // ambient always added, doesn't care for shadow
-
-	col += vec4(lfac * dirLight.color, 1.0) * albedo;
-
-	outCol = col;
+	outCol.a = albedo.a;
 	if(material.alphaCutoff == -1.f) { // alphaMode opque
 		outCol.a = 1.f;
 	}

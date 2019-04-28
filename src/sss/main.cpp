@@ -25,8 +25,8 @@
 
 class SSSApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!App::init(settings)) {
+	bool init(const nytl::Span<const char*> args) override {
+		if(!App::init(args)) {
 			return false;
 		}
 
@@ -127,11 +127,11 @@ public:
 		auto combineFragment = vpp::ShaderModule(device,
 			smooth_shadow_light_pp_frag_data);
 
-		vpp::GraphicsPipelineInfo combinePipeInfo(renderer().renderPass(),
+		vpp::GraphicsPipelineInfo combinePipeInfo(renderPass(),
 			pp_.pipeLayout, vpp::ShaderProgram({
 				{combineVertex, vk::ShaderStageBits::vertex},
 				{combineFragment, vk::ShaderStageBits::fragment}
-		}), 0, renderer().samples());
+		}), 0, samples());
 
 		combinePipeInfo.assembly.topology = vk::PrimitiveTopology::triangleFan;
 
@@ -291,6 +291,7 @@ public:
 	}
 
 	LightSystem& lightSystem() { return *lightSystem_; }
+	const char* name() const override { return "2D Subsurf Scattering"; };
 
 protected:
 	std::optional<LightSystem> lightSystem_;
@@ -323,7 +324,7 @@ protected:
 // main
 int main(int argc, const char** argv) {
 	SSSApp app;
-	if(!app.init({"subsurface scattering", {*argv, std::size_t(argc)}})) {
+	if(!app.init({*argv, std::size_t(argc)})) {
 		return EXIT_FAILURE;
 	}
 

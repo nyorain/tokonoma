@@ -21,6 +21,33 @@ layout(set = 2, binding = 0, row_major) uniform LightBuf {
 };
 
 void main() {
-	// TODO
-	scatter = 0.f;
+	vec2 suv = 2 * uv - 1;
+	suv.y *= -1.f; // flip y
+	float depth = texture(depthTex, uv).r;
+	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
+	vec3 pos = pos4.xyz / pos4.w;
+
+	vec3 v = normalize(pos - scene.viewPos); // view direction
+	vec3 viewToLight = -light.dir; // normalized on cpu
+	float ldv = dot(viewToLight, v);
+	if(ldv < 0) {
+		scatter = 0.f;
+		return;
+	}
+
+	// TODO: mapping not fragment shader dependent but relative
+	// expensive, could be done in vertex shader (or cpu but
+	// has to be refreshed every time viewPos changes...)
+	// mapped position of a directional light
+	vec3 mappedLightPos = sceneMap(scene.proj, scene.viewPos - light.dir);
+	if(mappedLightPos.z < 0) {
+		// in this case the light is behind the camera, there
+		// will be no depth scattering.
+		scatter = 0.f;
+		return;
+	}
+
+	mappedLightPos.z = 1.f; // on far plane, everything in front of it
+	scatter = lightScatterDepth(uv, mappedLightPos.xy,
+		mappedLightPos.z, ldv, depthTex);
 }
