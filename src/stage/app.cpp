@@ -432,8 +432,9 @@ bool App::init(nytl::Span<const char*> args) {
 	impl_->renderer.emplace(*this, *presentQueue, impl_->scInfo);
 
 	// additional stuff
-	if(auto subpass = rvgSubpass(); subpass) {
-		rvg::ContextSettings rvgcs {renderPass(), *subpass};
+	auto [pass, subpass] = rvgPass();
+	if(pass) {
+		rvg::ContextSettings rvgcs {pass, subpass};
 		rvgcs.samples = samples();
 		rvgcs.clipDistanceEnable = impl_->clipDistance;
 
@@ -1119,6 +1120,10 @@ vpp::ViewableImage& App::multisampleTarget() const {
 
 const vk::SwapchainCreateInfoKHR& App::swapchainInfo() const {
 	return impl_->scInfo;
+}
+
+std::pair<vk::RenderPass, unsigned> App::rvgPass() const {
+	return {renderPass(), 0};
 }
 
 // free util

@@ -57,7 +57,7 @@ public:
 	const Primitive& lightBall() const { return lightBall_; }
 
 protected:
-	nytl::Vec2ui size_ {2048u, 2048u};
+	nytl::Vec2ui size_ {4096u, 4096u};
 	vpp::ViewableImage target_; // depth
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
@@ -72,6 +72,8 @@ public:
 		std::uint32_t flags {0};
 		nytl::Vec3f position {1.f, 1.f, 1.f};
 		float farPlane {30.f};
+		// TODO: params.x (constant term) is basically always 1.f, get rid
+		// of that everywhere?
 		nytl::Vec3f attenuation {1.f, 0.1, 0.05};
 		float _ {}; // padding
 	} data;

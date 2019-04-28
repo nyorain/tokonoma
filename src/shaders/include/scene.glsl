@@ -41,6 +41,18 @@ struct MaterialPcr {
 	float alphaCutoff;
 };
 
+// returns the z value belonging to the given depth buffer value
+// obviously requires the near and far plane values that were used
+// in the perspective projection.
+// depth expected in standard vulkan range [0,1]
+float depthtoz(float depth, float near, float far) {
+	return near * far / (far + near - depth * (far - near));
+}
+// NOTE: we could implement an alternative version that uses the projection
+// matrix for depthtoz. But we always use the premultiplied
+// projectionView matrix and we can't get the information out of that.
+
+
 // computes shadow for directional light
 // returns (1 - shadow), i.e. the light factor
 float dirShadow(sampler2DShadow shadowMap, vec3 pos, int range) {
@@ -60,6 +72,12 @@ float dirShadow(sampler2DShadow shadowMap, vec3 pos, int range) {
 
 	float total = ((2 * range + 1) * (2 * range + 1));
 	return sum / total;
+}
+
+// Calculates the light attentuation based on the distance d and the
+// light attenuation parameters
+float attenuation(float d, vec3 params) {
+	return 1.f / (params.x + params.y * d + params.z * (d * d));
 }
 
 // from https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows
@@ -177,22 +195,7 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 		return 0.f;
 	}
 
-	// NOTE: random factors (especially the 35 seems weird...)
-	// currently tuned for directional light
-	float ldv = -dot(lightDir, viewDir);
-	float fac = mieScattering(ldv, 0.05);
-	fac *= 35.0 * ldv;
-
-	// nice small "sun" in addition to the all around scattering
-	fac += mieScattering(ldv, 0.95);
-
-	// Make sure light gradually fades when light gets outside of screen
-	// instead of suddenly jumping to 0 because of 'if' at beginning.
-	fac *= pow(lightPos.x * (1 - lightPos.x), 0.9);
-	fac *= pow(lightPos.y * (1 - lightPos.y), 0.9);
-
 	vec2 ray = lightPos - fragPos;
-
 	// NOTE: making the number of steps dependent on the ray length
 	// is probably a bad idea. When light an pixel (geometry) are close, the
 	// chance for artefacts is the highest i guess
@@ -213,29 +216,51 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
 	ipos += ditherValue * step;
 
-	// TODO: atm, light can shine through completely closed wall...
-	// idea: make samples near the light more important.
-
 	// NOTE: instead of the dithering we could use a fully random
 	// offset. Doesn't seem to work as well though.
 	// Offset to step probably a bad idea
 	// ipos += 0.7 * random(fragPos) * step;
 	// step += 0.01 * (2 * random(step) - 1) * step;
+	
+	// sampling gets more important the closer we get to the light
+	// important to not allow light to shine through completely
+	// closed walls (because there e.g. is only one sample in it)
+	float importance = 0.01;
+	float total = 0.f;
 	for(uint i = 0u; i < steps; ++i) {
 		// sampler2DShadow: z value is the value we compare with
 		// accum += texture(depthTex, vec3(ipos, rayEnd.z)).r;
 
 		float depth = textureLod(depthTex, ipos, 0).r;
-		accum += (depth < lightDepth ? 0.f : 1.f);
+		accum += importance * (depth < lightDepth ? 0.f : 1.f);
 		ipos += step;
-		if(ipos != clamp(ipos, 0, 1)) {
-			break;
-		}
+
+		total += importance;
+		importance *= 2;
 	}
 
-	accum *= fac / steps;
-	accum = clamp(accum, 0.0, 1.0);
-	return accum;
+	// accum *= fac / steps;
+	accum /= total;
+	// accum = clamp(accum, 0.0, 1.0);
+	// accum = smoothstep(0.1, 1.0, accum);
+
+	// NOTE: random factors (especially the 35 seems weird...)
+	// currently tuned for directional light
+	float ldv = -dot(lightDir, viewDir);
+	float fac = 10 * mieScattering(ldv, 0.05);
+	fac *= ldv;
+
+	// nice small "sun" in addition to the all around scattering
+	// fac += mieScattering(ldv, 0.95);
+
+	// Make sure light gradually fades when light gets outside of screen
+	// instead of suddenly jumping to 0 because of 'if' at beginning.
+	// fac *= pow(lightPos.x * (1 - lightPos.x), 0.9);
+	// fac *= pow(lightPos.y * (1 - lightPos.y), 0.9);
+	fac *= 4 * lightPos.x * (1 - lightPos.x);
+	fac *= 4 * lightPos.y * (1 - lightPos.y);
+
+	return fac * accum;
 }
 
 /*

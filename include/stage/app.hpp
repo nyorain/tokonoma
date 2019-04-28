@@ -67,12 +67,13 @@ protected:
 	// Should be overwritten to return the name of this app.
 	virtual const char* name() const { return "doi app"; }
 
-	// Should return nullopt if rvg (and vui) are not needed, otherwise
-	// the subpass they are used in. Will use the render pass returned
-	// from createRenderPass for rvg and vui.
-	// TODO: might be a limitation for some apps to only use rvg and vui
-	// in one subpass, needs fixing in rvg.
-	virtual std::optional<unsigned> rvgSubpass() const { return {0}; }
+	// Should return {} if rvg (and vui) are not needed, otherwise
+	// the render and subpass they are used in.
+	// NOTE: might be a limitation for some apps to only use rvg and vui
+	// in one subpass, rvg requires it like that though. Changing it will
+	// be hard since then rvg needs to compile multiple pipelines (one
+	// for each render/subpass).
+	virtual std::pair<vk::RenderPass, unsigned> rvgPass() const;
 
 
 	// argument parsing

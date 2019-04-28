@@ -11,7 +11,11 @@ layout(set = 2, binding = 1) uniform samplerCubeShadow shadowCube;
 
 void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 		out vec3 lcolor) {
-	lcolor = light.color;
+	ldir = fragPos - light.pos;
+	float lightDistance = length(fragPos - light.pos);
+	ldir /= lightDistance;
+	lcolor = attenuation(lightDistance, light.attenuation) * light.color;
+
 	bool pcf = (light.flags & lightPcf) != 0;
 	if(pcf) {
 		// TODO: make radius parameters configurable,
@@ -23,14 +27,4 @@ void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 	} else {
 		lcolor *= pointShadow(shadowCube, light.pos, light.farPlane, fragPos);
 	}
-
-	ldir = fragPos - light.pos;
-	float lightDistance = length(fragPos - light.pos);
-	ldir /= lightDistance;
-
-	float denom = 
-		light.attenuation.x + // constant
-		light.attenuation.y * lightDistance + // linear
-		light.attenuation.z * (lightDistance * lightDistance);
-	lcolor *= 1 / denom;
 }

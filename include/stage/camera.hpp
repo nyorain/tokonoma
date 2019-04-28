@@ -27,16 +27,17 @@ struct Camera {
 	} perspective;
 };
 
-inline auto fixedMatrix(Camera& c) {
+inline auto projection(const Camera& c) {
 	auto& p = c.perspective;
-	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
-	return mat * doi::lookAtRH({}, c.dir, c.up);
+	return doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
 }
 
-inline auto matrix(Camera& c) {
-	auto& p = c.perspective;
-	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
-	return mat * doi::lookAtRH(c.pos, c.pos + c.dir, c.up);
+inline auto fixedMatrix(const Camera& c) {
+	return projection(c) * doi::lookAtRH({}, c.dir, c.up);
+}
+
+inline auto matrix(const Camera& c) {
+	return projection(c) * doi::lookAtRH(c.pos, c.pos + c.dir, c.up);
 }
 
 inline void rotateView(Camera& c, float dyaw, float dpitch) {

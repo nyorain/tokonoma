@@ -269,15 +269,27 @@ nytl::Mat4f DirLight::lightBallMatrix(nytl::Vec3f viewPos) const {
 
 nytl::Mat4f DirLight::lightMatrix(nytl::Vec3f viewPos) const {
 	// TODO: sizes should be configurable; depend on scene size
-	auto mat = doi::ortho3Sym(12.f, 12.f, 0.5f, 30.f);
-	auto ndir = nytl::normalized(this->data.dir);
-	mat = mat * doi::lookAtRH(viewPos - 10 * ndir,
-		viewPos,
-		{0.f, 1.f, 0.f});
+	// TODO: can be opimtized, better position
+	auto pos = viewPos - 10 * this->data.dir;
+	// auto pos = -this->data.dir;
+
+	// discretize
+	// using namespace nytl::vec::cw;
+	// using namespace nytl::vec::operators;
+	auto frustSize = 12.f; // TODO
+	// auto step = 2048 * frustSize / size_.x;
+	// auto step = 4.f;
+	// pos = ceil(pos / step) * step;
+
+	auto mat = doi::ortho3Sym(frustSize, frustSize, 0.5f, 30.f);
+	// mat = mat * doi::lookAtRH(pos, {0.f, 0.f, 0.f}, {0.f, 1.f, 0.f});
+	mat = mat * doi::lookAtRH(pos, viewPos, {0.f, 1.f, 0.f});
 	return mat;
 }
 
 void DirLight::updateDevice(nytl::Vec3f viewPos) {
+	nytl::normalize(this->data.dir);
+
 	auto map = ubo_.memoryMap();
 	auto span = map.span();
 	doi::write(span, this->data);

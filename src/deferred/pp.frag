@@ -1,20 +1,33 @@
 #version 450
 
+#extension GL_GOOGLE_include_directive : enable
+#include "scene.glsl"
+
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
 
-layout(set = 0, binding = 0, input_attachment_index = 0)
+layout(set = 0, binding = 0, row_major) uniform Scene {
+	mat4 _proj;
+	mat4 _invProj;
+	vec3 _viewPos;
+	float nearPlane;
+	float farPlane;
+} scene;
+
+layout(set = 1, binding = 0, input_attachment_index = 0)
 	uniform subpassInput inLight;
-layout(set = 0, binding = 1, input_attachment_index = 1)
+layout(set = 1, binding = 1, input_attachment_index = 1)
 	uniform subpassInput inAlbedo;
-layout(set = 0, binding = 2) uniform UBO {
+layout(set = 1, binding = 2) uniform UBO {
 	vec3 scatterLightColor;
 	uint tonemap;
-	float ssaoFactor;
+	float aoFactor;
+	float ssaoPow;
 	float exposure;
 } ubo;
-// layout(set = 0, binding = 3) uniform sampler2D ssaoTex;
-// layout(set = 0, binding = 4) uniform sampler2D scatterTex;
+layout(set = 1, binding = 3) uniform sampler2D ssaoTex;
+layout(set = 1, binding = 4) uniform sampler2D depthTex;
+layout(set = 1, binding = 5) uniform sampler2D scatterTex;
 
 // http://filmicworlds.com/blog/filmic-tonemapping-operators/
 // has a nice preview of different tonemapping operators
@@ -52,16 +65,15 @@ vec3 tonemap(vec3 x) {
 void main() {
 	vec4 color = subpassLoad(inLight);
 
-	/*
 	// scattering
 	{
 		float scatter = 0.f;
-		int range = 1;
+		int range = 2;
 		vec2 texelSize = 1.f / textureSize(scatterTex, 0);
 		for(int x = -range; x <= range; ++x) {
 			for(int y = -range; y <= range; ++y) {
 				vec2 off = texelSize * vec2(x, y);
-				scatter += texture(scatterTex, uv + off).a;
+				scatter += texture(scatterTex, uv + off).r;
 			}
 		}
 
@@ -69,37 +81,54 @@ void main() {
 		scatter /= total;
 		color.rgb += scatter * ubo.scatterLightColor;
 	}
-	*/
 
-	/*
-	// ssao
 	{
+		const float near = scene.nearPlane;
+		const float far = scene.farPlane;
+
 		float ao = 0.f;
-		int range = 1;
+		int range = 2;
 		vec2 texelSize = 1.f / textureSize(ssaoTex, 0);
+		float depth = textureLod(depthTex, uv, 0).r;
+		float z = depthtoz(depth, near, far);
+		float total = 0.f;
+
+		// TODO: what kind of filter to use?
+		// without gaussian it's a simple box filter
+		// gaussian vs box
+		// const float kernel[5][5] = {
+		// 	{0.003765,	0.015019,	0.023792,	0.015019,	0.003765},
+		// 	{0.015019,	0.059912,	0.094907,	0.059912,	0.015019},
+		// 	{0.023792,	0.094907,	0.150342,	0.094907,	0.023792},
+		// 	{0.015019,	0.059912,	0.094907,	0.059912,	0.015019},
+		// 	{0.003765,	0.015019,	0.023792,	0.015019,	0.003765},
+		// };
+
 		for(int x = -range; x <= range; ++x) {
 			for(int y = -range; y <= range; ++y) {
-				vec2 off = texelSize * vec2(x, y);
-				ao += texture(ssaoTex, uv + off).a;
+				vec2 off = texelSize * vec2(x, y); // spaced
+				float sampleDepth = textureLod(depthTex, uv + off, 0.0).r;
+				float samplez = depthtoz(sampleDepth, near, far);
+				float sampleAo = textureLod(ssaoTex, uv + off, 0.0).r;
+
+				// make sure to not blur over edges here
+				float fac = smoothstep(0.0, 1.0, 1 - 20 * abs(z - samplez));
+				// fac *= kernel[x + range][y + range];
+				ao += fac * sampleAo;
+				total += fac;
 			}
 		}
 
-		int total = ((2 * range + 1) * (2 * range + 1));
+		// w component of albedo contains texture-based ao factor
 		ao /= total;
-
-
-		float ao = 0.2f;
-		// w component contains texture-based ao factor
 		vec4 albedo = subpassLoad(inAlbedo);
-		// color.rgb += ao * ubo.ssaoFactor * albedo.rgb * albedo.w;
-		color.rgb += ao * albedo.rgb;
-	}
-	*/
+		color.rgb += pow(ao, ubo.ssaoPow) * ubo.aoFactor * albedo.rgb * albedo.w;
 
-	// TODO: simple ao, remove when we have ssao
-	float ao = 0.2f * ubo.ssaoFactor;
-	vec4 albedo = subpassLoad(inAlbedo);
-	color.rgb += ao * albedo.rgb;
+		// no blur variant
+		// float ao = textureLod(ssaoTex, uv, 0.0).r;
+		// vec4 albedo = subpassLoad(inAlbedo);
+		// color.rgb += pow(ao, ubo.ssaoPow) * ubo.aoFactor * albedo.rgb * albedo.w;
+	}
 
 	fragColor = vec4(tonemap(color.rgb), 1.0);
 }

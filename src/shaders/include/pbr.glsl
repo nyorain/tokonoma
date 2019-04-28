@@ -50,12 +50,12 @@ vec3 cookTorrance(vec3 n, vec3 l, vec3 v, float roughness,
 	f0 = mix(f0, albedo, metallic);
 
 	vec3 h = normalize(l + v);
-	float ndv = max(dot(n, v), 0.0);
-	float ndl = max(dot(n, l), 0.0);
+	float ndv = max(dot(n, v), 0.001);
+	float ndl = max(dot(n, l), 0.001);
 
 	float ndf = distributionGGX(n, h, roughness);
 	float g = geometrySmith(ndv, ndl, roughness);
-	vec3 f = fresnelSchlick(max(dot(h, v), 0.0), f0);
+	vec3 f = fresnelSchlick(clamp(dot(h, v), 0.0, 1.0), f0);
 
 	vec3 specular = (ndf * g * f) / max(4.0 * ndv * ndl, 0.001);
 	vec3 diffuse = (1.0 - f) * (1.0 - metallic) * albedo / pi;

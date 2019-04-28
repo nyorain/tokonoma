@@ -113,11 +113,14 @@ shaders_src = {
 	  ['lith.comp', include_glsl],
 	],
 	'deferred': [
-	  ['gbuf.vert', include_glsl + scene_glsl],
-	  ['gbuf.frag', include_glsl + scene_glsl],
-	  ['pp.frag', include_glsl + scene_glsl],
-	  ['pointLight.frag', include_glsl + scene_glsl],
-	  ['dirLight.frag', include_glsl + scene_glsl],
+	  ['gbuf.vert', deferred_glsl],
+	  ['gbuf.frag', deferred_glsl],
+	  ['pp.frag', deferred_glsl],
+	  ['pointLight.frag', deferred_glsl],
+	  ['dirLight.frag', deferred_glsl],
+	  ['ssao.frag', deferred_glsl],
+	  ['pointScatter.frag', deferred_glsl],
+	  ['dirScatter.frag', deferred_glsl],
 	],
 }
 

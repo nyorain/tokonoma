@@ -58,7 +58,7 @@ void main() {
 	outAlbedo.rgb = albedo.rgb;
 	outEmission.xyz = texture(emissionTex, inUV).rgb;
 
-	outNormal.z = 2.f * (1.f / model.id) - 1.f; // snorm format
+	outNormal.z = 2.f * (model.id / 65536.0) - 1.f; // snorm format
 	outAlbedo.w = texture(occlusionTex, inUV).r;
 
 	vec4 mr = texture(metalRoughTex, inUV);
