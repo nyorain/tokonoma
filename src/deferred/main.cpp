@@ -45,14 +45,12 @@
 #include <cstdlib>
 #include <random>
 
-// TODO: downscale/optimize bloom
-//   use multiple different levels of blur (for the different mip levels)
-//   shouldn't need anything really new (except multiple image views, one
-//   for each mip level), just create mip levels and then blur each one.
-//   Combining them back together can probably be done in combine pass
+// TODO: push descriptor fixes to vpp
 // TODO: use bright reflective areas (or just fully lit areas,
 //   everything over a certain bloom threshold) for bloom as well,
-//   not just the emissisve stuff.
+//   not just the emissisve stuff. Simply output them into the emissive
+//   buffer as well; we have no use for that besides blur.
+//   But then scale emissive in there (like 0.9 * emissive + 0.1 * light)
 //   http://kalogirou.net/2006/05/20/how-to-do-good-bloom-for-hdr-rendering/
 // TODO: try out compute pipeline for ssao. vulkan does not require
 //   that r8 formats support storage image though
@@ -107,11 +105,13 @@ public:
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
 	static constexpr auto ssaoSampleCount = 32u;
 	static constexpr auto pointLight = true;
+	static constexpr auto maxBloomLevels = 4u;
 
 	// pp.frag
 	static constexpr unsigned flagSSAO = (1u << 0u);
 	static constexpr unsigned flagScattering = (1u << 1u);
 	static constexpr unsigned flagSSR = (1u << 2u);
+	static constexpr unsigned flagBloom = (1u << 3u);
 
 	// see pp.frag
 	struct PostProcessParams { // could name that PPP
@@ -120,7 +120,8 @@ public:
 		float aoFactor {0.1f};
 		float ssaoPow {1.f};
 		float exposure {1.f};
-		std::uint32_t flags {};
+		std::uint32_t flags {flagBloom};
+		std::uint32_t bloomLevels {1};
 	};
 
 	static const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
@@ -266,14 +267,19 @@ protected:
 	} scatter_;
 
 	// bloom
+	struct BloomLevel {
+		vpp::ImageView view;
+		vpp::TrDs ds;
+	};
+
 	struct {
-		vpp::ViewableImage targetHorz;
-		vpp::ViewableImage targetVert;
 		vpp::Pipeline pipe;
 		vpp::PipelineLayout pipeLayout;
 		vpp::TrDsLayout dsLayout;
-		vpp::TrDs dsHorz;
-		vpp::TrDs dsVert;
+		vpp::Image tmpTarget;
+		std::vector<BloomLevel> tmpLevels;
+		std::vector<BloomLevel> emissionLevels;
+		vpp::ImageView fullBloom;
 	} bloom_;
 };
 
@@ -398,13 +404,13 @@ void ViewApp::initRenderData() {
 
 	// sampler
 	vk::SamplerCreateInfo sci;
-	sci.addressModeU = vk::SamplerAddressMode::repeat;
-	sci.addressModeV = vk::SamplerAddressMode::repeat;
-	sci.addressModeW = vk::SamplerAddressMode::repeat;
-	// sci.magFilter = vk::Filter::linear;
-	// sci.minFilter = vk::Filter::linear;
-	sci.magFilter = vk::Filter::nearest;
-	sci.minFilter = vk::Filter::nearest;
+	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
+	sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
+	sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
+	sci.magFilter = vk::Filter::linear;
+	sci.minFilter = vk::Filter::linear;
+	// sci.magFilter = vk::Filter::nearest;
+	// sci.minFilter = vk::Filter::nearest;
 	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
 	sci.minLod = 0.0;
 	sci.maxLod = 100.0;
@@ -909,7 +915,7 @@ void ViewApp::initPPass() {
 		vpp::descriptorBinding( // normal
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-		vpp::descriptorBinding( // emission
+		vpp::descriptorBinding( // bloom
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 	};
@@ -1217,9 +1223,6 @@ void ViewApp::initBloom() {
 	vk::Pipeline vkpipe;
 	vk::createComputePipelines(dev, {}, 1u, cpi, nullptr, vkpipe);
 	bloom_.pipe = {dev, vkpipe};
-
-	bloom_.dsHorz = {dev.descriptorAllocator(), bloom_.dsLayout};
-	bloom_.dsVert = {dev.descriptorAllocator(), bloom_.dsLayout};
 }
 
 vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
@@ -1290,7 +1293,23 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	// create offscreen buffers, gbufs
 	initBuf(gpass_.normal, normalsFormat);
 	initBuf(gpass_.albedo, albedoFormat);
-	initBuf(gpass_.emission, emissionFormat);
+
+	// emission buf - we need mipmap levels here for bloom later
+	auto usage = vk::ImageUsageBits::colorAttachment |
+		vk::ImageUsageBits::inputAttachment |
+		vk::ImageUsageBits::transferSrc |
+		vk::ImageUsageBits::transferDst |
+		vk::ImageUsageBits::storage |
+		vk::ImageUsageBits::sampled;
+	auto info = vpp::ViewableImageCreateInfo::color(device(),
+		{size.width, size.height}, usage, {emissionFormat},
+		vk::ImageTiling::optimal, samples());
+	dlg_assert(info);
+	auto bloomLevels = std::min(maxBloomLevels, doi::mipmapLevels(size));
+	info->img.mipLevels = 1 + bloomLevels;
+	gpass_.emission = {device(), *info};
+
+	attachments.push_back(gpass_.emission.vkImageView());
 	attachments.push_back(depthTarget().vkImageView()); // depth
 	vk::FramebufferCreateInfo fbi({}, gpass_.pass,
 		attachments.size(), attachments.data(),
@@ -1321,6 +1340,47 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		size.width, size.height, 1);
 	scatter_.fb = {dev, fbi};
 
+	// TODO: targetHorz image view currently unused, we could use
+	// a simple image here... what happens with imageStore if the
+	// view has access to multiple lods? if this is allows and only
+	// writes to the highest lod, we can use it
+	// bloom images
+	usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled;
+	info = vpp::ViewableImageCreateInfo::color(device(),
+		{size.width / 2, size.height / 2}, usage, {emissionFormat},
+		vk::ImageTiling::optimal, samples());
+	info->img.mipLevels = bloomLevels;
+	dlg_assert(info);
+	bloom_.tmpTarget = {device(), info->img};
+
+	pp_.params.bloomLevels = bloomLevels;
+	pp_.updateParams = true;
+	bloom_.emissionLevels.clear();
+	bloom_.tmpLevels.clear();
+	for(auto i = 0u; i < bloomLevels; ++i) {
+		auto ivi = info->view;
+
+		// emission view
+		auto& emissionLevel = bloom_.emissionLevels.emplace_back();
+		ivi.subresourceRange.baseMipLevel = i + 1;
+		ivi.image = gpass_.emission.image();
+		emissionLevel.view = {dev, ivi};
+		emissionLevel.ds = {dev.descriptorAllocator(), bloom_.dsLayout};
+
+		// tmp target
+		auto& tmpLevel = bloom_.tmpLevels.emplace_back();
+		ivi.image = bloom_.tmpTarget;
+		ivi.subresourceRange.baseMipLevel = i;
+		tmpLevel.view = {dev, ivi};
+		tmpLevel.ds = {dev.descriptorAllocator(), bloom_.dsLayout};
+	}
+
+	auto ivi = info->view;
+	ivi.image = gpass_.emission.image();
+	ivi.subresourceRange.baseMipLevel = 0;
+	ivi.subresourceRange.levelCount = bloomLevels;
+	bloom_.fullBloom = {dev, ivi};
+
 	// create swapchain framebuffers
 	attachments.clear();
 	attachments.emplace_back(); // scPos
@@ -1340,15 +1400,16 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 
 void ViewApp::updateDescriptors() {
 	updateDescriptors_ = false;
+	std::vector<vpp::DescriptorSetUpdate> updates;
 
-	vpp::DescriptorSetUpdate dsu(lpass_.ds);
-	dsu.inputAttachment({{{}, gpass_.normal.vkImageView(),
+	auto& ldsu = updates.emplace_back(lpass_.ds);
+	ldsu.inputAttachment({{{}, gpass_.normal.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
+	ldsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.inputAttachment({{{}, gpass_.emission.vkImageView(),
+	ldsu.inputAttachment({{{}, gpass_.emission.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.inputAttachment({{{}, depthTarget().imageView(),
+	ldsu.inputAttachment({{{}, depthTarget().imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	auto ssaoView = (pp_.params.flags & flagSSAO) ?
@@ -1358,26 +1419,26 @@ void ViewApp::updateDescriptors() {
 	auto depthView = (pp_.params.flags != 0) ?
 		depthMipView_ : depthTarget().vkImageView();
 
-	vpp::DescriptorSetUpdate ldsu(pp_.ds);
+	auto& pdsu = updates.emplace_back(pp_.ds);
 	// ldsu.inputAttachment({{{}, lpass_.light.vkImageView(),
 	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.imageSampler({{{}, lpass_.light.vkImageView(),
+	pdsu.imageSampler({{{}, lpass_.light.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
+	pdsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.uniform({{pp_.ubo.buffer(), pp_.ubo.offset(), pp_.ubo.size()}});
-	ldsu.imageSampler({{{}, ssaoView,
+	pdsu.uniform({{pp_.ubo.buffer(), pp_.ubo.offset(), pp_.ubo.size()}});
+	pdsu.imageSampler({{{}, ssaoView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.imageSampler({{{}, depthView,
+	pdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.imageSampler({{{}, scatterView,
+	pdsu.imageSampler({{{}, scatterView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.imageSampler({{{}, gpass_.normal.vkImageView(),
+	pdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ldsu.imageSampler({{{}, gpass_.emission.vkImageView(),
+	pdsu.imageSampler({{{}, bloom_.fullBloom,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	vpp::DescriptorSetUpdate ssdsu(ssao_.ds);
+	auto& ssdsu = updates.emplace_back(ssao_.ds);
 	ssdsu.uniform({{ssao_.samples.buffer(), ssao_.samples.offset(),
 		ssao_.samples.size()}});
 	ssdsu.imageSampler({{{}, ssao_.noise.vkImageView(),
@@ -1387,23 +1448,26 @@ void ViewApp::updateDescriptors() {
 	ssdsu.inputAttachment({{{}, gpass_.normal.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	vpp::DescriptorSetUpdate sdsu(scatter_.ds);
+	auto& sdsu = updates.emplace_back(scatter_.ds);
 	sdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	vpp::DescriptorSetUpdate bhdsu(bloom_.dsHorz);
-	bhdsu.imageSampler({{{}, gpass_.emission.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	bhdsu.image({{{}, bloom_.targetHorz.vkImageView(),
-		vk::ImageLayout::general}});
+	for(auto i = 0u; i < pp_.params.bloomLevels; ++i) {
+		auto& tmp = bloom_.tmpLevels[i];
+		auto& emission = bloom_.emissionLevels[i];
 
-	vpp::DescriptorSetUpdate bvdsu(bloom_.dsVert);
-	bhdsu.imageSampler({{{}, bloom_.targetHorz.vkImageView(),
-		vk::ImageLayout::general}});
-	bhdsu.image({{{}, bloom_.targetVert.vkImageView(),
-		vk::ImageLayout::general}});
+		auto& bhdsu = updates.emplace_back(tmp.ds);
+		bhdsu.imageSampler({{{}, emission.view,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		bhdsu.storage({{{}, tmp.view, vk::ImageLayout::general}});
 
-	vpp::apply({dsu, ldsu, ssdsu, sdsu});
+		auto& bvdsu = updates.emplace_back(emission.ds);
+		bvdsu.imageSampler({{{}, tmp.view,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		bvdsu.storage({{{}, emission.view, vk::ImageLayout::general}});
+	}
+
+	vpp::apply(updates);
 }
 
 // enable anisotropy if possible
@@ -1665,6 +1729,145 @@ void ViewApp::record(const RenderBuffer& buf) {
 		}
 
 		vk::cmdEndRenderPass(cb);
+	}
+
+	// bloom
+	if(pp_.params.flags & flagBloom) {
+		// create emission mipmaps
+		auto& emission = gpass_.emission.image();
+		auto bloomLevels = pp_.params.bloomLevels;
+
+		// transition mipmap level 0 transferSrc
+		vpp::changeLayout(cb, emission,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::allGraphics,
+			vk::AccessBits::shaderRead,
+			vk::ImageLayout::transferSrcOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferRead,
+			{vk::ImageAspectBits::color, 0, 1, 0, 1});
+
+		// transition all but mipmap level 0 to transferDst
+		vpp::changeLayout(cb, emission,
+			vk::ImageLayout::undefined, // we don't need the content any more
+			vk::PipelineStageBits::topOfPipe, {},
+			vk::ImageLayout::transferDstOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferWrite,
+			{vk::ImageAspectBits::color, 1, bloomLevels, 0, 1});
+
+		for(auto i = 1u; i < bloomLevels + 1; ++i) {
+			// std::max needed for end offsets when the texture is not
+			// quadratic: then we would get 0 there although the mipmap
+			// still has size 1
+			vk::ImageBlit blit;
+			blit.srcSubresource.layerCount = 1;
+			blit.srcSubresource.mipLevel = i - 1;
+			blit.srcSubresource.aspectMask = vk::ImageAspectBits::color;
+			blit.srcOffsets[1].x = std::max(width >> (i - 1), 1u);
+			blit.srcOffsets[1].y = std::max(height >> (i - 1), 1u);
+			blit.srcOffsets[1].z = 1u;
+
+			blit.dstSubresource.layerCount = 1;
+			blit.dstSubresource.mipLevel = i;
+			blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
+			blit.dstOffsets[1].x = std::max(width >> i, 1u);
+			blit.dstOffsets[1].y = std::max(height >> i, 1u);
+			blit.dstOffsets[1].z = 1u;
+
+			// TODO: really bad that only nearest filter mode is allowed
+			// probably better to use custom shader to generate mipmaps/
+			// use custom buffer
+			vk::cmdBlitImage(cb, emission, vk::ImageLayout::transferSrcOptimal,
+				emission, vk::ImageLayout::transferDstOptimal, {blit},
+				vk::Filter::nearest);
+
+			// change layout of current mip level to transferSrc for next mip level
+			vpp::changeLayout(cb, emission,
+				vk::ImageLayout::transferDstOptimal,
+				vk::PipelineStageBits::transfer,
+				vk::AccessBits::transferWrite,
+				vk::ImageLayout::transferSrcOptimal,
+				vk::PipelineStageBits::transfer,
+				vk::AccessBits::transferRead,
+				{vk::ImageAspectBits::color, i, 1, 0, 1});
+		}
+
+		// transform all levels back to readonly for blur read pass
+		vpp::changeLayout(cb, emission,
+			vk::ImageLayout::transferSrcOptimal,
+			vk::PipelineStageBits::transfer,
+			vk::AccessBits::transferRead,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::allCommands,
+			vk::AccessBits::shaderRead,
+			{vk::ImageAspectBits::color, 0, bloomLevels + 1, 0, 1});
+
+		// make tmp target writable
+		vpp::changeLayout(cb, bloom_.tmpTarget,
+			vk::ImageLayout::undefined,
+			vk::PipelineStageBits::allCommands,
+			vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+			vk::ImageLayout::general,
+			vk::PipelineStageBits::computeShader,
+			vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+			{vk::ImageAspectBits::color, 0, bloomLevels, 0, 1});
+
+		// blur
+		// we blur layer for layer (both passes every time) since that
+		// might have cache advantages over first doing horizontal
+		// for all and then doing vertical for all i guess
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, bloom_.pipe);
+		for(auto i = 0u; i < bloomLevels; ++i) {
+			auto& tmp = bloom_.tmpLevels[i];
+			auto& emissionImg = emission;
+			auto& emission = bloom_.emissionLevels[i];
+
+			std::uint32_t horizontal = 1u;
+			vk::cmdPushConstants(cb, bloom_.pipeLayout, vk::ShaderStageBits::compute,
+				0, 4, &horizontal);
+			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+				bloom_.pipeLayout, 0, {tmp.ds}, {});
+
+			auto w = std::max(width >> (i + 1), 1u);
+			auto h = std::max(width >> (i + 1), 1u);
+			vk::cmdDispatch(cb, std::ceil(w / 32.f), std::ceil(h / 32.f), 1);
+
+			vpp::changeLayout(cb, bloom_.tmpTarget,
+				vk::ImageLayout::general,
+				vk::PipelineStageBits::allCommands,
+				vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+				vk::ImageLayout::shaderReadOnlyOptimal,
+				vk::PipelineStageBits::computeShader |
+					vk::PipelineStageBits::fragmentShader,
+				vk::AccessBits::shaderRead,
+				{vk::ImageAspectBits::color, i, 1, 0, 1});
+			vpp::changeLayout(cb, emissionImg,
+				vk::ImageLayout::undefined,
+				vk::PipelineStageBits::allCommands,
+				vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+				vk::ImageLayout::general,
+				vk::PipelineStageBits::computeShader,
+				vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+				{vk::ImageAspectBits::color, i + 1, 1, 0, 1});
+
+			horizontal = 0u;
+			vk::cmdPushConstants(cb, bloom_.pipeLayout, vk::ShaderStageBits::compute,
+				0, 4, &horizontal);
+			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+				bloom_.pipeLayout, 0, {emission.ds}, {});
+			vk::cmdDispatch(cb, std::ceil(w / 32.f), std::ceil(h / 32.f), 1);
+		}
+
+		// make all meission layers readonly
+		vpp::changeLayout(cb, emission,
+			vk::ImageLayout::general,
+			vk::PipelineStageBits::allCommands,
+			vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::allCommands,
+			vk::AccessBits::shaderRead,
+			{vk::ImageAspectBits::color, 1, bloomLevels, 0, 1});
 	}
 
 	// post process pass

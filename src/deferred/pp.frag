@@ -31,12 +31,13 @@ layout(set = 1, binding = 2) uniform UBO {
 	float ssaoPow;
 	float exposure;
 	uint flags;
+	uint bloomLevels;
 } ubo;
 layout(set = 1, binding = 3) uniform sampler2D ssaoTex;
 layout(set = 1, binding = 4) uniform sampler2D depthTex;
 layout(set = 1, binding = 5) uniform sampler2D scatterTex;
 layout(set = 1, binding = 6) uniform sampler2D normalTex;
-layout(set = 1, binding = 7) uniform sampler2D emissionTex;
+layout(set = 1, binding = 7) uniform sampler2D bloomTex;
 
 // http://filmicworlds.com/blog/filmic-tonemapping-operators/
 // has a nice preview of different tonemapping operators
@@ -251,8 +252,10 @@ void main() {
 	}
 
 	// add bloom
-	// TODO: blur! in extra pass(es), downscaled
-	color.rgb += 4 * texture(emissionTex, uv).rgb;
+	for(uint i = 0u; i < 1 + ubo.bloomLevels; ++i) {
+		float fac = 1.f / (1 + i);
+		color.rgb += fac * textureLod(bloomTex, uv, i).rgb;
+	}
 
 	fragColor = vec4(tonemap(color.rgb), 1.0);
 }

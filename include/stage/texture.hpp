@@ -50,4 +50,8 @@ vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 // has a float format and can store values >1.0.
 bool isHDR(vk::Format);
 
+// computes the number of mipmap levels needed for a full mipmap chain
+// for an image of the given size.
+unsigned mipmapLevels(const vk::Extent2D& extent);
+
 } // namespace doi
