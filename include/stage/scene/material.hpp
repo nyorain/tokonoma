@@ -48,6 +48,7 @@ protected:
 	float roughness_ {1.f};
 	float metalness_ {1.f};
 	float alphaCutoff_ {-1.f}; // opaque alpha mode
+	nytl::Vec3f emission_ {0.f, 0.f, 0.f};
 
 	// optional maps
 	struct Tex {

@@ -40,10 +40,20 @@
 #include <shaders/deferred.ssao.frag.h>
 #include <shaders/deferred.pointScatter.frag.h>
 #include <shaders/deferred.dirScatter.frag.h>
+#include <shaders/deferred.gblur.comp.h>
 
 #include <cstdlib>
 #include <random>
 
+// TODO: downscale/optimize bloom
+//   use multiple different levels of blur (for the different mip levels)
+//   shouldn't need anything really new (except multiple image views, one
+//   for each mip level), just create mip levels and then blur each one.
+//   Combining them back together can probably be done in combine pass
+// TODO: use bright reflective areas (or just fully lit areas,
+//   everything over a certain bloom threshold) for bloom as well,
+//   not just the emissisve stuff.
+//   http://kalogirou.net/2006/05/20/how-to-do-good-bloom-for-hdr-rendering/
 // TODO: try out compute pipeline for ssao. vulkan does not require
 //   that r8 formats support storage image though
 // TODO: try out other mechanisms for better ssao cache coherency
@@ -78,6 +88,9 @@
 // TODO(optimization): more efficient point light shadow cube map
 //   rendering: only render those sides that we can actually see...
 //   -> nothing culling-related implement at all at the moment
+// TODO(optimization): we currently don't use the a component of the
+//   bloom targets. We could basically get a free (strong) blur there...
+//   maybe good for ssao or something?
 // NOTE: investigate/compare deferred lightning elements?
 //   http://gameangst.com/?p=141
 
@@ -93,11 +106,12 @@ public:
 	static constexpr auto ssaoFormat = vk::Format::r8Unorm;
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
 	static constexpr auto ssaoSampleCount = 32u;
-	static constexpr auto pointLight = false;
+	static constexpr auto pointLight = true;
 
 	// pp.frag
 	static constexpr unsigned flagSSAO = (1u << 0u);
 	static constexpr unsigned flagScattering = (1u << 1u);
+	static constexpr unsigned flagSSR = (1u << 2u);
 
 	// see pp.frag
 	struct PostProcessParams { // could name that PPP
@@ -106,7 +120,7 @@ public:
 		float aoFactor {0.1f};
 		float ssaoPow {1.f};
 		float exposure {1.f};
-		std::uint32_t flags {flagSSAO | flagScattering};
+		std::uint32_t flags {};
 	};
 
 	static const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
@@ -114,11 +128,13 @@ public:
 public:
 	bool init(const nytl::Span<const char*> args) override;
 	void initRenderData() override;
+
 	void initGPass();
 	void initLPass();
 	void initPPass();
 	void initSSAO();
 	void initScattering();
+	void initBloom();
 	void updateDescriptors();
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
@@ -248,6 +264,17 @@ protected:
 		vpp::ViewableImage target;
 		vpp::Framebuffer fb;
 	} scatter_;
+
+	// bloom
+	struct {
+		vpp::ViewableImage targetHorz;
+		vpp::ViewableImage targetVert;
+		vpp::Pipeline pipe;
+		vpp::PipelineLayout pipeLayout;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs dsHorz;
+		vpp::TrDs dsVert;
+	} bloom_;
 };
 
 bool ViewApp::init(const nytl::Span<const char*> args) {
@@ -339,9 +366,8 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	createValueTextfield(pp, "tonemap", pp_.params.tonemap, set);
 
 	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
-	cb1.set(true);
+	cb1.set(pp_.params.flags & flagSSAO);
 	cb1.onToggle = [&](auto&) {
-		dlg_info("toggled scattering");
 		pp_.params.flags ^= flagSSAO;
 		pp_.updateParams = true;
 		updateDescriptors_ = true;
@@ -349,13 +375,19 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	};
 
 	auto& cb2 = pp.create<Checkbox>("scattering").checkbox();
-	cb2.set(true);
+	cb2.set(pp_.params.flags & flagScattering);
 	cb2.onToggle = [&](auto&) {
-		dlg_info("toggled scattering");
 		pp_.params.flags ^= flagScattering;
 		pp_.updateParams = true;
 		updateDescriptors_ = true;
 		App::scheduleRerecord();
+	};
+
+	auto& cb3 = pp.create<Checkbox>("SSR").checkbox();
+	cb3.set(pp_.params.flags & flagSSR);
+	cb3.onToggle = [&](auto&) {
+		pp_.params.flags ^= flagSSR;
+		pp_.updateParams = true;
 	};
 
 	return true;
@@ -387,6 +419,7 @@ void ViewApp::initRenderData() {
 	initPPass(); // post processing, combining
 	initSSAO(); // ssao
 	initScattering(); // light scattering/volumentric light shafts/god rays
+	initBloom(); // blur light regions
 
 	// dummy texture for materials that don't have a texture
 	std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
@@ -790,11 +823,13 @@ void ViewApp::initPPass() {
 	auto& dev = vulkanDevice();
 
 	// render pass
-	std::array<vk::AttachmentDescription, 3u> attachments;
+	// std::array<vk::AttachmentDescription, 3u> attachments;
+	std::array<vk::AttachmentDescription, 2u> attachments;
 	struct {
 		unsigned swapchain = 0u;
-		unsigned light = 1u;
-		unsigned albedo = 2u;
+		// unsigned light = 1u;
+		// unsigned albedo = 2u;
+		unsigned albedo = 1u;
 	} ids;
 
 	attachments[ids.swapchain].format = swapchainInfo().imageFormat;
@@ -817,15 +852,17 @@ void ViewApp::initPPass() {
 		attachments[id].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 	};
 
-	addInput(ids.light, lightFormat);
+	// addInput(ids.light, lightFormat);
 	addInput(ids.albedo, albedoFormat);
 
 	// subpass
 	vk::AttachmentReference inputRefs[2];
-	inputRefs[0].attachment = ids.light;
+	// inputRefs[0].attachment = ids.light;
+	// inputRefs[0].layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	// inputRefs[1].attachment = ids.albedo;
+	// inputRefs[1].layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	inputRefs[0].attachment = ids.albedo;
 	inputRefs[0].layout = vk::ImageLayout::shaderReadOnlyOptimal;
-	inputRefs[1].attachment = ids.albedo;
-	inputRefs[1].layout = vk::ImageLayout::shaderReadOnlyOptimal;
 
 	vk::AttachmentReference colorRef;
 	colorRef.attachment = ids.swapchain;
@@ -834,7 +871,8 @@ void ViewApp::initPPass() {
 	vk::SubpassDescription subpass;
 	subpass.colorAttachmentCount = 1u;
 	subpass.pColorAttachments = &colorRef;
-	subpass.inputAttachmentCount = 2u;
+	// subpass.inputAttachmentCount = 2u;
+	subpass.inputAttachmentCount = 1u;
 	subpass.pInputAttachments = inputRefs;
 
 	vk::RenderPassCreateInfo rpi;
@@ -847,9 +885,12 @@ void ViewApp::initPPass() {
 
 	// pipe
 	auto lightInputBindings = {
+		// vpp::descriptorBinding( // output from light pass
+		// 	vk::DescriptorType::inputAttachment,
+		// 	vk::ShaderStageBits::fragment),
 		vpp::descriptorBinding( // output from light pass
-			vk::DescriptorType::inputAttachment,
-			vk::ShaderStageBits::fragment),
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 		vpp::descriptorBinding( // albedo for ao
 			vk::DescriptorType::inputAttachment,
 			vk::ShaderStageBits::fragment),
@@ -863,6 +904,12 @@ void ViewApp::initPPass() {
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 		vpp::descriptorBinding( // light scattering
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+		vpp::descriptorBinding( // normal
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+		vpp::descriptorBinding( // emission
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 	};
@@ -1139,6 +1186,42 @@ void ViewApp::initScattering() {
 	scatter_.ds = {dev.descriptorAllocator(), scatter_.dsLayout};
 }
 
+void ViewApp::initBloom() {
+	// layouts
+	auto& dev = vulkanDevice();
+	auto blurBindings = {
+		vpp::descriptorBinding( // input color
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+		vpp::descriptorBinding( // input color
+			vk::DescriptorType::storageImage,
+			vk::ShaderStageBits::compute)
+	};
+
+	vk::PushConstantRange pcr;
+	pcr.size = 4;
+	pcr.stageFlags = vk::ShaderStageBits::compute;
+
+	bloom_.dsLayout = {dev, blurBindings};
+	bloom_.pipeLayout = {dev, {bloom_.dsLayout}, {pcr}};
+
+	// pipe
+	vpp::ShaderModule blurShader(dev, deferred_gblur_comp_data);
+
+	vk::ComputePipelineCreateInfo cpi;
+	cpi.layout = bloom_.pipeLayout;
+	cpi.stage.module = blurShader;
+	cpi.stage.stage = vk::ShaderStageBits::compute;
+	cpi.stage.pName = "main";
+
+	vk::Pipeline vkpipe;
+	vk::createComputePipelines(dev, {}, 1u, cpi, nullptr, vkpipe);
+	bloom_.pipe = {dev, vkpipe};
+
+	bloom_.dsHorz = {dev.descriptorAllocator(), bloom_.dsLayout};
+	bloom_.dsVert = {dev.descriptorAllocator(), bloom_.dsLayout};
+}
+
 vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 	auto width = size.width;
 	auto height = size.height;
@@ -1241,7 +1324,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	// create swapchain framebuffers
 	attachments.clear();
 	attachments.emplace_back(); // scPos
-	attachments.push_back(lpass_.light.vkImageView());
+	// attachments.push_back(lpass_.light.vkImageView());
 	attachments.push_back(gpass_.albedo.vkImageView());
 
 	for(auto& buf : bufs) {
@@ -1276,7 +1359,9 @@ void ViewApp::updateDescriptors() {
 		depthMipView_ : depthTarget().vkImageView();
 
 	vpp::DescriptorSetUpdate ldsu(pp_.ds);
-	ldsu.inputAttachment({{{}, lpass_.light.vkImageView(),
+	// ldsu.inputAttachment({{{}, lpass_.light.vkImageView(),
+	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
+	ldsu.imageSampler({{{}, lpass_.light.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	ldsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
@@ -1286,6 +1371,10 @@ void ViewApp::updateDescriptors() {
 	ldsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	ldsu.imageSampler({{{}, scatterView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ldsu.imageSampler({{{}, gpass_.normal.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ldsu.imageSampler({{{}, gpass_.emission.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	vpp::DescriptorSetUpdate ssdsu(ssao_.ds);
@@ -1301,6 +1390,18 @@ void ViewApp::updateDescriptors() {
 	vpp::DescriptorSetUpdate sdsu(scatter_.ds);
 	sdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
+
+	vpp::DescriptorSetUpdate bhdsu(bloom_.dsHorz);
+	bhdsu.imageSampler({{{}, gpass_.emission.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	bhdsu.image({{{}, bloom_.targetHorz.vkImageView(),
+		vk::ImageLayout::general}});
+
+	vpp::DescriptorSetUpdate bvdsu(bloom_.dsVert);
+	bhdsu.imageSampler({{{}, bloom_.targetHorz.vkImageView(),
+		vk::ImageLayout::general}});
+	bhdsu.image({{{}, bloom_.targetVert.vkImageView(),
+		vk::ImageLayout::general}});
 
 	vpp::apply({dsu, ldsu, ssdsu, sdsu});
 }

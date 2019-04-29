@@ -43,7 +43,7 @@ vpp::ViewableImage loadImage(const vpp::Device& dev, const gltf::Image& tex,
 vk::PushConstantRange Material::pcr() {
 	vk::PushConstantRange pcr;
 	pcr.offset = 0;
-	pcr.size = sizeof(float) * 8;
+	pcr.size = sizeof(float) * 11;
 	pcr.stageFlags = vk::ShaderStageBits::fragment;
 	return pcr;
 }
@@ -116,6 +116,11 @@ Material::Material(const gltf::Model& model,
 		metalness_ = metal->second.Factor();
 	}
 
+	if(auto em = add.find("emissiveFactor"); em != pbr.end()) {
+		auto c = em->second.ColorFactor();
+		emission_ = {float(c[0]), float(c[1]), float(c[2])};
+	}
+
 	// TODO: we really should allocate textures at once, using
 	// deferred initialization
 	// TODO: loading images like that prevents us from parallalizing
@@ -164,7 +169,8 @@ Material::Material(const gltf::Model& model,
 		metalnessRoughnessTex_ = {dummyView, defaultSampler};
 	}
 
-	// TODO: we could also respect the factors for normal (?) and occlusion
+	// TODO: we could also respect the "strength" parameters of
+	// (at least some?) textures
 	if(auto rm = add.find("normalTexture"); rm != add.end()) {
 		dlg_assertm(rm->second.TextureTexCoord() == 0,
 			"only one set of texture coordinates supported");
@@ -188,7 +194,7 @@ Material::Material(const gltf::Model& model,
 		occlusionTex_ = {dummyView, defaultSampler};
 	}
 
-	if(auto rm = add.find("emissionTexture"); rm != add.end()) {
+	if(auto rm = add.find("emissiveTexture"); rm != add.end()) {
 		dlg_assertm(rm->second.TextureTexCoord() == 0,
 			"only one set of texture coordinates supported");
 		auto tex = rm->second.TextureIndex();
@@ -257,12 +263,14 @@ void Material::bind(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 		float metalness;
 		std::uint32_t flags;
 		float alphaCutoff;
+		nytl::Vec3f emission;
 	} data = {
 		albedo_,
 		roughness_,
 		metalness_,
 		flags_.value(),
-		alphaCutoff_
+		alphaCutoff_,
+		emission_,
 	};
 
 	vk::cmdPushConstants(cb, pl, vk::ShaderStageBits::fragment, 0,

@@ -21,9 +21,9 @@ layout(set = 2, binding = 0, row_major) uniform LightBuf {
 };
 
 void main() {
+	float depth = texture(depthTex, uv).r;
 	vec2 suv = 2 * uv - 1;
 	suv.y *= -1.f; // flip y
-	float depth = texture(depthTex, uv).r;
 	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
 	vec3 pos = pos4.xyz / pos4.w;
 

@@ -18,7 +18,7 @@ layout(set = 2, binding = 0, row_major) uniform Model {
 } model;
 
 layout(push_constant) uniform Face {
-	layout(offset = 32) uint id;
+	layout(offset = 44) uint id;
 } face;
 
 void main() {

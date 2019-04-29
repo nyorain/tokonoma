@@ -121,6 +121,7 @@ shaders_src = {
 	  ['ssao.frag', deferred_glsl],
 	  ['pointScatter.frag', deferred_glsl],
 	  ['dirScatter.frag', deferred_glsl],
+	  ['gblur.comp', deferred_glsl],
 	],
 }
 

@@ -43,7 +43,7 @@ float computeSSAO(vec3 pos, vec3 normal, float depth) {
 
 	// TODO: lod important for performance, random sampling kills cache
 	// the nearer we are, the higher mipmap level we can use
-	float lod = clamp(10 * radius / z, 0.0, 6.0);
+	float lod = clamp(radius / z, 0.0, 6.0);
 	// float lod = 0.0;
 	for(int i = 0; i < ssaoSampleCount; ++i) {
 		vec3 samplePos = TBN * ssao.samples[i].xyz; // From tangent to view-space

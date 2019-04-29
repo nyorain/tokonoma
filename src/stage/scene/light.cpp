@@ -21,7 +21,7 @@
 namespace doi {
 
 // needs to be the same as in shadowmapCube.vert
-constexpr auto pcrOffsetFaceID = 32u;
+constexpr auto pcrOffsetFaceID = 44u;
 
 ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		vk::DescriptorSetLayout lightDsLayout,

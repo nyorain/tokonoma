@@ -39,6 +39,7 @@ struct MaterialPcr {
 	float metallic;
 	uint flags;
 	float alphaCutoff;
+	vec3 emission;
 };
 
 // returns the z value belonging to the given depth buffer value
