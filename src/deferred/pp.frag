@@ -39,6 +39,7 @@ layout(set = 1, binding = 4) uniform sampler2D depthTex;
 layout(set = 1, binding = 5) uniform sampler2D scatterTex;
 layout(set = 1, binding = 6) uniform sampler2D normalTex;
 layout(set = 1, binding = 7) uniform sampler2D bloomTex;
+layout(set = 1, binding = 8) uniform sampler2D ssrTex;
 
 // http://filmicworlds.com/blog/filmic-tonemapping-operators/
 // has a nice preview of different tonemapping operators
@@ -68,72 +69,6 @@ vec3 tonemap(vec3 x) {
 	}
 }
 
-// completely self developed ssr that uses the depth difference sign
-vec3 ssr2(vec3 viewPos, vec3 fragPos, vec3 normal) {
-	vec2 px = 1 / textureSize(depthTex, 0); // size of 1 pixel
-	vec3 v = normalize(fragPos - viewPos);
-	vec3 reflDir = reflect(v, normal);
-	vec3 pos = fragPos;
-	float fac = 1 - dot(-v, normal);
-
-	const float near = scene.nearPlane;
-	const float far = scene.farPlane;
-	const uint steps = 16u;
-	float stepSize = 0.1;
-	const float bepx = 1; // binary end condition in pixels
-
-	for(uint i = 0u; i < steps; ++i) {
-		vec3 opos = pos;
-		pos += stepSize * reflDir;
-		vec3 uv = sceneMap(scene.proj, pos);
-		if(uv != clamp(uv, 0.0, 1.0)) {
-			return vec3(0.0);
-		}
-
-		float depth = textureLod(depthTex, uv.xy, 0).r;
-		float z = depthtoz(uv.z, near, far);
-		float sampleZ = depthtoz(depth, near, far);
-		if(sampleZ < z) { // we are behind a surface; have hit someething
-			// we know the segment where we hit now; find a more precise
-			// hit now using binary search
-			// TODO: also break when we don't move 1 pixel
-			// per iteration anymore. Can be determined using the change
-			// in uv (in relation to textureSize of depthTex).
-			const float bsteps = 8u;
-			for(uint i = 0; i < bsteps; ++i) {
-				vec3 mid = 0.5 * (opos + pos);
-				uv = sceneMap(scene.proj, mid);
-				// if(uv != clamp(uv, 0.0, 1.0)) { // TODO: needed?
-				// 	return vec3(0.0);
-				// }
-
-				float depth = textureLod(depthTex, uv.xy, 0).r;
-				float z = depthtoz(uv.z, near, far);
-				float sampleZ = depthtoz(depth, near, far);
-				if(sampleZ < z) {
-					pos = mid;
-				} else {
-					opos = mid;
-				}
-			}
-
-			// check normal. if dot is greater 0 we have hit a backside
-			vec3 sampleN = decodeNormal(texture(normalTex, uv.xy).xy);
-			if(dot(sampleN, reflDir) > 0) {
-				return vec3(0.0);
-			}
-
-			vec2 dist = 1 - 2 * abs(vec2(0.5, 0.5) - uv.xy);
-			fac *= dist.x * dist.y;
-			return fac * texture(lightTex, uv.xy).rgb;
-		}
-
-		stepSize *= 2;
-	}
-
-	return vec3(0.0);
-}
-
 // TODO: better blurring/filter for ssao/scattering
 //  or move at least light scattering to light shader? that would
 //  allow it for multiple light sources (using natural hdr) as
@@ -152,7 +87,7 @@ void main() {
 	// scattering
 	if((ubo.flags & flagScattering) != 0) {
 		float scatter = 0.f;
-		int range = 1;
+		int range = 2;
 		vec2 texelSize = 1.f / textureSize(scatterTex, 0);
 		for(int x = -range; x <= range; ++x) {
 			for(int y = -range; y <= range; ++y) {
@@ -181,7 +116,7 @@ void main() {
 		const float far = scene.farPlane;
 
 		float ssao = 0.f;
-		int range = 2;
+		int range = 1;
 		vec2 texelSize = 1.f / textureSize(ssaoTex, 0);
 		float depth = textureLod(depthTex, uv, 0).r;
 		float z = depthtoz(depth, near, far);
@@ -195,11 +130,13 @@ void main() {
 		// 	{0.023792,	0.094907,	0.150342,	0.094907,	0.023792},
 		// 	{0.015019,	0.059912,	0.094907,	0.059912,	0.015019},
 		// 	{0.003765,	0.015019,	0.023792,	0.015019,	0.003765},
-		// };
+		// }
 
+		// TODO: probably best to bur in 2-step guassian pass
+		// then also use linear sampling gauss, see gblur.frag
 		for(int x = -range; x <= range; ++x) {
 			for(int y = -range; y <= range; ++y) {
-				vec2 off = texelSize * vec2(x, y); // spaced
+				vec2 off = texelSize * vec2(x, y);
 				vec2 uvo = clamp(uv + off, 0.0, 1.0);
 				float sampleDepth = textureLod(depthTex, uvo, 0.0).r;
 				float samplez = depthtoz(sampleDepth, near, far);
@@ -239,16 +176,17 @@ void main() {
 	// post processing into combining and true post processing.
 	// The combine pass should also contain the bloom addition.
 	if((ubo.flags & flagSSR) != 0) {
-		// reconstruct position
-		float depth = textureLod(depthTex, uv, 0).r;
-		if(depth != 1.f) { // otherwise nothing was rendererd here
-			vec2 suv = 2 * uv - 1;
-			suv.y *= -1.f; // flip y
-			vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
-			vec3 fragPos = pos4.xyz / pos4.w;
-			vec3 normal = decodeNormal(texture(normalTex, uv).xy);
-			// color.rgb += ssr(scene.viewPos, fragPos, normal);
-			color.rgb += ssr2(scene.viewPos, fragPos, normal);
+		// TODO: blur based on roughness and refl distance.
+		vec4 refl = textureLod(ssrTex, uv, 0);
+		vec2 ruv = refl.xy;
+		if(refl.xy != vec2(0.0)) {
+			vec3 light = textureLod(lightTex, ruv, 0).rgb;
+			float fac = refl.z;
+			// make reflections weaker when near image borders
+			// to avoid plopping in
+			vec2 sdist = 1 - 2 * abs(vec2(0.5, 0.5) - ruv);
+			fac *= pow(sdist.x * sdist.y, 0.8);
+			color.rgb += fac * light;
 		}
 	}
 

@@ -13,6 +13,7 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj;
 	mat4 invProj;
 	vec3 viewPos;
+	float near, far;
 } scene;
 
 layout(set = 1, binding = 0) uniform sampler2D depthTex;
@@ -21,7 +22,8 @@ layout(set = 2, binding = 0, row_major) uniform LightBuf {
 };
 
 void main() {
-	float depth = texture(depthTex, uv).r;
+	float ldepth = texture(depthTex, uv).r;
+	float depth = ztodepth(ldepth, scene.near, scene.far); // TODO
 	vec2 suv = 2 * uv - 1;
 	suv.y *= -1.f; // flip y
 	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
@@ -29,13 +31,17 @@ void main() {
 
 	vec3 v = normalize(pos - scene.viewPos); // view direction
 	vec3 viewToLight = normalize(light.pos - scene.viewPos);
-	float ldv = dot(viewToLight, v);
-	if(ldv < 0) {
-		scatter = 0.f;
-		return;
-	}
 
-	// TODO: mapping not fragment shader dependent but relative
+	// TODO: the abs needed here is weird... we probably should calculate
+	// ldv in a completely different manner...
+	float ldv = abs(dot(viewToLight, v));
+
+	// if(ldv < 0) {
+	// 	scatter = 1.0f;
+	// 	return;
+	// }
+
+	// TODO: mapping not fragment shader dependent but somewhat
 	// expensive, could be done in vertex shader (or cpu but
 	// has to be refreshed every time viewPos changes...)
 	// mapped position of a directional light
@@ -47,8 +53,9 @@ void main() {
 		return;
 	}
 
+	float lightDepth = depthtoz(mappedLightPos.z, scene.near, scene.far);
 	scatter = lightScatterDepth(uv, mappedLightPos.xy,
-		mappedLightPos.z, ldv, depthTex);
+		lightDepth, ldv, depthTex, ldepth);
 
 	// attentuation volume
 	// TODO: document how the projection here works

@@ -41,10 +41,28 @@
 #include <shaders/deferred.pointScatter.frag.h>
 #include <shaders/deferred.dirScatter.frag.h>
 #include <shaders/deferred.gblur.comp.h>
+#include <shaders/deferred.ssr.comp.h>
 
 #include <cstdlib>
 #include <random>
 
+// TODO: there is currently a bloom artefact that looks like a sync
+//   issue or unitialized memory. Maybe have a look at with renderdoc
+// TODO: there is currently a artefact for light scattering.
+//   was introduct with using the linear depth buffer
+//   fix that (can e.g. be seen on sponza with point light).
+//   ok, so not really an artefact and rather a structural problem:
+//   the ground is in front of the light source from the
+//   camera pov... i don't think there is a solution for that!
+//   depth-based light scattering will probably only work for direcitonal
+//   lights. The shadowmap-based approach should work for point lights
+//   as well though (should work even better in general!)
+//   integrate that.
+//   nvm, seems to be something about ldv?!
+// TODO: fix used samplers, we need more than one! some passes are
+//   better with linear sampler, others need nearest sampler.
+//   same for mipmap. But try to let multiple passes use same
+//   sampler if possible
 // TODO: use bright reflective areas (or just fully lit areas,
 //   everything over a certain bloom threshold) for bloom as well,
 //   not just the emissisve stuff. Simply output them into the emissive
@@ -55,6 +73,7 @@
 //   that r8 formats support storage image though
 // TODO: try out other mechanisms for better ssao cache coherency
 //   we should somehow use a higher lod level i guess
+// TODO: fix theoretical synchronization issues
 // TODO: lod depth levels with nearest filter (see image blit)
 //   aren't really helpful, linear depth mipmaps would be *way* better.
 //   we could do that in a custom shader, should probably not even be
@@ -81,7 +100,9 @@
 // TODO(optimization?) we could reuse float gbuffers for later hdr rendering
 //   not that easy though since normal buffer has snorm format...
 //   attachments can be used as color *and* input attachments in a
-//   subpass.
+//   subpass. And reusing the normals buffer as light output buffer
+//   is pretty perfect, no pass depends on both as input.
+//   maybe vulkan mutable format helps?
 // TODO(optimization): more efficient point light shadow cube map
 //   rendering: only render those sides that we can actually see...
 //   -> nothing culling-related implement at all at the moment
@@ -102,7 +123,9 @@ public:
 	static constexpr auto emissionFormat = vk::Format::r8g8b8a8Unorm;
 	static constexpr auto ssaoFormat = vk::Format::r8Unorm;
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
-	static constexpr auto ssaoSampleCount = 32u;
+	static constexpr auto ldepthFormat = vk::Format::r16Sfloat;
+	static constexpr auto ssrFormat = vk::Format::r8g8b8a8Unorm;
+	static constexpr auto ssaoSampleCount = 16u;
 	static constexpr auto pointLight = true;
 	static constexpr auto maxBloomLevels = 4u;
 
@@ -116,8 +139,8 @@ public:
 	struct PostProcessParams { // could name that PPP
 		nytl::Vec3f scatterLightColor {1.f, 0.9f, 0.5f};
 		std::uint32_t tonemap {2}; // uncharted
-		float aoFactor {0.1f};
-		float ssaoPow {1.f};
+		float aoFactor {0.05f};
+		float ssaoPow {3.f};
 		float exposure {1.f};
 		std::uint32_t flags {flagBloom};
 		std::uint32_t bloomLevels {1};
@@ -135,6 +158,7 @@ public:
 	void initSSAO();
 	void initScattering();
 	void initBloom();
+	void initSSR();
 	void updateDescriptors();
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
@@ -209,6 +233,7 @@ protected:
 		vpp::ViewableImage normal;
 		vpp::ViewableImage albedo;
 		vpp::ViewableImage emission;
+		vpp::ViewableImage depth; // color, for linear sampling/mipmaps
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 	} gpass_;
@@ -272,14 +297,23 @@ protected:
 	};
 
 	struct {
-		vpp::Pipeline pipe;
 		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
 		vpp::TrDsLayout dsLayout;
 		vpp::Image tmpTarget;
 		std::vector<BloomLevel> tmpLevels;
 		std::vector<BloomLevel> emissionLevels;
 		vpp::ImageView fullBloom;
 	} bloom_;
+
+	// ssr
+	struct {
+		vpp::ViewableImage target;
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+	} ssr_;
 };
 
 bool ViewApp::init(const nytl::Span<const char*> args) {
@@ -393,6 +427,8 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	cb3.onToggle = [&](auto&) {
 		pp_.params.flags ^= flagSSR;
 		pp_.updateParams = true;
+		updateDescriptors_ = true;
+		App::scheduleRerecord();
 	};
 
 	auto& cb4 = pp.create<Checkbox>("Bloom").checkbox();
@@ -420,6 +456,7 @@ void ViewApp::initRenderData() {
 	// sci.magFilter = vk::Filter::nearest;
 	// sci.minFilter = vk::Filter::nearest;
 	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
+	// sci.mipmapMode = vk::SamplerMipmapMode::linear;
 	sci.minLod = 0.0;
 	sci.maxLod = 100.0;
 	// sci.maxLod = 0.0;
@@ -434,6 +471,7 @@ void ViewApp::initRenderData() {
 	initSSAO(); // ssao
 	initScattering(); // light scattering/volumentric light shafts/god rays
 	initBloom(); // blur light regions
+	initSSR(); // screen space relfections
 
 	// dummy texture for materials that don't have a texture
 	std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
@@ -491,12 +529,13 @@ void ViewApp::initGPass() {
 	auto& dev = vulkanDevice();
 
 	// render pass
-	std::array<vk::AttachmentDescription, 4> attachments;
+	std::array<vk::AttachmentDescription, 5> attachments;
 	struct {
 		unsigned normals = 0;
 		unsigned albedo = 1;
 		unsigned emission = 2;
 		unsigned depth = 3;
+		unsigned ldepth = 4;
 	} ids;
 
 	auto addGBuf = [&](auto id, auto format) {
@@ -514,22 +553,25 @@ void ViewApp::initGPass() {
 	addGBuf(ids.albedo, albedoFormat);
 	addGBuf(ids.emission, emissionFormat);
 	addGBuf(ids.depth, depthFormat());
+	addGBuf(ids.ldepth, ldepthFormat);
 
 	// subpass
-	vk::AttachmentReference gbufRefs[3];
+	vk::AttachmentReference gbufRefs[4];
 	gbufRefs[0].attachment = ids.normals;
 	gbufRefs[0].layout = vk::ImageLayout::colorAttachmentOptimal;
 	gbufRefs[1].attachment = ids.albedo;
 	gbufRefs[1].layout = vk::ImageLayout::colorAttachmentOptimal;
 	gbufRefs[2].attachment = ids.emission;
 	gbufRefs[2].layout = vk::ImageLayout::colorAttachmentOptimal;
+	gbufRefs[3].attachment = ids.ldepth;
+	gbufRefs[3].layout = vk::ImageLayout::colorAttachmentOptimal;
 
 	vk::AttachmentReference depthRef;
 	depthRef.attachment = ids.depth;
 	depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
 
 	vk::SubpassDescription subpass;
-	subpass.colorAttachmentCount = 3;
+	subpass.colorAttachmentCount = 4;
 	subpass.pColorAttachments = gbufRefs;
 	subpass.pDepthStencilAttachment = &depthRef;
 
@@ -548,10 +590,12 @@ void ViewApp::initGPass() {
 	dependency.dstStageMask = vk::PipelineStageBits::computeShader |
 		vk::PipelineStageBits::fragmentShader |
 		vk::PipelineStageBits::earlyFragmentTests |
-		vk::PipelineStageBits::lateFragmentTests;
+		vk::PipelineStageBits::lateFragmentTests |
+		vk::PipelineStageBits::transfer;
 	dependency.dstAccessMask = vk::AccessBits::inputAttachmentRead |
 		vk::AccessBits::depthStencilAttachmentRead |
 		vk::AccessBits::depthStencilAttachmentWrite |
+		vk::AccessBits::transferRead |
 		vk::AccessBits::shaderRead;
 
 	vk::RenderPassCreateInfo rpi;
@@ -567,10 +611,11 @@ void ViewApp::initGPass() {
 
 	// pipeline
 	// per scene; view + projection matrix
+	auto stages =  vk::ShaderStageBits::vertex |
+		vk::ShaderStageBits::fragment |
+		vk::ShaderStageBits::compute;
 	auto sceneBindings = {
-		vpp::descriptorBinding(
-			vk::DescriptorType::uniformBuffer,
-			vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer, stages)
 	};
 
 	sceneDsLayout_ = {dev, sceneBindings};
@@ -620,19 +665,15 @@ void ViewApp::initGPass() {
 	attributes[2].binding = 1;
 
 	// we don't blend in the gbuffers; simply overwrite
-	vk::PipelineColorBlendAttachmentState blendAttachments[3];
-	blendAttachments[0].blendEnable = false;
-	blendAttachments[0].colorWriteMask =
-		vk::ColorComponentBits::r |
-		vk::ColorComponentBits::g |
-		vk::ColorComponentBits::b |
-		vk::ColorComponentBits::a;
+	auto blendAttachments = {
+		noBlendAttachment(),
+		noBlendAttachment(),
+		noBlendAttachment(),
+		noBlendAttachment()
+	};
 
-	blendAttachments[1] = blendAttachments[0];
-	blendAttachments[2] = blendAttachments[0];
-
-	gpi.blend.attachmentCount = 3u;
-	gpi.blend.pAttachments = blendAttachments;
+	gpi.blend.attachmentCount = blendAttachments.size();
+	gpi.blend.pAttachments = blendAttachments.begin();
 
 	gpi.vertex.pVertexAttributeDescriptions = attributes;
 	gpi.vertex.vertexAttributeDescriptionCount = 3u;
@@ -666,7 +707,7 @@ void ViewApp::initLPass() {
 		unsigned normals = 0;
 		unsigned albedo = 1;
 		unsigned emission = 2;
-		unsigned depth = 3;
+		unsigned depth = 3; // TODO: use ldepth here?
 		unsigned light = 4;
 	} ids;
 
@@ -924,6 +965,9 @@ void ViewApp::initPPass() {
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 		vpp::descriptorBinding( // bloom
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+		vpp::descriptorBinding( // ssr
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 	};
@@ -1207,7 +1251,7 @@ void ViewApp::initBloom() {
 		vpp::descriptorBinding( // input color
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
-		vpp::descriptorBinding( // input color
+		vpp::descriptorBinding( // output color, blurred
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute)
 	};
@@ -1233,10 +1277,42 @@ void ViewApp::initBloom() {
 	bloom_.pipe = {dev, vkpipe};
 }
 
+void ViewApp::initSSR() {
+	// layouts
+	auto& dev = vulkanDevice();
+	auto ssrBindings = {
+		vpp::descriptorBinding( // linear depth
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+		vpp::descriptorBinding( // normals
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+		vpp::descriptorBinding( // output data
+			vk::DescriptorType::storageImage,
+			vk::ShaderStageBits::compute)
+	};
+
+	ssr_.dsLayout = {dev, ssrBindings};
+	ssr_.ds = {dev.descriptorAllocator(), ssr_.dsLayout};
+	ssr_.pipeLayout = {dev, {sceneDsLayout_, ssr_.dsLayout}, {}};
+
+	// pipe
+	vpp::ShaderModule ssrShader(dev, deferred_ssr_comp_data);
+
+	vk::ComputePipelineCreateInfo cpi;
+	cpi.layout = ssr_.pipeLayout;
+	cpi.stage.module = ssrShader;
+	cpi.stage.stage = vk::ShaderStageBits::compute;
+	cpi.stage.pName = "main";
+
+	vk::Pipeline vkpipe;
+	vk::createComputePipelines(dev, {}, 1u, cpi, nullptr, vkpipe);
+	ssr_.pipe = {dev, vkpipe};
+}
+
 vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 	auto width = size.width;
 	auto height = size.height;
-	auto levels = 1 + std::floor(std::log2(std::max(width, height)));
 
 	// img
 	vk::ImageCreateInfo img;
@@ -1245,7 +1321,7 @@ vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 	img.extent.width = width;
 	img.extent.height = height;
 	img.extent.depth = 1;
-	img.mipLevels = levels;
+	img.mipLevels = 1;
 	img.arrayLayers = 1;
 	img.sharingMode = vk::SharingMode::exclusive;
 	img.tiling = vk::ImageTiling::optimal;
@@ -1269,11 +1345,6 @@ vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 	// create the viewable image
 	// will set the created image in the view info for us
 	vpp::ViewableImage target = {device(), img, view};
-
-	view.subresourceRange.levelCount = levels;
-	view.image = target.image();
-	depthMipView_ = {device(), view};
-	depthMipLevels_ = levels;
 
 	return target;
 }
@@ -1319,12 +1390,38 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 
 	attachments.push_back(gpass_.emission.vkImageView());
 	attachments.push_back(depthTarget().vkImageView()); // depth
+
+	depthMipLevels_ = doi::mipmapLevels(size);
+	// depthMipLevels_ = 1u;
+	usage = vk::ImageUsageBits::colorAttachment |
+		vk::ImageUsageBits::inputAttachment |
+		vk::ImageUsageBits::transferSrc |
+		vk::ImageUsageBits::transferDst |
+		vk::ImageUsageBits::sampled;
+	info = vpp::ViewableImageCreateInfo::color(device(),
+		{size.width, size.height}, usage, {ldepthFormat},
+		vk::ImageTiling::optimal, samples());
+	dlg_assert(info);
+	info->img.mipLevels = depthMipLevels_;
+	gpass_.depth = {device(), *info};
+	attachments.push_back(gpass_.depth.vkImageView());
+
+	info->view.subresourceRange.levelCount = depthMipLevels_;
+	info->view.image = gpass_.depth.image();
+	depthMipView_ = {device(), info->view};
+
 	vk::FramebufferCreateInfo fbi({}, gpass_.pass,
 		attachments.size(), attachments.data(),
 		size.width, size.height, 1);
 	gpass_.fb = {dev, fbi};
 
 	// light buf
+	attachments.clear();
+	attachments.push_back(gpass_.normal.vkImageView());
+	attachments.push_back(gpass_.albedo.vkImageView());
+	attachments.push_back(gpass_.emission.vkImageView());
+	attachments.push_back(depthTarget().vkImageView());
+
 	initBuf(lpass_.light, lightFormat);
 	fbi = vk::FramebufferCreateInfo({}, lpass_.pass,
 		attachments.size(), attachments.data(),
@@ -1348,11 +1445,9 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		size.width, size.height, 1);
 	scatter_.fb = {dev, fbi};
 
-	// TODO: targetHorz image view currently unused, we could use
-	// a simple image here... what happens with imageStore if the
-	// view has access to multiple lods? if this is allows and only
-	// writes to the highest lod, we can use it
-	// bloom images
+	// TODO: really start with half-sized bloom for first level?
+	// try out different settings/make it confiurable. Should have
+	// major impact on visuals *and* performance
 	usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled;
 	info = vpp::ViewableImageCreateInfo::color(device(),
 		{size.width / 2, size.height / 2}, usage, {emissionFormat},
@@ -1389,6 +1484,14 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	ivi.subresourceRange.levelCount = bloomLevels;
 	bloom_.fullBloom = {dev, ivi};
 
+	// ssr target image
+	usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled;
+	info = vpp::ViewableImageCreateInfo::color(device(),
+		{size.width, size.height}, usage, {ssrFormat},
+		vk::ImageTiling::optimal, samples());
+	dlg_assert(info);
+	ssr_.target = {device(), *info};
+
 	// create swapchain framebuffers
 	attachments.clear();
 	attachments.emplace_back(); // scPos
@@ -1420,14 +1523,17 @@ void ViewApp::updateDescriptors() {
 	ldsu.inputAttachment({{{}, depthTarget().imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
+	auto needDepth = flagScattering | flagSSR | flagSSAO;
 	auto ssaoView = (pp_.params.flags & flagSSAO) ?
 		ssao_.target.vkImageView() : dummyTex_.vkImageView();
 	auto scatterView = (pp_.params.flags & flagScattering) ?
 		scatter_.target.vkImageView() : dummyTex_.vkImageView();
-	auto depthView = (pp_.params.flags != 0) ?
-		depthMipView_ : depthTarget().vkImageView();
+	auto depthView = ((pp_.params.flags & needDepth) != 0) ?
+		depthMipView_ : gpass_.depth.vkImageView();
 	auto bloomView = (pp_.params.flags & flagBloom) ?
 		bloom_.fullBloom : gpass_.emission.vkImageView();
+	auto ssrView = (pp_.params.flags & flagSSR) ?
+		ssr_.target.vkImageView() : dummyTex_.vkImageView();
 
 	auto& pdsu = updates.emplace_back(pp_.ds);
 	// ldsu.inputAttachment({{{}, lpass_.light.vkImageView(),
@@ -1446,6 +1552,8 @@ void ViewApp::updateDescriptors() {
 	pdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	pdsu.imageSampler({{{}, bloomView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	pdsu.imageSampler({{{}, ssrView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	auto& ssdsu = updates.emplace_back(ssao_.ds);
@@ -1478,6 +1586,14 @@ void ViewApp::updateDescriptors() {
 			bvdsu.storage({{{}, emission.view, vk::ImageLayout::general}});
 		}
 	}
+
+	auto& rdsu = updates.emplace_back(ssr_.ds);
+	rdsu.imageSampler({{{}, depthView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	rdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	rdsu.storage({{{}, ssr_.target.vkImageView(),
+		vk::ImageLayout::general}});
 
 	vpp::apply(updates);
 }
@@ -1555,10 +1671,11 @@ void ViewApp::record(const RenderBuffer& buf) {
 
 	// gpass
 	{
-		std::array<vk::ClearValue, 4u> cv {};
+		std::array<vk::ClearValue, 5u> cv {};
 		cv[0] = {-1.f, -1.f, -1.f, -1.f}; // normals, snorm
 		cv[1] = cv[2] = {{0.f, 0.f, 0.f, 0.f}};
 		cv[3].depthStencil = {1.f, 0u};
+		cv[4] = {{1000.f, 0.f, 0.f, 0.f}}; // r16f depth
 		vk::cmdBeginRenderPass(cb, {
 			gpass_.pass,
 			gpass_.fb,
@@ -1588,8 +1705,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// create depth mipmaps
-	if(pp_.params.flags != 0) {
-		auto& depthImg = depthTarget().image();
+	auto needDepth = flagScattering | flagSSR | flagSSAO;
+	if(depthMipLevels_ > 1 && (pp_.params.flags & needDepth) != 0) {
+		auto& depthImg = gpass_.depth.image();
 		// transition mipmap level 0 transferSrc
 		vpp::changeLayout(cb, depthImg,
 			vk::ImageLayout::shaderReadOnlyOptimal,
@@ -1598,7 +1716,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 			vk::ImageLayout::transferSrcOptimal,
 			vk::PipelineStageBits::transfer,
 			vk::AccessBits::transferRead,
-			{vk::ImageAspectBits::depth, 0, 1, 0, 1});
+			{vk::ImageAspectBits::color, 0, 1, 0, 1});
 
 		// transition all but mipmap level 0 to transferDst
 		vpp::changeLayout(cb, depthImg,
@@ -1607,7 +1725,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 			vk::ImageLayout::transferDstOptimal,
 			vk::PipelineStageBits::transfer,
 			vk::AccessBits::transferWrite,
-			{vk::ImageAspectBits::depth, 1, depthMipLevels_ - 1, 0, 1});
+			{vk::ImageAspectBits::color, 1, depthMipLevels_ - 1, 0, 1});
 
 		for(auto i = 1u; i < depthMipLevels_; ++i) {
 			// std::max needed for end offsets when the texture is not
@@ -1616,24 +1734,21 @@ void ViewApp::record(const RenderBuffer& buf) {
 			vk::ImageBlit blit;
 			blit.srcSubresource.layerCount = 1;
 			blit.srcSubresource.mipLevel = i - 1;
-			blit.srcSubresource.aspectMask = vk::ImageAspectBits::depth;
+			blit.srcSubresource.aspectMask = vk::ImageAspectBits::color;
 			blit.srcOffsets[1].x = std::max(width >> (i - 1), 1u);
 			blit.srcOffsets[1].y = std::max(height >> (i - 1), 1u);
 			blit.srcOffsets[1].z = 1u;
 
 			blit.dstSubresource.layerCount = 1;
 			blit.dstSubresource.mipLevel = i;
-			blit.dstSubresource.aspectMask = vk::ImageAspectBits::depth;
+			blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
 			blit.dstOffsets[1].x = std::max(width >> i, 1u);
 			blit.dstOffsets[1].y = std::max(height >> i, 1u);
 			blit.dstOffsets[1].z = 1u;
 
-			// TODO: really bad that only nearest filter mode is allowed
-			// probably better to use custom shader to generate mipmaps/
-			// use custom buffer
 			vk::cmdBlitImage(cb, depthImg, vk::ImageLayout::transferSrcOptimal,
 				depthImg, vk::ImageLayout::transferDstOptimal, {blit},
-				vk::Filter::nearest);
+				vk::Filter::linear);
 
 			// change layout of current mip level to transferSrc for next mip level
 			vpp::changeLayout(cb, depthImg,
@@ -1643,7 +1758,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 				vk::ImageLayout::transferSrcOptimal,
 				vk::PipelineStageBits::transfer,
 				vk::AccessBits::transferRead,
-				{vk::ImageAspectBits::depth, i, 1, 0, 1});
+				{vk::ImageAspectBits::color, i, 1, 0, 1});
 		}
 
 		// transform all levels back to readonly
@@ -1654,7 +1769,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 			vk::ImageLayout::shaderReadOnlyOptimal,
 			vk::PipelineStageBits::allCommands,
 			vk::AccessBits::shaderRead,
-			{vk::ImageAspectBits::depth, 0, depthMipLevels_, 0, 1});
+			{vk::ImageAspectBits::color, 0, depthMipLevels_, 0, 1});
 	}
 
 	// ssao
@@ -1752,8 +1867,8 @@ void ViewApp::record(const RenderBuffer& buf) {
 		// transition mipmap level 0 transferSrc
 		vpp::changeLayout(cb, emission,
 			vk::ImageLayout::shaderReadOnlyOptimal,
-			vk::PipelineStageBits::allGraphics,
-			vk::AccessBits::shaderRead,
+			vk::PipelineStageBits::allCommands,
+			vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
 			vk::ImageLayout::transferSrcOptimal,
 			vk::PipelineStageBits::transfer,
 			vk::AccessBits::transferRead,
@@ -1787,12 +1902,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 			blit.dstOffsets[1].y = std::max(height >> i, 1u);
 			blit.dstOffsets[1].z = 1u;
 
-			// TODO: really bad that only nearest filter mode is allowed
-			// probably better to use custom shader to generate mipmaps/
-			// use custom buffer
 			vk::cmdBlitImage(cb, emission, vk::ImageLayout::transferSrcOptimal,
 				emission, vk::ImageLayout::transferDstOptimal, {blit},
-				vk::Filter::nearest);
+				vk::Filter::linear);
 
 			// change layout of current mip level to transferSrc for next mip level
 			vpp::changeLayout(cb, emission,
@@ -1880,6 +1992,33 @@ void ViewApp::record(const RenderBuffer& buf) {
 			vk::PipelineStageBits::allCommands,
 			vk::AccessBits::shaderRead,
 			{vk::ImageAspectBits::color, 1, bloomLevels, 0, 1});
+	}
+
+	// ssr pass
+	{
+		auto target = ssr_.target.vkImage();
+		vpp::changeLayout(cb, target,
+			vk::ImageLayout::undefined, // don't need that anymore
+			vk::PipelineStageBits::topOfPipe, {},
+			vk::ImageLayout::general,
+			vk::PipelineStageBits::computeShader,
+			vk::AccessBits::shaderWrite,
+			{vk::ImageAspectBits::color, 0, 1, 0, 1});
+
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
+			ssr_.pipe);
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+			ssr_.pipeLayout, 0, {sceneDs_, ssr_.ds}, {});
+		vk::cmdDispatch(cb, std::ceil(width / 8.f), std::ceil(height / 8.f), 1);
+
+		vpp::changeLayout(cb, target,
+			vk::ImageLayout::general,
+			vk::PipelineStageBits::computeShader,
+			vk::AccessBits::shaderWrite,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::fragmentShader,
+			vk::AccessBits::shaderRead,
+			{vk::ImageAspectBits::color, 0, 1, 0, 1});
 	}
 
 	// post process pass

@@ -116,7 +116,7 @@ Material::Material(const gltf::Model& model,
 		metalness_ = metal->second.Factor();
 	}
 
-	if(auto em = add.find("emissiveFactor"); em != pbr.end()) {
+	if(auto em = add.find("emissiveFactor"); em != add.end()) {
 		auto c = em->second.ColorFactor();
 		emission_ = {float(c[0]), float(c[1]), float(c[2])};
 	}

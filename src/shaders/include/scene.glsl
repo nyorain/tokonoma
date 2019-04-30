@@ -49,6 +49,12 @@ struct MaterialPcr {
 float depthtoz(float depth, float near, float far) {
 	return near * far / (far + near - depth * (far - near));
 }
+float ztodepth(float z, float near, float far) {
+	if(z == 1000.f) { // TODO
+		return 1.f;
+	}
+	return (near + far - near * far / z) / (far - near);
+}
 // NOTE: we could implement an alternative version that uses the projection
 // matrix for depthtoz. But we always use the premultiplied
 // projectionView matrix and we can't get the information out of that.
@@ -189,14 +195,14 @@ float mieScattering(float lightDotView, float gs) {
 // fragPos and lightPos are in screen space
 // ldv: dot(lightDir, viewDir)
 float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
-		float ldv, sampler2D depthTex) {
+		float ldv, sampler2D depthTex, float fragDepth) {
 	// if light position is outside of screen, we can't scatter since
 	// we can't track rays to the ray (since depth map only covers screen)
 	if(clamp(lightPos, 0.0, 1.0) != lightPos) {
 		return 0.f;
 	}
 
-	vec2 ray = lightPos - fragPos;
+	vec3 ray = vec3(lightPos, lightDepth) - vec3(fragPos, fragDepth);
 	// NOTE: making the number of steps dependent on the ray length
 	// is probably a bad idea. When light an pixel (geometry) are close, the
 	// chance for artefacts is the highest i guess
@@ -204,9 +210,9 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	// uint steps = uint(clamp(10 * l, 5, 15));
 
 	uint steps = 10;
-	vec2 step = ray / steps;
+	vec3 step = ray / steps;
 	float accum = 0.f;
-	vec2 ipos = fragPos;
+	vec3 ipos = vec3(fragPos, fragDepth);
 
 	// TODO: maybe more efficient ot pass pattern as texture?
 	// or make global variable?
@@ -218,7 +224,7 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 		{ 0.1875f, 0.6875f, 0.0625f, 0.5625},
 		{ 0.9375f, 0.4375f, 0.8125f, 0.3125}};
 	float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
-	ipos += ditherValue * step;
+	ipos.xy += ditherValue * step.xy; // TODO: z too?
 
 	// NOTE: instead of the dithering we could use a fully random
 	// offset. Doesn't seem to work as well though.
@@ -232,17 +238,32 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	float importance = 0.01;
 	float total = 0.f;
 
+	int lod = 0;
 	// like ssao: we manually choose the lod since the default
 	// derivative-based lod mechanisms aren't of much use here.
 	// the larger the step size is, the less detail with need,
 	// therefore larger step size -> high mipmap level
-	float lod = clamp(10 * dot(step, step), 0.0, 6.0);
+	// NOTE: nope, that doesn't work, destroys our random sampling
+	// basically, that only works on higher levels...
+	// vec2 stepPx = step * textureSize(depthTex, 0);
+	// float stepLength = length(stepPx); // correct one, below are guesses
+	// float stepLength = max(abs(stepPx.x), abs(stepPx.y));
+	// float stepLength = min(abs(stepPx.x), abs(stepPx.y));
+	// float stepLength = dot(stepPx, stepPx);
+	// float lod = clamp(log2(stepLength) - 1, 0.0, 4.0);
+
 	for(uint i = 0u; i < steps; ++i) {
 		// sampler2DShadow: z value is the value we compare with
 		// accum += texture(depthTex, vec3(ipos, rayEnd.z)).r;
 
-		float depth = textureLod(depthTex, ipos, lod).r;
-		accum += importance * (depth < lightDepth ? 0.f : 1.f);
+		float depth = textureLod(depthTex, ipos.xy, lod).r;
+
+		// TODO: don't make it binary for second condition
+		// if(depth > lightDepth || depth < ipos.z) {
+		if(depth > lightDepth) {
+			accum += importance;
+		}
+
 		ipos += step;
 
 		total += importance;

@@ -122,6 +122,7 @@ shaders_src = {
 	  ['pointScatter.frag', deferred_glsl],
 	  ['dirScatter.frag', deferred_glsl],
 	  ['gblur.comp', deferred_glsl],
+	  ['ssr.comp', deferred_glsl],
 	],
 }
 

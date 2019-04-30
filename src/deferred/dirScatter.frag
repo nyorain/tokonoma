@@ -13,6 +13,7 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj;
 	mat4 invProj;
 	vec3 viewPos;
+	float near, far;
 } scene;
 
 layout(set = 1, binding = 0) uniform sampler2D depthTex;
@@ -23,7 +24,8 @@ layout(set = 2, binding = 0, row_major) uniform LightBuf {
 void main() {
 	vec2 suv = 2 * uv - 1;
 	suv.y *= -1.f; // flip y
-	float depth = texture(depthTex, uv).r;
+	float ldepth = texture(depthTex, uv).r;
+	float depth = ztodepth(ldepth, scene.near, scene.far); // TODO
 	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
 	vec3 pos = pos4.xyz / pos4.w;
 
@@ -47,7 +49,7 @@ void main() {
 		return;
 	}
 
-	mappedLightPos.z = 1.f; // on far plane, everything in front of it
+	// lightDepth on far plane, everything in front of it
 	scatter = lightScatterDepth(uv, mappedLightPos.xy,
-		mappedLightPos.z, ldv, depthTex);
+		1.f, ldv, depthTex, ldepth);
 }

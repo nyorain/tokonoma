@@ -36,15 +36,20 @@ float computeSSAO(vec3 pos, vec3 normal, float depth) {
 
 	const float near = scene.nearPlane;
 	const float far = scene.farPlane;
-	float z = depthtoz(depth, near, far);
+	// float z = depthtoz(depth, near, far);
+	float z = depth;
 
 	float occlusion = 0.0;
 	float radius = 0.15;
+	const float bias = 0.025;
 
 	// TODO: lod important for performance, random sampling kills cache
 	// the nearer we are, the higher mipmap level we can use
+	// TODO: maybe calculate lod per sample? but that brings new cache
+	// problems...
 	float lod = clamp(radius / z, 0.0, 6.0);
 	// float lod = 0.0;
+	// float lod = 2;
 	for(int i = 0; i < ssaoSampleCount; ++i) {
 		vec3 samplePos = TBN * ssao.samples[i].xyz; // From tangent to view-space
 		samplePos = pos + samplePos * radius; 
@@ -53,10 +58,10 @@ float computeSSAO(vec3 pos, vec3 normal, float depth) {
 		float sampleDepth = textureLod(depthTex, screenSpace.xy, lod).r;
 		
 		float offz = depthtoz(screenSpace.z, near, far);
-		float samplez = depthtoz(sampleDepth, near, far);
+		// float samplez = depthtoz(sampleDepth, near, far);
+		float samplez = sampleDepth;
 		float rangeCheck = smoothstep(0.0, 1.0, radius / abs(samplez - z));
 
-		const float bias = 0.025;
 		occlusion += (samplez <= offz - bias ? 1.0 : 0.0) * rangeCheck;
 	}  
 
@@ -65,15 +70,18 @@ float computeSSAO(vec3 pos, vec3 normal, float depth) {
 
 void main() {
 	float depth = texture(depthTex, uv).r;
-	if(depth == 1.f) { // nothing rendered here
+	// if(depth == 1.f) { // nothing rendered here
+	if(depth >= 1000.f) { // nothing rendered here
 		outSSAO = 0.f;
 		return;
 	}
 
+	float ndepth = ztodepth(depth, scene.nearPlane, scene.farPlane); // TODO
+
 	// reconstruct position from frag coord (uv) and depth
 	vec2 suv = 2 * uv - 1; // projected suv
 	suv.y *= -1.f; // flip y
-	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
+	vec4 pos4 = scene.invProj * vec4(suv, ndepth, 1.0);
 	vec3 fragPos = pos4.xyz / pos4.w;
 
 	vec3 normal = decodeNormal(subpassLoad(inNormal).xy);
