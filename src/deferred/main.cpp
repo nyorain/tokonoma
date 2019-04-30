@@ -45,7 +45,6 @@
 #include <cstdlib>
 #include <random>
 
-// TODO: push descriptor fixes to vpp
 // TODO: use bright reflective areas (or just fully lit areas,
 //   everything over a certain bloom threshold) for bloom as well,
 //   not just the emissisve stuff. Simply output them into the emissive
@@ -394,6 +393,15 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	cb3.onToggle = [&](auto&) {
 		pp_.params.flags ^= flagSSR;
 		pp_.updateParams = true;
+	};
+
+	auto& cb4 = pp.create<Checkbox>("Bloom").checkbox();
+	cb4.set(pp_.params.flags & flagBloom);
+	cb4.onToggle = [&](auto&) {
+		pp_.params.flags ^= flagBloom;
+		pp_.updateParams = true;
+		updateDescriptors_ = true;
+		App::scheduleRerecord();
 	};
 
 	return true;
@@ -1418,6 +1426,8 @@ void ViewApp::updateDescriptors() {
 		scatter_.target.vkImageView() : dummyTex_.vkImageView();
 	auto depthView = (pp_.params.flags != 0) ?
 		depthMipView_ : depthTarget().vkImageView();
+	auto bloomView = (pp_.params.flags & flagBloom) ?
+		bloom_.fullBloom : gpass_.emission.vkImageView();
 
 	auto& pdsu = updates.emplace_back(pp_.ds);
 	// ldsu.inputAttachment({{{}, lpass_.light.vkImageView(),
@@ -1435,7 +1445,7 @@ void ViewApp::updateDescriptors() {
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	pdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.imageSampler({{{}, bloom_.fullBloom,
+	pdsu.imageSampler({{{}, bloomView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	auto& ssdsu = updates.emplace_back(ssao_.ds);
@@ -1452,19 +1462,21 @@ void ViewApp::updateDescriptors() {
 	sdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	for(auto i = 0u; i < pp_.params.bloomLevels; ++i) {
-		auto& tmp = bloom_.tmpLevels[i];
-		auto& emission = bloom_.emissionLevels[i];
+	if(pp_.params.flags & flagBloom) {
+		for(auto i = 0u; i < pp_.params.bloomLevels; ++i) {
+			auto& tmp = bloom_.tmpLevels[i];
+			auto& emission = bloom_.emissionLevels[i];
 
-		auto& bhdsu = updates.emplace_back(tmp.ds);
-		bhdsu.imageSampler({{{}, emission.view,
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		bhdsu.storage({{{}, tmp.view, vk::ImageLayout::general}});
+			auto& bhdsu = updates.emplace_back(tmp.ds);
+			bhdsu.imageSampler({{{}, emission.view,
+				vk::ImageLayout::shaderReadOnlyOptimal}});
+			bhdsu.storage({{{}, tmp.view, vk::ImageLayout::general}});
 
-		auto& bvdsu = updates.emplace_back(emission.ds);
-		bvdsu.imageSampler({{{}, tmp.view,
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		bvdsu.storage({{{}, emission.view, vk::ImageLayout::general}});
+			auto& bvdsu = updates.emplace_back(emission.ds);
+			bvdsu.imageSampler({{{}, tmp.view,
+				vk::ImageLayout::shaderReadOnlyOptimal}});
+			bvdsu.storage({{{}, emission.view, vk::ImageLayout::general}});
+		}
 	}
 
 	vpp::apply(updates);

@@ -9,6 +9,7 @@ layout(location = 0) out vec4 fragColor;
 const uint flagSSAO = (1u << 0u);
 const uint flagScattering = (1u << 1u);
 const uint flagSSR = (1u << 2u);
+const uint flagBloom = (1u << 3u);
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj;
@@ -252,8 +253,15 @@ void main() {
 	}
 
 	// add bloom
-	for(uint i = 0u; i < 1 + ubo.bloomLevels; ++i) {
-		float fac = 1.f / (1 + i);
+	uint bloomLevels = 1;
+	float bfac = 3.f;
+	if((ubo.flags & flagBloom) != 0) {
+		bfac = 1.f;
+		bloomLevels += ubo.bloomLevels;
+	}
+
+	for(uint i = 0u; i < bloomLevels; ++i) {
+		float fac = bfac / (1 + i);
 		color.rgb += fac * textureLod(bloomTex, uv, i).rgb;
 	}
 
