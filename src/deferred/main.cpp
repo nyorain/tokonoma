@@ -46,8 +46,9 @@
 #include <cstdlib>
 #include <random>
 
-// TODO: there is currently a bloom artefact that looks like a sync
-//   issue or unitialized memory. Maybe have a look at with renderdoc
+// TODO: try out fxaa in postprocessing shader. Should it be done before
+//   any effects like adding bloom, ssr, light scattering or ssao?
+//   maybe try full image first, should work alright
 // TODO: there is currently a artefact for light scattering.
 //   was introduct with using the linear depth buffer
 //   fix that (can e.g. be seen on sponza with point light).
@@ -1954,7 +1955,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 				bloom_.pipeLayout, 0, {tmp.ds}, {});
 
 			auto w = std::max(width >> (i + 1), 1u);
-			auto h = std::max(width >> (i + 1), 1u);
+			auto h = std::max(height >> (i + 1), 1u);
 			vk::cmdDispatch(cb, std::ceil(w / 32.f), std::ceil(h / 32.f), 1);
 
 			vpp::changeLayout(cb, bloom_.tmpTarget,
