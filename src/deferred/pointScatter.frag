@@ -32,21 +32,20 @@ void main() {
 	vec3 v = normalize(pos - scene.viewPos); // view direction
 	vec3 viewToLight = normalize(light.pos - scene.viewPos);
 
-	// TODO: the abs needed here is weird... we probably should calculate
-	// ldv in a completely different manner...
-	float ldv = abs(dot(viewToLight, v));
-
-	// if(ldv < 0) {
-	// 	scatter = 1.0f;
-	// 	return;
-	// }
+	// TODO: not sure what light direction is here... direction from
+	// camera to light? but then we might have dot(ldir, vdir) < 0, although
+	// the camera *contains* the light which leads to weird edges
+	// float ldv = dot(viewToLight, v);
+	float ldv = 1.0;
+	// vec3 posToLight = normalize(light.pos - pos);
+	// float ldv = dot(viewToLight, posToLight);
 
 	// TODO: mapping not fragment shader dependent but somewhat
 	// expensive, could be done in vertex shader (or cpu but
 	// has to be refreshed every time viewPos changes...)
 	// mapped position of a directional light
 	vec3 mappedLightPos = sceneMap(scene.proj, light.pos);
-	if(mappedLightPos.z < 0) {
+	if(clamp(mappedLightPos, 0.0, 1.0) != mappedLightPos) {
 		// in this case the light is behind the camera, there
 		// will be no depth scattering.
 		scatter = 0.f;

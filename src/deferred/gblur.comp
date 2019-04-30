@@ -24,8 +24,10 @@ void main() {
 		return;
 	}
 
+	// +0.5 offset for pixel important to make blur centered
+	// pixel centers is at 0.5
 	vec2 pixelSize = 1.f / textureSize(inCol, 0);
-	vec2 uv = pixel * pixelSize;
+	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
 	vec3 blurred = texture(inCol, uv).rgb * weights[0];
 
 	vec2 off = pixelSize * vec2(horizontal, 1 - horizontal);

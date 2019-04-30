@@ -46,20 +46,14 @@
 #include <cstdlib>
 #include <random>
 
+// TODO: rgba16snorm (normalsFormat) isn't guaranteed to be supported
+//   as color attachment... i guess we could fall back to rgba16sint
+//   which is guaranteed to be supported?
 // TODO: try out fxaa in postprocessing shader. Should it be done before
 //   any effects like adding bloom, ssr, light scattering or ssao?
 //   maybe try full image first, should work alright
-// TODO: there is currently a artefact for light scattering.
-//   was introduct with using the linear depth buffer
-//   fix that (can e.g. be seen on sponza with point light).
-//   ok, so not really an artefact and rather a structural problem:
-//   the ground is in front of the light source from the
-//   camera pov... i don't think there is a solution for that!
-//   depth-based light scattering will probably only work for direcitonal
-//   lights. The shadowmap-based approach should work for point lights
-//   as well though (should work even better in general!)
-//   integrate that.
-//   nvm, seems to be something about ldv?!
+// TODO: point light scattering currently doesn't support the ldv value,
+//   i.e. view-dir dependent scattering only based on attenuation
 // TODO: fix used samplers, we need more than one! some passes are
 //   better with linear sampler, others need nearest sampler.
 //   same for mipmap. But try to let multiple passes use same
@@ -70,21 +64,17 @@
 //   buffer as well; we have no use for that besides blur.
 //   But then scale emissive in there (like 0.9 * emissive + 0.1 * light)
 //   http://kalogirou.net/2006/05/20/how-to-do-good-bloom-for-hdr-rendering/
-// TODO: try out compute pipeline for ssao. vulkan does not require
-//   that r8 formats support storage image though
+// TODO: fix theoretical synchronization issues
+// TODO: do we really need depth mip levels anywhere? test if it really
+//   brings ssao performance improvement.
 // TODO: try out other mechanisms for better ssao cache coherency
 //   we should somehow use a higher lod level i guess
-// TODO: fix theoretical synchronization issues
-// TODO: lod depth levels with nearest filter (see image blit)
-//   aren't really helpful, linear depth mipmaps would be *way* better.
-//   we could do that in a custom shader, should probably not even be
-//   much more expensive
-//   Probably quite nice alternative: use custom depth gbuffer that
-//   stores linear depth (or even world position?) in r16f format.
-//   should be enough for our algorithms
+
 // TODO: investigate reversed z buffer
 //   http://dev.theomader.com/depth-precision/
 //   https://nlguillemot.wordpress.com/2016/12/07/reversed-z-in-opengl/
+// TODO: try out compute pipeline for ssao. vulkan does not require
+//   that r8 formats support storage image though
 
 // NOTE: we always use ssao, even when object/material has ao texture.
 // In that case both are multiplied. That's how its usually done, see
@@ -125,9 +115,10 @@ public:
 	static constexpr auto ssaoFormat = vk::Format::r8Unorm;
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
 	static constexpr auto ldepthFormat = vk::Format::r16Sfloat;
-	static constexpr auto ssrFormat = vk::Format::r8g8b8a8Unorm;
+	// static constexpr auto ssrFormat = vk::Format::r8g8b8a8Unorm;
+	static constexpr auto ssrFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto ssaoSampleCount = 16u;
-	static constexpr auto pointLight = true;
+	static constexpr auto pointLight = false;
 	static constexpr auto maxBloomLevels = 4u;
 
 	// pp.frag
@@ -368,7 +359,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.updateDevice(camera_.pos);
-		pp_.params.scatterLightColor = 0.5f * l.data.color;
+		pp_.params.scatterLightColor = 0.05f * l.data.color;
 	}
 
 	// gui

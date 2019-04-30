@@ -47,10 +47,13 @@ struct MaterialPcr {
 // in the perspective projection.
 // depth expected in standard vulkan range [0,1]
 float depthtoz(float depth, float near, float far) {
+	if(z >= 1.f) { // TODO: hack
+		return 999.f;
+	}
 	return near * far / (far + near - depth * (far - near));
 }
 float ztodepth(float z, float near, float far) {
-	if(z == 1000.f) { // TODO
+	if(z >= 999.f) { // TODO: hack
 		return 1.f;
 	}
 	return (near + far - near * far / z) / (far - near);
@@ -192,16 +195,22 @@ float mieScattering(float lightDotView, float gs) {
 	return result;
 }
 
+// https://www.shadertoy.com/view/lslXDr
+float phase_mie(float c, float g) {
+	float cc = c * c;
+	float gg = g * g;
+	float a = ( 1.0 - gg ) * ( 1.0 + cc );
+	float b = 1.0 + gg - 2.0 * g * c;
+	b *= sqrt( b );
+	b *= 2.0 + gg;	
+	return (3.0 / 8.0 / 3.141) * a / b;
+}
+
 // fragPos and lightPos are in screen space
 // ldv: dot(lightDir, viewDir)
+// TODO: remove of use z component of ipos; fragDepth
 float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 		float ldv, sampler2D depthTex, float fragDepth) {
-	// if light position is outside of screen, we can't scatter since
-	// we can't track rays to the ray (since depth map only covers screen)
-	if(clamp(lightPos, 0.0, 1.0) != lightPos) {
-		return 0.f;
-	}
-
 	vec3 ray = vec3(lightPos, lightDepth) - vec3(fragPos, fragDepth);
 	// NOTE: making the number of steps dependent on the ray length
 	// is probably a bad idea. When light an pixel (geometry) are close, the
@@ -260,14 +269,13 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 
 		// TODO: don't make it binary for second condition
 		// if(depth > lightDepth || depth < ipos.z) {
-		if(depth > lightDepth) {
+		if(depth >= lightDepth) {
 			accum += importance;
 		}
 
 		ipos += step;
-
 		total += importance;
-		importance *= 2;
+		// importance *= 2;
 	}
 
 	// accum *= fac / steps;
@@ -277,7 +285,8 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 
 	// NOTE: random factors (especially the 35 seems weird...)
 	// currently tuned for directional light
-	float fac = 10 * mieScattering(ldv, 0.05);
+	// float fac = 10 * mieScattering(ldv, -0.7);
+	float fac = 10 * phase_mie(ldv, -0.4);
 	fac *= ldv;
 
 	// nice small "sun" in addition to the all around scattering

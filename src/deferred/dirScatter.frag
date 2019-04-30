@@ -42,7 +42,7 @@ void main() {
 	// has to be refreshed every time viewPos changes...)
 	// mapped position of a directional light
 	vec3 mappedLightPos = sceneMap(scene.proj, scene.viewPos - light.dir);
-	if(mappedLightPos.z < 0) {
+	if(clamp(mappedLightPos, 0.0, 1.0) != mappedLightPos) {
 		// in this case the light is behind the camera, there
 		// will be no depth scattering.
 		scatter = 0.f;
@@ -51,5 +51,5 @@ void main() {
 
 	// lightDepth on far plane, everything in front of it
 	scatter = lightScatterDepth(uv, mappedLightPos.xy,
-		1.f, ldv, depthTex, ldepth);
+		999.f, ldv, depthTex, ldepth);
 }
