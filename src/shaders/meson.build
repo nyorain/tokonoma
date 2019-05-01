@@ -117,6 +117,7 @@ shaders_src = {
 	  ['gbuf.frag', deferred_glsl],
 	  ['pp.frag', deferred_glsl],
 	  ['pointLight.frag', deferred_glsl],
+	  ['pointLight.vert', deferred_glsl],
 	  ['dirLight.frag', deferred_glsl],
 	  ['ssao.frag', deferred_glsl],
 	  ['pointScatter.frag', deferred_glsl],

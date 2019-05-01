@@ -13,7 +13,7 @@ void getLightParams(vec3 viewPos, vec3 fragPos,
 #include "scene.glsl"
 #include "pbr.glsl"
 
-layout(location = 0) in vec2 uv;
+layout(location = 0) noperspective in vec2 uv;
 layout(location = 0) out vec4 fragColor;
 layout(location = 1) out vec4 outEmission;
 
@@ -37,6 +37,10 @@ layout(set = 1, binding = 3, input_attachment_index = 3)
 	uniform subpassInput inDepth;
 
 void main() {
+	// fragColor = vec4(uv, 0.0, 0.0);
+	// vec2 uv = gl_FragCoord.xy / vec2(1920, 1080);
+	// return;
+
 	fragColor = vec4(0.0);
 	outEmission = vec4(0.0);
 	float depth = subpassLoad(inDepth).r;
@@ -83,6 +87,12 @@ void main() {
 	vec3 lcolor;
 	vec3 ldir;
 	getLightParams(scene.viewPos, fragPos, ldir, lcolor);
+
+	// TODO: better fast return
+	// mainly relevant for point lights
+	if(lcolor.r + lcolor.g + lcolor.b < 0.01) {
+		return;
+	}
 
 	// for debugging: diffuse only
 	// vec3 light = dot(normal, -ldir) * albedo;

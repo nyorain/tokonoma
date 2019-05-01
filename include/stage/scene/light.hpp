@@ -31,6 +31,7 @@ struct ShadowData {
 // TODO: enum or something?
 constexpr std::uint32_t lightFlagDir = (1u << 0);
 constexpr std::uint32_t lightFlagPcf = (1u << 1);
+constexpr std::uint32_t lightFlagShadow = (1u << 2);
 
 class DirLight {
 public:
@@ -74,15 +75,16 @@ public:
 		float farPlane {30.f};
 		// TODO: params.x (constant term) is basically always 1.f, get rid
 		// of that everywhere?
-		nytl::Vec3f attenuation {1.f, 0.1, 0.05};
-		float _ {}; // padding
+		// TODO: always automatically calculate attenuation from radius?
+		nytl::Vec3f attenuation {1.f, 4, 8};
+		float radius {2.f};
 	} data;
 
 public:
 	PointLight() = default;
 	PointLight(const vpp::Device&, const vpp::TrDsLayout& matLayout,
 		const vpp::TrDsLayout& primitiveLayout, const ShadowData& data,
-		const Material& lightBallMat);
+		const Material& lightBallMat, vk::ImageView noShadowMap = {});
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
@@ -92,6 +94,7 @@ public:
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return shadowMap_.vkImageView(); }
 	const Primitive& lightBall() const { return lightBall_; }
+	bool hasShadowMap() const { return data.flags & lightFlagShadow; }
 
 protected:
 	nytl::Vec2ui size_ {512u, 512u}; // per side

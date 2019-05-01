@@ -188,8 +188,21 @@ void main() {
 		vec4 refl = textureLod(ssrTex, uv, 0);
 		vec2 ruv = refl.xy;
 		if(refl.xy != vec2(0.0)) {
-			vec3 light = textureLod(lightTex, ruv, 0).rgb;
 			float fac = refl.z;
+			int range = int(clamp(5.0 * refl.w, 0.0, 5.0));
+			// int range = 3;
+			vec3 light = vec3(0.0);
+			vec2 texelSize = 1.0 / textureSize(lightTex, 0);
+			for(int x = -range; x <= range; ++x) {
+				for(int y = -range; y <= range; ++y) {
+					vec2 off = texelSize * vec2(x, y);
+					vec2 uvo = clamp(ruv + off, 0.0, 1.0);
+					light += textureLod(lightTex, uvo, 0).rgb;
+				}
+			}
+
+			light /= (2 * range + 1) * (2 * range + 1);
+
 			// make reflections weaker when near image borders
 			// to avoid plopping in
 			vec2 sdist = 1 - 2 * abs(vec2(0.5, 0.5) - ruv);

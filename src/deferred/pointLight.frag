@@ -16,6 +16,11 @@ void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 	ldir /= lightDistance;
 	lcolor = attenuation(lightDistance, light.attenuation) * light.color;
 
+	bool shadow = (light.flags & lightShadow) != 0;
+	if(!shadow) {
+		return;
+	}
+
 	bool pcf = (light.flags & lightPcf) != 0;
 	if(pcf) {
 		// TODO: make radius parameters configurable,

@@ -310,53 +310,56 @@ void DirLight::updateDevice(nytl::Vec3f viewPos) {
 // worth investigating... we'd still need 6 seperate renderpasses though)
 PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
-		const Material& mat) {
+		const Material& mat, vk::ImageView noShadowMap) {
 	auto extent = vk::Extent3D{size_.x, size_.y, 1u};
+	if(!noShadowMap) {
+		this->data.flags |= lightFlagShadow;
 
-	// target
-	auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
-		vk::ImageUsageBits::transferSrc;
-	auto targetInfo = vpp::ViewableImageCreateInfo::general(dev,
-		extent, targetUsage, {data.depthFormat},
-		vk::ImageAspectBits::depth);
-	target_ = {dev, *targetInfo};
+		// target
+		auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
+			vk::ImageUsageBits::transferSrc;
+		auto targetInfo = vpp::ViewableImageCreateInfo::general(dev,
+			extent, targetUsage, {data.depthFormat},
+			vk::ImageAspectBits::depth);
+		target_ = {dev, *targetInfo};
 
-	// framebuffer
-	vk::FramebufferCreateInfo fbi {};
-	fbi.attachmentCount = 1;
-	fbi.width = extent.width;
-	fbi.height = extent.height;
-	fbi.layers = 1u;
-	fbi.pAttachments = &target_.vkImageView();
-	fbi.renderPass = data.rp;
-	fb_ = {dev, fbi};
+		// framebuffer
+		vk::FramebufferCreateInfo fbi {};
+		fbi.attachmentCount = 1;
+		fbi.width = extent.width;
+		fbi.height = extent.height;
+		fbi.layers = 1u;
+		fbi.pAttachments = &target_.vkImageView();
+		fbi.renderPass = data.rp;
+		fb_ = {dev, fbi};
 
-	// shadow map
-	targetInfo->img.arrayLayers = 6u;
-	targetInfo->img.flags = vk::ImageCreateBits::cubeCompatible;
-	targetInfo->img.usage = vk::ImageUsageBits::sampled |
-		vk::ImageUsageBits::transferDst;
-	targetInfo->view.subresourceRange.layerCount = 6u;
-	targetInfo->view.components = {};
-	targetInfo->view.viewType = vk::ImageViewType::cube;
-	shadowMap_ = {dev, *targetInfo};
+		// shadow map
+		targetInfo->img.arrayLayers = 6u;
+		targetInfo->img.flags = vk::ImageCreateBits::cubeCompatible;
+		targetInfo->img.usage = vk::ImageUsageBits::sampled |
+			vk::ImageUsageBits::transferDst;
+		targetInfo->view.subresourceRange.layerCount = 6u;
+		targetInfo->view.components = {};
+		targetInfo->view.viewType = vk::ImageViewType::cube;
+		shadowMap_ = {dev, *targetInfo};
 
-	// initial layout change
-	auto cb = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
-	vk::beginCommandBuffer(cb, {});
-	vpp::changeLayout(cb, shadowMap_.image(),
-		vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::topOfPipe, {},
-		{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
-	vk::endCommandBuffer(cb);
+		// initial layout change
+		auto cb = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
+		vk::beginCommandBuffer(cb, {});
+		vpp::changeLayout(cb, shadowMap_.image(),
+			vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::topOfPipe, {},
+			{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
+		vk::endCommandBuffer(cb);
 
-	// TODO: don't wait here... batch that work
-	vk::SubmitInfo submission;
-	submission.commandBufferCount = 1;
-	submission.pCommandBuffers = &cb.vkHandle();
-	dev.queueSubmitter().add(submission);
-	dev.queueSubmitter().wait(dev.queueSubmitter().current());
+		// TODO: don't wait here... batch that work
+		vk::SubmitInfo submission;
+		submission.commandBufferCount = 1;
+		submission.pCommandBuffers = &cb.vkHandle();
+		dev.queueSubmitter().add(submission);
+		dev.queueSubmitter().wait(dev.queueSubmitter().current());
+	}
 
 	// setup light ds and ubo
 	auto hostMem = dev.hostMemoryTypes();
@@ -368,12 +371,12 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
-	ldsu.imageSampler({{data.sampler, shadowMap(),
+	ldsu.imageSampler({{data.sampler, hasShadowMap() ? shadowMap() : noShadowMap,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	vpp::apply({ldsu});
 
 	// primitive
-	auto sphere = doi::Sphere{{}, {0.1f, 0.1f, 0.1f}};
+	auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
 	auto shape = doi::generateUV(sphere);
 	lightBall_ = {dev, shape, primitiveDsLayout,
 		mat, lightBallMatrix(), 0xFF}; // TODO: id
@@ -384,7 +387,7 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 nytl::Mat4f PointLight::lightBallMatrix() const {
 	// slight offset since otherwise we end up in ball after
 	// setting it to current position
-	return translateMat(this->data.position + nytl::Vec3f{0.2, 0.2, 0.2});
+	return translateMat(this->data.position);
 }
 
 nytl::Mat4f PointLight::lightMatrix(unsigned i) const {

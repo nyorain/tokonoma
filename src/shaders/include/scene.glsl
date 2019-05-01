@@ -3,6 +3,7 @@
 // Light.flags
 const uint lightDir = (1u << 0); // otherwise point
 const uint lightPcf = (1u << 1); // use pcf
+const uint lightShadow = (1u << 2); // use shadow
 
 // MaterialPcr.flags
 const uint normalMap = (1u << 0);
@@ -29,7 +30,7 @@ struct PointLight {
 	vec3 pos;
 	float farPlane;
 	vec3 attenuation;
-	float _; // padding
+	float radius;
 	mat4 proj[6]; // global -> cubemap [side i] light space
 };
 

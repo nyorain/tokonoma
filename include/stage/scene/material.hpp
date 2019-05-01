@@ -29,7 +29,8 @@ public:
 	// default, dummy material
 	Material(const vpp::TrDsLayout& dsLayout, vk::ImageView dummy,
 		vk::Sampler dummySampler, nytl::Vec4f albedo = {1.f, 1.f, 1.f, 1.f},
-		float roughness = 1.f, float metalness = 1.f, bool doubleSided = false);
+		float roughness = 1.f, float metalness = 1.f, bool doubleSided = false,
+		nytl::Vec3f emission = {0.f, 0.f, 0.f});
 	Material(const gltf::Model& model, const gltf::Material& material,
 		const vpp::TrDsLayout& layout, vk::ImageView dummy,
 		vk::Sampler defaultSampler, nytl::StringParam path,

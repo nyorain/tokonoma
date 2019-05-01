@@ -330,6 +330,7 @@ vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 		imgi.view.viewType = vk::ImageViewType::e2dArray;
 	}
 	imgi.img.arrayLayers = files.size();
+	imgi.img.imageType = vk::ImageType::e2d;
 	imgi.view.subresourceRange.layerCount = files.size();
 	vpp::ViewableImage image = {dev, imgi, devMem};
 

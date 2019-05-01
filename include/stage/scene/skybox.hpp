@@ -18,6 +18,7 @@ public:
 		unsigned subpass, vk::SampleCountBits samples);
 	void updateDevice(const nytl::Mat4f& viewProj);
 	void render(vk::CommandBuffer cb);
+	auto& indexBuffer() const { return indices_; }
 
 protected:
 	void writeDs();

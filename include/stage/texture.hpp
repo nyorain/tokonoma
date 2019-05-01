@@ -38,6 +38,7 @@ vpp::ViewableImage loadTexture(const vpp::Device& dev, vk::Extent3D size,
 	vk::Format dataFormat = {}, bool mipmap = true);
 
 // TODO: support mipmaps here as well
+// TODO: overload that takes data and sizes
 // creates an array of textures/a cubemap
 vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 	nytl::Span<const nytl::StringParam> files, bool cubemap = false,

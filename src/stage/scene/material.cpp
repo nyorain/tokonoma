@@ -72,13 +72,15 @@ vpp::TrDsLayout Material::createDsLayout(const vpp::Device& dev) {
 
 Material::Material(const vpp::TrDsLayout& dsLayout,
 		vk::ImageView dummy, vk::Sampler dummySampler, nytl::Vec4f albedo,
-		float roughness, float metalness, bool doubleSided) {
+		float roughness, float metalness, bool doubleSided,
+		nytl::Vec3f emission) {
 	albedo_ = albedo;
 	roughness_ = roughness;
 	metalness_ = metalness;
 	if(doubleSided) {
 		flags_ |= Flags::doubleSided;
 	}
+	emission_ = emission;
 
 	albedoTex_ = {dummy, dummySampler};
 	metalnessRoughnessTex_ = {dummy, dummySampler};

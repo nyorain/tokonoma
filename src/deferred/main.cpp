@@ -36,6 +36,7 @@
 #include <shaders/deferred.gbuf.frag.h>
 #include <shaders/deferred.pp.frag.h>
 #include <shaders/deferred.pointLight.frag.h>
+#include <shaders/deferred.pointLight.vert.h>
 #include <shaders/deferred.dirLight.frag.h>
 #include <shaders/deferred.ssao.frag.h>
 #include <shaders/deferred.pointScatter.frag.h>
@@ -46,6 +47,10 @@
 #include <cstdlib>
 #include <random>
 
+// TODO: display debug modes in pp shader; not per light
+// TODO: better ssr blurring. Use physically better approaches and
+//   maybe pre-blur light buffer copy in extra pass (double, gauss)
+//   based on blurring output from ssr pass
 // TODO: parameterize all currently random values and factors
 //   (especially in artefact-prone screen space shaders)
 // TODO: maybe do high pass on light output *after* blending.
@@ -205,6 +210,7 @@ protected:
 
 	vpp::Sampler sampler_; // default linear sampler
 	vpp::ViewableImage dummyTex_;
+	vpp::ViewableImage dummyCube_;
 	std::unique_ptr<doi::Scene> scene_;
 	std::optional<doi::Material> lightMaterial_;
 
@@ -221,6 +227,10 @@ protected:
 	bool updateDescriptors_ {false};
 
 	// doi::Skybox skybox_;
+
+	// needed for point light rendering.
+	// TODO: also contained in skybox, share them somehow.
+	vpp::SubBuffer boxIndices_;
 
 	// image view into the depth buffer that accesses all depth levels
 	vpp::ImageView depthMipView_;
@@ -337,6 +347,19 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	// skybox_.init(dev, "../assets/kloofendal2k.hdr",
 		// renderPass(), 3u, samples());
 
+	boxIndices_ = {dev.bufferAllocator(), 36u * sizeof(std::uint16_t),
+		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
+		0, dev.deviceMemoryTypes()};
+	std::array<std::uint16_t, 36> indices = {
+		0, 1, 2,  2, 1, 3, // front
+		1, 5, 3,  3, 5, 7, // right
+		2, 3, 6,  6, 3, 7, // top
+		4, 0, 6,  6, 0, 2, // left
+		4, 5, 0,  0, 5, 1, // bottom
+		5, 4, 7,  7, 4, 6, // back
+	};
+	vpp::writeStaging430(boxIndices_, vpp::raw(*indices.data(), 36u));
+
 	// Load Model
 	auto s = sceneScale_;
 	auto mat = doi::scaleMat<4, float>({s, s, s});
@@ -358,14 +381,15 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 
 	lightMaterial_.emplace(materialDsLayout_,
 		dummyTex_.vkImageView(), scene_->defaultSampler(),
-		nytl::Vec{1.f, 1.f, 0.4f, 1.f});
+		nytl::Vec{1.f, 1.f, 0.4f, 1.f}, 0.f, 0.f, false,
+		nytl::Vec{1.f, 0.9f, 0.5f});
 
 	if(pointLight) {
 		auto& l = pointLights_.emplace_back(dev, lightDsLayout_,
 			primitiveDsLayout_, shadowData_, *lightMaterial_);
 		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {2.f, 1.7f, 0.8f};
-		l.data.attenuation = {1.f, 0.3f, 0.1f};
+		// l.data.attenuation = {1.f, 0.3f, 0.1f};
 		l.updateDevice();
 		pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
@@ -492,6 +516,11 @@ void ViewApp::initRenderData() {
 	auto ptr = reinterpret_cast<std::byte*>(data.data());
 	dummyTex_ = doi::loadTexture(dev, {1, 1, 1},
 		vk::Format::r8g8b8a8Unorm, {ptr, data.size()});
+
+	// TODO: really bad hack right here...
+	auto n = "../assets/1px.jpeg";
+	dummyCube_ = doi::loadTextureArray(dev, {n, n, n, n, n, n},
+	vk::Format::r8g8b8a8Unorm, true);
 
 	// ubo and stuff
 	auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
@@ -834,20 +863,19 @@ void ViewApp::initLPass() {
 	lpass_.pipeLayout = {dev, {sceneDsLayout_, lpass_.dsLayout,
 		lightDsLayout_}, {}};
 
-	// TODO: don't use fullscreen here. Only render the areas of the screen
-	// that are effected by the light (huge, important optimization
-	// when there are many lights in the scene!)
-	// Render simple box volume for best performance
-	vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
+	vpp::ShaderModule pointVertShader(dev, deferred_pointLight_vert_data);
 	vpp::ShaderModule pointFragShader(dev, deferred_pointLight_frag_data);
 	vpp::GraphicsPipelineInfo pgpi{lpass_.pass, lpass_.pipeLayout, {{
-		{vertShader, vk::ShaderStageBits::vertex},
+		{pointVertShader, vk::ShaderStageBits::vertex},
 		{pointFragShader, vk::ShaderStageBits::fragment},
 	}}};
 
+	// TODO: enable depth test?
 	pgpi.depthStencil.depthTestEnable = false;
 	pgpi.depthStencil.depthWriteEnable = false;
-	pgpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
+	pgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+	pgpi.rasterization.cullMode = vk::CullModeBits::back;
+	pgpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 	// additive blending
 	vk::PipelineColorBlendAttachmentState blendAttachments[2];
@@ -872,9 +900,11 @@ void ViewApp::initLPass() {
 	// dir light
 	// here we can use a fullscreen shader pass since directional lights
 	// don't have a light volume
+	// TODO: don't load fullscreen shader multiple times
 	vpp::ShaderModule dirFragShader(dev, deferred_dirLight_frag_data);
+	vpp::ShaderModule fullVertShader(dev, stage_fullscreen_vert_data);
 	vpp::GraphicsPipelineInfo lgpi{lpass_.pass, lpass_.pipeLayout, {{
-		{vertShader, vk::ShaderStageBits::vertex},
+		{fullVertShader, vk::ShaderStageBits::vertex},
 		{dirFragShader, vk::ShaderStageBits::fragment},
 	}}};
 
@@ -1677,7 +1707,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 
 	// render shadow maps
 	for(auto& light : pointLights_) {
-		light.render(cb, shadowData_, *scene_);
+		if(light.hasShadowMap()) {
+			light.render(cb, shadowData_, *scene_);
+		}
 	}
 	for(auto& light : dirLights_) {
 		light.render(cb, shadowData_, *scene_);
@@ -1711,12 +1743,12 @@ void ViewApp::record(const RenderBuffer& buf) {
 
 		// NOTE: ideally, don't render these in gbuffer pass but later
 		// on with different lightning?
-		// for(auto& l : pointLights_) {
-		// 	l.lightBall().render(cb, gPipeLayout_);
-		// }
-		// for(auto& l : dirLights_) {
-		// 	l.lightBall().render(cb, gPipeLayout_);
-		// }
+		for(auto& l : pointLights_) {
+			l.lightBall().render(cb, gpass_.pipeLayout);
+		}
+		for(auto& l : dirLights_) {
+			l.lightBall().render(cb, gpass_.pipeLayout);
+		}
 
 		vk::cmdEndRenderPass(cb);
 	}
@@ -1859,10 +1891,12 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			lpass_.pipeLayout, 0, {sceneDs_, lpass_.ds}, {});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, lpass_.pointPipe);
+		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
+			boxIndices_.offset(), vk::IndexType::uint16);
 		for(auto& light : pointLights_) {
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 				lpass_.pipeLayout, 2, {light.ds()}, {});
-			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
+			vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0); // box
 		}
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, lpass_.dirPipe);
@@ -2088,7 +2122,7 @@ void ViewApp::update(double dt) {
 }
 
 bool ViewApp::key(const ny::KeyEvent& ev) {
-	static std::default_random_engine rnd;
+	static std::default_random_engine rnd(std::time(nullptr));
 	if(App::key(ev)) {
 		return true;
 	}
@@ -2142,6 +2176,19 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			l.data.position = camera_.pos;
 			l.data.color = {dist(rnd), dist(rnd), dist(rnd)};
 			l.data.attenuation = {1.f, 0.6f * dist(rnd), 0.3f * dist(rnd)};
+			l.updateDevice();
+			App::scheduleRerecord();
+			break;
+		 } case ny::Keycode::z: {
+			// no shadow map
+			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
+				primitiveDsLayout_, shadowData_, *lightMaterial_,
+				dummyCube_.vkImageView());
+			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+			l.data.position = camera_.pos;
+			l.data.color = {dist(rnd), dist(rnd), dist(rnd)};
+			l.data.attenuation = {1.f, 8, 32};
+			l.data.radius = 0.5f;
 			l.updateDevice();
 			App::scheduleRerecord();
 			break;

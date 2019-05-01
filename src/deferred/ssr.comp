@@ -76,7 +76,7 @@ void main() {
 	float stepSize = startStepSize;
 	vec3 pos = fragPos;
 	vec2 hitUV = vec2(0.0);
-	float dist = 0;
+	float blur = 0;
 	for(uint i = 0u; i < marchSteps; ++i) {
 		vec3 lpos = pos; // last position
 		pos += stepSize * reflDir;
@@ -133,19 +133,19 @@ void main() {
 		// have on the screen.
 		// TODO: do we even really need this check? we pretty much have
 		// already verified this via the depth check above, right?
-		vec3 sampleN = decodeNormal(textureLod(normalTex, uv.xy, lod).xy);
+		vec4 gbufN = textureLod(normalTex, uv.xy, lod);
+		vec3 sampleN = decodeNormal(gbufN.xy);
 		float ndr = dot(sampleN, reflDir);
 		float f = smoothstep(0.00, 0.25, -ndr);
 		if(f > 0.0) {
-			fac *= f;
+			float roughness = gbufN.w;
+			fac *= roughness * f;
 			hitUV = uv.xy;
-			dist = distance(fragPos, mid);
+			blur = roughness * distance(fragPos, mid);
 		}
 
 		break;
 	}
 	
-	// TODO: how to guarantee dist fits in 8 bit? maybe normalize somehow
-	// (depth buffer near/far like)?
-	imageStore(outData, ivec2(pixel), vec4(hitUV, fac, dist));
+	imageStore(outData, ivec2(pixel), vec4(hitUV, fac, blur));
 }
