@@ -48,10 +48,21 @@
 #include <random>
 
 // TODO: display debug modes in pp shader; not per light
-// TODO: better ssr blurring. Use physically better approaches and
+// TODO: re-add skybox and transparent objects in forward pass.
+//   the objects from that pass will have no effect on ssao or ssr,
+//   no other way to do it. That means that you will never see a transparent
+//   object in a reflection... (todo: you should see the skybox though!
+//   how to handle that?)
+//   An alternative idea is to use 2 forward passes: one for almost opaque
+//   objects that can be aproximated as opaque for ssr/ssao sakes and then
+//   (after reading the buffers for ss algorithms) another forward pass
+//   for almost-transparent objects.
+// TODO: better ssr blurring. Use more physical (cone trace) approaches and
 //   maybe pre-blur light buffer copy in extra pass (double, gauss)
-//   based on blurring output from ssr pass
-// TODO: parameterize all currently random values and factors
+//   based on blurring output from ssr pass.
+//   create blurred mipmaps of light buffers (bloom like) and access
+//   them depending on the ssr blur level?
+// TODO: parameterize all (currently somewhat random) values and factors
 //   (especially in artefact-prone screen space shaders)
 // TODO: maybe do high pass on light output *after* blending.
 //   currently, when there are many light shining on a surface
@@ -61,6 +72,8 @@
 // TODO: see pp.frag, can improve order of screen space applying.
 //   basically split pp up in two passes: one combine pass and then
 //   a post processing pass (using tonemapping and applying ssr)
+// TODO: re-add (fix for point light) the shadowmap-based light
+//   scattering approach
 // TODO: rgba16snorm (normalsFormat) isn't guaranteed to be supported
 //   as color attachment... i guess we could fall back to rgba16sint
 //   which is guaranteed to be supported?
@@ -243,6 +256,18 @@ protected:
 	vpp::Semaphore selectionSemaphore_;
 	bool selectionPending_ {};
 
+	// point light selection. 0 if invalid
+	unsigned currentID_ {}; // for id giving
+	struct {
+		unsigned id {0xFFFFFFFFu};
+		vui::dat::Folder* folder {};
+		vui::Textfield* radiusField {};
+		vui::Textfield* a1Field {};
+		vui::Textfield* a2Field {};
+		std::unique_ptr<vui::Widget> removedFolder {};
+	} selected_;
+	vui::dat::Panel* vuiPanel_ {};
+
 	// gbuffer and lightning passes
 	struct {
 		vpp::RenderPass pass;
@@ -379,6 +404,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		return false;
 	}
 
+	currentID_ = scene_->primitives().size();
 	lightMaterial_.emplace(materialDsLayout_,
 		dummyTex_.vkImageView(), scene_->defaultSampler(),
 		nytl::Vec{1.f, 1.f, 0.4f, 1.f}, 0.f, 0.f, false,
@@ -386,7 +412,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 
 	if(pointLight) {
 		auto& l = pointLights_.emplace_back(dev, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, *lightMaterial_);
+			primitiveDsLayout_, shadowData_, *lightMaterial_, currentID_++);
 		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		// l.data.attenuation = {1.f, 0.3f, 0.1f};
@@ -394,7 +420,8 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
 		auto& l = dirLights_.emplace_back(dev, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, camera_.pos, *lightMaterial_);
+			primitiveDsLayout_, shadowData_, camera_.pos, *lightMaterial_,
+			currentID_++);
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.updateDevice(camera_.pos);
@@ -409,24 +436,32 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	auto& panel = gui.create<vui::dat::Panel>(pos, 300.f);
 
 	auto& pp = panel.create<vui::dat::Folder>("Post Processing");
-	auto createValueTextfield = [](auto& at, auto name, auto& value,
-			bool* set = {}) {
-		auto start = std::to_string(value);
+	auto createNumTextfield = [](auto& at, auto name, auto initial, auto func) {
+		auto start = std::to_string(initial);
 		if(start.size() > 4) {
 			start.resize(4, '\0');
 		}
 		auto& t = at.template create<Textfield>(name, start).textfield();
-		t.onSubmit = [&, set, name](auto& tf) {
+		t.onSubmit = [&, f = std::move(func), name](auto& tf) {
 			try {
-				value = std::stof(tf.utf8());
-				if(set) {
-					*set = true;
-				}
+				auto val = std::stof(tf.utf8());
+				f(val);
 			} catch(const std::exception& err) {
 				dlg_error("Invalid float for {}: {}", name, tf.utf8());
 				return;
 			}
 		};
+		return &t;
+	};
+
+	auto createValueTextfield = [createNumTextfield](auto& at, auto name,
+			auto& value, bool* set = {}) {
+		return createNumTextfield(at, name, value, [&value, set](auto v){
+			value = v;
+			if(set) {
+				*set = true;
+			}
+		});
 	};
 
 	auto set = &pp_.updateParams;
@@ -477,6 +512,31 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		pp_.params.flags ^= flagFXAA;
 		pp_.updateParams = true;
 	};
+
+	// light selection
+	vuiPanel_ = &panel;
+	selected_.folder = &panel.create<Folder>("Light");
+	auto& light = *selected_.folder;
+	selected_.radiusField = createNumTextfield(light, "Radius",
+			0.0, [this](auto val) {
+		dlg_assert(selected_.id != 0xFFFFFFFFu);
+		pointLights_[selected_.id].data.radius = val;
+		updateLights_ = true;
+	});
+	selected_.a1Field = createNumTextfield(light, "Attenuation: Linear",
+			0.0, [this](auto val) {
+		dlg_assert(selected_.id != 0xFFFFFFFFu);
+		pointLights_[selected_.id].data.attenuation.y = val;
+		updateLights_ = true;
+	});
+	selected_.a2Field = createNumTextfield(light, "Attenuation: Quadatric",
+			0.0, [this](auto val) {
+		dlg_assert(selected_.id != 0xFFFFFFFFu);
+		pointLights_[selected_.id].data.attenuation.z = val;
+		updateLights_ = true;
+	});
+
+	selected_.removedFolder = panel.remove(*selected_.folder);
 
 	return true;
 }
@@ -2171,7 +2231,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			return true;
 		case ny::Keycode::comma: {
 			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
-				primitiveDsLayout_, shadowData_, *lightMaterial_);
+				primitiveDsLayout_, shadowData_, *lightMaterial_, currentID_++);
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 			l.data.position = camera_.pos;
 			l.data.color = {dist(rnd), dist(rnd), dist(rnd)};
@@ -2182,7 +2242,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		 } case ny::Keycode::z: {
 			// no shadow map
 			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
-				primitiveDsLayout_, shadowData_, *lightMaterial_,
+				primitiveDsLayout_, shadowData_, *lightMaterial_, currentID_++,
 				dummyCube_.vkImageView());
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 			l.data.position = camera_.pos;
@@ -2284,10 +2344,42 @@ void ViewApp::updateDevice() {
 			{1u, 1u, 1u}, {vk::ImageAspectBits::color});
 		dlg_assert(bytes.size() == sizeof(float) * 4);
 		auto fp = reinterpret_cast<const float*>(bytes.data());
-		auto selected = 65536 * (0.5f + 0.5f * fp[2]);
-		dlg_info("selected: {} ({} {} {} {})", selected,
-			fp[0], fp[1], fp[2], fp[3]);
+		int selected = 65536 * (0.5f + 0.5f * fp[2]);
 		selectionPending_ = {};
+
+		auto& primitives = scene_->primitives();
+		bool found = false;
+		if(selected <= 0) {
+			dlg_warn("Non-positive selected: {}", selected);
+		} else if(unsigned(selected) < primitives.size()) {
+			dlg_info("Selected primitive: {}", selected);
+		} else {
+			selected -= primitives.size();
+			if(unsigned(selected) < dirLights_.size()) {
+				dlg_info("Selected dir light: {}", selected);
+			} else {
+				selected -= dirLights_.size();
+				if(unsigned(selected) < pointLights_.size()) {
+					found = true;
+					dlg_info("Selected point light: {}", selected);
+					if(selected_.id == 0xFFFFFFFFu) {
+						vuiPanel_->add(std::move(selected_.removedFolder));
+					}
+					selected_.id = selected;
+					auto& l = pointLights_[selected];
+					selected_.radiusField->utf8(std::to_string(l.data.radius));
+					selected_.a1Field->utf8(std::to_string(l.data.attenuation.y));
+					selected_.a2Field->utf8(std::to_string(l.data.attenuation.z));
+				} else {
+					dlg_warn("Invalid selection value: {}", selected);
+				}
+			}
+		}
+
+		if(!found && selected_.id != 0xFFFFFFFFu) {
+			selected_.id = 0xFFFFFFFFu;
+			selected_.removedFolder = vuiPanel_->remove(*selected_.folder);
+		}
 	}
 
 	// recevie selection id

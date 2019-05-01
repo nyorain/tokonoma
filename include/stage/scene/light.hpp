@@ -46,7 +46,7 @@ public:
 	DirLight() = default;
 	DirLight(const vpp::Device&, const vpp::TrDsLayout& matDsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
-		nytl::Vec3f viewPos, const Material& lightBallMat);
+		nytl::Vec3f viewPos, const Material& lightBallMat, unsigned id);
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
@@ -84,7 +84,8 @@ public:
 	PointLight() = default;
 	PointLight(const vpp::Device&, const vpp::TrDsLayout& matLayout,
 		const vpp::TrDsLayout& primitiveLayout, const ShadowData& data,
-		const Material& lightBallMat, vk::ImageView noShadowMap = {});
+		const Material& lightBallMat, unsigned id,
+		vk::ImageView noShadowMap = {});
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);

@@ -88,7 +88,7 @@ public:
 protected:
 	rvg::Paint bgPaint_;
 	rvg::RectShape bgShape_;
-		std::unique_ptr<vui::Widget> removed6_ {};
+	std::unique_ptr<vui::Widget> removed6_ {};
 };
 
 int main(int argc, const char** argv) {
