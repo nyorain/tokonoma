@@ -46,6 +46,16 @@
 #include <cstdlib>
 #include <random>
 
+// TODO: parameterize all currently random values and factors
+//   (especially in artefact-prone screen space shaders)
+// TODO: maybe do high pass on light output *after* blending.
+//   currently, when there are many light shining on a surface
+//   the surface gets bright (obviously) but is not added to
+//   bloom buffer since no *single* light passes the threshold.
+//   requires additional pass though
+// TODO: see pp.frag, can improve order of screen space applying.
+//   basically split pp up in two passes: one combine pass and then
+//   a post processing pass (using tonemapping and applying ssr)
 // TODO: rgba16snorm (normalsFormat) isn't guaranteed to be supported
 //   as color attachment... i guess we could fall back to rgba16sint
 //   which is guaranteed to be supported?
@@ -58,33 +68,25 @@
 //   better with linear sampler, others need nearest sampler.
 //   same for mipmap. But try to let multiple passes use same
 //   sampler if possible
-// TODO: use bright reflective areas (or just fully lit areas,
-//   everything over a certain bloom threshold) for bloom as well,
-//   not just the emissisve stuff. Simply output them into the emissive
-//   buffer as well; we have no use for that besides blur.
-//   But then scale emissive in there (like 0.9 * emissive + 0.1 * light)
-//   http://kalogirou.net/2006/05/20/how-to-do-good-bloom-for-hdr-rendering/
+// TODO: cascaded shadow maps for directional lights
+// TODO: make shadow maps optional for lights (disable for small lights),
+//   generally allow configuring the size
 // TODO: fix theoretical synchronization issues
 // TODO: do we really need depth mip levels anywhere? test if it really
 //   brings ssao performance improvement.
-// TODO: try out other mechanisms for better ssao cache coherency
+// TODO: low prio; look at adding smaa. That needs multiple post processing
+//   passes though... Add it as new class
+
+// lower prio optimizations:
+// TODO(optimization): try out other mechanisms for better ssao cache coherency
 //   we should somehow use a higher lod level i guess
-
-// TODO: investigate reversed z buffer
-//   http://dev.theomader.com/depth-precision/
-//   https://nlguillemot.wordpress.com/2016/12/07/reversed-z-in-opengl/
-// TODO: try out compute pipeline for ssao. vulkan does not require
+// TODO(optimization): try out compute pipeline for ssao. vulkan does not require
 //   that r8 formats support storage image though
-
-// NOTE: we always use ssao, even when object/material has ao texture.
-// In that case both are multiplied. That's how its usually done, see
-// https://docs.unrealengine.com/en-us/Engine/Rendering/LightingAndShadows/AmbientOcclusion
-
-// NOTE: ssao currently independent from *any* lights at all
-// NOTE: we currently completely ignore tangents and compute that
-//   in the shader via derivates
-
-// low prio optimizations:
+// TODO(optimization, cleanup): we only need emission as input to lightning pass since its
+//   w component has a pbr property. We could instead move that to
+//   normals and the material id of normals somewhere else, e.g.
+//   the emission buffer. But that is sfloat instead of snorm,
+//   not sure how to encode in that case.
 // TODO(optimization?): we could theoretically just use one shadow map at all.
 //   requires splitting the light passes though (rendering with light pipe)
 //   so might have disadvantage. so not high prio
@@ -92,17 +94,30 @@
 //   not that easy though since normal buffer has snorm format...
 //   attachments can be used as color *and* input attachments in a
 //   subpass. And reusing the normals buffer as light output buffer
-//   is pretty perfect, no pass depends on both as input.
-//   maybe vulkan mutable format helps?
+//   is pretty perfect, no pass depends on both as input (edit: ssr
+//   does now. remove that if it's not needed or do ssr
+//   before the light pass then).
+//   should be possible with vulkan mutable format images
 // TODO(optimization): more efficient point light shadow cube map
 //   rendering: only render those sides that we can actually see...
 //   -> nothing culling-related implement at all at the moment
 // TODO(optimization): we currently don't use the a component of the
 //   bloom targets. We could basically get a free (strong) blur there...
 //   maybe good for ssao or something?
+
 // NOTE: investigate/compare deferred lightning elements?
 //   http://gameangst.com/?p=141
-
+// NOTE: we always use ssao, even when object/material has ao texture.
+//   In that case both are multiplied. That's how its usually done, see
+//   https://docs.unrealengine.com/en-us/Engine/Rendering/LightingAndShadows/AmbientOcclusion
+// NOTE: ssao currently independent from *any* lights at all
+// NOTE: we currently completely ignore tangents and compute that
+//   in the shader via derivates
+// NOTE: could investigate reversed z buffer
+//   http://dev.theomader.com/depth-precision/
+//   https://nlguillemot.wordpress.com/2016/12/07/reversed-z-in-opengl/
+// NOTE: ssr needs hdr format since otherwise we get artefacts for storing
+//   the uv value when the window has more than 255 pixels.
 
 class ViewApp : public doi::App {
 public:
@@ -111,14 +126,13 @@ public:
 	static constexpr auto lightFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto normalsFormat = vk::Format::r16g16b16a16Snorm;
 	static constexpr auto albedoFormat = vk::Format::r8g8b8a8Srgb;
-	static constexpr auto emissionFormat = vk::Format::r8g8b8a8Unorm;
+	static constexpr auto emissionFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto ssaoFormat = vk::Format::r8Unorm;
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
 	static constexpr auto ldepthFormat = vk::Format::r16Sfloat;
-	// static constexpr auto ssrFormat = vk::Format::r8g8b8a8Unorm;
 	static constexpr auto ssrFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto ssaoSampleCount = 16u;
-	static constexpr auto pointLight = false;
+	static constexpr auto pointLight = true;
 	static constexpr auto maxBloomLevels = 4u;
 
 	// pp.frag
@@ -126,6 +140,7 @@ public:
 	static constexpr unsigned flagScattering = (1u << 1u);
 	static constexpr unsigned flagSSR = (1u << 2u);
 	static constexpr unsigned flagBloom = (1u << 3u);
+	static constexpr unsigned flagFXAA = (1u << 4u);
 
 	// see pp.frag
 	struct PostProcessParams { // could name that PPP
@@ -134,8 +149,8 @@ public:
 		float aoFactor {0.05f};
 		float ssaoPow {3.f};
 		float exposure {1.f};
-		std::uint32_t flags {flagBloom};
-		std::uint32_t bloomLevels {1};
+		std::uint32_t flags {};
+		std::uint32_t bloomLevels {};
 	};
 
 	static const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
@@ -350,7 +365,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 			primitiveDsLayout_, shadowData_, *lightMaterial_);
 		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {2.f, 1.7f, 0.8f};
-		l.data.attenuation = {1.f, 0.4f, 0.2f};
+		l.data.attenuation = {1.f, 0.3f, 0.1f};
 		l.updateDevice();
 		pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
@@ -430,6 +445,13 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		pp_.updateParams = true;
 		updateDescriptors_ = true;
 		App::scheduleRerecord();
+	};
+
+	auto& cb5 = pp.create<Checkbox>("FXAA").checkbox();
+	cb5.set(pp_.params.flags & flagFXAA);
+	cb5.onToggle = [&](auto&) {
+		pp_.params.flags ^= flagFXAA;
+		pp_.updateParams = true;
 	};
 
 	return true;
@@ -736,17 +758,19 @@ void ViewApp::initLPass() {
 	gbufRefs[1].attachment = ids.albedo;
 	gbufRefs[1].layout = vk::ImageLayout::shaderReadOnlyOptimal;
 	gbufRefs[2].attachment = ids.emission;
-	gbufRefs[2].layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	gbufRefs[2].layout = vk::ImageLayout::general;
 	gbufRefs[3].attachment = ids.depth;
 	gbufRefs[3].layout = vk::ImageLayout::shaderReadOnlyOptimal;
 
-	vk::AttachmentReference lightRef;
-	lightRef.attachment = ids.light;
-	lightRef.layout = vk::ImageLayout::colorAttachmentOptimal;
+	vk::AttachmentReference outputRefs[2];
+	outputRefs[0].attachment = ids.light;
+	outputRefs[0].layout = vk::ImageLayout::colorAttachmentOptimal;
+	outputRefs[1].attachment = ids.emission;
+	outputRefs[1].layout = vk::ImageLayout::general;
 
 	vk::SubpassDescription subpass;
-	subpass.colorAttachmentCount = 1u;
-	subpass.pColorAttachments = &lightRef;
+	subpass.colorAttachmentCount = 2u;
+	subpass.pColorAttachments = outputRefs;
 	subpass.inputAttachmentCount = 4u;
 	subpass.pInputAttachments = gbufRefs;
 
@@ -826,22 +850,23 @@ void ViewApp::initLPass() {
 	pgpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 
 	// additive blending
-	vk::PipelineColorBlendAttachmentState blendAttachment;
-	blendAttachment.blendEnable = true;
-	blendAttachment.colorBlendOp = vk::BlendOp::add;
-	blendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
-	blendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
-	blendAttachment.alphaBlendOp = vk::BlendOp::add;
-	blendAttachment.srcAlphaBlendFactor = vk::BlendFactor::one;
-	blendAttachment.dstAlphaBlendFactor = vk::BlendFactor::one;
-	blendAttachment.colorWriteMask =
+	vk::PipelineColorBlendAttachmentState blendAttachments[2];
+	blendAttachments[0].blendEnable = true;
+	blendAttachments[0].colorBlendOp = vk::BlendOp::add;
+	blendAttachments[0].srcColorBlendFactor = vk::BlendFactor::one;
+	blendAttachments[0].dstColorBlendFactor = vk::BlendFactor::one;
+	blendAttachments[0].alphaBlendOp = vk::BlendOp::add;
+	blendAttachments[0].srcAlphaBlendFactor = vk::BlendFactor::one;
+	blendAttachments[0].dstAlphaBlendFactor = vk::BlendFactor::one;
+	blendAttachments[0].colorWriteMask =
 		vk::ColorComponentBits::r |
 		vk::ColorComponentBits::g |
 		vk::ColorComponentBits::b |
 		vk::ColorComponentBits::a;
+	blendAttachments[1] = blendAttachments[0];
 
-	pgpi.blend.attachmentCount = 1u;
-	pgpi.blend.pAttachments = &blendAttachment;
+	pgpi.blend.attachmentCount = 2u;
+	pgpi.blend.pAttachments = blendAttachments;
 	pgpi.flags(vk::PipelineCreateBits::allowDerivatives);
 
 	// dir light
@@ -1511,7 +1536,7 @@ void ViewApp::updateDescriptors() {
 	ldsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	ldsu.inputAttachment({{{}, gpass_.emission.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+		vk::ImageLayout::general}});
 	ldsu.inputAttachment({{{}, depthTarget().imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
@@ -2063,6 +2088,7 @@ void ViewApp::update(double dt) {
 }
 
 bool ViewApp::key(const ny::KeyEvent& ev) {
+	static std::default_random_engine rnd;
 	if(App::key(ev)) {
 		return true;
 	}
@@ -2109,7 +2135,17 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			pp_.params.exposure /= 1.1f;
 			pp_.updateParams = true;
 			return true;
-		default:
+		case ny::Keycode::comma: {
+			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
+				primitiveDsLayout_, shadowData_, *lightMaterial_);
+			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+			l.data.position = camera_.pos;
+			l.data.color = {dist(rnd), dist(rnd), dist(rnd)};
+			l.data.attenuation = {1.f, 0.6f * dist(rnd), 0.3f * dist(rnd)};
+			l.updateDevice();
+			App::scheduleRerecord();
+			break;
+		} default:
 			break;
 	}
 

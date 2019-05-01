@@ -15,6 +15,7 @@ void getLightParams(vec3 viewPos, vec3 fragPos,
 
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
+layout(location = 1) out vec4 outEmission;
 
 // scene
 layout(set = 0, binding = 0, row_major) uniform Scene {
@@ -36,9 +37,10 @@ layout(set = 1, binding = 3, input_attachment_index = 3)
 	uniform subpassInput inDepth;
 
 void main() {
+	fragColor = vec4(0.0);
+	outEmission = vec4(0.0);
 	float depth = subpassLoad(inDepth).r;
 	if(depth == 1) { // nothing rendered in gbufs here
-		fragColor = vec4(0.0);
 		return;
 	}
 
@@ -59,7 +61,6 @@ void main() {
 
 	// debug output modes
 	switch(scene.mode) {
-	case 0: break; // normal rendering
 	case 1:
 		fragColor = vec4(albedo, 0.0);
 		return;
@@ -75,12 +76,8 @@ void main() {
 	case 5:
 		fragColor = vec4(vec3(roughness), 0.0);
 		return;
-	case 6:
-		fragColor = vec4(vec3(sEmission.rgb), 0.0);
-		return;
 	default:
-		fragColor = vec4(0.0);
-		return;
+		break; // continue normally
 	}
 
 	vec3 lcolor;
@@ -97,4 +94,25 @@ void main() {
 	// NOTE: we are currently wasting the alpha component
 	vec3 color = max(light * lcolor, 0.0);
 	fragColor = vec4(color, 0.0);
+
+	// high pass for bloom/emission
+	const float highPassThreshold = 0.5;
+	// float l = color.r + color.g + color.b;
+	float l = length(color);
+	// float l = max(color.r, max(color.g, color.b));
+	if(l > highPassThreshold) {
+		// color *= pow(1 - (highPassThreshold / l), 2);
+		// color *= 1 - (highPassThreshold / l);
+		// color *= smoothstep(0.0, 1.0, l - highPassThreshold);
+		// color *= (l - highPassThreshold);
+
+		// NOTE: this one turns out to be be best.
+		// the pow leads to pushing the color vector towards
+		// length 1 (higher power means stronger towards 1).
+		// this is important since otherwise single well-lit pixels
+		// may create really bright bloom which leads to bloom popping
+		// when moving
+		color *= pow(l - highPassThreshold, 0.4) / l;
+		outEmission = vec4(color, 0.0);
+	}
 }

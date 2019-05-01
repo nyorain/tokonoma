@@ -2,6 +2,7 @@
 
 #extension GL_GOOGLE_include_directive : enable
 #include "scene.glsl"
+#include "fxaa.glsl"
 
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
@@ -10,6 +11,7 @@ const uint flagSSAO = (1u << 0u);
 const uint flagScattering = (1u << 1u);
 const uint flagSSR = (1u << 2u);
 const uint flagBloom = (1u << 3u);
+const uint flagFXAA = (1u << 4u);
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj;
@@ -76,8 +78,14 @@ vec3 tonemap(vec3 x) {
 //  and such
 void main() {
 	// vec4 color = subpassLoad(inLight);
-	vec4 color = texture(lightTex, uv);
-	if(scene.mode >= 1 && scene.mode <= 6) {
+	vec4 color;
+	if((ubo.flags & flagFXAA) != 0) {
+		color = fxaa(lightTex, gl_FragCoord.xy);
+	} else {
+		color = texture(lightTex, uv);
+	}
+
+	if(scene.mode >= 1 && scene.mode <= 5) {
 		// light shader rendered a debug view, don't modify
 		// it in any way. Just forward
 		fragColor = vec4(color.rgb, 1.0);
@@ -192,16 +200,26 @@ void main() {
 
 	// add bloom
 	uint bloomLevels = 1;
-	float bfac = 3.f;
+	float bfac = 1.f;
 	if((ubo.flags & flagBloom) != 0) {
 		bfac = 1.f;
 		bloomLevels += ubo.bloomLevels;
 	}
 
+	// TODO: if not using bloom, we will access bloomTex (the original
+	// full-sized mip level) without fxaa; looks bad
+
+	vec3 bloomSum = vec3(0.0);
 	for(uint i = 0u; i < bloomLevels; ++i) {
 		float fac = bfac / (1 + i);
-		color.rgb += fac * textureLod(bloomTex, uv, i).rgb;
+		bloomSum += fac * textureLod(bloomTex, uv, i).rgb;
 	}
 
+	if(scene.mode == 6) {
+		fragColor = vec4(tonemap(bloomSum), 1.0);
+		return;
+	}
+
+	color.rgb += bloomSum;
 	fragColor = vec4(tonemap(color.rgb), 1.0);
 }

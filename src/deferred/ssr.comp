@@ -25,10 +25,10 @@ layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D outData;
 // binSteps: number of binary search steps used once a hit interval
 //   has ben found. Increases precision of found hit exponentially.
 const uint marchSteps = 16u; // linear marching steps
-const uint binsSteps = 4u; // binary search steps after found hit interval
+const uint binsSteps = 8u; // binary search steps after found hit interval
 const float startStepSize = 0.01;
 const float stepFactor = 2.0;
-const float dthreshold = 0.5; // lin depth threshold
+const float dthreshold = 0.05; // linear depth threshold
 
 // TODO: add binary search end condition?: when pixel distance
 //   on depthTex between lower and upper bounds positions is
@@ -119,9 +119,12 @@ void main() {
 		// check if depth is in threshold of expected hit
 		// TODO: could be put a check like that ealier? would improve
 		// performance in non-hit cases
-		if(abs(marchZ - sampleZ) > dthreshold) {
+		float diff = abs(marchZ - sampleZ);
+		if(diff > dthreshold) {
 			break;
 		}
+
+		fac *= smoothstep(-dthreshold, -dthreshold / 4, -diff);
 
 		// check the normal of the found hit point. If dot(normal, rayDir)
 		// is greater 0, that means we hit the surface from the back.
@@ -132,7 +135,7 @@ void main() {
 		// already verified this via the depth check above, right?
 		vec3 sampleN = decodeNormal(textureLod(normalTex, uv.xy, lod).xy);
 		float ndr = dot(sampleN, reflDir);
-		float f = smoothstep(0.05, 0.25, -ndr);
+		float f = smoothstep(0.00, 0.25, -ndr);
 		if(f > 0.0) {
 			fac *= f;
 			hitUV = uv.xy;

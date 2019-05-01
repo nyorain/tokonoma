@@ -47,9 +47,9 @@ struct MaterialPcr {
 // in the perspective projection.
 // depth expected in standard vulkan range [0,1]
 float depthtoz(float depth, float near, float far) {
-	if(z >= 1.f) { // TODO: hack
-		return 999.f;
-	}
+	// if(depth >= 1.f) { // TODO: hack
+		// return 1000.f;
+	// }
 	return near * far / (far + near - depth * (far - near));
 }
 float ztodepth(float z, float near, float far) {

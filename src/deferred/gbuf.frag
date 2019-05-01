@@ -58,7 +58,7 @@ void main() {
 
 	outNormal.xy = encodeNormal(normal);
 	outAlbedo.rgb = albedo.rgb;
-	outEmission.xyz = material.emission * texture(emissionTex, inUV).rgb;
+	outEmission.xyz = 4 * material.emission * texture(emissionTex, inUV).rgb;
 
 	outNormal.z = 2.f * (model.id / 65536.0) - 1.f; // snorm format
 	outAlbedo.w = texture(occlusionTex, inUV).r;

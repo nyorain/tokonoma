@@ -3,19 +3,21 @@ doesn't handle transparency yet.
 # concept
 some passes are entirely optional (2 for bloom; 3+4 for ssao)
 
-- first renderpass: render all primitives into gbufs
-- second renderpass: blur emission *compure passes?*
+- renderpass: render all primitives into gbufs
+- renderpass: blur emission *compure passes?*
 	- first subpass: horizontal blur into new framebuffer
 	- second subpass: vertical blur into orginal framebuffer
 	  *or user smaller framebuffer here? is blurred anyway now*
-- third renderpass: screen space: ssao *compute pass?*
-- 4th rp: blur ssao buffer *compute passes?*
+- renderpass: screen space: ssao *compute pass?*
+- rp: blur ssao buffer *compute passes?*
 	- first subpass: horizontal blur into new framebuffer
 	- second subpass: vertical blur into orginal framebuffer
 	  *or user smaller framebuffer here? is blurred anyway now*
-- 5th rp: shading: using gbuffers, bloom and ssao buffer, render
-  a hdr image (16f), a component is light scattering
-- 7th rp: post processing *compute pass?*
+- rp: shading: using gbuffers, render a hdr image (16f)
+- rp: light scattering
+- rp: ssr
+- compute passes: bloom blur, on different mipmap levels
+- rp: post processing *compute pass?*
 	- uses hdr buffer from 5th rp as input
 	- combine with bloom
 	- tonemap the 16f image onto the final swapchain image
