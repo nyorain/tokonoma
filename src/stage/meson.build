@@ -26,6 +26,8 @@ stage_deps = [
   dep_vulkan,
   dep_soundio,
   dep_b2d,
+  dep_turbojpeg,
+  dep_png,
   gltf_dep,
 ]
 
@@ -38,6 +40,7 @@ stage_src = [
 	'geometry.cpp',
 	'physics.cpp',
 	'texture.cpp',
+	'image.cpp',
 
 	'scene/scene.cpp',
 	'scene/material.cpp',

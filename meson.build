@@ -58,6 +58,8 @@ dep_ny = dependency('ny', fallback: ['ny', 'ny_dep'])
 dep_rvg = dependency('rvg', fallback: ['rvg', 'rvg_dep'])
 dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
+dep_turbojpeg = dependency('libturbojpeg')
+dep_png = dependency('libpng')
 
 external_inc = include_directories('external/include')
 libpath = join_paths(meson.source_root(), 'external', 'lib', build_machine.system())

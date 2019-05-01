@@ -1,5 +1,6 @@
 #include <stage/texture.hpp>
 #include <stage/bits.hpp>
+#include <stage/image.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/imageOps.hpp>
 #include <vpp/queue.hpp>
@@ -29,40 +30,50 @@
 // a lot of memory (half the memory needed!) and most hdr images really
 // only need 16 bit precision.
 
+// stbi supports more format (especially hdr) but our own jpeg/png
+// loaders (using the libraries) are *way* faster.
+constexpr bool useStageImage = true;
+
 namespace doi {
 
 std::tuple<std::byte*, vk::Extent3D> loadImage(nytl::StringParam filename,
 		unsigned channels, bool hdr) {
-	dlg_assertlm(dlg_level_debug, stbi_is_hdr(filename.c_str()) == hdr,
-		"texture '{}' requires stbi hdr conversion", filename);
-
-	int width, height, ch;
-	std::byte* data;
-	if(hdr) {
-		auto fd = stbi_loadf(filename.c_str(), &width, &height, &ch, channels);
-		data = reinterpret_cast<std::byte*>(fd);
+	if(useStageImage && !hdr && channels == 4) {
+		Image image;
+		dlg_assert(load(filename, image) == Error::none);
+		return {image.data.release(), {image.width, image.height}};
 	} else {
-		auto cd = stbi_load(filename.c_str(), &width, &height, &ch, channels);
-		data = reinterpret_cast<std::byte*>(cd);
+		dlg_assertlm(dlg_level_debug, stbi_is_hdr(filename.c_str()) == hdr,
+			"texture '{}' requires stbi hdr conversion", filename);
+
+		int width, height, ch;
+		std::byte* data;
+		if(hdr) {
+			auto fd = stbi_loadf(filename.c_str(), &width, &height, &ch, channels);
+			data = reinterpret_cast<std::byte*>(fd);
+		} else {
+			auto cd = stbi_load(filename.c_str(), &width, &height, &ch, channels);
+			data = reinterpret_cast<std::byte*>(cd);
+		}
+
+		if(!data) {
+			dlg_warn("Failed to open texture file {}", filename);
+
+			std::string err = "Could not load image from ";
+			err += filename;
+			err += ": ";
+			err += stbi_failure_reason();
+			throw std::runtime_error(err);
+		}
+
+		dlg_assert(width > 0 && height > 0);
+
+		vk::Extent3D extent;
+		extent.width = width;
+		extent.height = height;
+		extent.depth = 1u;
+		return {data, extent};
 	}
-
-	if(!data) {
-		dlg_warn("Failed to open texture file {}", filename);
-
-		std::string err = "Could not load image from ";
-		err += filename;
-		err += ": ";
-		err += stbi_failure_reason();
-		throw std::runtime_error(err);
-	}
-
-	dlg_assert(width > 0 && height > 0);
-
-	vk::Extent3D extent;
-	extent.width = width;
-	extent.height = height;
-	extent.depth = 1u;
-	return {data, extent};
 }
 
 vpp::ViewableImage loadTexture(const vpp::Device& dev,
