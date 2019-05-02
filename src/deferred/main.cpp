@@ -50,14 +50,14 @@
 #include <cstdlib>
 #include <random>
 
+// TODO: maybe do high pass on light output *after* blending.
+//   currently, when there are many light shining on a surface
+//   the surface gets bright (obviously) but is not added to
+//   bloom buffer since no *single* light passes the threshold.
+//   requires additional pass though
+// TODO: gather statistics for optimization with time query pools
 // TODO: re-add light scattering (per light?)
 //   even if per-light we can still apply if after lightning pass
-// TODO: look into vk_khr_multiview (promoted to vulkan 1.1?) for
-//   cubemap rendering (point lights, but also skybox transformation)
-// TODO: don't use rgba32f for ssr. We need it since otherwise we might
-//   get uv precision issues (noticed with artefact halo when doing
-//   bloom before). But should be possible to solve this via packing somehow,
-//   maybe rgba16unorm is enough (extended storage format though...).
 // TODO: we should be able to always use the same attenuation (or at least
 //   make it independent from radius) by normalizing distance from light
 //   (dividing by radius) before caluclating attunation
@@ -70,18 +70,8 @@
 //   objects that can be aproximated as opaque for ssr/ssao sakes and then
 //   (after reading the buffers for ss algorithms) another forward pass
 //   for almost-transparent objects. Probably not worht it though
-// TODO: better ssr blurring. Use more physical (cone trace) approaches and
-//   maybe pre-blur light buffer copy in extra pass (double, gauss)
-//   based on blurring output from ssr pass.
-//   create blurred mipmaps of light buffers (bloom like) and access
-//   them depending on the ssr blur level?
 // TODO: parameterize all (currently somewhat random) values and factors
 //   (especially in artefact-prone screen space shaders)
-// TODO: maybe do high pass on light output *after* blending.
-//   currently, when there are many light shining on a surface
-//   the surface gets bright (obviously) but is not added to
-//   bloom buffer since no *single* light passes the threshold.
-//   requires additional pass though
 // TODO: re-add (fix for point light) the shadowmap-based light
 //   scattering approach
 // TODO: rgba16snorm (normalsFormat) isn't guaranteed to be supported
@@ -101,10 +91,15 @@
 // TODO: do we really need depth mip levels anywhere? test if it really
 //   brings ssao performance improvement. Otherwise we are wasting this
 //   whole "depth mip map levels" thing
+// TODO: blur ssr in extra pass (with compute shader shared memory,
+//   see ssrBlur.comp wip). Should hopefully improve performance
+//   and allow for greater blur. Also distribute factors (compute guass +
+//   depth difference) via shared variables
 
-// TODO: low prio; look at adding smaa. That needs multiple post processing
+// low prio:
+// TODO: look at adding smaa. That needs multiple post processing
 //   passes though... Add it as new class
-// TODO: low prio, more an idea:
+// TODO: more an idea:
 //   shadow cube debug mode (where cubemap is rendered, one can
 //   look around). Maybe use moving the camera then for moving the light.
 //   can be activated via vui when light is selcted.
@@ -151,6 +146,8 @@
 // TODO(optimization): we currently don't use the a component of the
 //   bloom targets. We could basically get a free (strong) blur there...
 //   maybe good for ssao or something?
+// TODO: look into vk_khr_multiview (promoted to vulkan 1.1?) for
+//   cubemap rendering (point lights, but also skybox transformation)
 
 // NOTE: investigate/compare deferred lightning elements?
 //   http://gameangst.com/?p=141
@@ -555,7 +552,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	cb1.onToggle = [&](auto&) {
 		params_.flags ^= flagSSAO;
 		updateRenderParams_ = true;
-		updateDescriptors_ = true;
+		App::resize_ = true; // recreate
 		App::scheduleRerecord();
 	};
 
@@ -573,7 +570,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	cb3.onToggle = [&](auto&) {
 		params_.flags ^= flagSSR;
 		updateRenderParams_ = true;
-		updateDescriptors_ = true;
+		App::resize_ = true; // recreate
 		App::scheduleRerecord();
 	};
 
@@ -582,7 +579,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	cb4.onToggle = [&](auto&) {
 		params_.flags ^= flagBloom;
 		updateRenderParams_ = true;
-		updateDescriptors_ = true;
+		App::resize_ = true; // recreate
 		App::scheduleRerecord();
 	};
 
@@ -1700,76 +1697,98 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	lpass_.fb = {dev, fbi};
 
 	// ssao buf
-	attachments.clear();
-	initBuf(ssao_.target, ssaoFormat);
-	fbi = vk::FramebufferCreateInfo({}, ssao_.pass,
-		attachments.size(), attachments.data(),
-		size.width, size.height, 1);
-	ssao_.fb = {dev, fbi};
+	if(params_.flags & flagSSAO) {
+		attachments.clear();
+		initBuf(ssao_.target, ssaoFormat);
+		fbi = vk::FramebufferCreateInfo({}, ssao_.pass,
+			attachments.size(), attachments.data(),
+			size.width, size.height, 1);
+		ssao_.fb = {dev, fbi};
 
-	// ssao blur
-	attachments.clear();
-	initBuf(ssao_.blur.target, ssaoFormat);
-	fbi = vk::FramebufferCreateInfo({}, ssao_.pass,
-		attachments.size(), attachments.data(),
-		size.width, size.height, 1);
-	ssao_.blur.fb = {dev, fbi};
+		// ssao blur
+		attachments.clear();
+		initBuf(ssao_.blur.target, ssaoFormat);
+		fbi = vk::FramebufferCreateInfo({}, ssao_.pass,
+			attachments.size(), attachments.data(),
+			size.width, size.height, 1);
+		ssao_.blur.fb = {dev, fbi};
+	} else {
+		ssao_.blur.fb = {};
+		ssao_.target = {};
+		ssao_.blur.target = {};
+		ssao_.blur.fb = {};
+	}
 
 	// scatter buf
-	attachments.clear();
-	initBuf(scatter_.target, scatterFormat);
-	fbi = vk::FramebufferCreateInfo({}, scatter_.pass,
-		attachments.size(), attachments.data(),
-		size.width, size.height, 1);
-	scatter_.fb = {dev, fbi};
+	if(params_.flags & flagScattering) {
+		attachments.clear();
+		initBuf(scatter_.target, scatterFormat);
+		fbi = vk::FramebufferCreateInfo({}, scatter_.pass,
+			attachments.size(), attachments.data(),
+			size.width, size.height, 1);
+		scatter_.fb = {dev, fbi};
+	} else {
+		scatter_.target = {};
+		scatter_.fb = {};
+	}
 
 	// TODO: really start with half-sized bloom for first level?
 	// try out different settings/make it confiurable. Should have
 	// major impact on visuals *and* performance
-	usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled;
-	info = vpp::ViewableImageCreateInfo::color(device(),
-		{size.width / 2, size.height / 2}, usage, {emissionFormat},
-		vk::ImageTiling::optimal, samples());
-	info->img.mipLevels = bloomLevels;
-	dlg_assert(info);
-	bloom_.tmpTarget = {device(), info->img};
+	if(params_.flags & flagBloom) {
+		usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled;
+		info = vpp::ViewableImageCreateInfo::color(device(),
+			{size.width / 2, size.height / 2}, usage, {emissionFormat},
+			vk::ImageTiling::optimal, samples());
+		info->img.mipLevels = bloomLevels;
+		dlg_assert(info);
+		bloom_.tmpTarget = {device(), info->img};
 
-	bloomLevels_ = bloomLevels;
-	bloom_.emissionLevels.clear();
-	bloom_.tmpLevels.clear();
-	for(auto i = 0u; i < bloomLevels; ++i) {
+		bloomLevels_ = bloomLevels;
+		bloom_.emissionLevels.clear();
+		bloom_.tmpLevels.clear();
+		for(auto i = 0u; i < bloomLevels; ++i) {
+			auto ivi = info->view;
+
+			// emission view
+			auto& emissionLevel = bloom_.emissionLevels.emplace_back();
+			ivi.subresourceRange.baseMipLevel = i + 1;
+			ivi.image = gpass_.emission.image();
+			emissionLevel.view = {dev, ivi};
+			emissionLevel.ds = {dev.descriptorAllocator(), bloom_.dsLayout};
+
+			// tmp target
+			auto& tmpLevel = bloom_.tmpLevels.emplace_back();
+			ivi.image = bloom_.tmpTarget;
+			ivi.subresourceRange.baseMipLevel = i;
+			tmpLevel.view = {dev, ivi};
+			tmpLevel.ds = {dev.descriptorAllocator(), bloom_.dsLayout};
+		}
+
 		auto ivi = info->view;
-
-		// emission view
-		auto& emissionLevel = bloom_.emissionLevels.emplace_back();
-		ivi.subresourceRange.baseMipLevel = i + 1;
 		ivi.image = gpass_.emission.image();
-		emissionLevel.view = {dev, ivi};
-		emissionLevel.ds = {dev.descriptorAllocator(), bloom_.dsLayout};
-
-		// tmp target
-		auto& tmpLevel = bloom_.tmpLevels.emplace_back();
-		ivi.image = bloom_.tmpTarget;
-		ivi.subresourceRange.baseMipLevel = i;
-		tmpLevel.view = {dev, ivi};
-		tmpLevel.ds = {dev.descriptorAllocator(), bloom_.dsLayout};
+		ivi.subresourceRange.baseMipLevel = 0;
+		ivi.subresourceRange.levelCount = bloomLevels;
+		bloom_.fullBloom = {dev, ivi};
+	} else {
+		bloom_.tmpLevels.clear();
+		bloom_.fullBloom = {};
+		bloom_.tmpTarget = {};
 	}
 
-	auto ivi = info->view;
-	ivi.image = gpass_.emission.image();
-	ivi.subresourceRange.baseMipLevel = 0;
-	ivi.subresourceRange.levelCount = bloomLevels;
-	bloom_.fullBloom = {dev, ivi};
-
 	// ssr target image
-	usage = vk::ImageUsageBits::storage |
-		vk::ImageUsageBits::sampled |
-		vk::ImageUsageBits::inputAttachment;
-	info = vpp::ViewableImageCreateInfo::color(device(),
-		{size.width, size.height}, usage, {ssrFormat},
-		vk::ImageTiling::optimal, samples());
-	dlg_assert(info);
-	ssr_.target = {device(), *info};
+	if(params_.flags & flagSSR) {
+		usage = vk::ImageUsageBits::storage |
+			vk::ImageUsageBits::sampled |
+			vk::ImageUsageBits::inputAttachment;
+		info = vpp::ViewableImageCreateInfo::color(device(),
+			{size.width, size.height}, usage, {ssrFormat},
+			vk::ImageTiling::optimal, samples());
+		dlg_assert(info);
+		ssr_.target = {device(), *info};
+	} else {
+		ssr_.target = {};
+	}
 
 	// create swapchain framebuffers
 	for(auto& buf : bufs) {
@@ -1833,31 +1852,35 @@ void ViewApp::updateDescriptors() {
 	cdsu.imageSampler({{{}, bloomView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	auto& ssdsu = updates.emplace_back(ssao_.ds);
-	ssdsu.uniform({{ssao_.samples.buffer(), ssao_.samples.offset(),
-		ssao_.samples.size()}});
-	ssdsu.imageSampler({{{}, ssao_.noise.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ssdsu.imageSampler({{{}, depthView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ssdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+	if(params_.flags & flagSSAO) {
+		auto& ssdsu = updates.emplace_back(ssao_.ds);
+		ssdsu.uniform({{ssao_.samples.buffer(), ssao_.samples.offset(),
+			ssao_.samples.size()}});
+		ssdsu.imageSampler({{{}, ssao_.noise.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ssdsu.imageSampler({{{}, depthView,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ssdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	auto& ssbhdsu = updates.emplace_back(ssao_.blur.dsHorz);
-	ssbhdsu.imageSampler({{{}, ssao_.target.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ssbhdsu.imageSampler({{{}, depthView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+		auto& ssbhdsu = updates.emplace_back(ssao_.blur.dsHorz);
+		ssbhdsu.imageSampler({{{}, ssao_.target.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ssbhdsu.imageSampler({{{}, depthView,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	auto& ssbvdsu = updates.emplace_back(ssao_.blur.dsVert);
-	ssbvdsu.imageSampler({{{}, ssao_.blur.target.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ssbvdsu.imageSampler({{{}, depthView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+		auto& ssbvdsu = updates.emplace_back(ssao_.blur.dsVert);
+		ssbvdsu.imageSampler({{{}, ssao_.blur.target.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ssbvdsu.imageSampler({{{}, depthView,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+	}
 
-	auto& sdsu = updates.emplace_back(scatter_.ds);
-	sdsu.imageSampler({{{}, depthView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+	if(params_.flags & flagScattering) {
+		auto& sdsu = updates.emplace_back(scatter_.ds);
+		sdsu.imageSampler({{{}, depthView,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+	}
 
 	if(params_.flags & flagBloom) {
 		for(auto i = 0u; i < bloomLevels_; ++i) {
@@ -1876,29 +1899,33 @@ void ViewApp::updateDescriptors() {
 		}
 	}
 
-	auto& rdsu = updates.emplace_back(ssr_.ds);
-	rdsu.imageSampler({{{}, depthView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	rdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	rdsu.storage({{{}, ssr_.target.vkImageView(),
-		vk::ImageLayout::general}});
+	if(params_.flags & flagSSR) {
+		auto& rdsu = updates.emplace_back(ssr_.ds);
+		rdsu.imageSampler({{{}, depthView,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		rdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		rdsu.storage({{{}, ssr_.target.vkImageView(),
+			vk::ImageLayout::general}});
+	}
 
-	auto& ddsu = updates.emplace_back(debug_.ds);
-	ddsu.uniform({{paramsUbo_.buffer(), paramsUbo_.offset(),
-		paramsUbo_.size()}});
-	ddsu.inputAttachment({{{}, gpass_.albedo.imageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ddsu.inputAttachment({{{}, gpass_.normal.imageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ddsu.inputAttachment({{{}, gpass_.depth.imageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ddsu.inputAttachment({{{}, ssaoView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ddsu.inputAttachment({{{}, ssrView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	ddsu.imageSampler({{{}, bloomView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+	if(params_.mode != 0) {
+		auto& ddsu = updates.emplace_back(debug_.ds);
+		ddsu.uniform({{paramsUbo_.buffer(), paramsUbo_.offset(),
+			paramsUbo_.size()}});
+		ddsu.inputAttachment({{{}, gpass_.albedo.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ddsu.inputAttachment({{{}, gpass_.normal.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ddsu.inputAttachment({{{}, gpass_.depth.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ddsu.inputAttachment({{{}, ssaoView,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ddsu.inputAttachment({{{}, ssrView,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ddsu.imageSampler({{{}, bloomView,
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+	}
 
 	vpp::apply(updates);
 }
@@ -2496,6 +2523,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			params_.mode = (params_.mode + numModes - 1) % numModes;
 			updateRenderParams_ = true;
 			if(params_.mode == 0 || params_.mode == numModes - 1) {
+				resize_ = true; // recreate
 				App::scheduleRerecord();
 			}
 			return true;
@@ -2543,6 +2571,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		params_.mode = diff;
 		updateRenderParams_ = true;
 		if(was0 || params_.mode == 0) {
+			resize_ = true; // recreate
 			App::scheduleRerecord();
 		}
 	}
