@@ -1,0 +1,63 @@
+#version 450
+
+const uint flagSSAO = (1u << 0u);
+const uint flagBloom = (1u << 3u);
+
+// TODO: split this up in multiple additive passes, each rendering
+// one texture? or multiple compute shaders (e.g. bloom addition
+// requires special handling). Should be more cache-friendly since
+// then only one texture per draw has to be kept in cache; here
+// we need all 4
+
+// TODO: how to choose the best workgroup size? make it configurable!
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, rgba16f) uniform image2D outCol;
+
+layout(set = 0, binding = 1)  uniform Params {
+	uint flags;
+	uint bloomLevels;
+	float aoFactor;
+} params;
+
+layout(set = 0, binding = 2) uniform sampler2D albedoTex;
+layout(set = 0, binding = 3) uniform sampler2D ssaoTex;
+layout(set = 0, binding = 4) uniform sampler2D bloomTex;
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outCol);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+	vec4 color = imageLoad(outCol, ivec2(pixel));
+
+	// apply ssao
+	vec4 albedo = texture(albedoTex, uv);
+	float ao = params.aoFactor * albedo.w;
+	if((params.flags & flagSSAO) != 0) {
+		ao *= texture(ssaoTex, uv).r;
+	}
+	color.rgb += ao * albedo.rgb;
+
+	// apply bloom
+	uint bloomLevels = 1;
+	float bfac = 2.f;
+	if((params.flags & flagBloom) != 0) {
+		bfac = 1.f;
+		bloomLevels += params.bloomLevels;
+	}
+
+	vec3 bloomSum = vec3(0.0);
+	for(uint i = 0u; i < bloomLevels; ++i) {
+		float fac = bfac / (1 + i);
+		bloomSum += fac * textureLod(bloomTex, uv, i).rgb;
+	}
+
+	color.rgb += bloomSum;
+
+	// write back
+	imageStore(outCol, ivec2(pixel), color);
+}

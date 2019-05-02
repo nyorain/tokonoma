@@ -54,6 +54,17 @@ void main() {
 	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
 	vec3 fragPos = pos4.xyz / pos4.w;
 
+	vec3 lcolor;
+	vec3 ldir;
+	getLightParams(scene.viewPos, fragPos, ldir, lcolor);
+
+	// fast return; useful for point lights (where pixel is outside radius)
+	// and shadow regions. We don't have to do the complete pbr calculation
+	// there.
+	if(lcolor.r + lcolor.g + lcolor.b < 0.001) {
+		return;
+	}
+
 	vec4 sNormal = subpassLoad(inNormal);
 	vec4 sAlbedo = subpassLoad(inAlbedo);
 	vec4 sEmission = subpassLoad(inEmission);
@@ -84,16 +95,6 @@ void main() {
 		break; // continue normally
 	}
 
-	vec3 lcolor;
-	vec3 ldir;
-	getLightParams(scene.viewPos, fragPos, ldir, lcolor);
-
-	// TODO: better fast return
-	// mainly relevant for point lights
-	if(lcolor.r + lcolor.g + lcolor.b < 0.01) {
-		return;
-	}
-
 	// for debugging: diffuse only
 	// vec3 light = dot(normal, -ldir) * albedo;
 
@@ -105,6 +106,8 @@ void main() {
 	vec3 color = max(light * lcolor, 0.0);
 	fragColor = vec4(color, 0.0);
 
+	// TODO: move to extra pass; *after* all lightning was done
+	// for all lights!
 	// high pass for bloom/emission
 	const float highPassThreshold = 0.5;
 	// float l = color.r + color.g + color.b;

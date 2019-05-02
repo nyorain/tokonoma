@@ -124,21 +124,21 @@ void main() {
 		const float far = scene.farPlane;
 
 		float ssao = 0.f;
-		int range = 1;
+		int range = 4;
 		vec2 texelSize = 1.f / textureSize(ssaoTex, 0);
-		float depth = textureLod(depthTex, uv, 0).r;
-		float z = depthtoz(depth, near, far);
+		float z = textureLod(depthTex, uv, 0).r;
+		// float z = depthtoz(depth, near, far);
 		float total = 0.f;
 
 		// TODO: what kind of filter to use?
 		// without gaussian it's a simple box filter
-		// const float kernel[5][5] = {
-		// 	{0.003765,	0.015019,	0.023792,	0.015019,	0.003765},
-		// 	{0.015019,	0.059912,	0.094907,	0.059912,	0.015019},
-		// 	{0.023792,	0.094907,	0.150342,	0.094907,	0.023792},
-		// 	{0.015019,	0.059912,	0.094907,	0.059912,	0.015019},
-		// 	{0.003765,	0.015019,	0.023792,	0.015019,	0.003765},
-		// }
+		const float kernel[5][5] = {
+			{0.003765,	0.015019,	0.023792,	0.015019,	0.003765},
+			{0.015019,	0.059912,	0.094907,	0.059912,	0.015019},
+			{0.023792,	0.094907,	0.150342,	0.094907,	0.023792},
+			{0.015019,	0.059912,	0.094907,	0.059912,	0.015019},
+			{0.003765,	0.015019,	0.023792,	0.015019,	0.003765},
+		};
 
 		// TODO: probably best to bur in 2-step guassian pass
 		// then also use linear sampling gauss, see gblur.frag
@@ -146,8 +146,8 @@ void main() {
 			for(int y = -range; y <= range; ++y) {
 				vec2 off = texelSize * vec2(x, y);
 				vec2 uvo = clamp(uv + off, 0.0, 1.0);
-				float sampleDepth = textureLod(depthTex, uvo, 0.0).r;
-				float samplez = depthtoz(sampleDepth, near, far);
+				float samplez = textureLod(depthTex, uvo, 0.0).r;
+				// float samplez = depthtoz(sampleDepth, near, far);
 				float sampleAo = textureLod(ssaoTex, uvo, 0.0).r;
 
 				// make sure to not blur over edges here

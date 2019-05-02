@@ -13,6 +13,11 @@ void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 		out vec3 lcolor) {
 	ldir = fragPos - light.pos;
 	float lightDistance = length(fragPos - light.pos);
+	if(lightDistance > light.radius) { // pixel not lighted by this light
+		lcolor = vec3(0.0);
+		return;
+	}
+
 	ldir /= lightDistance;
 	lcolor = attenuation(lightDistance, light.attenuation) * light.color;
 
@@ -32,4 +37,6 @@ void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 	} else {
 		lcolor *= pointShadow(shadowCube, light.pos, light.farPlane, fragPos);
 	}
+
+	return true;
 }

@@ -41,7 +41,7 @@ vec3 getNormal() {
 }
 
 void main() {
-	// TODO: allow emission for discarded pixels?
+	// discarded fragments only output no emission
 	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
 		discard;
 	}
@@ -64,10 +64,8 @@ void main() {
 	outAlbedo.w = texture(occlusionTex, inUV).r;
 
 	vec4 mr = texture(metalRoughTex, inUV);
-	// as specified by gltf spec
-	// NOTE: roughness uses only half the range (normal gbuf is snorm)
-	// but since it only uses 8 bits and we have a 16 bit format
-	// that should be ok. we waste some space here though!
+	// components as specified by gltf spec
+	// NOTE: use only half the range (normal and emissions gbufs are 16f)
 	outNormal.w = material.roughness * mr.g;
 	outEmission.w = material.metallic * mr.b;
 

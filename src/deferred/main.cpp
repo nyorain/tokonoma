@@ -47,6 +47,14 @@
 #include <cstdlib>
 #include <random>
 
+// TODO: we should be able to always use the same attenuation (or at least
+//   make it independent from radius) by normalizing distance from light
+//   (dividing by radius) before caluclating attunation
+// TODO: shadow cube debug mode (where cubemap is rendered, one can
+//   look around). Maybe use moving the camera then for moving the light.
+//   can be activated via vui when light is selcted.
+//   something comparable for dir lights? where direction can be set by
+//   moving camera around?
 // TODO: display debug modes in pp shader; not per light
 // TODO: re-add skybox and transparent objects in forward pass.
 //   the objects from that pass will have no effect on ssao or ssr,
@@ -76,12 +84,16 @@
 //   scattering approach
 // TODO: rgba16snorm (normalsFormat) isn't guaranteed to be supported
 //   as color attachment... i guess we could fall back to rgba16sint
-//   which is guaranteed to be supported?
+//   which is guaranteed to be supported? and then encode it
 // TODO: try out fxaa in postprocessing shader. Should it be done before
 //   any effects like adding bloom, ssr, light scattering or ssao?
 //   maybe try full image first, should work alright
 // TODO: point light scattering currently doesn't support the ldv value,
 //   i.e. view-dir dependent scattering only based on attenuation
+// TODO: support light scattering for every light (add a light flag for it).
+//   For point lights, we only have to scatter in the light volume.
+//   Probably can't combine it with the volume rasterization step in the
+//   light pass though, so have to render the box twice.
 // TODO: fix used samplers, we need more than one! some passes are
 //   better with linear sampler, others need nearest sampler.
 //   same for mipmap. But try to let multiple passes use same
@@ -96,10 +108,20 @@
 //   passes though... Add it as new class
 
 // lower prio optimizations:
+// TODO(optimization): when shaderStorageImageExtendedFormats is supported,
+//   we can perform pretty much all fullscreen passes (ssao, ssr, combining,
+//   ssao blurring) as compute shaders. For doing it with post processing/
+//   tonemapping we'd also need to create the swapchain with storage image
+//   caps *and* know that it uses a format that is supported... so probably
+//   stick with fullscreen render pass there.
+//   Some of the above mentioned don't need extended formats, those should
+//   definietly be moved to compute passes.
+//   NOTE: for some passes (and their inputs) that means giving up
+//   input attachments though. Is that a performance loss anywhere?
+//   input attachments are probably only relevent when using multiple
+//   subpasses, right?
 // TODO(optimization): try out other mechanisms for better ssao cache coherency
-//   we should somehow use a higher lod level i guess
-// TODO(optimization): try out compute pipeline for ssao. vulkan does not require
-//   that r8 formats support storage image though
+//   we should somehow use a higher mipmap level i guess
 // TODO(optimization, cleanup): we only need emission as input to lightning pass since its
 //   w component has a pbr property. We could instead move that to
 //   normals and the material id of normals somewhere else, e.g.
@@ -184,6 +206,7 @@ public:
 	void initScattering();
 	void initBloom();
 	void initSSR();
+	void initCombine();
 	void updateDescriptors();
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
@@ -284,9 +307,9 @@ protected:
 	struct {
 		vpp::RenderPass pass;
 		vpp::Framebuffer fb;
-		vpp::ViewableImage light;
 		vpp::TrDsLayout dsLayout; // input
 		vpp::TrDs ds;
+		vpp::ViewableImage light;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pointPipe;
 		vpp::Pipeline dirPipe;
@@ -295,9 +318,9 @@ protected:
 	// post processing
 	struct {
 		vpp::RenderPass pass;
-		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;
 		vpp::PipelineLayout pipeLayout;
+		vpp::TrDsLayout dsLayout;
 		vpp::SubBuffer ubo;
 		vpp::Pipeline pipe;
 
@@ -308,24 +331,33 @@ protected:
 	// ssao
 	struct {
 		vpp::RenderPass pass;
-		vpp::PipelineLayout pipeLayout;
-		vpp::Pipeline pipe;
 		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
 		vpp::ViewableImage target;
 		vpp::ViewableImage noise;
 		vpp::Framebuffer fb;
 		vpp::SubBuffer samples;
 	} ssao_;
 
+	// ssao blur
+	// TODO
+	// struct {
+	// 	vpp::TrDsLayout dsLayout;
+	// 	vpp::TrDs ds;
+	// 	vpp::PipelineLayout pipeLayout;
+	// 	vpp::Pipeline pipe;
+	// } ssaoBlur_;
+
 	// light scattering
 	struct {
 		vpp::RenderPass pass;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pointPipe;
 		vpp::Pipeline dirPipe;
-		vpp::TrDsLayout dsLayout;
-		vpp::TrDs ds;
 
 		// TODO: we might want to allow per-light scattering
 		vpp::ViewableImage target;
@@ -339,9 +371,9 @@ protected:
 	};
 
 	struct {
+		vpp::TrDsLayout dsLayout;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
-		vpp::TrDsLayout dsLayout;
 		vpp::Image tmpTarget;
 		std::vector<BloomLevel> tmpLevels;
 		std::vector<BloomLevel> emissionLevels;
@@ -350,12 +382,20 @@ protected:
 
 	// ssr
 	struct {
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
 		vpp::ViewableImage target;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
+	} ssr_;
+
+	// combining pass
+	struct {
 		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;
-	} ssr_;
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+	} combine_;
 };
 
 bool ViewApp::init(const nytl::Span<const char*> args) {
@@ -523,13 +563,13 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		pointLights_[selected_.id].data.radius = val;
 		updateLights_ = true;
 	});
-	selected_.a1Field = createNumTextfield(light, "Attenuation: Linear",
+	selected_.a1Field = createNumTextfield(light, "L Attenuation",
 			0.0, [this](auto val) {
 		dlg_assert(selected_.id != 0xFFFFFFFFu);
 		pointLights_[selected_.id].data.attenuation.y = val;
 		updateLights_ = true;
 	});
-	selected_.a2Field = createNumTextfield(light, "Attenuation: Quadatric",
+	selected_.a2Field = createNumTextfield(light, "Q Attenuation",
 			0.0, [this](auto val) {
 		dlg_assert(selected_.id != 0xFFFFFFFFu);
 		pointLights_[selected_.id].data.attenuation.z = val;
