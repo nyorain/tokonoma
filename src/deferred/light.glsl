@@ -61,7 +61,7 @@ void main() {
 	// fast return; useful for point lights (where pixel is outside radius)
 	// and shadow regions. We don't have to do the complete pbr calculation
 	// there.
-	if(lcolor.r + lcolor.g + lcolor.b < 0.001) {
+	if(lcolor.r + lcolor.g + lcolor.b < 0.0001) {
 		return;
 	}
 

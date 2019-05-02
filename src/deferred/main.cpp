@@ -52,6 +52,10 @@
 #include <cstdlib>
 #include <random>
 
+// TODO: don't use rgba32f for ssr. We need it since otherwise we might
+//   get uv precision issues (noticed with artefact halo when doing
+//   bloom before). But should be possible to solve this via packing somehow,
+//   maybe rgba16unorm is enough (extended storage format though...).
 // TODO: we should be able to always use the same attenuation (or at least
 //   make it independent from radius) by normalizing distance from light
 //   (dividing by radius) before caluclating attunation
@@ -163,6 +167,13 @@
 //   https://nlguillemot.wordpress.com/2016/12/07/reversed-z-in-opengl/
 // NOTE: ssr needs hdr format since otherwise we get artefacts for storing
 //   the uv value when the window has more than 255 pixels.
+// NOTE: we currently apply the base lod (mipmap level 0) of the emission
+//   texture in the combine pass (before ssr) but only apply the other
+//   emission lods (blooms, mipmap levels >0) after/together with ssr
+//   in the pp pass. Bloom and ssr don't work well together but we still
+//   want emissive objects to be reflected. They just won't have bloom
+//   in the reflection. Could be fixed by reading the emission buffer
+//   during ssr but that's probably really not worth it!
 
 class ViewApp : public doi::App {
 public:
@@ -175,7 +186,8 @@ public:
 	static constexpr auto ssaoFormat = vk::Format::r8Unorm;
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
 	static constexpr auto ldepthFormat = vk::Format::r16Sfloat;
-	static constexpr auto ssrFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto ssrFormat = vk::Format::r32g32b32a32Sfloat;
+	// static constexpr auto ssrFormat = vk::Format::r16g16b16a16Snorm;
 	static constexpr auto ssaoSampleCount = 16u;
 	static constexpr auto pointLight = true;
 	static constexpr auto maxBloomLevels = 4u;
@@ -192,11 +204,11 @@ public:
 		std::uint32_t flags {flagFXAA};
 		std::uint32_t tonemap {2};
 		float exposure {1.f};
+		std::uint32_t bloomLevels {};
 	};
 
 	struct CombineParams {
 		std::uint32_t flags {};
-		std::uint32_t bloomLevels {};
 		float aoFactor {0.05f};
 		float ssaoPow {3.f};
 	};
@@ -252,7 +264,9 @@ protected:
 	vpp::SubBuffer sceneUbo_;
 	vpp::TrDs sceneDs_;
 
-	vpp::Sampler sampler_; // default linear sampler
+	vpp::Sampler linearSampler_;
+	vpp::Sampler nearestSampler_;
+
 	vpp::ViewableImage dummyTex_;
 	vpp::ViewableImage dummyCube_;
 	std::unique_ptr<doi::Scene> scene_;
@@ -326,9 +340,9 @@ protected:
 	// post processing
 	struct {
 		vpp::RenderPass pass;
-		vpp::TrDs ds;
 		vpp::PipelineLayout pipeLayout;
 		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
 		vpp::SubBuffer ubo;
 		vpp::Pipeline pipe;
 
@@ -458,7 +472,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	currentID_ = scene_->primitives().size();
 	lightMaterial_.emplace(materialDsLayout_,
 		dummyTex_.vkImageView(), scene_->defaultSampler(),
-		nytl::Vec{1.f, 1.f, 0.4f, 1.f}, 0.f, 0.f, false,
+		nytl::Vec{0.f, 0.f, 0.0f, 0.f}, 0.f, 0.f, false,
 		nytl::Vec{1.f, 0.9f, 0.5f});
 
 	if(pointLight) {
@@ -549,10 +563,10 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	};
 
 	auto& cb4 = pp.create<Checkbox>("Bloom").checkbox();
-	cb4.set(combine_.params.flags & flagBloom);
+	cb4.set(pp_.params.flags & flagBloom);
 	cb4.onToggle = [&](auto&) {
-		combine_.params.flags ^= flagBloom;
-		combine_.updateParams = true;
+		pp_.params.flags ^= flagBloom;
+		pp_.updateParams = true;
 		updateDescriptors_ = true;
 		App::scheduleRerecord();
 	};
@@ -602,17 +616,20 @@ void ViewApp::initRenderData() {
 	sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
 	sci.magFilter = vk::Filter::linear;
 	sci.minFilter = vk::Filter::linear;
-	// sci.magFilter = vk::Filter::nearest;
-	// sci.minFilter = vk::Filter::nearest;
-	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
 	// sci.mipmapMode = vk::SamplerMipmapMode::linear;
+	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
 	sci.minLod = 0.0;
 	sci.maxLod = 100.0;
-	// sci.maxLod = 0.0;
 	sci.anisotropyEnable = false;
 	// sci.anisotropyEnable = anisotropy_;
 	// sci.maxAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
-	sampler_ = {dev, sci};
+	linearSampler_ = {dev, sci};
+
+	sci.magFilter = vk::Filter::nearest;
+	sci.minFilter = vk::Filter::nearest;
+	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
+	sci.anisotropyEnable = false;
+	nearestSampler_ = {dev, sci};
 
 	initGPass(); // geometry to g buffers
 	initLPass(); // per light: using g buffers for shading
@@ -926,7 +943,8 @@ void ViewApp::initLPass() {
 	dependency.dstStageMask = vk::PipelineStageBits::computeShader |
 		vk::PipelineStageBits::fragmentShader;
 	dependency.dstAccessMask = vk::AccessBits::inputAttachmentRead |
-		vk::AccessBits::shaderRead;
+		vk::AccessBits::shaderRead |
+		vk::AccessBits::shaderWrite;
 
 	vk::RenderPassCreateInfo rpi;
 	rpi.attachmentCount = attachments.size();
@@ -1069,12 +1087,20 @@ void ViewApp::initPPass() {
 		vpp::descriptorBinding( // params ubo
 			vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::fragment),
+		// we use the nearest sampler here since we use it for fxaa and ssr
+		// and for ssr we *need* nearest (otherwise be bleed artefacts).
+		// Not sure about fxaa but seems to work with nearest.
 		vpp::descriptorBinding( // output from combine pass
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
+		// we sample per pixel, nearest should be alright
 		vpp::descriptorBinding( // ssr output
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
+		// here it's important to use a linear sampler since we upscale
+		vpp::descriptorBinding( // bloom
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
 	};
 
 	pp_.dsLayout = {dev, ppInputBindings};
@@ -1165,10 +1191,10 @@ void ViewApp::initSSAO() {
 			vk::ShaderStageBits::fragment),
 		vpp::descriptorBinding( // ssao noise texture
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
 		vpp::descriptorBinding( // depth texture
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
 		vpp::descriptorBinding( // normals input
 			vk::DescriptorType::inputAttachment,
 			vk::ShaderStageBits::fragment),
@@ -1300,7 +1326,7 @@ void ViewApp::initScattering() {
 	auto scatterBindings = {
 		vpp::descriptorBinding( // depthTex
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
 	};
 
 	scatter_.dsLayout = {dev, scatterBindings};
@@ -1352,9 +1378,11 @@ void ViewApp::initBloom() {
 	// layouts
 	auto& dev = vulkanDevice();
 	auto blurBindings = {
+		// important to use linear sampler here, our shader is optimized,
+		// reads multiple pixels in a single fetch via linear sampling
 		vpp::descriptorBinding( // input color
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
 		vpp::descriptorBinding( // output color, blurred
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute)
@@ -1387,10 +1415,10 @@ void ViewApp::initSSR() {
 	auto ssrBindings = {
 		vpp::descriptorBinding( // linear depth
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
 		vpp::descriptorBinding( // normals
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
 		vpp::descriptorBinding( // output data
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute)
@@ -1426,13 +1454,13 @@ void ViewApp::initCombine() {
 			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding( // albedo
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
 		vpp::descriptorBinding( // ssao
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
-		vpp::descriptorBinding( // bloom
+			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
+		vpp::descriptorBinding( // emission
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
 	};
 
 	combine_.dsLayout = {dev, combineBindings};
@@ -1603,7 +1631,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	dlg_assert(info);
 	bloom_.tmpTarget = {device(), info->img};
 
-	combine_.params.bloomLevels = bloomLevels;
+	pp_.params.bloomLevels = bloomLevels;
 	pp_.updateParams = true;
 	bloom_.emissionLevels.clear();
 	bloom_.tmpLevels.clear();
@@ -1672,7 +1700,7 @@ void ViewApp::updateDescriptors() {
 	// auto scatterView = (pp_.params.flags & flagScattering) ?
 		// scatter_.target.vkImageView() : dummyTex_.vkImageView();
 	auto depthView = needDepth ?  depthMipView_ : gpass_.depth.vkImageView();
-	auto bloomView = (combine_.params.flags & flagBloom) ?
+	auto bloomView = (pp_.params.flags & flagBloom) ?
 		bloom_.fullBloom : gpass_.emission.vkImageView();
 	auto ssrView = (pp_.params.flags & flagSSR) ?
 		ssr_.target.vkImageView() : dummyTex_.vkImageView();
@@ -1682,6 +1710,8 @@ void ViewApp::updateDescriptors() {
 	pdsu.imageSampler({{{}, lpass_.light.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	pdsu.imageSampler({{{}, ssrView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	pdsu.imageSampler({{{}, bloomView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	auto& cdsu = updates.emplace_back(combine_.ds);
@@ -1710,8 +1740,8 @@ void ViewApp::updateDescriptors() {
 	sdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	if(combine_.params.flags & flagBloom) {
-		for(auto i = 0u; i < combine_.params.bloomLevels; ++i) {
+	if(pp_.params.flags & flagBloom) {
+		for(auto i = 0u; i < pp_.params.bloomLevels; ++i) {
 			auto& tmp = bloom_.tmpLevels[i];
 			auto& emission = bloom_.emissionLevels[i];
 
@@ -2003,10 +2033,10 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// bloom
-	if(combine_.params.flags & flagBloom) {
+	if(pp_.params.flags & flagBloom) {
 		// create emission mipmaps
 		auto& emission = gpass_.emission.image();
-		auto bloomLevels = combine_.params.bloomLevels;
+		auto bloomLevels = pp_.params.bloomLevels;
 
 		// transition mipmap level 0 transferSrc
 		vpp::changeLayout(cb, emission,
