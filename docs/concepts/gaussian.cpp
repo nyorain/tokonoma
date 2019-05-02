@@ -1,4 +1,5 @@
 // https://stackoverflow.com/questions/8204645
+// see stackoverflow for license information
 
 #include <cmath>
 #include <vector>

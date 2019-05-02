@@ -10,6 +10,8 @@ layout(local_size_x = blurSize, local_size_y = blurSize) in;
 layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D outColor;
 layout(set = 0, binding = 1) uniform sampler2D inColor;
 
+// TODO: can be compressed to 5 values:
+// float kernel[] = {0.00564, 0.01353, 0.02528, 0.03678, 0.04168};
 // see guassian.cpp
 const float kernel[blurSize][blurSize] = {
 	{0.00076, 0.00183, 0.00342, 0.00498, 0.00564, 0.00498, 0.00342, 0.00183, 0.00076, },

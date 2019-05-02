@@ -21,8 +21,7 @@ layout(set = 1, binding = 0) uniform SSAOSamplerBuf {
 
 layout(set = 1, binding = 1) uniform sampler2D noiseTex;
 layout(set = 1, binding = 2) uniform sampler2D depthTex;
-layout(set = 1, binding = 3, input_attachment_index = 0)
-	uniform subpassInput inNormal;
+layout(set = 1, binding = 3) uniform sampler2D normalTex;
 
 float computeSSAO(vec3 pos, vec3 normal, float depth) {
 	// TODO: easier when using repeated texture sampler...
@@ -43,13 +42,11 @@ float computeSSAO(vec3 pos, vec3 normal, float depth) {
 	float radius = 0.15;
 	const float bias = 0.025;
 
-	// TODO: lod important for performance, random sampling kills cache
-	// the nearer we are, the higher mipmap level we can use
-	// TODO: maybe calculate lod per sample? but that brings new cache
-	// problems...
+	// NOTE: lod important for performance, random sampling kills cache
+	// the nearer we are, the higher mipmap level we can use since the radius
+	// is in world space. If we are near to a surface then even a small
+	// world space radius means a huge screen space distance.
 	float lod = clamp(radius / z, 0.0, 6.0);
-	// float lod = 0.0;
-	// float lod = 2;
 	for(int i = 0; i < ssaoSampleCount; ++i) {
 		vec3 samplePos = TBN * ssao.samples[i].xyz; // From tangent to view-space
 		samplePos = pos + samplePos * radius; 
@@ -84,6 +81,6 @@ void main() {
 	vec4 pos4 = scene.invProj * vec4(suv, ndepth, 1.0);
 	vec3 fragPos = pos4.xyz / pos4.w;
 
-	vec3 normal = decodeNormal(subpassLoad(inNormal).xy);
+	vec3 normal = decodeNormal(textureLod(normalTex, uv, 0).xy);
 	outSSAO = computeSSAO(fragPos, normal, depth);
 }
