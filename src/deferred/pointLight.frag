@@ -37,6 +37,4 @@ void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 	} else {
 		lcolor *= pointShadow(shadowCube, light.pos, light.farPlane, fragPos);
 	}
-
-	return true;
 }

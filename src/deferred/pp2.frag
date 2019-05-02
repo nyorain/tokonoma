@@ -9,14 +9,14 @@ const uint flagFXAA = (1u << 4u);
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
 
-layout(set = 0, binding = 0) uniform sampler2D colorTex;
-layout(set = 0, binding = 1) uniform sampler2D ssrTex;
-
-layout(set = 1, binding = 2) uniform Params {
+layout(set = 0, binding = 0) uniform Params {
 	uint flags;
 	uint tonemap;
 	float exposure;
 } params;
+
+layout(set = 0, binding = 1) uniform sampler2D colorTex;
+layout(set = 0, binding = 2) uniform sampler2D ssrTex;
 
 // http://filmicworlds.com/blog/filmic-tonemapping-operators/
 // has a nice preview of different tonemapping operators

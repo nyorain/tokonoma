@@ -34,7 +34,7 @@
 #include <shaders/stage.fullscreen.vert.h>
 #include <shaders/deferred.gbuf.vert.h>
 #include <shaders/deferred.gbuf.frag.h>
-#include <shaders/deferred.pp.frag.h>
+// #include <shaders/deferred.pp.frag.h>
 #include <shaders/deferred.pointLight.frag.h>
 #include <shaders/deferred.pointLight.vert.h>
 #include <shaders/deferred.dirLight.frag.h>
@@ -43,6 +43,11 @@
 #include <shaders/deferred.dirScatter.frag.h>
 #include <shaders/deferred.gblur.comp.h>
 #include <shaders/deferred.ssr.comp.h>
+#include <shaders/deferred.combine.comp.h>
+#include <shaders/deferred.pp2.frag.h>
+
+// TODO
+// #include <shaders/deferred.debug.frag.h>
 
 #include <cstdlib>
 #include <random>
@@ -184,13 +189,16 @@ public:
 
 	// see pp.frag
 	struct PostProcessParams { // could name that PPP
-		nytl::Vec3f scatterLightColor {1.f, 0.9f, 0.5f};
-		std::uint32_t tonemap {2}; // uncharted
-		float aoFactor {0.05f};
-		float ssaoPow {3.f};
+		std::uint32_t flags {flagFXAA};
+		std::uint32_t tonemap {2};
 		float exposure {1.f};
+	};
+
+	struct CombineParams {
 		std::uint32_t flags {};
 		std::uint32_t bloomLevels {};
+		float aoFactor {0.05f};
+		float ssaoPow {3.f};
 	};
 
 	static const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
@@ -395,6 +403,9 @@ protected:
 		vpp::TrDs ds;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
+		vpp::SubBuffer ubo;
+		CombineParams params;
+		bool updateParams {true};
 	} combine_;
 };
 
@@ -457,7 +468,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		l.data.color = {2.f, 1.7f, 0.8f};
 		// l.data.attenuation = {1.f, 0.3f, 0.1f};
 		l.updateDevice();
-		pp_.params.scatterLightColor = 0.1f * l.data.color;
+		// pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
 		auto& l = dirLights_.emplace_back(dev, lightDsLayout_,
 			primitiveDsLayout_, shadowData_, camera_.pos, *lightMaterial_,
@@ -465,7 +476,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.updateDevice(camera_.pos);
-		pp_.params.scatterLightColor = 0.05f * l.data.color;
+		// pp_.params.scatterLightColor = 0.05f * l.data.color;
 	}
 
 	// gui
@@ -506,27 +517,27 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 
 	auto set = &pp_.updateParams;
 	createValueTextfield(pp, "exposure", pp_.params.exposure, set);
-	createValueTextfield(pp, "aoFactor", pp_.params.aoFactor, set);
-	createValueTextfield(pp, "ssaoPow", pp_.params.ssaoPow, set);
+	createValueTextfield(pp, "aoFactor", combine_.params.aoFactor, set);
+	createValueTextfield(pp, "ssaoPow", combine_.params.ssaoPow, set);
 	createValueTextfield(pp, "tonemap", pp_.params.tonemap, set);
 
 	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
-	cb1.set(pp_.params.flags & flagSSAO);
+	cb1.set(combine_.params.flags & flagSSAO);
 	cb1.onToggle = [&](auto&) {
-		pp_.params.flags ^= flagSSAO;
-		pp_.updateParams = true;
+		combine_.params.flags ^= flagSSAO;
+		combine_.updateParams = true;
 		updateDescriptors_ = true;
 		App::scheduleRerecord();
 	};
 
-	auto& cb2 = pp.create<Checkbox>("scattering").checkbox();
-	cb2.set(pp_.params.flags & flagScattering);
-	cb2.onToggle = [&](auto&) {
-		pp_.params.flags ^= flagScattering;
-		pp_.updateParams = true;
-		updateDescriptors_ = true;
-		App::scheduleRerecord();
-	};
+	// auto& cb2 = pp.create<Checkbox>("scattering").checkbox();
+	// cb2.set(pp_.params.flags & flagScattering);
+	// cb2.onToggle = [&](auto&) {
+	// 	pp_.params.flags ^= flagScattering;
+	// 	pp_.updateParams = true;
+	// 	updateDescriptors_ = true;
+	// 	App::scheduleRerecord();
+	// };
 
 	auto& cb3 = pp.create<Checkbox>("SSR").checkbox();
 	cb3.set(pp_.params.flags & flagSSR);
@@ -538,10 +549,10 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	};
 
 	auto& cb4 = pp.create<Checkbox>("Bloom").checkbox();
-	cb4.set(pp_.params.flags & flagBloom);
+	cb4.set(combine_.params.flags & flagBloom);
 	cb4.onToggle = [&](auto&) {
-		pp_.params.flags ^= flagBloom;
-		pp_.updateParams = true;
+		combine_.params.flags ^= flagBloom;
+		combine_.updateParams = true;
 		updateDescriptors_ = true;
 		App::scheduleRerecord();
 	};
@@ -610,6 +621,7 @@ void ViewApp::initRenderData() {
 	initScattering(); // light scattering/volumentric light shafts/god rays
 	initBloom(); // blur light regions
 	initSSR(); // screen space relfections
+	initCombine(); // combining pass
 
 	// dummy texture for materials that don't have a texture
 	std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
@@ -1025,111 +1037,56 @@ void ViewApp::initPPass() {
 	auto& dev = vulkanDevice();
 
 	// render pass
-	// std::array<vk::AttachmentDescription, 3u> attachments;
-	std::array<vk::AttachmentDescription, 2u> attachments;
-	struct {
-		unsigned swapchain = 0u;
-		// unsigned light = 1u;
-		// unsigned albedo = 2u;
-		unsigned albedo = 1u;
-	} ids;
-
-	attachments[ids.swapchain].format = swapchainInfo().imageFormat;
-	attachments[ids.swapchain].samples = samples();
-	attachments[ids.swapchain].loadOp = vk::AttachmentLoadOp::dontCare;
-	attachments[ids.swapchain].storeOp = vk::AttachmentStoreOp::store;
-	attachments[ids.swapchain].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-	attachments[ids.swapchain].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-	attachments[ids.swapchain].initialLayout = vk::ImageLayout::undefined;
-	attachments[ids.swapchain].finalLayout = vk::ImageLayout::presentSrcKHR;
-
-	auto addInput = [&](auto id, auto format) {
-		attachments[id].format = format;
-		attachments[id].samples = samples();
-		attachments[id].loadOp = vk::AttachmentLoadOp::load;
-		attachments[id].storeOp = vk::AttachmentStoreOp::store;
-		attachments[id].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-		attachments[id].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-		attachments[id].initialLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		attachments[id].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	};
-
-	// addInput(ids.light, lightFormat);
-	addInput(ids.albedo, albedoFormat);
+	vk::AttachmentDescription attachment;
+	attachment.format = swapchainInfo().imageFormat;
+	attachment.samples = samples();
+	attachment.loadOp = vk::AttachmentLoadOp::dontCare;
+	attachment.storeOp = vk::AttachmentStoreOp::store;
+	attachment.stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+	attachment.stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+	attachment.initialLayout = vk::ImageLayout::undefined;
+	attachment.finalLayout = vk::ImageLayout::presentSrcKHR;
 
 	// subpass
-	vk::AttachmentReference inputRefs[2];
-	// inputRefs[0].attachment = ids.light;
-	// inputRefs[0].layout = vk::ImageLayout::shaderReadOnlyOptimal;
-	// inputRefs[1].attachment = ids.albedo;
-	// inputRefs[1].layout = vk::ImageLayout::shaderReadOnlyOptimal;
-	inputRefs[0].attachment = ids.albedo;
-	inputRefs[0].layout = vk::ImageLayout::shaderReadOnlyOptimal;
-
 	vk::AttachmentReference colorRef;
-	colorRef.attachment = ids.swapchain;
+	colorRef.attachment = 0u;
 	colorRef.layout = vk::ImageLayout::colorAttachmentOptimal;
 
 	vk::SubpassDescription subpass;
 	subpass.colorAttachmentCount = 1u;
 	subpass.pColorAttachments = &colorRef;
-	// subpass.inputAttachmentCount = 2u;
-	subpass.inputAttachmentCount = 1u;
-	subpass.pInputAttachments = inputRefs;
 
 	vk::RenderPassCreateInfo rpi;
-	rpi.attachmentCount = attachments.size();
-	rpi.pAttachments = attachments.data();
+	rpi.attachmentCount = 1u;
+	rpi.pAttachments = &attachment;
 	rpi.subpassCount = 1u;
 	rpi.pSubpasses = &subpass;
 
 	pp_.pass = {dev, rpi};
 
 	// pipe
-	auto lightInputBindings = {
-		// vpp::descriptorBinding( // output from light pass
-		// 	vk::DescriptorType::inputAttachment,
-		// 	vk::ShaderStageBits::fragment),
-		vpp::descriptorBinding( // output from light pass
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-		vpp::descriptorBinding( // albedo for ao
-			vk::DescriptorType::inputAttachment,
-			vk::ShaderStageBits::fragment),
+	auto ppInputBindings = {
 		vpp::descriptorBinding( // params ubo
 			vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::fragment),
-		vpp::descriptorBinding( // ssao
+		vpp::descriptorBinding( // output from combine pass
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-		vpp::descriptorBinding( // depth
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-		vpp::descriptorBinding( // light scattering
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-		vpp::descriptorBinding( // normal
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-		vpp::descriptorBinding( // bloom
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-		vpp::descriptorBinding( // ssr
+		vpp::descriptorBinding( // ssr output
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 	};
 
-	pp_.dsLayout = {dev, lightInputBindings};
+	pp_.dsLayout = {dev, ppInputBindings};
 	pp_.ds = {device().descriptorAllocator(), pp_.dsLayout};
 
-	auto uboSize = sizeof(PostProcessParams);
-	pp_.ubo = {dev.bufferAllocator(), uboSize,
+	pp_.ubo = {dev.bufferAllocator(), sizeof(PostProcessParams),
 		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
 
-	pp_.pipeLayout = {dev, {sceneDsLayout_, pp_.dsLayout}, {}};
+	pp_.pipeLayout = {dev, {pp_.dsLayout}, {}};
 
 	vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
-	vpp::ShaderModule fragShader(dev, deferred_pp_frag_data);
+	vpp::ShaderModule fragShader(dev, deferred_pp2_frag_data);
 	vpp::GraphicsPipelineInfo gpi {pp_.pass, pp_.pipeLayout, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
@@ -1457,6 +1414,49 @@ void ViewApp::initSSR() {
 	ssr_.pipe = {dev, vkpipe};
 }
 
+void ViewApp::initCombine() {
+	// layouts
+	auto& dev = vulkanDevice();
+	auto combineBindings = {
+		vpp::descriptorBinding( // target
+			vk::DescriptorType::storageImage,
+			vk::ShaderStageBits::compute),
+		vpp::descriptorBinding( // ubo
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::compute),
+		vpp::descriptorBinding( // albedo
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+		vpp::descriptorBinding( // ssao
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+		vpp::descriptorBinding( // bloom
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+	};
+
+	combine_.dsLayout = {dev, combineBindings};
+	combine_.ds = {dev.descriptorAllocator(), combine_.dsLayout};
+	combine_.pipeLayout = {dev, {combine_.dsLayout}, {}};
+
+	// pipe
+	vpp::ShaderModule combineShader(dev, deferred_combine_comp_data);
+
+	vk::ComputePipelineCreateInfo cpi;
+	cpi.layout = combine_.pipeLayout;
+	cpi.stage.module = combineShader;
+	cpi.stage.stage = vk::ShaderStageBits::compute;
+	cpi.stage.pName = "main";
+
+	vk::Pipeline vkpipe;
+	vk::createComputePipelines(dev, {}, 1u, cpi, nullptr, vkpipe);
+	combine_.pipe = {dev, vkpipe};
+
+	// ubo
+	combine_.ubo = {dev.bufferAllocator(), sizeof(CombineParams),
+		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
+}
+
 vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 	auto width = size.width;
 	auto height = size.height;
@@ -1499,15 +1499,15 @@ vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 void ViewApp::initBuffers(const vk::Extent2D& size,
 		nytl::Span<RenderBuffer> bufs) {
 	auto& dev = vulkanDevice();
-	auto scPos = 0u; // attachments[scPos]: swapchain image
 	depthTarget() = createDepthTarget(size);
 
 	std::vector<vk::ImageView> attachments;
-	auto initBuf = [&](vpp::ViewableImage& img, vk::Format format) {
+	auto initBuf = [&](vpp::ViewableImage& img, vk::Format format,
+			vk::ImageUsageFlags extraUsage = {}) {
 		auto usage = vk::ImageUsageBits::colorAttachment |
 			vk::ImageUsageBits::inputAttachment |
 			vk::ImageUsageBits::transferSrc |
-			vk::ImageUsageBits::sampled;
+			vk::ImageUsageBits::sampled | extraUsage;
 		auto info = vpp::ViewableImageCreateInfo::color(device(),
 			{size.width, size.height}, usage, {format},
 			vk::ImageTiling::optimal, samples());
@@ -1569,7 +1569,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	attachments.push_back(gpass_.emission.vkImageView());
 	attachments.push_back(depthTarget().vkImageView());
 
-	initBuf(lpass_.light, lightFormat);
+	initBuf(lpass_.light, lightFormat, vk::ImageUsageBits::storage);
 	fbi = vk::FramebufferCreateInfo({}, lpass_.pass,
 		attachments.size(), attachments.data(),
 		size.width, size.height, 1);
@@ -1603,7 +1603,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	dlg_assert(info);
 	bloom_.tmpTarget = {device(), info->img};
 
-	pp_.params.bloomLevels = bloomLevels;
+	combine_.params.bloomLevels = bloomLevels;
 	pp_.updateParams = true;
 	bloom_.emissionLevels.clear();
 	bloom_.tmpLevels.clear();
@@ -1640,13 +1640,9 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	ssr_.target = {device(), *info};
 
 	// create swapchain framebuffers
-	attachments.clear();
-	attachments.emplace_back(); // scPos
-	// attachments.push_back(lpass_.light.vkImageView());
-	attachments.push_back(gpass_.albedo.vkImageView());
-
 	for(auto& buf : bufs) {
-		attachments[scPos] = buf.imageView;
+		attachments.clear();
+		attachments.push_back(buf.imageView);
 		vk::FramebufferCreateInfo fbi({}, pp_.pass,
 			attachments.size(), attachments.data(),
 			size.width, size.height, 1);
@@ -1670,37 +1666,34 @@ void ViewApp::updateDescriptors() {
 	ldsu.inputAttachment({{{}, depthTarget().imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	auto needDepth = flagScattering | flagSSR | flagSSAO;
-	auto ssaoView = (pp_.params.flags & flagSSAO) ?
+	bool needDepth = (pp_.params.flags & flagSSR) || (combine_.params.flags & flagSSAO);
+	auto ssaoView = (combine_.params.flags & flagSSAO) ?
 		ssao_.target.vkImageView() : dummyTex_.vkImageView();
-	auto scatterView = (pp_.params.flags & flagScattering) ?
-		scatter_.target.vkImageView() : dummyTex_.vkImageView();
-	auto depthView = ((pp_.params.flags & needDepth) != 0) ?
-		depthMipView_ : gpass_.depth.vkImageView();
-	auto bloomView = (pp_.params.flags & flagBloom) ?
+	// auto scatterView = (pp_.params.flags & flagScattering) ?
+		// scatter_.target.vkImageView() : dummyTex_.vkImageView();
+	auto depthView = needDepth ?  depthMipView_ : gpass_.depth.vkImageView();
+	auto bloomView = (combine_.params.flags & flagBloom) ?
 		bloom_.fullBloom : gpass_.emission.vkImageView();
 	auto ssrView = (pp_.params.flags & flagSSR) ?
 		ssr_.target.vkImageView() : dummyTex_.vkImageView();
 
 	auto& pdsu = updates.emplace_back(pp_.ds);
-	// ldsu.inputAttachment({{{}, lpass_.light.vkImageView(),
-	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
+	pdsu.uniform({{pp_.ubo.buffer(), pp_.ubo.offset(), pp_.ubo.size()}});
 	pdsu.imageSampler({{{}, lpass_.light.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.uniform({{pp_.ubo.buffer(), pp_.ubo.offset(), pp_.ubo.size()}});
-	pdsu.imageSampler({{{}, ssaoView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.imageSampler({{{}, depthView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.imageSampler({{{}, scatterView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.imageSampler({{{}, bloomView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
 	pdsu.imageSampler({{{}, ssrView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+
+	auto& cdsu = updates.emplace_back(combine_.ds);
+	cdsu.storage({{{}, lpass_.light.vkImageView(),
+		vk::ImageLayout::general}});
+	cdsu.uniform({{combine_.ubo.buffer(), combine_.ubo.offset(),
+		combine_.ubo.size()}});
+	cdsu.imageSampler({{{}, gpass_.albedo.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	cdsu.imageSampler({{{}, ssaoView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	cdsu.imageSampler({{{}, bloomView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	auto& ssdsu = updates.emplace_back(ssao_.ds);
@@ -1717,8 +1710,8 @@ void ViewApp::updateDescriptors() {
 	sdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	if(pp_.params.flags & flagBloom) {
-		for(auto i = 0u; i < pp_.params.bloomLevels; ++i) {
+	if(combine_.params.flags & flagBloom) {
+		for(auto i = 0u; i < combine_.params.bloomLevels; ++i) {
 			auto& tmp = bloom_.tmpLevels[i];
 			auto& emission = bloom_.emissionLevels[i];
 
@@ -1854,8 +1847,8 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// create depth mipmaps
-	auto needDepth = flagScattering | flagSSR | flagSSAO;
-	if(depthMipLevels_ > 1 && (pp_.params.flags & needDepth) != 0) {
+	bool needDepth = (pp_.params.flags & flagSSR) || (combine_.params.flags & flagSSAO);
+	if(depthMipLevels_ > 1 && needDepth) {
 		auto& depthImg = gpass_.depth.image();
 		// transition mipmap level 0 transferSrc
 		vpp::changeLayout(cb, depthImg,
@@ -1922,7 +1915,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// ssao
-	if(pp_.params.flags & flagSSAO) {
+	if(combine_.params.flags & flagSSAO) {
 		vk::cmdBeginRenderPass(cb, {
 			ssao_.pass,
 			ssao_.fb,
@@ -2010,10 +2003,10 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// bloom
-	if(pp_.params.flags & flagBloom) {
+	if(combine_.params.flags & flagBloom) {
 		// create emission mipmaps
 		auto& emission = gpass_.emission.image();
-		auto bloomLevels = pp_.params.bloomLevels;
+		auto bloomLevels = combine_.params.bloomLevels;
 
 		// transition mipmap level 0 transferSrc
 		vpp::changeLayout(cb, emission,
@@ -2172,6 +2165,32 @@ void ViewApp::record(const RenderBuffer& buf) {
 			{vk::ImageAspectBits::color, 0, 1, 0, 1});
 	}
 
+	// combine pass
+	{
+		auto& target = lpass_.light.image();
+		vpp::changeLayout(cb, target,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::fragmentShader,
+			vk::AccessBits::shaderRead,
+			vk::ImageLayout::general,
+			vk::PipelineStageBits::computeShader,
+			vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+			{vk::ImageAspectBits::color, 0, 1, 0, 1});
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
+			combine_.pipe);
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+			combine_.pipeLayout, 0, {combine_.ds}, {});
+		vk::cmdDispatch(cb, std::ceil(width / 8.f), std::ceil(height / 8.f), 1u);
+		vpp::changeLayout(cb, target,
+			vk::ImageLayout::general,
+			vk::PipelineStageBits::fragmentShader,
+			vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::fragmentShader,
+			vk::AccessBits::shaderRead,
+			{vk::ImageAspectBits::color, 0, 1, 0, 1});
+	}
+
 	// post process pass
 	{
 		vk::cmdBeginRenderPass(cb, {
@@ -2187,7 +2206,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pp_.pipeLayout, 0, {sceneDs_, pp_.ds}, {});
+			pp_.pipeLayout, 0, {pp_.ds}, {});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 
 		// gui stuff
@@ -2256,10 +2275,6 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		case ny::Keycode::l:
 			showMode_ = (showMode_ + numModes - 1) % numModes;
 			camera_.update = true; // trigger update device
-			return true;
-		case ny::Keycode::i:
-			pp_.params.aoFactor = 1.f - pp_.params.aoFactor;
-			pp_.updateParams = true;
 			return true;
 		case ny::Keycode::equals:
 			pp_.params.exposure *= 1.1f;
@@ -2373,9 +2388,17 @@ void ViewApp::updateDevice() {
 	}
 
 	if(pp_.updateParams) {
+		pp_.updateParams = false;
 		auto map = pp_.ubo.memoryMap();
 		auto span = map.span();
 		doi::write(span, pp_.params);
+	}
+
+	if(combine_.updateParams) {
+		combine_.updateParams = false;
+		auto map = combine_.ubo.memoryMap();
+		auto span = map.span();
+		doi::write(span, combine_.params);
 	}
 
 	if(selectionPending_) {

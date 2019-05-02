@@ -28,7 +28,7 @@ const uint marchSteps = 16u; // linear marching steps
 const uint binsSteps = 8u; // binary search steps after found hit interval
 const float startStepSize = 0.01;
 const float stepFactor = 2.0;
-const float dthreshold = 0.05; // linear depth threshold
+const float dthreshold = 0.1; // linear depth threshold
 
 // TODO: add binary search end condition?: when pixel distance
 //   on depthTex between lower and upper bounds positions is

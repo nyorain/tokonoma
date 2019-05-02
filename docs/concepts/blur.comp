@@ -1,0 +1,73 @@
+#version 450
+
+const uint blurSide = 4;
+const uint blurSize = 2 * blurSide + 1;
+const uint dimSize = blurSide + blurSize + blurSide;
+const ivec2 offs[] = {{0, 0}, {0, 1}, {1, 0}, {1, 1}};
+shared vec3 colors[dimSize][dimSize];
+
+layout(local_size_x = blurSize, local_size_y = blurSize) in;
+layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D outColor;
+layout(set = 0, binding = 1) uniform sampler2D inColor;
+
+// see guassian.cpp
+const float kernel[blurSize][blurSize] = {
+	{0.00076, 0.00183, 0.00342, 0.00498, 0.00564, 0.00498, 0.00342, 0.00183, 0.00076, },
+	{0.00183, 0.00439, 0.00821, 0.01194, 0.01353, 0.01194, 0.00821, 0.00439, 0.00183, },
+	{0.00342, 0.00821, 0.01533, 0.02231, 0.02528, 0.02231, 0.01533, 0.00821, 0.00342, },
+	{0.00498, 0.01194, 0.02231, 0.03246, 0.03678, 0.03246, 0.02231, 0.01194, 0.00498, },
+	{0.00564, 0.01353, 0.02528, 0.03678, 0.04168, 0.03678, 0.02528, 0.01353, 0.00564, },
+	{0.00498, 0.01194, 0.02231, 0.03246, 0.03678, 0.03246, 0.02231, 0.01194, 0.00498, },
+	{0.00342, 0.00821, 0.01533, 0.02231, 0.02528, 0.02231, 0.01533, 0.00821, 0.00342, },
+	{0.00183, 0.00439, 0.00821, 0.01194, 0.01353, 0.01194, 0.00821, 0.00439, 0.00183, },
+	{0.00076, 0.00183, 0.00342, 0.00498, 0.00564, 0.00498, 0.00342, 0.00183, 0.00076, },
+};
+
+// TODO: currently not handling border conditions, will use the addressing
+// mode of the sampler at the moment.
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outColor);
+
+	uvec2 local = gl_LocalInvocationID.xy;
+	ivec2 slocal = ivec2(-blurSide + local.x, blurSide + local.y);
+	ivec2 s = sign(slocal);
+
+	vec2 pixelSize = 1.f / textureSize(inColor, 0);
+	uvec2 startID = gl_WorkGroupID.xy;
+	vec2 center = gl_WorkGroupID.xy + blurSide + 0.5;
+
+	// phase 1: gather
+	for(uint i = 0u; i < 4u; ++i) {
+		ivec2 off = s * offs[i];
+		ivec2 sid = 2 * slocal + off;
+		uvec2 id = uvec2(2 * blurSide + sid.x, 2 * blurSide + sid.y);
+		vec2 uv = (center + sid) * pixelSize;
+		colors[id.x][id.y] = texture(inColor, uv).rgb;
+	}
+
+	// we won't write anything, don't have to blur.
+	// note that (with the current implementation that uses the samplers
+	// address mode as border condition) we can't put this before
+	// the gather though since then the color values that are our
+	// responsibility would have undefined value
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	// wait for all invocations to complete reads
+	// apparently both are needed: https://stackoverflow.com/questions/39393560
+	barrier();
+	memoryBarrierShared();
+
+	// phase 2: blur, using the gathered data
+	vec3 col = vec3(0.0);
+	uvec2 base = local + blurSide;
+	for(int x = -int(blurSide); x <= blurSide; ++x) {
+		for(int y = -int(blurSide); y <= blurSide; ++y) {
+			col += kernel[x][y] * colors[base.x + x][base.y + y];
+		}
+	}
+
+	imageStore(outColor, ivec2(pixel), vec4(col, 0.0));
+}
