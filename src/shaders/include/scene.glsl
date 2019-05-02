@@ -9,6 +9,13 @@ const uint lightShadow = (1u << 2); // use shadow
 const uint normalMap = (1u << 0);
 const uint doubleSided = (1u << 1);
 
+// global rendering flags
+const uint flagSSAO = (1u << 0u);
+const uint flagScattering = (1u << 1u);
+const uint flagSSR = (1u << 2u);
+const uint flagBloom = (1u << 3u);
+const uint flagFXAA = (1u << 4u);
+
 // struct Light {
 // 	vec3 pos; // position for point light, direction of dir light
 // 	uint type; // point or dir

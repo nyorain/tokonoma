@@ -46,7 +46,7 @@ float computeSSAO(vec3 pos, vec3 normal, float depth) {
 	// the nearer we are, the higher mipmap level we can use since the radius
 	// is in world space. If we are near to a surface then even a small
 	// world space radius means a huge screen space distance.
-	float lod = clamp(radius / z, 0.0, 6.0);
+	float lod = clamp(radius / z, 0.0, 4.0);
 	for(int i = 0; i < ssaoSampleCount; ++i) {
 		vec3 samplePos = TBN * ssao.samples[i].xyz; // From tangent to view-space
 		samplePos = pos + samplePos * radius; 

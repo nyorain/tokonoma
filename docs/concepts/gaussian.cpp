@@ -33,7 +33,25 @@ kernel_type produce2dGaussianKernel (int kernelRadius) {
   return kernel2d;
 }
 
+kernel_row gaussRow(int radius) {
+	double sigma = radius / 2.0;
+	kernel_row row(2 * radius + 1);
+	double sum = 0.0;
+	for(auto col = 0u; col < row.size(); ++col) {
+		float x = gaussian(col, radius, sigma);
+		row[col] = x;
+		sum += x;
+	}
+
+	for(auto& v : row) {
+		v /= sum;
+	}
+
+	return row;
+}
+
 int main() {
+	/*
   kernel_type kernel2d = produce2dGaussianKernel(4);
   std::cout << std::setprecision(5) << std::fixed;
   for (unsigned row = 0; row < kernel2d.size(); row++) {
@@ -41,4 +59,11 @@ int main() {
       std::cout << kernel2d[row][col] << ", ";
     std::cout << "},\n{";
   }
+  */
+
+	auto row = gaussRow(4);
+	std::cout << std::setprecision(5) << std::fixed;
+	for(auto& v : row) {
+		std::cout << v << ", ";
+	}
 }

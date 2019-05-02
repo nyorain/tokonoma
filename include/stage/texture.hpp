@@ -6,6 +6,8 @@
 #include <optional>
 
 // all functions only work for color only images
+// TODO: support additional usage flags instead of always assuming
+// pretty much everything
 
 namespace doi {
 

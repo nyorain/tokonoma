@@ -10,7 +10,6 @@ layout(location = 2) in vec2 inUV;
 layout(location = 0) out vec3 outPos;
 layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec2 outUV;
-layout(location = 3) out float outLinDepth;
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj; // view and pojection
@@ -34,6 +33,7 @@ void main() {
 	gl_Position = scene.proj * m;
 	gl_Position.y = -gl_Position.y;
 
-	// TODO: or pass view and projection seperately...?
-	outLinDepth = depthtoz(gl_Position.z / gl_Position.w, scene.near, scene.far);
+	// TODO: doesn't work like that. More performant to do it here though
+	// noperspective only makes it worse
+	// outLinDepth = depthtoz(gl_Position.z / gl_Position.w, scene.near, scene.far);
 }

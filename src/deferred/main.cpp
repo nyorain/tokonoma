@@ -34,7 +34,6 @@
 #include <shaders/stage.fullscreen.vert.h>
 #include <shaders/deferred.gbuf.vert.h>
 #include <shaders/deferred.gbuf.frag.h>
-// #include <shaders/deferred.pp.frag.h>
 #include <shaders/deferred.pointLight.frag.h>
 #include <shaders/deferred.pointLight.vert.h>
 #include <shaders/deferred.dirLight.frag.h>
@@ -45,14 +44,14 @@
 #include <shaders/deferred.gblur.comp.h>
 #include <shaders/deferred.ssr.comp.h>
 #include <shaders/deferred.combine.comp.h>
-#include <shaders/deferred.pp2.frag.h>
-
-// TODO
-// #include <shaders/deferred.debug.frag.h>
+#include <shaders/deferred.pp.frag.h>
+#include <shaders/deferred.debug.frag.h>
 
 #include <cstdlib>
 #include <random>
 
+// TODO: re-add light scattering (per light?)
+//   even if per-light we can still apply if after lightning pass
 // TODO: look into vk_khr_multiview (promoted to vulkan 1.1?) for
 //   cubemap rendering (point lights, but also skybox transformation)
 // TODO: don't use rgba32f for ssr. We need it since otherwise we might
@@ -62,12 +61,6 @@
 // TODO: we should be able to always use the same attenuation (or at least
 //   make it independent from radius) by normalizing distance from light
 //   (dividing by radius) before caluclating attunation
-// TODO: shadow cube debug mode (where cubemap is rendered, one can
-//   look around). Maybe use moving the camera then for moving the light.
-//   can be activated via vui when light is selcted.
-//   something comparable for dir lights? where direction can be set by
-//   moving camera around?
-// TODO: display debug modes in pp shader; not per light
 // TODO: re-add skybox and transparent objects in forward pass.
 //   the objects from that pass will have no effect on ssao or ssr,
 //   no other way to do it. That means that you will never see a transparent
@@ -76,7 +69,7 @@
 //   An alternative idea is to use 2 forward passes: one for almost opaque
 //   objects that can be aproximated as opaque for ssr/ssao sakes and then
 //   (after reading the buffers for ss algorithms) another forward pass
-//   for almost-transparent objects.
+//   for almost-transparent objects. Probably not worht it though
 // TODO: better ssr blurring. Use more physical (cone trace) approaches and
 //   maybe pre-blur light buffer copy in extra pass (double, gauss)
 //   based on blurring output from ssr pass.
@@ -89,37 +82,39 @@
 //   the surface gets bright (obviously) but is not added to
 //   bloom buffer since no *single* light passes the threshold.
 //   requires additional pass though
-// TODO: see pp.frag, can improve order of screen space applying.
-//   basically split pp up in two passes: one combine pass and then
-//   a post processing pass (using tonemapping and applying ssr)
 // TODO: re-add (fix for point light) the shadowmap-based light
 //   scattering approach
 // TODO: rgba16snorm (normalsFormat) isn't guaranteed to be supported
 //   as color attachment... i guess we could fall back to rgba16sint
 //   which is guaranteed to be supported? and then encode it
-// TODO: try out fxaa in postprocessing shader. Should it be done before
-//   any effects like adding bloom, ssr, light scattering or ssao?
-//   maybe try full image first, should work alright
 // TODO: point light scattering currently doesn't support the ldv value,
 //   i.e. view-dir dependent scattering only based on attenuation
 // TODO: support light scattering for every light (add a light flag for it).
 //   For point lights, we only have to scatter in the light volume.
 //   Probably can't combine it with the volume rasterization step in the
 //   light pass though, so have to render the box twice.
-// TODO: fix used samplers, we need more than one! some passes are
-//   better with linear sampler, others need nearest sampler.
-//   same for mipmap. But try to let multiple passes use same
-//   sampler if possible
 // TODO: cascaded shadow maps for directional lights
-// TODO: make shadow maps optional for lights (disable for small lights),
-//   generally allow configuring the size
+//   Allow to set the shadow map size for all lights. Or automatically
+//   dynamically allocate shadow maps per frame (but also see the
+//   only one shadow map at all thing).
 // TODO: fix theoretical synchronization issues
 // TODO: do we really need depth mip levels anywhere? test if it really
-//   brings ssao performance improvement.
+//   brings ssao performance improvement. Otherwise we are wasting this
+//   whole "depth mip map levels" thing
+
 // TODO: low prio; look at adding smaa. That needs multiple post processing
 //   passes though... Add it as new class
+// TODO: low prio, more an idea:
+//   shadow cube debug mode (where cubemap is rendered, one can
+//   look around). Maybe use moving the camera then for moving the light.
+//   can be activated via vui when light is selcted.
+//   something comparable for dir lights? where direction can be set by
+//   moving camera around?
 
 // lower prio optimizations:
+// TODO(optimization): look into textureOffset/textureLodOffset functions for
+//   shaders. We use this functionality really often, might get
+//   something for free there
 // TODO(optimization): when shaderStorageImageExtendedFormats is supported,
 //   we can perform pretty much all fullscreen passes (ssao, ssr, combining,
 //   ssao blurring) as compute shaders. For doing it with post processing/
@@ -189,8 +184,8 @@ public:
 	static constexpr auto ssaoFormat = vk::Format::r8Unorm;
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
 	static constexpr auto ldepthFormat = vk::Format::r16Sfloat;
-	static constexpr auto ssrFormat = vk::Format::r32g32b32a32Sfloat;
-	// static constexpr auto ssrFormat = vk::Format::r16g16b16a16Snorm;
+	// static constexpr auto ssrFormat = vk::Format::r32g32b32a32Sfloat;
+	static constexpr auto ssrFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto ssaoSampleCount = 16u;
 	static constexpr auto pointLight = true;
 	static constexpr auto maxBloomLevels = 4u;
@@ -202,18 +197,26 @@ public:
 	static constexpr unsigned flagBloom = (1u << 3u);
 	static constexpr unsigned flagFXAA = (1u << 4u);
 
-	// see pp.frag
-	struct PostProcessParams { // could name that PPP
-		std::uint32_t flags {flagFXAA};
-		std::uint32_t tonemap {2};
-		float exposure {1.f};
-		std::uint32_t bloomLevels {};
-	};
+	static constexpr unsigned modeNormal = 0u;
+	static constexpr unsigned modeAlbedo = 1u;
+	static constexpr unsigned modeNormals = 2u;
+	static constexpr unsigned modeRoughness = 3u;
+	static constexpr unsigned modeMetalness = 4u;
+	static constexpr unsigned modeAO = 5u;
+	static constexpr unsigned modeAlbedoAO = 6u;
+	static constexpr unsigned modeSSR = 7u;
+	static constexpr unsigned modeDepth = 8u;
+	static constexpr unsigned modeEmission = 9u;
+	static constexpr unsigned modeBloom = 10u;
 
-	struct CombineParams {
-		std::uint32_t flags {};
+	// see various post processing or screen space shaders
+	struct RenderParams {
+		std::uint32_t mode = 0u;
+		std::uint32_t flags {flagFXAA};
 		float aoFactor {0.05f};
 		float ssaoPow {3.f};
+		std::uint32_t tonemap {2};
+		float exposure {1.f};
 	};
 
 	static const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
@@ -231,6 +234,7 @@ public:
 	void initBloom();
 	void initSSR();
 	void initCombine();
+	void initDebug();
 	void updateDescriptors();
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
@@ -268,6 +272,11 @@ protected:
 	vpp::SubBuffer sceneUbo_;
 	vpp::TrDs sceneDs_;
 
+	bool updateRenderParams_ {true};
+	RenderParams params_;
+	vpp::SubBuffer paramsUbo_;
+	std::uint32_t bloomLevels_ {};
+
 	vpp::Sampler linearSampler_;
 	vpp::Sampler nearestSampler_;
 
@@ -281,7 +290,6 @@ protected:
 	float maxAnisotropy_ {16.f};
 
 	bool anisotropy_ {}; // whether device supports anisotropy
-	std::uint32_t showMode_ {}; // what to show/debug views
 	float time_ {};
 	bool rotateView_ {}; // mouseLeft down
 	doi::Camera camera_ {};
@@ -347,11 +355,7 @@ protected:
 		vpp::PipelineLayout pipeLayout;
 		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;
-		vpp::SubBuffer ubo;
 		vpp::Pipeline pipe;
-
-		PostProcessParams params;
-		bool updateParams {true};
 	} pp_;
 
 	// ssao
@@ -416,16 +420,21 @@ protected:
 		vpp::Pipeline pipe;
 	} ssr_;
 
-	// combining pass
+	// combining compute pass
 	struct {
 		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
-		vpp::SubBuffer ubo;
-		CombineParams params;
-		bool updateParams {true};
 	} combine_;
+
+	// debug render pass, uses pp_.pass
+	struct {
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+	} debug_;
 };
 
 bool ViewApp::init(const nytl::Span<const char*> args) {
@@ -434,8 +443,8 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	}
 
 	auto& dev = vulkanDevice();
-	camera_.perspective.near = 0.1f;
-	camera_.perspective.far = 100.f;
+	camera_.perspective.near = 0.01f;
+	camera_.perspective.far = 20.f;
 
 	// TODO: re-add this. In pass between light and pp?
 	// hdr skybox
@@ -485,7 +494,8 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 			primitiveDsLayout_, shadowData_, *lightMaterial_, currentID_++);
 		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {2.f, 1.7f, 0.8f};
-		// l.data.attenuation = {1.f, 0.3f, 0.1f};
+		l.data.attenuation = {1.f, 0.3f, 0.1f};
+		l.data.radius = 10.f;
 		l.updateDevice();
 		// pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
@@ -534,18 +544,17 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		});
 	};
 
-	auto ppu = &pp_.updateParams;
-	auto cu = &combine_.updateParams;
-	createValueTextfield(pp, "exposure", pp_.params.exposure, ppu);
-	createValueTextfield(pp, "aoFactor", combine_.params.aoFactor, cu);
-	createValueTextfield(pp, "ssaoPow", combine_.params.ssaoPow, cu);
-	createValueTextfield(pp, "tonemap", pp_.params.tonemap, ppu);
+	auto flag = &updateRenderParams_;
+	createValueTextfield(pp, "exposure", params_.exposure, flag);
+	createValueTextfield(pp, "aoFactor", params_.aoFactor, flag);
+	createValueTextfield(pp, "ssaoPow", params_.ssaoPow, flag);
+	createValueTextfield(pp, "tonemap", params_.tonemap, flag);
 
 	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
-	cb1.set(combine_.params.flags & flagSSAO);
+	cb1.set(params_.flags & flagSSAO);
 	cb1.onToggle = [&](auto&) {
-		combine_.params.flags ^= flagSSAO;
-		combine_.updateParams = true;
+		params_.flags ^= flagSSAO;
+		updateRenderParams_ = true;
 		updateDescriptors_ = true;
 		App::scheduleRerecord();
 	};
@@ -560,28 +569,28 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	// };
 
 	auto& cb3 = pp.create<Checkbox>("SSR").checkbox();
-	cb3.set(pp_.params.flags & flagSSR);
+	cb3.set(params_.flags & flagSSR);
 	cb3.onToggle = [&](auto&) {
-		pp_.params.flags ^= flagSSR;
-		pp_.updateParams = true;
+		params_.flags ^= flagSSR;
+		updateRenderParams_ = true;
 		updateDescriptors_ = true;
 		App::scheduleRerecord();
 	};
 
 	auto& cb4 = pp.create<Checkbox>("Bloom").checkbox();
-	cb4.set(pp_.params.flags & flagBloom);
+	cb4.set(params_.flags & flagBloom);
 	cb4.onToggle = [&](auto&) {
-		pp_.params.flags ^= flagBloom;
-		pp_.updateParams = true;
+		params_.flags ^= flagBloom;
+		updateRenderParams_ = true;
 		updateDescriptors_ = true;
 		App::scheduleRerecord();
 	};
 
 	auto& cb5 = pp.create<Checkbox>("FXAA").checkbox();
-	cb5.set(pp_.params.flags & flagFXAA);
+	cb5.set(params_.flags & flagFXAA);
 	cb5.onToggle = [&](auto&) {
-		pp_.params.flags ^= flagFXAA;
-		pp_.updateParams = true;
+		params_.flags ^= flagFXAA;
+		updateRenderParams_ = true;
 	};
 
 	// light selection
@@ -645,6 +654,7 @@ void ViewApp::initRenderData() {
 	initBloom(); // blur light regions
 	initSSR(); // screen space relfections
 	initCombine(); // combining pass
+	initDebug(); // init debug pipeline/pass
 
 	// dummy texture for materials that don't have a texture
 	std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
@@ -661,8 +671,7 @@ void ViewApp::initRenderData() {
 	auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
 		+ sizeof(nytl::Mat4f) // inv proj
 		+ sizeof(nytl::Vec3f) // viewPos
-		+ 2 * sizeof(float) // near, far plane
-		+ sizeof(std::uint32_t); // render/show buffer mode; flags
+		+ 2 * sizeof(float); // near, far plane
 	sceneDs_ = {dev.descriptorAllocator(), sceneDsLayout_};
 	sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
 		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
@@ -670,6 +679,10 @@ void ViewApp::initRenderData() {
 	shadowData_ = doi::initShadowData(dev, depthFormat(),
 		lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 		doi::Material::pcr());
+
+	// params ubo
+	paramsUbo_ = {dev.bufferAllocator(), sizeof(RenderParams),
+		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
 
 	// scene descriptor, used for some pipelines as set 0 for camera
 	// matrix and view position
@@ -1107,18 +1120,19 @@ void ViewApp::initPPass() {
 		vpp::descriptorBinding( // bloom
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
+		// depth (for ssr), use nearest sampler as ssr does
+		vpp::descriptorBinding( // bloom
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
 	};
 
 	pp_.dsLayout = {dev, ppInputBindings};
 	pp_.ds = {device().descriptorAllocator(), pp_.dsLayout};
 
-	pp_.ubo = {dev.bufferAllocator(), sizeof(PostProcessParams),
-		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
-
 	pp_.pipeLayout = {dev, {pp_.dsLayout}, {}};
 
 	vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
-	vpp::ShaderModule fragShader(dev, deferred_pp2_frag_data);
+	vpp::ShaderModule fragShader(dev, deferred_pp_frag_data);
 	vpp::GraphicsPipelineInfo gpi {pp_.pass, pp_.pipeLayout, {{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
@@ -1513,10 +1527,58 @@ void ViewApp::initCombine() {
 	vk::Pipeline vkpipe;
 	vk::createComputePipelines(dev, {}, 1u, cpi, nullptr, vkpipe);
 	combine_.pipe = {dev, vkpipe};
+}
 
-	// ubo
-	combine_.ubo = {dev.bufferAllocator(), sizeof(CombineParams),
-		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
+void ViewApp::initDebug() {
+	auto& dev = vulkanDevice();
+
+	// layouts
+	auto debugInputBindings = {
+		vpp::descriptorBinding( // params ubo
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // albedo
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // normal
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // depth
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // ssao
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // ssr
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // ssr
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
+	};
+
+	debug_.dsLayout = {dev, debugInputBindings};
+	debug_.ds = {device().descriptorAllocator(), debug_.dsLayout};
+
+	debug_.pipeLayout = {dev, {debug_.dsLayout}, {}};
+
+	vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
+	vpp::ShaderModule fragShader(dev, deferred_debug_frag_data);
+	vpp::GraphicsPipelineInfo gpi {pp_.pass, debug_.pipeLayout, {{
+		{vertShader, vk::ShaderStageBits::vertex},
+		{fragShader, vk::ShaderStageBits::fragment},
+	}}};
+
+	gpi.depthStencil.depthTestEnable = false;
+	gpi.depthStencil.depthWriteEnable = false;
+	gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
+	gpi.blend.attachmentCount = 1u;
+	gpi.blend.pAttachments = &noBlendAttachment();
+
+	vk::Pipeline vkpipe;
+	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), nullptr, vkpipe);
+
+	debug_.pipe = {dev, vkpipe};
 }
 
 vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
@@ -1672,8 +1734,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	dlg_assert(info);
 	bloom_.tmpTarget = {device(), info->img};
 
-	pp_.params.bloomLevels = bloomLevels;
-	pp_.updateParams = true;
+	bloomLevels_ = bloomLevels;
 	bloom_.emissionLevels.clear();
 	bloom_.tmpLevels.clear();
 	for(auto i = 0u; i < bloomLevels; ++i) {
@@ -1701,7 +1762,9 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	bloom_.fullBloom = {dev, ivi};
 
 	// ssr target image
-	usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled;
+	usage = vk::ImageUsageBits::storage |
+		vk::ImageUsageBits::sampled |
+		vk::ImageUsageBits::inputAttachment;
 	info = vpp::ViewableImageCreateInfo::color(device(),
 		{size.width, size.height}, usage, {ssrFormat},
 		vk::ImageTiling::optimal, samples());
@@ -1735,31 +1798,34 @@ void ViewApp::updateDescriptors() {
 	ldsu.inputAttachment({{{}, depthTarget().imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	bool needDepth = (pp_.params.flags & flagSSR) || (combine_.params.flags & flagSSAO);
-	auto ssaoView = (combine_.params.flags & flagSSAO) ?
+	bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
+	auto ssaoView = (params_.flags & flagSSAO) ?
 		ssao_.target.vkImageView() : dummyTex_.vkImageView();
 	// auto scatterView = (pp_.params.flags & flagScattering) ?
 		// scatter_.target.vkImageView() : dummyTex_.vkImageView();
 	auto depthView = needDepth ?  depthMipView_ : gpass_.depth.vkImageView();
-	auto bloomView = (pp_.params.flags & flagBloom) ?
+	auto bloomView = (params_.flags & flagBloom) ?
 		bloom_.fullBloom : gpass_.emission.vkImageView();
-	auto ssrView = (pp_.params.flags & flagSSR) ?
+	auto ssrView = (params_.flags & flagSSR) ?
 		ssr_.target.vkImageView() : dummyTex_.vkImageView();
 
 	auto& pdsu = updates.emplace_back(pp_.ds);
-	pdsu.uniform({{pp_.ubo.buffer(), pp_.ubo.offset(), pp_.ubo.size()}});
+	pdsu.uniform({{paramsUbo_.buffer(), paramsUbo_.offset(),
+		paramsUbo_.size()}});
 	pdsu.imageSampler({{{}, lpass_.light.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	pdsu.imageSampler({{{}, ssrView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	pdsu.imageSampler({{{}, bloomView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
+	pdsu.imageSampler({{{}, depthView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	auto& cdsu = updates.emplace_back(combine_.ds);
 	cdsu.storage({{{}, lpass_.light.vkImageView(),
 		vk::ImageLayout::general}});
-	cdsu.uniform({{combine_.ubo.buffer(), combine_.ubo.offset(),
-		combine_.ubo.size()}});
+	cdsu.uniform({{paramsUbo_.buffer(), paramsUbo_.offset(),
+		paramsUbo_.size()}});
 	cdsu.imageSampler({{{}, gpass_.albedo.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	cdsu.imageSampler({{{}, ssaoView,
@@ -1793,8 +1859,8 @@ void ViewApp::updateDescriptors() {
 	sdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
-	if(pp_.params.flags & flagBloom) {
-		for(auto i = 0u; i < pp_.params.bloomLevels; ++i) {
+	if(params_.flags & flagBloom) {
+		for(auto i = 0u; i < bloomLevels_; ++i) {
 			auto& tmp = bloom_.tmpLevels[i];
 			auto& emission = bloom_.emissionLevels[i];
 
@@ -1817,6 +1883,22 @@ void ViewApp::updateDescriptors() {
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	rdsu.storage({{{}, ssr_.target.vkImageView(),
 		vk::ImageLayout::general}});
+
+	auto& ddsu = updates.emplace_back(debug_.ds);
+	ddsu.uniform({{paramsUbo_.buffer(), paramsUbo_.offset(),
+		paramsUbo_.size()}});
+	ddsu.inputAttachment({{{}, gpass_.albedo.imageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.inputAttachment({{{}, gpass_.normal.imageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.inputAttachment({{{}, gpass_.depth.imageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.inputAttachment({{{}, ssaoView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.inputAttachment({{{}, ssrView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, bloomView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	vpp::apply(updates);
 }
@@ -1930,7 +2012,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// create depth mipmaps
-	bool needDepth = (pp_.params.flags & flagSSR) || (combine_.params.flags & flagSSAO);
+	bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
 	if(depthMipLevels_ > 1 && needDepth) {
 		auto& depthImg = gpass_.depth.image();
 		// transition mipmap level 0 transferSrc
@@ -1998,7 +2080,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// ssao
-	if(combine_.params.flags & flagSSAO) {
+	if(params_.flags & flagSSAO) {
 		vk::cmdBeginRenderPass(cb, {
 			ssao_.pass,
 			ssao_.fb,
@@ -2019,7 +2101,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// ssao blur
-	if(combine_.params.flags & flagSSAO) {
+	if(params_.flags & flagSSAO) {
 		vk::Viewport vp{0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
 			ssao_.blur.pipe);
@@ -2036,8 +2118,8 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
 		std::uint32_t horizontal = 1u;
-		vk::cmdPushConstants(cb, bloom_.pipeLayout, vk::ShaderStageBits::compute,
-			0, 4, &horizontal);
+		vk::cmdPushConstants(cb, ssao_.blur.pipeLayout,
+			vk::ShaderStageBits::fragment, 0, 4, &horizontal);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			ssao_.blur.pipeLayout, 0, {ssao_.blur.dsHorz}, {});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
@@ -2055,8 +2137,8 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
 		horizontal = 0u;
-		vk::cmdPushConstants(cb, bloom_.pipeLayout, vk::ShaderStageBits::compute,
-			0, 4, &horizontal);
+		vk::cmdPushConstants(cb, ssao_.blur.pipeLayout,
+			vk::ShaderStageBits::fragment, 0, 4, &horizontal);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			ssao_.blur.pipeLayout, 0, {ssao_.blur.dsVert}, {});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
@@ -2064,7 +2146,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// scatter
-	if(pp_.params.flags & flagScattering) {
+	if(params_.flags & flagScattering) {
 		vk::cmdBeginRenderPass(cb, {
 			scatter_.pass,
 			scatter_.fb,
@@ -2131,10 +2213,10 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// bloom
-	if(pp_.params.flags & flagBloom) {
+	if(params_.flags & flagBloom) {
 		// create emission mipmaps
 		auto& emission = gpass_.emission.image();
-		auto bloomLevels = pp_.params.bloomLevels;
+		auto bloomLevels = bloomLevels_;
 
 		// transition mipmap level 0 transferSrc
 		vpp::changeLayout(cb, emission,
@@ -2267,7 +2349,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// ssr pass
-	{
+	if(params_.flags & flagSSR) {
 		auto target = ssr_.target.vkImage();
 		vpp::changeLayout(cb, target,
 			vk::ImageLayout::undefined, // don't need that anymore
@@ -2294,7 +2376,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// combine pass
-	{
+	if(params_.mode == 0) {
 		auto& target = lpass_.light.image();
 		vpp::changeLayout(cb, target,
 			vk::ImageLayout::shaderReadOnlyOptimal,
@@ -2332,9 +2414,16 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pp_.pipeLayout, 0, {pp_.ds}, {});
+		if(params_.mode == 0) {
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
+			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+				pp_.pipeLayout, 0, {pp_.ds}, {});
+		} else {
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, debug_.pipe);
+			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+				debug_.pipeLayout, 0, {debug_.ds}, {});
+		}
+
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 
 		// gui stuff
@@ -2359,7 +2448,7 @@ void ViewApp::update(double dt) {
 	}
 
 	auto update = camera_.update || updateLights_ || selectionPos_;
-	update |= selectionPending_ || pp_.updateParams;
+	update |= selectionPending_ || updateRenderParams_;
 	if(update) {
 		App::scheduleRedraw();
 	}
@@ -2378,7 +2467,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		return false;
 	}
 
-	auto numModes = 10u;
+	auto numModes = 11u;
 	switch(ev.keycode) {
 		case ny::Keycode::m: // move light here
 			if(!dirLights_.empty()) {
@@ -2397,20 +2486,26 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			updateLights_ = true;
 			return true;
 		case ny::Keycode::n:
-			showMode_ = (showMode_ + 1) % numModes;
-			camera_.update = true; // trigger update device
+			params_.mode = (params_.mode + 1) % numModes;
+			updateRenderParams_ = true;
+			if(params_.mode == 0 || params_.mode == 1) {
+				App::scheduleRerecord();
+			}
 			return true;
 		case ny::Keycode::l:
-			showMode_ = (showMode_ + numModes - 1) % numModes;
-			camera_.update = true; // trigger update device
+			params_.mode = (params_.mode + numModes - 1) % numModes;
+			updateRenderParams_ = true;
+			if(params_.mode == 0 || params_.mode == numModes - 1) {
+				App::scheduleRerecord();
+			}
 			return true;
 		case ny::Keycode::equals:
-			pp_.params.exposure *= 1.1f;
-			pp_.updateParams = true;
+			params_.exposure *= 1.1f;
+			updateRenderParams_ = true;
 			return true;
 		case ny::Keycode::minus:
-			pp_.params.exposure /= 1.1f;
-			pp_.updateParams = true;
+			params_.exposure /= 1.1f;
+			updateRenderParams_ = true;
 			return true;
 		case ny::Keycode::comma: {
 			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
@@ -2430,7 +2525,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 			l.data.position = camera_.pos;
 			l.data.color = {dist(rnd), dist(rnd), dist(rnd)};
-			l.data.attenuation = {1.f, 8, 32};
+			l.data.attenuation = {1.f, 16, 256};
 			l.data.radius = 0.5f;
 			l.updateDevice();
 			App::scheduleRerecord();
@@ -2443,9 +2538,13 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 	auto k1 = static_cast<unsigned>(ny::Keycode::k1);
 	auto k0 = static_cast<unsigned>(ny::Keycode::k0);
 	if(uk >= k1 && uk <= k0) {
+		auto was0 = params_.mode == 0;
 		auto diff = (1 + uk - k1) % numModes;
-		showMode_ = diff;
-		camera_.update = true;
+		params_.mode = diff;
+		updateRenderParams_ = true;
+		if(was0 || params_.mode == 0) {
+			App::scheduleRerecord();
+		}
 	}
 
 	return false;
@@ -2495,7 +2594,6 @@ void ViewApp::updateDevice() {
 		doi::write(span, camera_.pos);
 		doi::write(span, camera_.perspective.near);
 		doi::write(span, camera_.perspective.far);
-		doi::write(span, showMode_);
 
 		// skybox_.updateDevice(fixedMatrix(camera_));
 
@@ -2515,18 +2613,11 @@ void ViewApp::updateDevice() {
 		updateLights_ = false;
 	}
 
-	if(pp_.updateParams) {
-		pp_.updateParams = false;
-		auto map = pp_.ubo.memoryMap();
+	if(updateRenderParams_) {
+		updateRenderParams_ = false;
+		auto map = paramsUbo_.memoryMap();
 		auto span = map.span();
-		doi::write(span, pp_.params);
-	}
-
-	if(combine_.updateParams) {
-		combine_.updateParams = false;
-		auto map = combine_.ubo.memoryMap();
-		auto span = map.span();
-		doi::write(span, combine_.params);
+		doi::write(span, params_);
 	}
 
 	if(selectionPending_) {

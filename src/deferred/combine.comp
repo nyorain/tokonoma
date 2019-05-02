@@ -1,21 +1,19 @@
 #version 450
 
-const uint flagSSAO = (1u << 0u);
-
-// TODO: split this up in multiple additive passes, each rendering
-// one texture? or multiple compute shaders (e.g. bloom addition
-// requires special handling). Should be more cache-friendly since
-// then only one texture per draw has to be kept in cache; here
-// we need all 4
+#extension GL_GOOGLE_include_directive : enable
+#include "scene.glsl"
 
 // TODO: how to choose the best workgroup size? make it configurable!
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, rgba16f) uniform image2D outCol;
 
 layout(set = 0, binding = 1)  uniform Params {
+	uint mode;
 	uint flags;
 	float aoFactor;
 	float ssaoPow;
+	uint tonemap;
+	float exposure;
 } params;
 
 layout(set = 0, binding = 2) uniform sampler2D albedoTex;

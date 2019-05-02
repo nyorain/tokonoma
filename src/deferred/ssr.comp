@@ -15,31 +15,41 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 
 layout(set = 1, binding = 0) uniform sampler2D linDepthTex;
 layout(set = 1, binding = 1) uniform sampler2D normalTex;
-// layout(set = 1, binding = 2, rgba16_snorm) uniform writeonly image2D outData;
-layout(set = 1, binding = 2, rgba32f) uniform writeonly image2D outData;
+layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D outData;
+// layout(set = 1, binding = 2, rgba32f) uniform writeonly image2D outData;
 
-// parameters
-// TODO: should be configurable; most based on scene size
+// TODO: parameters should be configurable; most based on scene size
+// getting these right is extremely important, ssr succeeds or fails
+// depending on these!
+//
 // marchSteps: linear marching steps to find surface hit,
 //   if too low, we might "march" completely through objects, i.e.
 //   completely miss out on possible reflections
 // binSteps: number of binary search steps used once a hit interval
 //   has ben found. Increases precision of found hit exponentially.
+// startStepSize: if too large, reflections really close to an object
+//   may be skipped. If too small, the reflection ray may hit directly
+//   at the beginning
+// stepFactor: how much stepSize gets large in every step.
+//
+// When either startStepSize or stepFactor gets too large, hits may
+// be skipped and objects disappear from ssr, flicker on object/camera
+// movement or have extremely aliased edges.
 const uint marchSteps = 16u; // linear marching steps
 const uint binsSteps = 8u; // binary search steps after found hit interval
-const float startStepSize = 0.01;
-const float stepFactor = 2.0;
-const float dthreshold = 0.1; // linear depth threshold
+const float startStepSize = 0.05;
+const float stepFactor = 1.1;
+const float dthreshold = 0.05; // linear depth threshold
 
 // TODO: add binary search end condition?: when pixel distance
 //   on depthTex between lower and upper bounds positions is
 //   smaller (user abs or max norm) than threshold bepx, stop
 //   binary search. Not sure if worth it though if binsSteps
 //   is so small anyways...
-// TODO: really continue when depth doesn't match what we need?
+// TODO: really continue marching when depth doesn't match what we need?
 //   there might be a better candidate later on but usually there is not.
 // TODO: don't always use lod level 0!
-//   especially in first search step. Should bring performance
+//   especially in outer linear marching. Should bring performance
 //   improvement. Really not sure how to determine the level to use though.
 //   we step through world space, hard to tell how many pixels we skip.
 const float lod = 0.0;
@@ -75,18 +85,23 @@ void main() {
 
 	// ssr
 	vec3 v = normalize(fragPos - scene.viewPos);	
-	vec3 reflDir = reflect(v, normal);
+	vec3 reflDir = normalize(reflect(v, normal)); // TODO: normalize not needed
 	float fac = 1 - dot(-v, normal); // the steeper we look, the less reflections
-	// fac *= pow(1 - roughness, 0.1); // TODO: there should be no pow; debugging
 	fac *= 1 - roughness;
 
 	float stepSize = startStepSize;
 	vec3 pos = fragPos;
-	vec2 hitUV = vec2(0.0);
+	vec2 hitUV = vec2(0, 0);
 	float blur = 0;
+
+	// initial startSize offset
+	// we don't want to hit the original surface
+	pos += stepSize * reflDir;
+
 	for(uint i = 0u; i < marchSteps; ++i) {
 		vec3 lpos = pos; // last position
 		pos += stepSize * reflDir;
+		stepSize *= stepFactor;
 		vec3 uv = sceneMap(scene.proj, pos);
 		if(uv != clamp(uv, 0.0, 1.0)) {
 			// the ray went out of bounds, no hit
@@ -96,12 +111,10 @@ void main() {
 		float marchZ = depthtoz(uv.z, scene.near, scene.far);
 		float sampleZ = textureLod(linDepthTex, uv.xy, lod).r;
 		if(sampleZ >= marchZ) {
-			// our ray is still in front of all surfaces.
-			// continue with larger step size
-			stepSize *= stepFactor;
-			continue;
+			continue; // march on
 		}
 
+		vec3 apos = pos; // backup
 		// we hit in this iteration and didn't hit the last iteration:
 		// our ray crossed a surface. Use a binary search to determine
 		// the hit point with higher accuracy.
@@ -113,6 +126,8 @@ void main() {
 			// we don't have to check if uv is in screen space bounds
 			// here anymore (as we have to above) because this is only
 			// an interpolation of two points known to be in bounds
+
+			uv.xy = (floor(uv.xy * size) + 0.5) / size; // pixel align
 
 			marchZ = depthtoz(uv.z, scene.near, scene.far);
 			sampleZ = textureLod(linDepthTex, uv.xy, lod).r;
@@ -130,26 +145,31 @@ void main() {
 		float diff = abs(marchZ - sampleZ);
 		if(diff > dthreshold) {
 			// we might find a better spot later on
+			pos = apos; // reset to before bsearch
 			continue;
 		}
 
-		fac *= smoothstep(-dthreshold, -dthreshold / 4, -diff);
+		fac *= smoothstep(-dthreshold, -0.8 * dthreshold, -diff);
 
 		// check the normal of the found hit point. If dot(normal, rayDir)
 		// is greater 0, that means we hit the surface from the back.
-		// Pretty much the greates limit of ssr: in this case the
+		// Pretty much the greatest limit of ssr: in this case the
 		// reflection would show something we currently just don't
 		// have on the screen.
-		// TODO: do we even really need this check? we pretty much have
-		// already verified this via the depth check above, right?
 		vec4 gbufN = textureLod(normalTex, uv.xy, lod);
 		vec3 sampleN = decodeNormal(gbufN.xy);
 		float ndr = dot(sampleN, reflDir);
-		float f = smoothstep(0.0, 0.1, -ndr);
+		float f = smoothstep(0.0, 0.2, -ndr);
 		if(f > 0.0) {
 			fac *= f;
-			hitUV = uv.xy;
-			blur = roughness * (distance(fragPos, mid) / 10.0);
+			hitUV = floor(uv.xy * size) + 0.5; // better precision encoded like that
+
+			vec3 dist = fragPos - mid;
+			// blur = roughness * dot(dist, dist);
+			blur = roughness * length(dist);
+
+			// fade out when surface the ray hit goes out of view
+			fac *= smoothstep(0.0, 0.2, dot(v, -sampleN));
 		}
 
 		break;

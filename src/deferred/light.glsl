@@ -23,7 +23,6 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 invProj;
 	vec3 viewPos;
 	float _near, _far;
-	uint mode;
 } scene;
 
 // gbuffers
@@ -61,7 +60,7 @@ void main() {
 	// fast return; useful for point lights (where pixel is outside radius)
 	// and shadow regions. We don't have to do the complete pbr calculation
 	// there.
-	if(lcolor.r + lcolor.g + lcolor.b < 0.0001) {
+	if(lcolor.r + lcolor.g + lcolor.b <= 0.0) {
 		return;
 	}
 
@@ -73,27 +72,6 @@ void main() {
 	vec3 albedo = sAlbedo.xyz;
 	float roughness = sNormal.w;
 	float metallic = sEmission.w;
-
-	// debug output modes
-	switch(scene.mode) {
-	case 1:
-		fragColor = vec4(albedo, 0.0);
-		return;
-	case 2:
-		fragColor = vec4(0.5 * normal + 0.5, 0.0);
-		return;
-	case 3:
-		fragColor = vec4(vec3(pow(depth, 15)), 0.0);
-		return;
-	case 4:
-		fragColor = vec4(vec3(metallic), 0.0);
-		return;
-	case 5:
-		fragColor = vec4(vec3(roughness), 0.0);
-		return;
-	default:
-		break; // continue normally
-	}
 
 	// for debugging: diffuse only
 	// vec3 light = dot(normal, -ldir) * albedo;

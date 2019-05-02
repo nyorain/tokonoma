@@ -120,7 +120,9 @@ vpp::ViewableImage loadTexture(const vpp::Device& dev, vk::Extent3D extent,
 		dataFormat = format;
 	}
 
-	auto usage = vk::ImageUsageBits::transferDst | vk::ImageUsageBits::sampled;
+	auto usage = vk::ImageUsageBits::transferDst |
+		vk::ImageUsageBits::sampled |
+		vk::ImageUsageBits::inputAttachment;
 	auto levels = 1u;
 	if(mipmap) {
 		levels = mipmapLevels({extent.width, extent.height});
@@ -327,7 +329,9 @@ vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 	});
 
 	// create iamge
-	auto usage = vk::ImageUsageBits::transferDst | vk::ImageUsageBits::sampled;
+	auto usage = vk::ImageUsageBits::transferDst |
+		vk::ImageUsageBits::sampled |
+		vk::ImageUsageBits::inputAttachment;
 	auto imgi = vpp::ViewableImageCreateInfo::color(
 		dev, vk::Extent3D {width, height, 1u}, usage,
 		{format}).value();
