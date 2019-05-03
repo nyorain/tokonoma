@@ -58,10 +58,14 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	vk::SubpassDependency dependency;
 	dependency.srcSubpass = 0u; // last
 	dependency.srcStageMask = vk::PipelineStageBits::allGraphics;
-	dependency.srcAccessMask = vk::AccessBits::depthStencilAttachmentWrite;
+	dependency.srcAccessMask = vk::AccessBits::depthStencilAttachmentWrite |
+		vk::AccessBits::depthStencilAttachmentRead |
+		vk::AccessBits::shaderWrite;
 	dependency.dstSubpass = vk::subpassExternal;
-	dependency.dstStageMask = vk::PipelineStageBits::allGraphics;
-	dependency.dstAccessMask = vk::AccessBits::memoryRead;
+	dependency.dstStageMask = vk::PipelineStageBits::fragmentShader |
+		vk::PipelineStageBits::transfer;
+	dependency.dstAccessMask = vk::AccessBits::shaderRead |
+		vk::AccessBits::transferRead;
 
 	vk::RenderPassCreateInfo rpi {};
 	rpi.attachmentCount = 1;
@@ -411,7 +415,8 @@ nytl::Mat4f PointLight::lightMatrix(unsigned i) const {
 	auto fov = 0.5 * nytl::constants::pi;
 	auto aspect = 1.f;
 	auto np = 0.1f;
-	auto fp = this->data.farPlane;
+	// auto fp = this->data.farPlane;
+	auto fp = this->data.radius;
 	auto mat = doi::perspective3RH<float>(fov, aspect, np, fp);
 	mat = mat * doi::lookAtRH(this->data.position,
 		this->data.position + views[i].normal,
@@ -543,7 +548,7 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::PipelineStageBits::transfer,
 		vk::AccessBits::transferWrite,
 		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::allGraphics,
+		vk::PipelineStageBits::fragmentShader,
 		vk::AccessBits::shaderRead,
 		{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
 }

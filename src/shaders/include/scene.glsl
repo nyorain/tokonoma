@@ -35,7 +35,8 @@ struct PointLight {
 	vec3 color;
 	uint flags;
 	vec3 pos;
-	float farPlane;
+	// float farPlane;
+	float _;
 	vec3 attenuation;
 	float radius;
 	mat4 proj[6]; // global -> cubemap [side i] light space
@@ -94,8 +95,17 @@ float dirShadow(sampler2DShadow shadowMap, vec3 pos, int range) {
 
 // Calculates the light attentuation based on the distance d and the
 // light attenuation parameters
-float attenuation(float d, vec3 params) {
-	return 1.f / (params.x + params.y * d + params.z * (d * d));
+// float attenuation(float d, vec3 params) {
+float attenuation(float d, float radius) {
+	// return 1.f / (params.x + params.y * d + params.z * (d * d));
+	
+	// TODO
+	// hardcoded, normalized attenuation
+	// at the outer border of the light (when d / radius = 1), the
+	// light will have an attenuation of below 0.01, so at normal
+	// exposure there will be no edge
+	d /= radius;
+	return 1.f / (1 + 8 * d + 96 * (d * d));
 }
 
 // from https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows

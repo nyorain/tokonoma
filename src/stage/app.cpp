@@ -1126,6 +1126,10 @@ std::pair<vk::RenderPass, unsigned> App::rvgPass() const {
 	return {renderPass(), 0};
 }
 
+rvg::Font& App::defaultFont() const {
+	return *impl_->defaultFont;
+}
+
 // free util
 std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 		std::string_view glslPath) {

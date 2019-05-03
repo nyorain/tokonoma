@@ -72,7 +72,7 @@ public:
 		nytl::Vec3f color {1.f, 1.f, 1.f};
 		std::uint32_t flags {0};
 		nytl::Vec3f position {1.f, 1.f, 1.f};
-		float farPlane {30.f};
+		float _; // padding
 		// TODO: params.x (constant term) is basically always 1.f, get rid
 		// of that everywhere?
 		// TODO: always automatically calculate attenuation from radius?

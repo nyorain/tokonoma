@@ -1,3 +1,4 @@
+#include "queryPool.hpp"
 #include <stage/app.hpp>
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
@@ -55,7 +56,6 @@
 //   the surface gets bright (obviously) but is not added to
 //   bloom buffer since no *single* light passes the threshold.
 //   requires additional pass though
-// TODO: gather statistics for optimization with time query pools
 // TODO: re-add light scattering (per light?)
 //   even if per-light we can still apply if after lightning pass
 // TODO: we should be able to always use the same attenuation (or at least
@@ -95,6 +95,11 @@
 //   see ssrBlur.comp wip). Should hopefully improve performance
 //   and allow for greater blur. Also distribute factors (compute guass +
 //   depth difference) via shared variables
+// TODO: how to handle light attenuation for point lights?
+//   see scene.glsl:attenuation, does it make sense to give each light
+//   its own parameters? normalize distance by radius before passing
+//   it to attenuation? parameters that work fine for a normalized
+//   distance are (1, 8, 128), but then lights are rather weak
 
 // low prio:
 // TODO: look at adding smaa. That needs multiple post processing
@@ -206,6 +211,8 @@ public:
 	static constexpr unsigned modeEmission = 9u;
 	static constexpr unsigned modeBloom = 10u;
 
+	static constexpr unsigned timestampCount = 10u;
+
 	// see various post processing or screen space shaders
 	struct RenderParams {
 		std::uint32_t mode = 0u;
@@ -309,6 +316,9 @@ protected:
 	vpp::CommandBuffer selectionCb_;
 	vpp::Semaphore selectionSemaphore_;
 	bool selectionPending_ {};
+
+	vpp::QueryPool queryPool_ {};
+	std::uint32_t timestampBits_ {};
 
 	// point light selection. 0 if invalid
 	unsigned currentID_ {}; // for id giving
@@ -432,6 +442,21 @@ protected:
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 	} debug_;
+
+	// times
+	struct TimePass {
+		rvg::Text passName;
+		rvg::Text time;
+	};
+
+	struct {
+		std::array<TimePass, timestampCount> texts;
+		rvg::RectShape bg;
+		rvg::Paint bgPaint;
+		rvg::Paint fgPaint;
+		unsigned frameCount {0};
+		bool hidden {};
+	} timings_;
 };
 
 bool ViewApp::init(const nytl::Span<const char*> args) {
@@ -615,6 +640,38 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 
 	selected_.removedFolder = panel.remove(*selected_.folder);
 
+	// times widget
+	{
+		auto names = {
+			"shadows:",
+			"gpass:",
+			"depth mips:",
+			"ssao:",
+			"scatter:",
+			"lpass:",
+			"bloom:",
+			"ssr:",
+			"combine:",
+			"post process:"
+		};
+
+		timings_.bgPaint = {rvgContext(), rvg::colorPaint({20, 20, 20, 200})};
+		timings_.fgPaint = {rvgContext(), rvg::colorPaint({230, 230, 230, 255})};
+		auto dm = rvg::DrawMode {};
+		dm.deviceLocal = true;
+		dm.fill = true;
+		dm.stroke = 0.f;
+		dm.aaFill = false;
+		timings_.bg = {rvgContext(), {}, {}, dm};
+
+		// positions set by resize
+		for(auto i = 0u; i < timings_.texts.size(); ++i) {
+			auto name = *(names.begin() + i);
+			timings_.texts[i].passName = {rvgContext(), name, defaultFont(), {}};
+			timings_.texts[i].time = {rvgContext(), "", defaultFont(), {}};
+		}
+	}
+
 	return true;
 }
 
@@ -711,6 +768,17 @@ void ViewApp::initRenderData() {
 	selectionCb_ = dev.commandAllocator().get(qfam,
 		vk::CommandPoolCreateBits::resetCommandBuffer);
 	selectionSemaphore_ = {dev};
+
+	// TODO: we can't assume this
+	timestampBits_ = dev.queueSubmitter().queue().properties().timestampValidBits;
+	dlg_assert(timestampBits_);
+	timestampBits_ = 0xFFFFFFFFu; // guaranteed
+
+	// query pool
+	vk::QueryPoolCreateInfo qpi;
+	qpi.queryCount = timestampCount + 1;
+	qpi.queryType = vk::QueryType::timestamp;
+	queryPool_ = {dev, qpi};
 }
 
 void ViewApp::initGPass() {
@@ -1016,11 +1084,13 @@ void ViewApp::initLPass() {
 		{pointFragShader, vk::ShaderStageBits::fragment},
 	}}};
 
-	// TODO: enable depth test?
+	// TODO: enable depth test for additional discarding by rasterizer
+	// (better performance i guess). requires depth attachment in this pass
+	// though. Don't enable depth write!
 	pgpi.depthStencil.depthTestEnable = false;
 	pgpi.depthStencil.depthWriteEnable = false;
 	pgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
-	pgpi.rasterization.cullMode = vk::CullModeBits::back;
+	pgpi.rasterization.cullMode = vk::CullModeBits::front;
 	pgpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 	// additive blending
@@ -1990,6 +2060,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 	vk::beginCommandBuffer(cb, {});
 	App::beforeRender(cb);
 
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::topOfPipe,
+		queryPool_, 0u);
+
 	// render shadow maps
 	for(auto& light : pointLights_) {
 		if(light.hasShadowMap()) {
@@ -1999,6 +2072,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 	for(auto& light : dirLights_) {
 		light.render(cb, shadowData_, *scene_);
 	}
+
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 1u);
 
 	const auto width = swapchainInfo().imageExtent.width;
 	const auto height = swapchainInfo().imageExtent.height;
@@ -2037,6 +2113,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 
 		vk::cmdEndRenderPass(cb);
 	}
+
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 2u);
 
 	// create depth mipmaps
 	bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
@@ -2106,6 +2185,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 			{vk::ImageAspectBits::color, 0, depthMipLevels_, 0, 1});
 	}
 
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 3u);
+
 	// ssao
 	if(params_.flags & flagSSAO) {
 		vk::cmdBeginRenderPass(cb, {
@@ -2172,6 +2254,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdEndRenderPass(cb);
 	}
 
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 4u);
+
 	// scatter
 	if(params_.flags & flagScattering) {
 		vk::cmdBeginRenderPass(cb, {
@@ -2202,6 +2287,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		vk::cmdEndRenderPass(cb);
 	}
+
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 5u);
 
 	// lpass
 	{
@@ -2238,6 +2326,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 
 		vk::cmdEndRenderPass(cb);
 	}
+
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 6u);
 
 	// bloom
 	if(params_.flags & flagBloom) {
@@ -2375,6 +2466,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 			{vk::ImageAspectBits::color, 1, bloomLevels, 0, 1});
 	}
 
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 7u);
+
 	// ssr pass
 	if(params_.flags & flagSSR) {
 		auto target = ssr_.target.vkImage();
@@ -2402,6 +2496,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 			{vk::ImageAspectBits::color, 0, 1, 0, 1});
 	}
 
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 8u);
+
 	// combine pass
 	if(params_.mode == 0) {
 		auto& target = lpass_.light.image();
@@ -2420,13 +2517,16 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdDispatch(cb, std::ceil(width / 8.f), std::ceil(height / 8.f), 1u);
 		vpp::changeLayout(cb, target,
 			vk::ImageLayout::general,
-			vk::PipelineStageBits::fragmentShader,
+			vk::PipelineStageBits::computeShader,
 			vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
 			vk::ImageLayout::shaderReadOnlyOptimal,
 			vk::PipelineStageBits::fragmentShader,
 			vk::AccessBits::shaderRead,
 			{vk::ImageAspectBits::color, 0, 1, 0, 1});
 	}
+
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 9u);
 
 	// post process pass
 	{
@@ -2457,8 +2557,23 @@ void ViewApp::record(const RenderBuffer& buf) {
 		rvgContext().bindDefaults(cb);
 		gui().draw(cb);
 
+		// times
+		rvgContext().bindDefaults(cb);
+		windowTransform().bind(cb);
+		timings_.bgPaint.bind(cb);
+		timings_.bg.fill(cb);
+
+		timings_.fgPaint.bind(cb);
+		for(auto& time : timings_.texts) {
+			time.passName.draw(cb);
+			time.time.draw(cb);
+		}
+
 		vk::cmdEndRenderPass(cb);
 	}
+
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 10u);
 
 	App::afterRender(cb);
 	vk::endCommandBuffer(cb);
@@ -2558,6 +2673,13 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			l.updateDevice();
 			App::scheduleRerecord();
 			break;
+		} case ny::Keycode::f: {
+			timings_.hidden ^= true;
+			timings_.bg.disable(timings_.hidden);
+			for(auto& t : timings_.texts) {
+				t.passName.disable(timings_.hidden);
+				t.time.disable(timings_.hidden);
+			}
 		} default:
 			break;
 	}
@@ -2748,6 +2870,28 @@ void ViewApp::updateDevice() {
 	if(updateDescriptors_) {
 		updateDescriptors();
 	}
+
+	// query pool
+	if(++timings_.frameCount == 30) {
+		auto& dev = vulkanDevice();
+		std::uint32_t queries[timestampCount + 1];
+
+		// TODO: can cause deadlock...
+		vk::getQueryPoolResults(dev, queryPool_, 0, timestampCount + 1,
+			sizeof(queries), queries, 4, vk::QueryResultBits::withAvailability);
+		timings_.frameCount = 0u;
+
+		auto last = queries[0] & timestampBits_;
+		for(auto i = 0u; i < timestampCount; ++i) {
+			auto current = queries[i + 1] & timestampBits_;
+			double diff = current - last;
+			diff *= dev.properties().limits.timestampPeriod; // ns
+			diff /= 1000 * 1000; // ms
+			auto sdiff = std::to_string(diff);
+			timings_.texts[i].time.change()->utf8(sdiff);
+			last = current;
+		}
+	}
 }
 
 void ViewApp::resize(const ny::SizeEvent& ev) {
@@ -2755,6 +2899,27 @@ void ViewApp::resize(const ny::SizeEvent& ev) {
 	selectionPos_ = {};
 	camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 	camera_.update = true;
+
+	auto pos = nytl::Vec2f(window().size());
+	pos.x -= 180;
+	pos.y = 30;
+
+	for(auto i = 0u; i < timings_.texts.size(); ++i) {
+		timings_.texts[i].passName.change()->position = pos;
+
+		auto opos = pos;
+		opos.x += 100;
+		timings_.texts[i].time.change()->position = opos;
+
+		pos.y += 20;
+	}
+
+	auto bgc = timings_.bg.change();
+	bgc->position = nytl::Vec2f(window().size());
+	bgc->position.x -= 200;
+	bgc->position.y = 10;
+	bgc->size.x = 180;
+	bgc->size.y = pos.y + 10;
 }
 
 const vk::PipelineColorBlendAttachmentState& ViewApp::noBlendAttachment() {

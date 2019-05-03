@@ -7,7 +7,7 @@
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
-// layout(location = 3) in float inLinDepth;
+layout(location = 3) in float inLinDepth;
 
 layout(location = 0) out vec4 outNormal; // xy: encoded normal, z: matID, w: roughness
 layout(location = 1) out vec4 outAlbedo; // rgb: albedo, w: occlusion
@@ -77,4 +77,5 @@ void main() {
 	outEmission.w = material.metallic * mr.b;
 
 	outDepth = depthtoz(gl_FragCoord.z, scene.near, scene.far);
+	// outDepth = inLinDepth;
 }

@@ -52,6 +52,7 @@ public:
 
 	vk::SampleCountBits samples() const;
 	const vk::SwapchainCreateInfoKHR& swapchainInfo() const;
+	rvg::Font& defaultFont() const;
 
 	// might be invalid, depends on settings
 	vpp::ViewableImage& depthTarget() const;

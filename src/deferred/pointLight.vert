@@ -15,15 +15,20 @@ layout(set = 2, binding = 0, row_major) uniform Light {
 	PointLight light;
 };
 
+const float bias = 0.1;
+
 void main() {
+	// the indices we are given have inverted normals (are designed
+	// for a skybox where the inside is the side it's viewed from).
+	// therefore, when we are outside, we have to reverse the order.
 	uint id = gl_VertexIndex;
-	/*
 	vec3 d = abs(light.pos - scene.viewPos);
-	bool inside = max(d.x, max(d.y, d.z)) <= radius;
-	if(!inside) { // camera is inside view volume, reverse face order
-		// id = 7 - id;
+
+	// bias since otherwise we might clip on the near plane
+	bool inside = max(d.x, max(d.y, d.z)) <= light.radius + bias;
+	if(inside) {
+		id = 7 - id;
 	}
-	*/
 
 	vec3 pos = vec3(
 		-1.f + 2 * ((id >> 0u) & 1u),

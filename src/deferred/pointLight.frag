@@ -19,7 +19,8 @@ void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 	}
 
 	ldir /= lightDistance;
-	lcolor = attenuation(lightDistance, light.attenuation) * light.color;
+	// lcolor = attenuation(lightDistance, light.attenuation) * light.color;
+	lcolor = attenuation(lightDistance, light.radius) * light.color;
 
 	bool shadow = (light.flags & lightShadow) != 0;
 	if(!shadow) {
@@ -32,9 +33,9 @@ void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 		// depend on scene size
 		float viewDistance = length(viewPos - fragPos);
 		float radius = (1.0 + (viewDistance / 30.0)) / 100.0;  
-		lcolor *= pointShadowSmooth(shadowCube, light.pos, light.farPlane,
+		lcolor *= pointShadowSmooth(shadowCube, light.pos, light.radius,
 			fragPos, radius);
 	} else {
-		lcolor *= pointShadow(shadowCube, light.pos, light.farPlane, fragPos);
+		lcolor *= pointShadow(shadowCube, light.pos, light.radius, fragPos);
 	}
 }

@@ -31,16 +31,17 @@ void main() {
 	}
 
 	// store depth: distance from light to pixel in that direction
-	float farPlane = light.farPlane;
+	// float farPlane = light.farPlane;
+	float farPlane = light.radius;
     float dist = length(inPos - light.pos);
 
 	// depth bias, roughly like vkCmdSetDepthBias
 	// TODO: should be configurable, e.g. use push constant
-	const float bias = 0.001;
+	const float bias = 0.005;
 	dist += bias;
 	// XXX: use slope as with vkCmdSetDepthBias; probably not perfect
 	// read up in vulkan spec how it's implemented
-	const float biasSlope = 2.0;
+	const float biasSlope = 3.0;
 	dist += biasSlope * max(abs(dFdx(inPos.z)), abs(dFdy(inPos.z)));
 
     gl_FragDepth = dist / farPlane; // map to [0, 1]; required for depth output
