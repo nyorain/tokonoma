@@ -8,6 +8,7 @@
 #include <stage/texture.hpp>
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
+#include <stage/defer.hpp>
 #include <stage/scene/shape.hpp>
 #include <stage/scene/light.hpp>
 #include <stage/scene/scene.hpp>
@@ -51,6 +52,10 @@
 #include <cstdlib>
 #include <random>
 
+// TODO: fix vpp shared buffer fixes. Maybe test it in vpp...
+//   also fix formats.cpp: findSupported e.g. throws
+//   on error...
+//   NOTE: contains breaking change in formats.cpp
 // TODO: maybe do high pass on light output *after* blending.
 //   currently, when there are many light shining on a surface
 //   the surface gets bright (obviously) but is not added to
@@ -284,9 +289,9 @@ protected:
 	vpp::Sampler linearSampler_;
 	vpp::Sampler nearestSampler_;
 
-	vpp::ViewableImage dummyTex_;
-	vpp::ViewableImage dummyCube_;
-	std::unique_ptr<doi::Scene> scene_;
+	doi::Texture dummyTex_;
+	doi::Texture dummyCube_;
+	doi::Scene scene_;
 	std::optional<doi::Material> lightMaterial_;
 
 	std::string modelname_ {};
@@ -373,7 +378,7 @@ protected:
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 		vpp::ViewableImage target;
-		vpp::ViewableImage noise;
+		doi::Texture noise;
 		vpp::Framebuffer fb;
 		vpp::SubBuffer samples;
 
@@ -464,71 +469,8 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		return false;
 	}
 
-	auto& dev = vulkanDevice();
 	camera_.perspective.near = 0.01f;
 	camera_.perspective.far = 20.f;
-
-	// TODO: re-add this. In pass between light and pp?
-	// hdr skybox
-	// skybox_.init(dev, "../assets/kloofendal2k.hdr",
-		// renderPass(), 3u, samples());
-
-	boxIndices_ = {dev.bufferAllocator(), 36u * sizeof(std::uint16_t),
-		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-		0, dev.deviceMemoryTypes()};
-	std::array<std::uint16_t, 36> indices = {
-		0, 1, 2,  2, 1, 3, // front
-		1, 5, 3,  3, 5, 7, // right
-		2, 3, 6,  6, 3, 7, // top
-		4, 0, 6,  6, 0, 2, // left
-		4, 5, 0,  0, 5, 1, // bottom
-		5, 4, 7,  7, 4, 6, // back
-	};
-	vpp::writeStaging430(boxIndices_, vpp::raw(*indices.data(), 36u));
-
-	// Load Model
-	auto s = sceneScale_;
-	auto mat = doi::scaleMat<4, float>({s, s, s});
-	auto samplerAnisotropy = 1.f;
-	if(anisotropy_) {
-		samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
-		samplerAnisotropy = std::max(samplerAnisotropy, maxAnisotropy_);
-	}
-
-	auto ri = doi::SceneRenderInfo{
-		materialDsLayout_,
-		primitiveDsLayout_,
-		dummyTex_.vkImageView(),
-		samplerAnisotropy
-	};
-	if(!(scene_ = doi::loadGltf(modelname_, dev, mat, ri))) {
-		return false;
-	}
-
-	currentID_ = scene_->primitives().size();
-	lightMaterial_.emplace(materialDsLayout_,
-		dummyTex_.vkImageView(), scene_->defaultSampler(),
-		nytl::Vec{0.f, 0.f, 0.0f, 0.f}, 0.f, 0.f, false,
-		nytl::Vec{1.f, 0.9f, 0.5f});
-
-	if(pointLight) {
-		auto& l = pointLights_.emplace_back(dev, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, *lightMaterial_, currentID_++);
-		l.data.position = {-1.8f, 6.0f, -2.f};
-		l.data.color = {2.f, 1.7f, 0.8f};
-		l.data.attenuation = {1.f, 0.3f, 0.1f};
-		l.data.radius = 10.f;
-		l.updateDevice();
-		// pp_.params.scatterLightColor = 0.1f * l.data.color;
-	} else {
-		auto& l = dirLights_.emplace_back(dev, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, camera_.pos, *lightMaterial_,
-			currentID_++);
-		l.data.dir = {-3.8f, -9.2f, -5.2f};
-		l.data.color = {2.f, 1.7f, 0.8f};
-		l.updateDevice(camera_.pos);
-		// pp_.params.scatterLightColor = 0.05f * l.data.color;
-	}
 
 	// gui
 	auto& gui = this->gui();
@@ -678,6 +620,14 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 void ViewApp::initRenderData() {
 	auto& dev = vulkanDevice();
 
+	// initialization setup.
+	auto& qs = dev.queueSubmitter();
+	auto qfam = qs.queue().family();
+	auto cb = dev.commandAllocator().get(qfam);
+	vk::beginCommandBuffer(cb, {});
+
+	doi::WorkBatcher batch{dev, cb};
+
 	// sampler
 	vk::SamplerCreateInfo sci;
 	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
@@ -711,23 +661,47 @@ void ViewApp::initRenderData() {
 	initDebug(); // init debug pipeline/pass
 
 	// dummy texture for materials that don't have a texture
-	std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
-	auto ptr = reinterpret_cast<std::byte*>(data.data());
-	dummyTex_ = doi::loadTexture(dev, {1, 1, 1},
-		vk::Format::r8g8b8a8Unorm, {ptr, data.size()});
+	// TODO: we could just create the dummy cube and make the dummy
+	// texture just a view into one of the dummy cube faces...
+	// TODO: those are required below (mainly by lights and by
+	//   materials, both should be fixable).
+	auto data = std::make_unique<std::byte[]>(4);
+	auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
+	std::memcpy(data.get(), idata.data(), 4u);
 
-	// TODO: really bad hack right here...
-	auto n = "../assets/1px.jpeg";
-	dummyCube_ = doi::loadTextureArray(dev, {n, n, n, n, n, n},
-	vk::Format::r8g8b8a8Unorm, true);
+	std::vector<std::unique_ptr<std::byte[]>> faces;
+	faces.emplace_back(std::move(data));
+	// auto initDummyTex = doi::Initializer<doi::Texture>(batch,
+	// 	std::move(faces), vk::Format::r8g8b8a8Unorm,
+	// 	vk::Extent2D{1u, 1u});
+	dummyTex_ = {dev, std::move(faces), vk::Format::r8g8b8a8Unorm,
+		vk::Extent2D{1u, 1u}};
+
+	faces.resize(6);
+	for(auto& f : faces) {
+		f = std::make_unique<std::byte[]>(4);
+		std::memcpy(f.get(), idata.data(), 4u);
+	}
+
+	auto params = doi::TextureCreateParams {};
+	params.cubemap = true;
+	dummyCube_ = {dev, std::move(faces), vk::Format::r8g8b8a8Unorm,
+		vk::Extent2D{1u, 1u}, params};
+	// auto initDummyCube = doi::Initializer<doi::Texture>(batch,
+	// 	std::move(faces), vk::Format::r8g8b8a8Unorm, vk::Extent2D{1u, 1u});
+
+	// initDummyTex.alloc(batch);
+	// initDummyCube.alloc(batch);
+	// dummyTex_ = initDummyTex.finish(batch);
+	// dummyCube_ = initDummyCube.finish(batch);
 
 	// ubo and stuff
 	auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
 		+ sizeof(nytl::Mat4f) // inv proj
 		+ sizeof(nytl::Vec3f) // viewPos
 		+ 2 * sizeof(float); // near, far plane
-	sceneDs_ = {dev.descriptorAllocator(), sceneDsLayout_};
-	sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
+	sceneDs_ = {vpp::defer, dev.descriptorAllocator(), sceneDsLayout_};
+	sceneUbo_ = {vpp::defer, dev.bufferAllocator(), sceneUboSize,
 		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
 
 	shadowData_ = doi::initShadowData(dev, depthFormat(),
@@ -737,12 +711,6 @@ void ViewApp::initRenderData() {
 	// params ubo
 	paramsUbo_ = {dev.bufferAllocator(), sizeof(RenderParams),
 		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
-
-	// scene descriptor, used for some pipelines as set 0 for camera
-	// matrix and view position
-	vpp::DescriptorSetUpdate sdsu(sceneDs_);
-	sdsu.uniform({{sceneUbo_.buffer(), sceneUbo_.offset(), sceneUbo_.size()}});
-	vpp::apply({sdsu});
 
 	// selection data
 	vk::ImageCreateInfo imgi;
@@ -754,17 +722,8 @@ void ViewApp::initRenderData() {
 	imgi.tiling = vk::ImageTiling::linear;
 	imgi.usage = vk::ImageUsageBits::transferDst;
 	imgi.samples = vk::SampleCountBits::e1;
-	selectionStage_ = {dev, imgi, dev.hostMemoryTypes()};
+	selectionStage_ = {vpp::defer, dev, imgi, dev.hostMemoryTypes()};
 
-	// TODO: batch...
-	vpp::changeLayout(selectionStage_,
-		vk::ImageLayout::undefined,
-		vk::PipelineStageBits::topOfPipe, {},
-		vk::ImageLayout::general,
-		vk::PipelineStageBits::bottomOfPipe, {},
-		{vk::ImageAspectBits::color, 0, 1, 0, 1}, dev.queueSubmitter());
-
-	auto qfam = dev.queueSubmitter().queue().family();
 	selectionCb_ = dev.commandAllocator().get(qfam,
 		vk::CommandPoolCreateBits::resetCommandBuffer);
 	selectionSemaphore_ = {dev};
@@ -779,6 +738,111 @@ void ViewApp::initRenderData() {
 	qpi.queryCount = timestampCount + 1;
 	qpi.queryType = vk::QueryType::timestamp;
 	queryPool_ = {dev, qpi};
+
+	// TODO: re-add this. In pass between light and pp?
+	// hdr skybox
+	// skybox_.init(dev, "../assets/kloofendal2k.hdr",
+		// renderPass(), 3u, samples());
+
+	boxIndices_ = {vpp::defer, dev.bufferAllocator(), 36u * sizeof(std::uint16_t),
+		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
+		0, dev.deviceMemoryTypes()};
+
+	// Load Model
+	auto s = sceneScale_;
+	auto mat = doi::scaleMat<4, float>({s, s, s});
+	auto samplerAnisotropy = 1.f;
+	if(anisotropy_) {
+		samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
+		samplerAnisotropy = std::max(samplerAnisotropy, maxAnisotropy_);
+	}
+
+	auto ri = doi::SceneRenderInfo{
+		materialDsLayout_,
+		primitiveDsLayout_,
+		dummyTex_.vkImageView(),
+		samplerAnisotropy
+	};
+
+	auto [omodel, path] = doi::loadGltf(modelname_);
+	if(!omodel) {
+		std::exit(-1);
+	}
+
+	auto model = std::move(*omodel);
+	dlg_info("Found {} scenes", model.scenes.size());
+	auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
+	auto& sc = model.scenes[scene];
+	auto initScene = doi::Initializer<doi::Scene>(batch, path, *omodel, sc,
+		mat, ri);
+
+	// allocate
+	sceneUbo_.init();
+	sceneDs_.init();
+	boxIndices_.init();
+	selectionStage_.init();
+	initScene.alloc(batch);
+
+	// cb
+	std::array<std::uint16_t, 36> indices = {
+		0, 1, 2,  2, 1, 3, // front
+		1, 5, 3,  3, 5, 7, // right
+		2, 3, 6,  6, 3, 7, // top
+		4, 0, 6,  6, 0, 2, // left
+		4, 5, 0,  0, 5, 1, // bottom
+		5, 4, 7,  7, 4, 6, // back
+	};
+	vpp::writeStaging(cb, boxIndices_, vpp::BufferLayout::std140,
+		vpp::raw(*indices.data(), 36u));
+	vpp::changeLayout(cb, selectionStage_,
+		vk::ImageLayout::undefined,
+		vk::PipelineStageBits::topOfPipe, {},
+		vk::ImageLayout::general,
+		vk::PipelineStageBits::bottomOfPipe, {},
+		{vk::ImageAspectBits::color, 0, 1, 0, 1});
+
+	// submit and wait
+	// NOTE: we could do something on the cpu meanwhile
+	vk::endCommandBuffer(cb);
+	vk::SubmitInfo si;
+	si.commandBufferCount = 1;
+	si.pCommandBuffers = &cb.vkHandle();
+	auto id = qs.add(si);
+	qs.wait(id);
+
+	scene_ = initScene.finish(batch);
+
+	// scene descriptor, used for some pipelines as set 0 for camera
+	// matrix and view position
+	vpp::DescriptorSetUpdate sdsu(sceneDs_);
+	sdsu.uniform({{sceneUbo_.buffer(), sceneUbo_.offset(), sceneUbo_.size()}});
+	vpp::apply({sdsu});
+
+
+	currentID_ = scene_.primitives().size();
+	lightMaterial_.emplace(materialDsLayout_,
+		dummyTex_.vkImageView(), scene_.defaultSampler(),
+		nytl::Vec{0.f, 0.f, 0.0f, 0.f}, 0.f, 0.f, false,
+		nytl::Vec{1.f, 0.9f, 0.5f});
+
+	// TODO: defer as well
+	if(pointLight) {
+		auto& l = pointLights_.emplace_back(dev, lightDsLayout_,
+			primitiveDsLayout_, shadowData_, currentID_++);
+		l.data.position = {-1.8f, 6.0f, -2.f};
+		l.data.color = {2.f, 1.7f, 0.8f};
+		l.data.attenuation = {1.f, 0.3f, 0.1f};
+		l.data.radius = 10.f;
+		l.updateDevice();
+		// pp_.params.scatterLightColor = 0.1f * l.data.color;
+	} else {
+		auto& l = dirLights_.emplace_back(dev, lightDsLayout_,
+			primitiveDsLayout_, shadowData_, camera_.pos, currentID_++);
+		l.data.dir = {-3.8f, -9.2f, -5.2f};
+		l.data.color = {2.f, 1.7f, 0.8f};
+		l.updateDevice(camera_.pos);
+		// pp_.params.scatterLightColor = 0.05f * l.data.color;
+	}
 }
 
 void ViewApp::initGPass() {
@@ -1090,6 +1154,7 @@ void ViewApp::initLPass() {
 	pgpi.depthStencil.depthTestEnable = false;
 	pgpi.depthStencil.depthWriteEnable = false;
 	pgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+	// TODO: why does it only work with front?
 	pgpi.rasterization.cullMode = vk::CullModeBits::front;
 	pgpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
@@ -1345,20 +1410,26 @@ void ViewApp::initSSAO() {
 
 	// NOTE: we could use a r32g32f format, would be more efficent
 	// might not be supported though... we could pack it into somehow
-	auto ssaoNoiseDim = 4u;
-	std::vector<nytl::Vec4f> ssaoNoise(ssaoNoiseDim * ssaoNoiseDim);
-	for(auto i = 0u; i < static_cast<uint32_t>(ssaoNoise.size()); i++) {
-		ssaoNoise[i] = nytl::Vec4f{
+	auto noiseDim = 4u;
+	auto noiseSize = sizeof(nytl::Vec4f) * noiseDim * noiseDim;
+	auto noiseData = std::make_unique<std::byte[]>(noiseSize);
+	auto noise = reinterpret_cast<nytl::Vec4f*>(noiseData.get());
+	for(auto i = 0u; i < noiseDim * noiseDim; i++) {
+		noise[i] = nytl::Vec4f{
 			rndDist(rndEngine) * 2.f - 1.f,
 			rndDist(rndEngine) * 2.f - 1.f,
 			0.0f, 0.0f
 		};
 	}
 
-	auto ptr = reinterpret_cast<const std::byte*>(ssaoNoise.data());
-	auto ptrSize = ssaoNoise.size() * sizeof(ssaoNoise[0]);
-	ssao_.noise = doi::loadTexture(dev, {ssaoNoiseDim, ssaoNoiseDim, 1u},
-		vk::Format::r32g32b32a32Sfloat, {ptr, ptrSize});
+	std::vector<std::unique_ptr<std::byte[]>> layers;
+	layers.emplace_back(std::move(noiseData));
+
+	// TODO: defer
+	auto params = doi::TextureCreateParams{};
+	params.format = vk::Format::r32g32b32a32Sfloat;
+	ssao_.noise = {dev, std::move(layers), vk::Format::r32g32b32a32Sfloat,
+		{noiseDim, noiseDim}, params};
 
 	ssao_.ds = {dev.descriptorAllocator(), ssao_.dsLayout};
 }
@@ -2066,11 +2137,11 @@ void ViewApp::record(const RenderBuffer& buf) {
 	// render shadow maps
 	for(auto& light : pointLights_) {
 		if(light.hasShadowMap()) {
-			light.render(cb, shadowData_, *scene_);
+			light.render(cb, shadowData_, scene_);
 		}
 	}
 	for(auto& light : dirLights_) {
-		light.render(cb, shadowData_, *scene_);
+		light.render(cb, shadowData_, scene_);
 	}
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
@@ -2100,10 +2171,11 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gpass_.pipe);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			gpass_.pipeLayout, 0, {sceneDs_}, {});
-		scene_->render(cb, gpass_.pipeLayout);
+		scene_.render(cb, gpass_.pipeLayout);
 
 		// NOTE: ideally, don't render these in gbuffer pass but later
 		// on with different lightning?
+		lightMaterial_->bind(cb, gpass_.pipeLayout);
 		for(auto& l : pointLights_) {
 			l.lightBall().render(cb, gpass_.pipeLayout);
 		}
@@ -2652,7 +2724,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			return true;
 		case ny::Keycode::comma: {
 			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
-				primitiveDsLayout_, shadowData_, *lightMaterial_, currentID_++);
+				primitiveDsLayout_, shadowData_, currentID_++);
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 			l.data.position = camera_.pos;
 			l.data.color = {dist(rnd), dist(rnd), dist(rnd)};
@@ -2661,9 +2733,10 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			App::scheduleRerecord();
 			break;
 		 } case ny::Keycode::z: {
+			 dlg_assert(dummyCube_.vkImageView());
 			// no shadow map
 			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
-				primitiveDsLayout_, shadowData_, *lightMaterial_, currentID_++,
+				primitiveDsLayout_, shadowData_, currentID_++,
 				dummyCube_.vkImageView());
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 			l.data.position = camera_.pos;
@@ -2780,7 +2853,7 @@ void ViewApp::updateDevice() {
 		int selected = 65536 * (0.5f + 0.5f * fp[2]);
 		selectionPending_ = {};
 
-		auto& primitives = scene_->primitives();
+		auto& primitives = scene_.primitives();
 		bool found = false;
 		if(selected <= 0) {
 			dlg_warn("Non-positive selected: {}", selected);

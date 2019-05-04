@@ -39,7 +39,8 @@ stage_src = [
 	'camera.cpp',
 	'geometry.cpp',
 	'physics.cpp',
-	'texture.cpp',
+	# 'texture.cpp',
+	'texture2.cpp',
 	'image.cpp',
 
 	'scene/scene.cpp',

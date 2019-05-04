@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stage/defer.hpp>
+
 #include <nytl/vec.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/matOps.hpp>
@@ -13,7 +15,7 @@
 namespace doi {
 namespace gltf = tinygltf;
 
-class Shape; // stage/scene/shape.hpp
+struct Shape; // stage/scene/shape.hpp
 class Material; // stage/scene/material.hpp
 
 class Primitive {
@@ -25,24 +27,30 @@ public:
 		nytl::Vec3f normal;
 	};
 
+	struct InitData {
+		vpp::SubBuffer stage;
+		std::vector<std::byte> vertData;
+		std::vector<std::byte> uvData;
+	};
+
 	// transform matrix
 	// must call updateDevice when changed
 	nytl::Mat4f matrix = nytl::identity<4, float>();
 
 public:
 	Primitive() = default;
-	Primitive(const vpp::Device& dev, const Shape& shape,
-		const vpp::TrDsLayout& dsLayout, const Material& material,
-		const nytl::Mat4f& matrix, unsigned id);
-	Primitive(const vpp::Device& dev,
-		const gltf::Model& model, const gltf::Primitive& primitive,
-		const vpp::TrDsLayout& dsLayout, const Material& material,
-		const nytl::Mat4f& matrix, unsigned id);
+	Primitive(const Shape&, const vpp::TrDsLayout&, unsigned material,
+		const nytl::Mat4f& transform, unsigned id);
+	Primitive(InitData&, const gltf::Model&,
+		const gltf::Primitive&, const vpp::TrDsLayout&, unsigned material,
+		const nytl::Mat4f& transform, unsigned id);
 
+	void initAlloc(vk::CommandBuffer, InitData&);
 	void render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout) const;
 	void updateDevice();
 
-	const Material& material() const { return *material_; }
+	unsigned material() const { return material_; }
+	bool hasUV() const { return uv_.size() != 0; }
 	auto id() const { return id_; }
 
 protected:
@@ -52,8 +60,8 @@ protected:
 	vpp::SubBuffer uv_; // uv coords (optional)
 	vpp::SubBuffer ubo_; // different buffer since on mappable mem
 	vpp::TrDs ds_;
-	const Material* material_;
 	unsigned id_;
+	unsigned material_; // id of the material
 };
 
 } // namespace doi

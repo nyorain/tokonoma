@@ -13,12 +13,14 @@ namespace doi {
 
 // NOTE: currently some code duplication between constructors
 // hard to factor out into one function though
-Primitive::Primitive(const vpp::Device& dev, const Shape& shape,
-		const vpp::TrDsLayout& dsLayout, const Material& material,
-		const nytl::Mat4f& mat, unsigned id) : id_(id) {
+// TODO: add deferred version of this constructor as well?
+Primitive::Primitive(const Shape& shape,
+		const vpp::TrDsLayout& dsLayout, unsigned material,
+		const nytl::Mat4f& mat, unsigned id) : matrix(mat), id_(id),
+			material_(material) {
+
+	auto& dev = dsLayout.device();
 	dlg_assert(shape.normals.size() == shape.positions.size());
-	this->matrix = mat;
-	this->material_ = &material;
 
 	auto size = shape.indices.size() * sizeof(std::uint32_t);
 	size += shape.positions.size() * sizeof(nytl::Vec3f);
@@ -88,13 +90,12 @@ Primitive::Primitive(const vpp::Device& dev, const Shape& shape,
 	vpp::apply({odsu});
 }
 
-Primitive::Primitive(const vpp::Device& dev,
-		const tinygltf::Model& model, const tinygltf::Primitive& primitive,
-		const vpp::TrDsLayout& dsLayout, const Material& material,
-		const nytl::Mat4f& mat, unsigned id) : id_(id) {
-	this->matrix = mat;
-	this->material_ = &material;
+Primitive::Primitive(InitData& data, const tinygltf::Model& model,
+		const tinygltf::Primitive& primitive, const vpp::TrDsLayout& dsLayout,
+		unsigned material, const nytl::Mat4f& mat, unsigned id) :
+			matrix(mat), id_(id), material_(material) {
 
+	auto& dev = dsLayout.device();
 	auto ip = primitive.attributes.find("POSITION");
 	auto in = primitive.attributes.find("NORMAL");
 	auto iuv = primitive.attributes.find("TEXCOORD_0"); // TODO: support more coords
@@ -114,9 +115,6 @@ Primitive::Primitive(const vpp::Device& dev,
 
 	auto* uva = iuv == primitive.attributes.end() ?
 		nullptr : &model.accessors[iuv->second];
-	if(!uva && material.hasTexture()) {
-		throw std::runtime_error("primitive uses texture but has no uv coords");
-	}
 
 	// compute total buffer size
 	auto size = 0u;
@@ -131,88 +129,88 @@ Primitive::Primitive(const vpp::Device& dev,
 		vk::BufferUsageBits::transferDst;
 
 	dlg_assert(na.count == pa.count);
-	vertices_ = {dev.bufferAllocator(), size, usage, 0u, devMem};
+	vertices_ = {vpp::defer, dev.bufferAllocator(), size, usage, 0u, devMem};
 	indexCount_ = ia.count;
 	vertexCount_ = na.count;
+
+	// write indices
+	data.vertData.resize(size);
+	auto span = nytl::Span<std::byte>(data.vertData);
+	for(auto idx : doi::range<1, std::uint32_t>(model, ia)) {
+		doi::write(span, idx);
+	}
+
+	// write vertices and normals
+	auto pr = doi::range<3, float>(model, pa);
+	auto nr = doi::range<3, float>(model, na);
+	for(auto pit = pr.begin(), nit = nr.begin();
+			pit != pr.end() && nit != nr.end();
+			++nit, ++pit) {
+		doi::write(span, *pit);
+		doi::write(span, *nit);
+	}
 
 	auto stageSize = size;
 	if(uva) {
 		auto uvSize = uva->count * sizeof(nytl::Vec2f); // uv coords
 		auto uvUsage = vk::BufferUsageBits::vertexBuffer |
 			vk::BufferUsageBits::transferDst;
-		uv_ = {dev.bufferAllocator(), uvSize, uvUsage, 0u, devMem};
+		uv_ = {vpp::defer, dev.bufferAllocator(), uvSize, uvUsage, 0u, devMem};
 		stageSize += uvSize;
+
+		data.uvData.resize(uvSize);
+		auto span = nytl::Span<std::byte>(data.uvData);
+		auto uvr = doi::range<2, float>(model, *uva);
+		for(auto uv : uvr) {
+			doi::write(span, uv);
+		}
 	}
 
-	// fill it
-	{
-		auto stage = vpp::SubBuffer{dev.bufferAllocator(), stageSize,
-			vk::BufferUsageBits::transferSrc, 0u, hostMem};
-		auto map = stage.memoryMap();
-		auto span = map.span();
-
-		// write indices
-		for(auto idx : doi::range<1, std::uint32_t>(model, ia)) {
-			doi::write(span, idx);
-		}
-
-		// write vertices and normals
-		auto pr = doi::range<3, float>(model, pa);
-		auto nr = doi::range<3, float>(model, na);
-		for(auto pit = pr.begin(), nit = nr.begin();
-				pit != pr.end() && nit != nr.end();
-				++nit, ++pit) {
-			doi::write(span, *pit);
-			doi::write(span, *nit);
-		}
-
-		// upload
-		auto& qs = dev.queueSubmitter();
-		auto cb = qs.device().commandAllocator().get(qs.queue().family());
-		vk::beginCommandBuffer(cb, {});
-		vk::BufferCopy region;
-		region.dstOffset = vertices_.offset();
-		region.srcOffset = stage.offset();
-		region.size = size;
-		vk::cmdCopyBuffer(cb, stage.buffer(), vertices_.buffer(), {region});
-
-		if(uva) {
-			auto offset = span.data() - map.ptr();
-			auto uvr = doi::range<2, float>(model, *uva);
-			for(auto uv : uvr) {
-				doi::write(span, uv);
-			}
-			dlg_assert(vk::DeviceSize(span.data() - map.ptr() - offset)
-				== uv_.size());
-
-			vk::BufferCopy region;
-			region.dstOffset = uv_.offset();
-			region.srcOffset = stage.offset() + offset;
-			region.size = uv_.size();
-			vk::cmdCopyBuffer(cb, stage.buffer(), uv_.buffer(), {region});
-		}
-
-		vk::endCommandBuffer(cb);
-
-		// execute
-		// TODO: could be batched with other work; we wait here
-		vk::SubmitInfo submission;
-		submission.commandBufferCount = 1;
-		submission.pCommandBuffers = &cb.vkHandle();
-		qs.wait(qs.add(submission));
-	}
+	data.stage = vpp::SubBuffer{vpp::defer, dev.bufferAllocator(),
+		stageSize, vk::BufferUsageBits::transferSrc, 0u, hostMem};
 
 	// ubo
-	size = Primitive::uboSize; // ubo
 	usage = vk::BufferUsageBits::uniformBuffer;
-	ubo_ = {dev.bufferAllocator(), size, usage, 0u, hostMem};
+	ubo_ = {vpp::defer, dev.bufferAllocator(), Primitive::uboSize, usage,
+		0u, hostMem};
+
+	// descriptor
+	ds_ = {vpp::defer, dev.descriptorAllocator(), dsLayout};
+}
+
+void Primitive::initAlloc(vk::CommandBuffer cb, InitData& data) {
+	vertices_.init();
+	ubo_.init();
+	data.stage.init();
+
+	auto map = data.stage.memoryMap();
+	auto span = map.span();
+	doi::write(span, data.vertData.data(), data.vertData.size());
+
+	vk::BufferCopy region;
+	region.dstOffset = vertices_.offset();
+	region.srcOffset = data.stage.offset();
+	region.size = data.vertData.size();
+	vk::cmdCopyBuffer(cb, data.stage.buffer(), vertices_.buffer(), {region});
+
+	if(!data.uvData.empty()) {
+		uv_.init();
+		auto offset = span.data() - map.ptr();
+		doi::write(span, data.uvData.data(), data.uvData.size());
+
+		vk::BufferCopy region;
+		region.dstOffset = uv_.offset();
+		region.srcOffset = data.stage.offset() + offset;
+		region.size = data.uvData.size();
+		vk::cmdCopyBuffer(cb, data.stage.buffer(), uv_.buffer(), {region});
+	}
+
 	updateDevice();
 
 	// descriptor
-	ds_ = {dev.descriptorAllocator(), dsLayout};
-	auto& mubo = ubo_;
+	ds_.init();
 	vpp::DescriptorSetUpdate odsu(ds_);
-	odsu.uniform({{mubo.buffer(), mubo.offset(), mubo.size()}});
+	odsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	vpp::apply({odsu});
 }
 
@@ -222,7 +220,6 @@ void Primitive::render(vk::CommandBuffer cb,
 	auto vOffset = iOffset + indexCount_ * sizeof(std::uint32_t);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 		pipeLayout, 2, {ds_}, {});
-	material().bind(cb, pipeLayout);
 
 	vk::cmdBindVertexBuffers(cb, 0, 1, {vertices_.buffer()}, {vOffset});
 

@@ -194,8 +194,8 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 // DirLight
 DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
-		nytl::Vec3f viewPos, const Material& mat, unsigned id) {
-	auto extent = vk::Extent3D{size_.x, size_.y, 1u};
+		nytl::Vec3f viewPos, unsigned id) {
+	auto extent = vk::Extent3D{size_.x, size_.y, 0u};
 
 	// target
 	auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
@@ -232,8 +232,7 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	// light ball
 	auto cube = doi::Cube{{}, {1.f, 1.f, 1.f}};
 	auto shape = doi::generate(cube);
-	lightBall_ = {dev, shape, primitiveDsLayout,
-		mat, lightBallMatrix(viewPos), id};
+	lightBall_ = {shape, primitiveDsLayout, 0u, lightBallMatrix(viewPos), id};
 
 	updateDevice(viewPos);
 }
@@ -314,8 +313,8 @@ void DirLight::updateDevice(nytl::Vec3f viewPos) {
 // worth investigating... we'd still need 6 seperate renderpasses though)
 PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
-		const Material& mat, unsigned id, vk::ImageView noShadowMap) {
-	auto extent = vk::Extent3D{size_.x, size_.y, 1u};
+		unsigned id, vk::ImageView noShadowMap) {
+	auto extent = vk::Extent3D{size_.x, size_.y, 0u};
 	if(!noShadowMap) {
 		this->data.flags |= lightFlagShadow;
 
@@ -382,8 +381,7 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	// primitive
 	auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
 	auto shape = doi::generateUV(sphere);
-	lightBall_ = {dev, shape, primitiveDsLayout,
-		mat, lightBallMatrix(), id};
+	lightBall_ = {shape, primitiveDsLayout, 0u, lightBallMatrix(), id};
 
 	updateDevice();
 }

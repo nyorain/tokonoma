@@ -10,8 +10,7 @@
 namespace doi {
 namespace gltf = tinygltf;
 
-struct SceneImage;
-struct Sampler;
+class Scene;
 
 class Material {
 public:
@@ -20,6 +19,15 @@ public:
 		normalMap = (1u << 0),
 		doubleSided = (1u << 1),
 		textured = (1u << 2),
+	};
+
+	struct InitData {
+		// image ids
+		unsigned albedo;
+		unsigned emission;
+		unsigned metalRoughness;
+		unsigned occlusion;
+		unsigned normal;
 	};
 
 	static vk::PushConstantRange pcr();
@@ -31,17 +39,17 @@ public:
 		vk::Sampler dummySampler, nytl::Vec4f albedo = {1.f, 1.f, 1.f, 1.f},
 		float roughness = 1.f, float metalness = 1.f, bool doubleSided = false,
 		nytl::Vec3f emission = {0.f, 0.f, 0.f});
-	Material(const gltf::Model& model, const gltf::Material& material,
-		const vpp::TrDsLayout& layout, vk::ImageView dummy,
-		vk::Sampler defaultSampler, nytl::StringParam path,
-		nytl::Span<SceneImage> images, nytl::Span<const Sampler> samplers);
+	Material(InitData&, const gltf::Model&, const gltf::Material&,
+		const vpp::TrDsLayout&, vk::ImageView dummy, Scene& scene);
+
+	void initAlloc(const Scene&, InitData&);
 
 	// Returns true if this material has *any* texture
 	bool hasTexture() const;
 	void bind(vk::CommandBuffer cb, vk::PipelineLayout) const;
 
 protected:
-	void initDs(const vpp::TrDsLayout& layout);
+	void updateDs();
 
 protected:
 	// maps
@@ -53,8 +61,8 @@ protected:
 
 	// optional maps
 	struct Tex {
-		vk::ImageView view;
-		vk::Sampler sampler;
+		vk::ImageView view {};
+		vk::Sampler sampler {};
 	};
 
 	Tex albedoTex_;

@@ -38,9 +38,12 @@ namespace doi {
 void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 		vk::RenderPass rp, unsigned subpassID, vk::SampleCountBits samples) {
 	initPipeline(dev, rp, subpassID, samples);
+	// TODO: add defer constructor
 	// TODO: maybe host visible is better here, we only read from it
 	// once anyways. Add option to loadTexture to allow that
-	auto equirectImg = doi::loadTexture(dev, hdrFile, false, true);
+	auto params = doi::TextureCreateParams {};
+	params.format = vk::Format::r16g16b16a16Sfloat;
+	auto equirectImg = doi::Texture(dev, hdrFile, params);
 
 	// convert equirectangular to cubemap
 	// renderpass
@@ -102,7 +105,7 @@ void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 	imgi.img.arrayLayers = 6u;
 	imgi.view.subresourceRange.layerCount = 6u;
 	imgi.view.viewType = vk::ImageViewType::cube;
-	cubemap_ = {dev, imgi};
+	cubemap_ = {vpp::ViewableImage{dev, imgi}};
 
 	// ds data
 	{
@@ -208,16 +211,19 @@ void Skybox::init(vpp::Device& dev, vk::RenderPass rp,
 		base + "Front" + suffix,
 	};
 
-	nytl::StringParam params[] = {
-		names[0],
-		names[1],
-		names[2],
-		names[3],
-		names[4],
-		names[5],
+	const char* nameStrings[] = {
+		names[0].c_str(),
+		names[1].c_str(),
+		names[2].c_str(),
+		names[3].c_str(),
+		names[4].c_str(),
+		names[5].c_str(),
 	};
 
-	cubemap_ = doi::loadTextureArray(dev, params, true, true);
+	auto params = doi::TextureCreateParams{};
+	params.format = vk::Format::r8g8b8a8Srgb;
+	params.cubemap = true;
+	cubemap_ = {dev, nameStrings, params};
 	writeDs();
 }
 

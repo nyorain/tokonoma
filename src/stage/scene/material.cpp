@@ -5,39 +5,6 @@
 #include <stage/texture.hpp>
 
 namespace doi {
-namespace {
-
-vpp::ViewableImage loadImage(const vpp::Device& dev, const gltf::Image& tex,
-		nytl::StringParam path, bool srgb) {
-	auto name = tex.name.empty() ?  tex.name : "'" + tex.name + "'";
-	dlg_info("  Loading image {}", name);
-
-	// TODO: we could support additional formats like r8 or r8g8.
-	// check tex.pixel_type. Also support other image parameters
-	if(!tex.uri.empty()) {
-		auto full = std::string(path);
-		full += tex.uri;
-		return doi::loadTexture(dev, full, srgb);
-	}
-
-	// TODO: simplifying assumptions that are usually met
-	dlg_assert(tex.component == 4);
-	dlg_assert(!tex.as_is);
-
-	vk::Extent3D extent;
-	extent.width = tex.width;
-	extent.height = tex.height;
-	extent.depth = 1;
-
-	auto format = srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
-	auto dataSize = extent.width * extent.height * 4u;
-	auto ptr = reinterpret_cast<const std::byte*>(tex.image.data());
-	auto data = nytl::Span<const std::byte>(ptr, dataSize);
-
-	return doi::loadTexture(dev, extent, format, data);
-}
-
-} // anon namespace
 
 
 vk::PushConstantRange Material::pcr() {
@@ -88,15 +55,15 @@ Material::Material(const vpp::TrDsLayout& dsLayout,
 	occlusionTex_ = {dummy, dummySampler};
 	emissionTex_ = {dummy, dummySampler};
 
-	initDs(dsLayout);
+	ds_ = {dsLayout.device().descriptorAllocator(), dsLayout};
+	updateDs();
 }
 
-Material::Material(const gltf::Model& model,
+Material::Material(InitData& data, const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& dsLayout,
-		vk::ImageView dummyView, vk::Sampler defaultSampler,
-		nytl::StringParam path, nytl::Span<SceneImage> images,
-		nytl::Span<const Sampler> samplers) {
-	auto& dev = dsLayout.device();
+		vk::ImageView dummyView, Scene& scene) {
+	ds_ = {vpp::defer, dsLayout.device().descriptorAllocator(), dsLayout};
+
 	auto& pbr = material.values;
 	auto& add = material.additionalValues;
 	if(auto color = pbr.find("baseColorFactor"); color != pbr.end()) {
@@ -130,23 +97,17 @@ Material::Material(const gltf::Model& model,
 	// of what images are needed, then parallalize loading (from disk),
 	// then submit and wait for command buffers, then finish initialization
 	// materials (i.e. write descriptor sets)
-	auto getTex = [&](const gltf::Texture& tex, bool srgb) {
-		auto sampler = defaultSampler;
+	auto getTex = [&](const gltf::Texture& tex, bool srgb, vk::Sampler& sampler) {
+		sampler = scene.defaultSampler().vkHandle();
 		if(tex.sampler >= 0) {
-			dlg_assert(unsigned(tex.sampler) < samplers.size());
-			sampler = samplers[tex.sampler].sampler;
+			dlg_assert(unsigned(tex.sampler) < scene.samplers().size());
+			sampler = scene.samplers()[tex.sampler].sampler;
 		}
 
 		dlg_assert(tex.source >= 0);
 		auto id = unsigned(tex.source);
-		dlg_assert(id < images.size());
-		if(!images[id].image.vkImageView()) {
-			images[id].image = loadImage(dev, model.images[id], path, srgb);
-			images[id].srgb = srgb;
-		}
-
-		dlg_assert(images[id].srgb == srgb);
-		return Tex{images[id].image.vkImageView(), sampler};
+		scene.createImage(id, srgb);
+		return id;
 	};
 
 	if(auto color = pbr.find("baseColorTexture"); color != pbr.end()) {
@@ -154,10 +115,10 @@ Material::Material(const gltf::Model& model,
 			"only one set of texture coordinates supported");
 		auto tex = color->second.TextureIndex();
 		dlg_assert(tex != -1);
-		albedoTex_ = getTex(model.textures[tex], true);
+		data.albedo = getTex(model.textures[tex], true, albedoTex_.sampler);
 		flags_ |= Flags::textured;
 	} else {
-		albedoTex_ = {dummyView, defaultSampler};
+		albedoTex_ = {dummyView, scene.defaultSampler()};
 	}
 
 	if(auto rm = pbr.find("metallicRoughnessTexture"); rm != pbr.end()) {
@@ -165,10 +126,11 @@ Material::Material(const gltf::Model& model,
 			"only one set of texture coordinates supported");
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
-		metalnessRoughnessTex_ = getTex(model.textures[tex], false);
+		data.metalRoughness = getTex(model.textures[tex], false,
+			metalnessRoughnessTex_.sampler);
 		flags_ |= Flags::textured;
 	} else {
-		metalnessRoughnessTex_ = {dummyView, defaultSampler};
+		metalnessRoughnessTex_ = {dummyView, scene.defaultSampler()};
 	}
 
 	// TODO: we could also respect the "strength" parameters of
@@ -178,11 +140,11 @@ Material::Material(const gltf::Model& model,
 			"only one set of texture coordinates supported");
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
-		normalTex_ = getTex(model.textures[tex], false);
+		data.normal = getTex(model.textures[tex], false, normalTex_.sampler);
 		flags_ |= Flags::textured;
 		flags_ |= Flags::normalMap;
 	} else {
-		normalTex_ = {dummyView, defaultSampler};
+		normalTex_ = {dummyView, scene.defaultSampler()};
 	}
 
 	if(auto rm = add.find("occlusionTexture"); rm != add.end()) {
@@ -190,10 +152,10 @@ Material::Material(const gltf::Model& model,
 			"only one set of texture coordinates supported");
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
-		occlusionTex_ = getTex(model.textures[tex], false);
+		data.occlusion = getTex(model.textures[tex], false, occlusionTex_.sampler);
 		flags_ |= Flags::textured;
 	} else {
-		occlusionTex_ = {dummyView, defaultSampler};
+		occlusionTex_ = {dummyView, scene.defaultSampler()};
 	}
 
 	if(auto rm = add.find("emissiveTexture"); rm != add.end()) {
@@ -201,10 +163,10 @@ Material::Material(const gltf::Model& model,
 			"only one set of texture coordinates supported");
 		auto tex = rm->second.TextureIndex();
 		dlg_assert(tex != -1);
-		emissionTex_ = getTex(model.textures[tex], true);
+		data.emission = getTex(model.textures[tex], true, emissionTex_.sampler);
 		flags_ |= Flags::textured;
 	} else {
-		emissionTex_ = {dummyView, defaultSampler};
+		emissionTex_ = {dummyView, scene.defaultSampler()};
 	}
 
 	// default is OPAQUE (alphaCutoff_ == -1.f);
@@ -234,12 +196,36 @@ Material::Material(const gltf::Model& model,
 			flags_ |= Flags::doubleSided;
 		}
 	}
-
-	initDs(dsLayout);
 }
 
-void Material::initDs(const vpp::TrDsLayout& layout) {
-	ds_ = {layout.device().descriptorAllocator(), layout};
+void Material::initAlloc(const Scene& scene, InitData& data) {
+	if(!normalTex_.view) {
+		dlg_assert(data.normal <= scene.images().size());
+		normalTex_.view = scene.images()[data.normal].image.vkImageView();
+	}
+	if(!albedoTex_.view) {
+		dlg_assert(data.albedo <= scene.images().size());
+		albedoTex_.view = scene.images()[data.albedo].image.vkImageView();
+	}
+	if(!occlusionTex_.view) {
+		dlg_assert(data.occlusion <= scene.images().size());
+		occlusionTex_.view = scene.images()[data.occlusion].image.vkImageView();
+	}
+	if(!emissionTex_.view) {
+		dlg_assert(data.emission <= scene.images().size());
+		emissionTex_.view = scene.images()[data.emission].image.vkImageView();
+	}
+	if(!metalnessRoughnessTex_.view) {
+		dlg_assert(data.metalRoughness <= scene.images().size());
+		metalnessRoughnessTex_.view =
+			scene.images()[data.metalRoughness].image.vkImageView();
+	}
+
+	ds_.init();
+	updateDs();
+}
+
+void Material::updateDs() {
 	vpp::DescriptorSetUpdate update(ds_);
 
 	auto write = [&](auto& tex) {

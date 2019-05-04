@@ -2,6 +2,8 @@
 
 #include <stage/scene/material.hpp>
 #include <stage/scene/primitive.hpp>
+#include <stage/texture.hpp>
+#include <stage/defer.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/nonCopyable.hpp>
@@ -20,8 +22,9 @@ struct SceneRenderInfo {
 };
 
 struct SceneImage {
-	vpp::ViewableImage image;
+	doi::Texture image;
 	bool srgb;
+	bool needed {};
 };
 
 struct SamplerInfo {
@@ -46,14 +49,23 @@ struct Sampler {
 	Sampler(const vpp::Device&, const gltf::Sampler&, float maxAnisotropy);
 };
 
-// TODO: make movable. Requires to remove reference from
-// primitive to material
-class Scene : public nytl::NonMovable {
+class Scene {
+public:
+	struct InitData {
+		std::vector<Texture::InitData> images;
+		std::vector<Material::InitData> materials;
+		std::vector<Primitive::InitData> primitives;
+	};
+
 public:
 	Scene() = default;
-	Scene(vpp::Device&, nytl::StringParam path, const gltf::Model&,
-		const gltf::Scene&, nytl::Mat4f matrix,
+	Scene(const WorkBatcher&, InitData&, nytl::StringParam path,
+		const gltf::Model&, const gltf::Scene&, nytl::Mat4f matrix,
 		const SceneRenderInfo&);
+
+	void initAlloc(const WorkBatcher&, InitData&);
+	void initFinish(const WorkBatcher&, InitData&) {}
+	void createImage(unsigned id, bool srgb);
 
 	void render(vk::CommandBuffer, vk::PipelineLayout) const;
 
@@ -69,19 +81,19 @@ public:
 	auto& defaultSampler() const { return defaultSampler_; }
 
 protected:
-	void loadNode(vpp::Device&, const gltf::Model&, const gltf::Node&,
-		const SceneRenderInfo&, nytl::Mat4f matrix);
+	void loadNode(const WorkBatcher&, InitData&, const gltf::Model&,
+		const gltf::Node&, const SceneRenderInfo&, nytl::Mat4f matrix);
 
 	vpp::Sampler defaultSampler_;
 	std::vector<Sampler> samplers_;
 	std::vector<SceneImage> images_;
 	std::vector<Material> materials_;
 	std::vector<Primitive> primitives_;
+	unsigned defaultMaterialID_ {};
 };
 
 // Tries to parse the given string as path or filename of a gltf/gltb file
-// and parse a scene from it.
-std::unique_ptr<Scene> loadGltf(nytl::StringParam at, vpp::Device& dev,
-	nytl::Mat4f matrix, const SceneRenderInfo&);
+// and parse it. On success, also returns the base path as second parameter
+std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam);
 
 } // namespace doi

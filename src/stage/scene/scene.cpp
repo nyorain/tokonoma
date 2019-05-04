@@ -9,10 +9,53 @@
 #include <dlg/dlg.hpp>
 
 namespace doi {
+namespace {
 
-Scene::Scene(vpp::Device& dev, nytl::StringParam path,
+doi::Texture loadImage(const WorkBatcher& batcher,
+		Texture::InitData& data, const gltf::Image& tex,
+		nytl::StringParam path, bool srgb) {
+	auto name = tex.name.empty() ?  tex.name : "'" + tex.name + "'";
+	dlg_info("  Loading image {}", name);
+	auto params = TextureCreateParams {};
+	params.format = srgb ?
+		vk::Format::r8g8b8a8Srgb :
+		vk::Format::r8g8b8a8Unorm;
+
+	// TODO: we could support additional formats like r8 or r8g8.
+	// check tex.pixel_type. Also support other image parameters
+	// TODO: we currently don't support hdr images. Check the
+	// specified image format
+	if(!tex.uri.empty()) {
+		auto full = std::string(path);
+		full += tex.uri;
+		return {batcher, data, full, params};
+	}
+
+	// TODO: simplifying assumptions that are usually met
+	dlg_assert(tex.component == 4);
+	dlg_assert(!tex.as_is);
+
+	vk::Extent2D extent;
+	extent.width = tex.width;
+	extent.height = tex.height;
+
+	auto format = srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
+	auto dataSize = extent.width * extent.height * 4u;
+	auto copy = std::make_unique<std::byte[]>(dataSize);
+	std::memcpy(copy.get(), tex.image.data(), dataSize);
+
+	std::vector<std::unique_ptr<std::byte[]>> layers;
+	layers.emplace_back(std::move(copy));
+	return {batcher, data, std::move(layers), format, extent, params};
+}
+
+} // anon namespace
+
+Scene::Scene(const WorkBatcher& batch, InitData& data, nytl::StringParam path,
 		const tinygltf::Model& model, const tinygltf::Scene& scene,
 		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
+	auto& dev = batch.dev;
+
 	// load samplers
 	// TODO: optimization, low prio
 	// check for duplicate samplers. But then also change how materials
@@ -36,44 +79,50 @@ Scene::Scene(vpp::Device& dev, nytl::StringParam path,
 	defaultSampler_ = {dev, sci};
 
 	// load materials
-	// will lazily load images and store them into the passed images_
-	// lazy loading isn't really important here, but just from reading
-	// model.images we can't know what they are going to be used for
-	// and that's important for knowing the image format.
-	// if an image is used as albedo or emission texture, the data is in
-	// srgb space, otherwise in rgb space. That's why we also store
-	// Image::srgb to check that this is always handled correctly.
+	// we load images later on because we first need to know where
+	// in materials they are used to know whether they contain srgb
+	// or linear data
 	images_.resize(model.images.size());
+
+	data.materials.reserve(model.materials.size());
 	dlg_info("Found {} materials", model.materials.size());
 	for(auto& material : model.materials) {
 		auto name = material.name.empty() ?
 			material.name :
 			"'" + material.name + "'";
 		dlg_info("  Loading material {}", name);
-		auto m = Material(model, material, ri.materialDsLayout, ri.dummyTex,
-			defaultSampler_, path, images_, samplers_);
+		auto& d = data.materials.emplace_back();
+		auto m = Material(d, model, material, ri.materialDsLayout,
+			ri.dummyTex, *this);
 		materials_.push_back(std::move(m));
 	}
 
 	// we need at least one material (see primitive creation)
 	// if there is none, add dummy
-	if(materials_.empty()) {
-		materials_.emplace_back(ri.materialDsLayout, ri.dummyTex,
-			defaultSampler_);
+	defaultMaterialID_ = materials_.size();
+	materials_.emplace_back(ri.materialDsLayout, ri.dummyTex,
+		defaultSampler_);
+
+	// initialize images
+	data.images.resize(model.images.size());
+	for(auto i = 0u; i < model.images.size(); ++i) {
+		auto& d = data.images[i];
+		auto& img = images_[i];
+		dlg_assertm(img.needed, "Model has unused image");
+		images_[i].image = loadImage(batch, d, model.images[i], path, img.srgb);
 	}
 
 	// load nodes tree recursively
 	for(auto& nodeid : scene.nodes) {
 		dlg_assert(unsigned(nodeid) < model.nodes.size());
 		auto& node = model.nodes[nodeid];
-		loadNode(dev, model, node, ri, matrix);
+		loadNode(batch, data, model, node, ri, matrix);
 	}
 }
 
-void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,
-		const tinygltf::Node& node, const SceneRenderInfo& ri,
-		nytl::Mat4f matrix) {
-
+void Scene::loadNode(const WorkBatcher& batch, InitData& data,
+		const tinygltf::Model& model, const tinygltf::Node& node,
+		const SceneRenderInfo& ri, nytl::Mat4f matrix) {
 	if(!node.matrix.empty()) {
 		nytl::Mat4f mat;
 		for(auto r = 0u; r < 4; ++r) {
@@ -118,7 +167,7 @@ void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,
 
 	for(auto nodeid : node.children) {
 		auto& child = model.nodes[nodeid];
-		loadNode(dev, model, child, ri, matrix);
+		loadNode(batch, data, model, child, ri, matrix);
 	}
 
 	if(node.mesh != -1) {
@@ -126,27 +175,60 @@ void Scene::loadNode(vpp::Device& dev, const tinygltf::Model& model,
 		auto name = mesh.name.empty() ?  mesh.name : "'" + mesh.name + "'";
 		dlg_info("  Loading mesh {}", name);
 		for(auto& primitive : mesh.primitives) {
-			Material* mat;
-			if(primitive.material < 0) {
-				// there is always at least one material, see material
-				// loading section. May be dummy material
-				mat = &materials_.back();
-			} else {
-				auto mid = unsigned(primitive.material);
-				dlg_assert(mid <= materials_.size());
-				mat = &materials_[mid];
+			auto mat = primitive.material;
+			if(mat < 0) {
+				// use default material
+				mat = defaultMaterialID_;
 			}
 
 			auto id = primitives_.size() + 1;
-			auto p = Primitive(dev, model, primitive,
-				ri.primitiveDsLayout, *mat, matrix, id);
-			primitives_.push_back(std::move(p));
+			auto& d = data.primitives.emplace_back();
+			auto p = Primitive(d, model, primitive,
+				ri.primitiveDsLayout, mat, matrix, id);
+
+			primitives_.emplace_back(std::move(p));
 		}
 	}
 }
 
+void Scene::initAlloc(const WorkBatcher& batch, InitData& data) {
+	dlg_assert(images_.size() == data.images.size());
+	dlg_assert(materials_.size() == data.materials.size() + 1); // + default mat
+	dlg_assert(primitives_.size() == data.primitives.size());
+
+	for(auto i = 0u; i < data.images.size(); ++i) {
+		images_[i].image.initAlloc(batch, data.images[i]);
+	}
+
+	for(auto i = 0u; i < data.materials.size(); ++i) {
+		materials_[i].initAlloc(*this, data.materials[i]);
+	}
+
+	for(auto i = 0u; i < data.primitives.size(); ++i) {
+		auto& p = primitives_[i];
+		auto& material = materials_[p.material()];
+		p.initAlloc(batch.cb, data.primitives[i]);
+		if(!p.hasUV() && material.hasTexture()) {
+			auto msg = "primitive uses texture but material has no uv coords";
+			throw std::runtime_error(msg);
+		}
+	}
+}
+
+void Scene::createImage(unsigned id, bool srgb) {
+	dlg_assert(id < images_.size());
+	if(images_[id].needed) {
+		dlg_assert(images_[id].srgb == srgb);
+	}
+
+	images_[id].srgb = srgb;
+	images_[id].needed = true;
+}
+
 void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 	for(auto& p : primitives_) {
+		auto& material = materials_[p.material()];
+		material.bind(cb, pl);
 		p.render(cb, pl);
 	}
 }
@@ -157,8 +239,7 @@ bool has_suffix(const std::string_view& str, const std::string_view& suffix) {
            str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-std::unique_ptr<Scene> loadGltf(nytl::StringParam at, vpp::Device& dev,
-		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
+std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam at) {
 
 	// Load Model
 	// fallback
@@ -247,10 +328,7 @@ std::unique_ptr<Scene> loadGltf(nytl::StringParam at, vpp::Device& dev,
 		return {};
 	}
 
-	dlg_info("Found {} scenes", model.scenes.size());
-	auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
-	auto& sc = model.scenes[scene];
-	return std::make_unique<Scene>(dev, path, model, sc, matrix, ri);
+	return {model, path};
 }
 
 // Sampler

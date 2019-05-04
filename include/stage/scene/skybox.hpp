@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stage/texture.hpp>
 #include <vpp/fwd.hpp>
 #include <vpp/image.hpp>
 #include <vpp/sharedBuffer.hpp>
@@ -27,7 +28,7 @@ protected:
 
 protected:
 	vpp::Device* dev_;
-	vpp::ViewableImage cubemap_;
+	doi::Texture cubemap_;
 	vpp::Sampler sampler_;
 	vpp::SubBuffer indices_;
 	vpp::SubBuffer ubo_;
