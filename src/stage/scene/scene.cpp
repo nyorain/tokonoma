@@ -110,6 +110,9 @@ Scene::Scene(const WorkBatcher& batch, InitData& data, nytl::StringParam path,
 		auto& img = images_[i];
 		dlg_assertm(img.needed, "Model has unused image");
 		images_[i].image = loadImage(batch, d, model.images[i], path, img.srgb);
+
+		// TODO
+		// images_[i].image.initAlloc(batch, d);
 	}
 
 	// load nodes tree recursively

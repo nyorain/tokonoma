@@ -211,12 +211,12 @@ Texture::Texture(const WorkBatcher& batcher, InitData& data,
 		auto info = *oinfo;
 		info.img.arrayLayers = layers;
 		info.img.imageType = vk::ImageType::e2d;
-		data.stageImage = {vpp::defer, batcher.dev, info.img, hostBits};
+		data.stageImage = {/*vpp::defer,*/ batcher.dev, info.img, hostBits};
 	} else {
 		auto dataSize = layers * vpp::formatSize(dataFormat) *
 			size.width * size.height;
 		auto usage = vk::BufferUsageBits::transferSrc;
-		data.stageBuf = {vpp::defer, batcher.dev.bufferAllocator(), dataSize,
+		data.stageBuf = {/*vpp::defer,*/ batcher.dev.bufferAllocator(), dataSize,
 			usage, 0u, hostBits};
 	}
 }
@@ -306,7 +306,7 @@ void Texture::initAlloc(const WorkBatcher& batcher, InitData& data) {
 	auto dataSize = layerCount * lsize;
 	if(blit) {
 		dlg_assert(data.stageImage);
-		data.stageImage.init();
+		// data.stageImage.init();
 
 		vpp::changeLayout(cb, data.stageImage,
 			vk::ImageLayout::preinitialized,
@@ -341,7 +341,7 @@ void Texture::initAlloc(const WorkBatcher& batcher, InitData& data) {
 			vk::Filter::nearest);
 	} else {
 		dlg_assert(data.stageBuf.buffer());
-		data.stageBuf.init();
+		// data.stageBuf.init();
 
 		std::vector<vk::BufferImageCopy> copies;
 		copies.reserve(layerCount);

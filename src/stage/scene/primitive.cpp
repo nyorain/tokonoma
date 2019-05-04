@@ -166,7 +166,7 @@ Primitive::Primitive(InitData& data, const tinygltf::Model& model,
 		}
 	}
 
-	data.stage = vpp::SubBuffer{vpp::defer, dev.bufferAllocator(),
+	data.stage = vpp::SubBuffer{/*vpp::defer, */dev.bufferAllocator(),
 		stageSize, vk::BufferUsageBits::transferSrc, 0u, hostMem};
 
 	// ubo
@@ -181,7 +181,7 @@ Primitive::Primitive(InitData& data, const tinygltf::Model& model,
 void Primitive::initAlloc(vk::CommandBuffer cb, InitData& data) {
 	vertices_.init();
 	ubo_.init();
-	data.stage.init();
+	// data.stage.init();
 
 	auto map = data.stage.memoryMap();
 	auto span = map.span();
