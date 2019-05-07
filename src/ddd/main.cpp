@@ -76,11 +76,15 @@ public:
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
 		sampler_ = {dev, sci};
 
-		// dummy texture for materials that don't have a texture
-		std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
-		auto ptr = reinterpret_cast<std::byte*>(data.data());
-		dummyTex_ = doi::loadTexture(dev, {1, 1, 1},
-			vk::Format::r8g8b8a8Unorm, {ptr, data.size()});
+		// dummyTex_ = doi::loadTexture(dev, {1, 1, 1},
+		// 	vk::Format::r8g8b8a8Unorm, {ptr, data.size()});
+		auto data = std::make_unique<std::byte[]>(4);
+		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
+		std::memcpy(data.get(), idata.data(), 4u);
+		std::vector<std::unique_ptr<std::byte[]>> faces;
+		faces.emplace_back(std::move(data));
+		dummyTex_ = {dev, std::move(faces), vk::Format::r8g8b8a8Unorm,
+			vk::Extent2D{1u, 1u}};
 
 		// per scense; view + projection matrix, lights
 		auto sceneBindings = {
@@ -103,10 +107,7 @@ public:
 		// per material
 		// push constant range for material
 		materialDsLayout_ = doi::Material::createDsLayout(dev);
-		vk::PushConstantRange pcr;
-		pcr.offset = 0;
-		pcr.size = sizeof(float) * 8;
-		pcr.stageFlags = vk::ShaderStageBits::fragment;
+		auto mpcr = doi::Material::pcr();
 
 		// per light
 		// TODO: statically use shadow data sampler here?
@@ -127,7 +128,7 @@ public:
 			materialDsLayout_,
 			primitiveDsLayout_,
 			lightDsLayout_,
-		}, {pcr}};
+		}, {mpcr}};
 
 		vk::SpecializationMapEntry maxLightsEntry;
 		maxLightsEntry.size = sizeof(std::uint32_t);
@@ -186,14 +187,39 @@ public:
 
 		pipe_ = {dev, vkpipe};
 
+		// initialization setup.
+		auto& qs = dev.queueSubmitter();
+		auto qfam = qs.queue().family();
+		auto cb = dev.commandAllocator().get(qfam);
+		vk::beginCommandBuffer(cb, {});
+
+		doi::WorkBatcher batch{dev, cb};
+
 		// Load Model
 		auto s = sceneScale_;
 		auto mat = doi::scaleMat<4, float>({s, s, s});
 		auto ri = doi::SceneRenderInfo{materialDsLayout_, primitiveDsLayout_,
 			dummyTex_.vkImageView(), 1.f};
-		if(!(scene_ = doi::loadGltf(modelname_, dev, mat, ri))) {
+		auto [omodel, path] = doi::loadGltf(modelname_);
+		if(!omodel) {
 			return false;
 		}
+
+		auto& model = *omodel;
+		auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
+		auto& sc = model.scenes[scene];
+		auto initScene = doi::Initializer<doi::Scene>(batch, path, model, sc,
+			mat, ri);
+		initScene.alloc(batch);
+
+		vk::endCommandBuffer(cb);
+		vk::SubmitInfo si;
+		si.commandBufferCount = 1;
+		si.pCommandBuffers = &cb.vkHandle();
+		auto id = qs.add(si);
+		qs.wait(id);
+
+		scene_ = {initScene.finish(batch)};
 
 		// add light primitive
 		lightMaterial_.emplace(materialDsLayout_,
@@ -211,8 +237,7 @@ public:
 		shadowData_ = doi::initShadowData(dev, depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
-		light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_,
-			*lightMaterial_};
+		light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_, 0u};
 		// light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_,
 		// 	camera_.pos, *lightMaterial_};
 		// light_.data.dir = {5.8f, -12.0f, 4.f};
@@ -267,6 +292,7 @@ public:
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 3, {light_.ds()}, {});
 		scene_->render(cb, pipeLayout_);
+		lightMaterial_->bind(cb, pipeLayout_);
 		light_.lightBall().render(cb, pipeLayout_);
 		skybox_.render(cb);
 	}
@@ -390,13 +416,13 @@ protected:
 	vpp::TrDs sceneDs_;
 	vpp::Pipeline pipe_;
 
-	vpp::ViewableImage dummyTex_;
+	doi::Texture dummyTex_;
 	bool moveLight_ {false};
 
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
 
-	std::unique_ptr<doi::Scene> scene_; // no default constructor
+	std::optional<doi::Scene> scene_; // no default constructor
 	doi::Camera camera_ {};
 
 	// light and shadow

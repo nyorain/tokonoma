@@ -15,6 +15,7 @@ const uint flagScattering = (1u << 1u);
 const uint flagSSR = (1u << 2u);
 const uint flagBloom = (1u << 3u);
 const uint flagFXAA = (1u << 4u);
+const uint flagDiffuseIBL = (1u << 5u);
 
 // struct Light {
 // 	vec3 pos; // position for point light, direction of dir light

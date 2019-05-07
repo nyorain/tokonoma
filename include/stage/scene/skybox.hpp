@@ -21,10 +21,14 @@ public:
 	void render(vk::CommandBuffer cb);
 	auto& indexBuffer() const { return indices_; }
 
+	auto& skybox() const { return cubemap_; }
+	auto& irradiance() const { return irradiance_; }
+
 protected:
 	void writeDs();
 	void initPipeline(vpp::Device&, vk::RenderPass rp, unsigned subpass,
 		vk::SampleCountBits samples);
+	void createIrradiance();
 
 protected:
 	vpp::Device* dev_;
@@ -37,6 +41,8 @@ protected:
 	vpp::TrDs ds_;
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
+
+	vpp::ViewableImage irradiance_;
 };
 
 } // namespace doi

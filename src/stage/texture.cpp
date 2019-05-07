@@ -317,7 +317,7 @@ vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
 		auto totalSize = files.size() * width * height *
 			vpp::formatSize(dataFormat);
 		auto stageBuf = vpp::SubBuffer(dev.bufferAllocator(), totalSize,
-			vk::BufferUsageBits::transferSrc, 0u, dev.hostMemoryTypes());
+			vk::BufferUsageBits::transferSrc, dev.hostMemoryTypes());
 
 		auto map = stageBuf.memoryMap();
 		auto span = map.span();

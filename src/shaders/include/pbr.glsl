@@ -14,6 +14,12 @@ vec3 fresnelSchlick(float cosTheta, vec3 f0) {
 	return f0 + (1.0 - f0) * pow(1.0 - cosTheta, 5.0);
 }
 
+// https://learnopengl.com/PBR/IBL/Diffuse-irradiance
+// https://seblagarde.wordpress.com/2011/08/17/hello-world/
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 f0, float roughness) {
+    return f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - cosTheta, 5.0);
+}  
+
 // Normal distribution function (ndf), Trowbridge-Reitz GGX.
 // Returns relative area of surface (microfacets) aligned like H; in [0, 1]
 float distributionGGX(vec3 n, vec3 h, float roughness) {

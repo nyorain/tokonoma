@@ -90,10 +90,10 @@ void main() {
 		if(pcf) {
 			float radius = 0.005;
 			shadow = pointShadowSmooth(shadowCube, pointLight.pos,
-				pointLight.farPlane, inPos, radius);
+				pointLight.radius, inPos, radius);
 		} else {
 			shadow = pointShadow(shadowCube, pointLight.pos,
-				pointLight.farPlane, inPos);
+				pointLight.radius, inPos);
 		}
 	}
 

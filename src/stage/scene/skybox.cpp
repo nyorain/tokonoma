@@ -17,6 +17,7 @@
 #include <shaders/stage.equirectToCube.frag.h>
 #include <shaders/stage.skybox.vert.h>
 #include <shaders/stage.skybox.frag.h>
+#include <shaders/stage.irradiance.frag.h>
 
 // implementation in texture.cpp
 // #pragma GCC diagnostic push
@@ -37,6 +38,7 @@ namespace doi {
 // cubemaps
 void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 		vk::RenderPass rp, unsigned subpassID, vk::SampleCountBits samples) {
+	dev_ = &dev;
 	initPipeline(dev, rp, subpassID, samples);
 	// TODO: add defer constructor
 	// TODO: maybe host visible is better here, we only read from it
@@ -67,11 +69,31 @@ void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 	subpass.colorAttachmentCount = 1;
 	subpass.pColorAttachments = &colRef;
 
+	// TODO, probably not correct/required like that
+	vk::SubpassDependency dependency;
+	dependency.srcSubpass = 0u;
+	dependency.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+	dependency.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+	dependency.dstSubpass = vk::subpassExternal;
+	dependency.dstStageMask = vk::PipelineStageBits::computeShader |
+		vk::PipelineStageBits::fragmentShader |
+		vk::PipelineStageBits::earlyFragmentTests |
+		vk::PipelineStageBits::lateFragmentTests |
+		vk::PipelineStageBits::transfer;
+	dependency.dstAccessMask = vk::AccessBits::inputAttachmentRead |
+		vk::AccessBits::depthStencilAttachmentRead |
+		vk::AccessBits::depthStencilAttachmentWrite |
+		vk::AccessBits::transferRead |
+		vk::AccessBits::shaderRead;
+
 	vk::RenderPassCreateInfo rpi;
 	rpi.attachmentCount = 1u;
 	rpi.pAttachments = &attachment;
 	rpi.subpassCount = 1u;
 	rpi.pSubpasses = &subpass;
+	rpi.dependencyCount = 1u;
+	rpi.pDependencies = &dependency;
+
 	auto renderPass = vpp::RenderPass(dev, rpi);
 
 	// we just reuse our ds, pipeline layouts and ubo buffer, they are good
@@ -99,7 +121,7 @@ void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 	auto usage = vk::ImageUsageBits::colorAttachment |
 		vk::ImageUsageBits::sampled;
 	auto imgi = vpp::ViewableImageCreateInfo::color(
-		dev, vk::Extent3D {width, height, 1u}, usage,
+		dev, vk::Extent3D {width, height}, usage,
 		{format}).value();
 	imgi.img.flags = vk::ImageCreateBits::cubeCompatible;
 	imgi.img.arrayLayers = 6u;
@@ -116,7 +138,7 @@ void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 	}
 
 	// https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
-	// NOTE: mainly with testing...
+	// NOTE: mainly through testing...
 	struct {
 		nytl::Vec4f x;
 		nytl::Vec4f y;
@@ -160,6 +182,10 @@ void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 
 		// record cb
 		// TODO: requires pipeline barriers
+		//   really inefficient btw there probably is a better way...
+		//   maybe use push constants (and custom pipe layout)
+		//   instead of waiting for completion... these stalls
+		//   are quite painful
 		auto& qs = dev.queueSubmitter();
 		auto cb = dev.commandAllocator().get(qs.queue().family());
 		vk::beginCommandBuffer(cb, {});
@@ -174,6 +200,96 @@ void Skybox::init(vpp::Device& dev, nytl::StringParam hdrFile,
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe);
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+			pipeLayout_, 0, {ds_}, {});
+		vk::cmdDraw(cb, 4, 1, 0, 0);
+
+		vk::cmdEndRenderPass(cb);
+		vk::endCommandBuffer(cb);
+
+		vk::SubmitInfo si {};
+		si.commandBufferCount = 1u;
+		si.pCommandBuffers = &cb.vkHandle();
+		qs.wait(qs.add(si));
+	}
+
+	// create irradiance ===
+	// irradiance is blurred as hell anyways, low res should be ok
+	width = 32u;
+	height = 32u;
+	auto size = vk::Extent3D {width, height};
+	auto info = *vpp::ViewableImageCreateInfo::color(dev, size, usage,
+		{format});
+	info.img.flags = vk::ImageCreateBits::cubeCompatible;
+	info.img.arrayLayers = 6u;
+	info.view.subresourceRange.layerCount = 6u;
+	info.view.viewType = vk::ImageViewType::cube;
+	irradiance_ = {dev, info};
+
+	// ds data
+	// read from generated cubemap now
+	{
+		vpp::DescriptorSetUpdate dsu(ds_);
+		dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+		dsu.imageSampler({{{}, cubemap_.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+	}
+
+	vpp::ShaderModule irradianceShader(dev, stage_irradiance_frag_data);
+	vpp::GraphicsPipelineInfo igpi{renderPass, pipeLayout_, {{
+		{vertShader, vk::ShaderStageBits::vertex},
+		{irradianceShader, vk::ShaderStageBits::fragment}
+	}}, 0u};
+
+	igpi.depthStencil.depthTestEnable = false;
+	igpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
+
+	vk::createGraphicsPipelines(dev, {}, 1, igpi.info(), NULL, vkPipe);
+	auto irradiancePipe = vpp::Pipeline(dev, vkPipe);
+
+	// TODO: again, really inefficient here!
+	for(auto i = 0u; i < 6u; ++i) {
+		{
+			auto map = ubo_.memoryMap();
+			auto span = map.span();
+			doi::write(span, faces[i]);
+			map.flush();
+		}
+
+		vk::ImageViewCreateInfo ivi;
+		ivi.format = format;
+		ivi.image = irradiance_.vkImage();
+		ivi.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+		ivi.subresourceRange.baseArrayLayer = i;
+		ivi.subresourceRange.layerCount = 1;
+		ivi.subresourceRange.levelCount = 1;
+		ivi.viewType = vk::ImageViewType::e2d;
+		auto renderView = vpp::ImageView(dev, ivi);
+
+		vk::FramebufferCreateInfo fbi;
+		fbi.attachmentCount = 1;
+		fbi.pAttachments = &renderView.vkHandle();
+		fbi.width = width;
+		fbi.height = height;
+		fbi.layers = 1;
+		fbi.renderPass = renderPass;
+		auto fb = vpp::Framebuffer(dev, fbi);
+
+		// record cb
+		auto& qs = dev.queueSubmitter();
+		auto cb = dev.commandAllocator().get(qs.queue().family());
+		vk::beginCommandBuffer(cb, {});
+
+		vk::RenderPassBeginInfo beginInfo;
+		beginInfo.framebuffer = fb;
+		beginInfo.renderArea.extent = {width, height};
+		beginInfo.renderPass = renderPass;
+		vk::cmdBeginRenderPass(cb, beginInfo, vk::SubpassContents::eInline);
+		vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
+		vk::cmdSetViewport(cb, 0, 1, vp);
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
+
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, irradiancePipe);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {ds_}, {});
 		vk::cmdDraw(cb, 4, 1, 0, 0);
@@ -288,7 +404,7 @@ void Skybox::initPipeline(vpp::Device& dev, vk::RenderPass rp,
 	// indices
 	indices_ = {dev.bufferAllocator(), 36u * sizeof(std::uint16_t),
 		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-		0, dev.deviceMemoryTypes()};
+		dev.deviceMemoryTypes()};
 	std::array<std::uint16_t, 36> indices = {
 		0, 1, 2,  2, 1, 3, // front
 		1, 5, 3,  3, 5, 7, // right
@@ -302,7 +418,7 @@ void Skybox::initPipeline(vpp::Device& dev, vk::RenderPass rp,
 	// ubo
 	auto uboSize = sizeof(nytl::Mat4f);
 	ubo_ = {dev.bufferAllocator(), uboSize, vk::BufferUsageBits::uniformBuffer,
-		0u, dev.hostMemoryTypes()};
+		dev.hostMemoryTypes()};
 
 	// create ds
 	ds_ = {ubo_.device().descriptorAllocator(), dsLayout_};
@@ -313,6 +429,10 @@ void Skybox::writeDs() {
 	dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	dsu.imageSampler({{{}, cubemap_.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
+
+	// NOTE: for debugging the irradiance map
+	// dsu.imageSampler({{{}, irradiance_.vkImageView(),
+		// vk::ImageLayout::shaderReadOnlyOptimal}});
 }
 
 void Skybox::render(vk::CommandBuffer cb) {

@@ -152,11 +152,9 @@ struct App::RenderImpl : public vpp::Renderer {
 	App& app_;
 
 	RenderImpl(App& app, const vpp::Queue& presentQueue,
-		const vk::SwapchainCreateInfoKHR& sci) : vpp::Renderer(presentQueue),
-			app_(app) {
+		const vk::SwapchainCreateInfoKHR& sci) : app_(app) {
 		// avoid initial record
-		mode_ = RecordMode::onDemand;
-		vpp::Renderer::init(sci);
+		vpp::Renderer::init(sci, presentQueue, {}, RecordMode::onDemand);
 		mode_ = RecordMode::all;
 	}
 	void record(const RenderBuffer& rb) override {

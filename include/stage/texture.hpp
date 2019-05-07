@@ -10,6 +10,7 @@
 // all functions only work for color only images
 // TODO: support additional usage flags instead of always assuming
 // pretty much everything
+// TODO: remove old functions
 
 namespace doi {
 
@@ -98,6 +99,10 @@ public:
 	Texture(const vpp::Device& dev, nytl::Span<const char* const> files,
 		const TextureCreateParams& = {});
 	Texture(const vpp::Device&,
+		nytl::Span<const std::byte> data,
+		vk::Format dataFormat, const vk::Extent2D& size,
+		const TextureCreateParams& = {});
+	Texture(const vpp::Device&,
 		std::vector<std::unique_ptr<std::byte[]>> dataLayers,
 		vk::Format dataFormat, const vk::Extent2D& size,
 		const TextureCreateParams& = {});
@@ -105,6 +110,10 @@ public:
 	Texture(const WorkBatcher&, InitData&, nytl::StringParam file,
 		const TextureCreateParams& = {});
 	Texture(const WorkBatcher&, InitData&, nytl::Span<const char* const> files,
+		const TextureCreateParams& = {});
+	Texture(const WorkBatcher&, InitData&,
+		nytl::Span<const std::byte> data,
+		vk::Format dataFormat, const vk::Extent2D& size,
 		const TextureCreateParams& = {});
 	Texture(const WorkBatcher&, InitData&,
 		std::vector<std::unique_ptr<std::byte[]>> dataLayers,

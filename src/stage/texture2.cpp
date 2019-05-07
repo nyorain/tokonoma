@@ -24,17 +24,20 @@ constexpr bool tryStageImage = true;
 namespace {
 void* stbiRealloc(void* old, std::size_t newSize) {
 	delete[] (std::byte*) old;
-	return new std::byte[newSize];
+	return (void*) (new std::byte[newSize]);
 }
 } // anon namespace
+
+#define STBI_FREE(p) (delete[] (std::byte*) p)
+#define STBI_MALLOC(size) ((void*) new std::byte[size])
+#define STBI_REALLOC(p, size) (stbiRealloc((void*) p, size))
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-align"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #define STB_IMAGE_IMPLEMENTATION
-#define STBI_FREE(p) (delete[] (std::byte*) p)
-#define STBI_MALLOC(size) ((void*) new std::byte[size])
-#define STBI_REALLOC(p, size) (stbiRealloc((void*) p, size))
+#define STB_IMAGE_STATIC // needed, otherwise we mess with other usages
+#pragma GCC diagnostic ignored "-Wunused-function" // static functions
 #include "stb_image.h"
 #pragma GCC diagnostic pop
 
@@ -217,13 +220,27 @@ Texture::Texture(const WorkBatcher& batcher, InitData& data,
 			size.width * size.height;
 		auto usage = vk::BufferUsageBits::transferSrc;
 		data.stageBuf = {/*vpp::defer,*/ batcher.dev.bufferAllocator(), dataSize,
-			usage, 0u, hostBits};
+			usage, hostBits};
 	}
 }
 
 Texture::Texture(const vpp::Device& dev, nytl::StringParam file,
 	const TextureCreateParams& params) :
 		Texture(dev, nytl::Span<const char* const>{file.c_str()}, params) {
+}
+
+Texture::Texture(const vpp::Device& dev,
+		nytl::Span<const std::byte> data,
+		vk::Format dataFormat, const vk::Extent2D& size,
+		const TextureCreateParams& params) {
+	auto dataSize = size.width * size.height * vpp::formatSize(dataFormat);
+	dlg_assert(data.size() == dataSize);
+
+	auto unique = std::make_unique<std::byte[]>(dataSize);
+	std::memcpy(unique.get(), data.data(), dataSize);
+	std::vector<std::unique_ptr<std::byte[]>> faces;
+	faces.emplace_back(std::move(unique));
+	*this = {dev, std::move(faces), dataFormat, size, params};
 }
 
 Texture::Texture(const vpp::Device& dev, nytl::Span<const char* const> files,
@@ -268,6 +285,20 @@ Texture::Texture(const vpp::Device& dev,
 	qs.wait(id);
 
 	initFinish(batcher, data);
+}
+
+Texture::Texture(const WorkBatcher& batcher, InitData& initData,
+		nytl::Span<const std::byte> data,
+		vk::Format dataFormat, const vk::Extent2D& size,
+		const TextureCreateParams& params) {
+	auto dataSize = size.width * size.height * vpp::formatSize(dataFormat);
+	dlg_assert(data.size() == dataSize);
+
+	auto unique = std::make_unique<std::byte[]>(dataSize);
+	std::memcpy(unique.get(), data.data(), dataSize);
+	std::vector<std::unique_ptr<std::byte[]>> faces;
+	faces.emplace_back(std::move(unique));
+	*this = {batcher, initData, std::move(faces), dataFormat, size, params};
 }
 
 void Texture::initAlloc(const WorkBatcher& batcher, InitData& data) {
@@ -325,8 +356,8 @@ void Texture::initAlloc(const WorkBatcher& batcher, InitData& data) {
 		vk::ImageBlit blit;
 		blit.srcSubresource.aspectMask = vk::ImageAspectBits::color;
 		blit.srcSubresource.layerCount = layerCount;
-		blit.dstSubresource.layerCount = layerCount;
 		blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
+		blit.dstSubresource.layerCount = layerCount;
 		blit.srcOffsets[1].x = width;
 		blit.srcOffsets[1].y = height;
 		blit.srcOffsets[1].z = 1;
@@ -402,7 +433,7 @@ void Texture::initAlloc(const WorkBatcher& batcher, InitData& data) {
 			blit.srcOffsets[1].y = std::max(height >> (i - 1), 1u);
 			blit.srcOffsets[1].z = 1u;
 
-			blit.dstSubresource.layerCount = 1;
+			blit.dstSubresource.layerCount = layerCount;
 			blit.dstSubresource.mipLevel = i;
 			blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
 			blit.dstOffsets[1].x = std::max(width >> i, 1u);

@@ -81,6 +81,7 @@ public:
 	} data;
 
 public:
+	// TODO: remove redundant vpp::Device
 	PointLight() = default;
 	PointLight(const vpp::Device&, const vpp::TrDsLayout& matLayout,
 		const vpp::TrDsLayout& primitiveLayout, const ShadowData& data,

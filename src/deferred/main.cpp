@@ -54,7 +54,7 @@
 
 // TODO: fix vpp shared buffer fixes. Maybe test it in vpp...
 //   also fix formats.cpp: findSupported e.g. throws
-//   on error...
+//   on error, the image type handling is really bad.
 //   NOTE: contains breaking change in formats.cpp
 // TODO: maybe do high pass on light output *after* blending.
 //   currently, when there are many light shining on a surface
@@ -188,9 +188,11 @@ public:
 	static constexpr auto normalsFormat = vk::Format::r16g16b16a16Snorm;
 	static constexpr auto albedoFormat = vk::Format::r8g8b8a8Srgb;
 	static constexpr auto emissionFormat = vk::Format::r16g16b16a16Sfloat;
+	// static constexpr auto emissionFormat = vk::Format::r8Unorm;
 	static constexpr auto ssaoFormat = vk::Format::r8Unorm;
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
 	static constexpr auto ldepthFormat = vk::Format::r16Sfloat;
+	// static constexpr auto ldepthFormat = vk::Format::r8Unorm;
 	// static constexpr auto ssrFormat = vk::Format::r32g32b32a32Sfloat;
 	static constexpr auto ssrFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto ssaoSampleCount = 16u;
@@ -203,6 +205,7 @@ public:
 	static constexpr unsigned flagSSR = (1u << 2u);
 	static constexpr unsigned flagBloom = (1u << 3u);
 	static constexpr unsigned flagFXAA = (1u << 4u);
+	static constexpr unsigned flagDiffuseIBL = (1u << 5u);
 
 	static constexpr unsigned modeNormal = 0u;
 	static constexpr unsigned modeAlbedo = 1u;
@@ -216,7 +219,7 @@ public:
 	static constexpr unsigned modeEmission = 9u;
 	static constexpr unsigned modeBloom = 10u;
 
-	static constexpr unsigned timestampCount = 10u;
+	static constexpr unsigned timestampCount = 11u;
 
 	// see various post processing or screen space shaders
 	struct RenderParams {
@@ -244,6 +247,7 @@ public:
 	void initSSR();
 	void initCombine();
 	void initDebug();
+	void initFwd();
 	void updateDescriptors();
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
@@ -305,7 +309,7 @@ protected:
 	bool updateLights_ {true};
 	bool updateDescriptors_ {false};
 
-	// doi::Skybox skybox_;
+	doi::Skybox skybox_;
 
 	// needed for point light rendering.
 	// TODO: also contained in skybox, share them somehow.
@@ -448,6 +452,16 @@ protected:
 		vpp::Pipeline pipe;
 	} debug_;
 
+	// forward pass
+	struct {
+		vpp::RenderPass pass;
+		vpp::Framebuffer fb;
+		// vpp::TrDsLayout dsLayout;
+		// vpp::TrDs ds;
+		// vpp::PipelineLayout pipeLayout;
+		// vpp::Pipeline pipe;
+	} fwd_;
+
 	// times
 	struct TimePass {
 		rvg::Text passName;
@@ -557,6 +571,13 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		updateRenderParams_ = true;
 	};
 
+	auto& cb6 = pp.create<Checkbox>("Diffuse IBL").checkbox();
+	cb6.set(params_.flags & flagDiffuseIBL);
+	cb6.onToggle = [&](auto&) {
+		params_.flags ^= flagDiffuseIBL;
+		updateRenderParams_ = true;
+	};
+
 	// light selection
 	vuiPanel_ = &panel;
 	selected_.folder = &panel.create<Folder>("Light");
@@ -591,6 +612,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 			"ssao:",
 			"scatter:",
 			"lpass:",
+			"fwd:",
 			"bloom:",
 			"ssr:",
 			"combine:",
@@ -659,6 +681,7 @@ void ViewApp::initRenderData() {
 	initSSR(); // screen space relfections
 	initCombine(); // combining pass
 	initDebug(); // init debug pipeline/pass
+	initFwd(); // init forward pass for skybox and transparent objects
 
 	// dummy texture for materials that don't have a texture
 	// TODO: we could just create the dummy cube and make the dummy
@@ -702,7 +725,7 @@ void ViewApp::initRenderData() {
 		+ 2 * sizeof(float); // near, far plane
 	sceneDs_ = {vpp::defer, dev.descriptorAllocator(), sceneDsLayout_};
 	sceneUbo_ = {vpp::defer, dev.bufferAllocator(), sceneUboSize,
-		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
+		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 	shadowData_ = doi::initShadowData(dev, depthFormat(),
 		lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
@@ -710,7 +733,7 @@ void ViewApp::initRenderData() {
 
 	// params ubo
 	paramsUbo_ = {dev.bufferAllocator(), sizeof(RenderParams),
-		vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
+		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 	// selection data
 	vk::ImageCreateInfo imgi;
@@ -728,7 +751,7 @@ void ViewApp::initRenderData() {
 		vk::CommandPoolCreateBits::resetCommandBuffer);
 	selectionSemaphore_ = {dev};
 
-	// TODO: we can't assume this
+	// TODO: we can't assume that timestamps are supported...
 	timestampBits_ = dev.queueSubmitter().queue().properties().timestampValidBits;
 	dlg_assert(timestampBits_);
 	timestampBits_ = 0xFFFFFFFFu; // guaranteed
@@ -739,14 +762,13 @@ void ViewApp::initRenderData() {
 	qpi.queryType = vk::QueryType::timestamp;
 	queryPool_ = {dev, qpi};
 
-	// TODO: re-add this. In pass between light and pp?
 	// hdr skybox
-	// skybox_.init(dev, "../assets/kloofendal2k.hdr",
-		// renderPass(), 3u, samples());
+	// skybox_.init(dev, "../assets/kloofendal2k.hdr", fwd_.pass, 0u, samples());
+	skybox_.init(dev, "/home/nyorain/art/assets/apt2k.hdr", fwd_.pass, 0u, samples());
 
 	boxIndices_ = {vpp::defer, dev.bufferAllocator(), 36u * sizeof(std::uint16_t),
 		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-		0, dev.deviceMemoryTypes()};
+		dev.deviceMemoryTypes(), 4u};
 
 	// Load Model
 	auto s = sceneScale_;
@@ -1404,7 +1426,7 @@ void ViewApp::initSSAO() {
 	auto size = sizeof(nytl::Vec4f) * ssaoSampleCount;
 	auto usage = vk::BufferUsageBits::transferDst |
 		vk::BufferUsageBits::uniformBuffer;
-	ssao_.samples = {dev.bufferAllocator(), size, usage, 0, devMem};
+	ssao_.samples = {dev.bufferAllocator(), size, usage, devMem};
 	vpp::writeStaging140(ssao_.samples, vpp::raw(*ssaoKernel.data(),
 			ssaoKernel.size()));
 
@@ -1647,11 +1669,20 @@ void ViewApp::initCombine() {
 		vpp::descriptorBinding( // emission
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
+		vpp::descriptorBinding( // normal
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
+		vpp::descriptorBinding( // linear depth
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
+		vpp::descriptorBinding( // irradiance
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
 	};
 
 	combine_.dsLayout = {dev, combineBindings};
 	combine_.ds = {dev.descriptorAllocator(), combine_.dsLayout};
-	combine_.pipeLayout = {dev, {combine_.dsLayout}, {}};
+	combine_.pipeLayout = {dev, {sceneDsLayout_, combine_.dsLayout}, {}};
 
 	// pipe
 	vpp::ShaderModule combineShader(dev, deferred_combine_comp_data);
@@ -1717,6 +1748,57 @@ void ViewApp::initDebug() {
 	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), nullptr, vkpipe);
 
 	debug_.pipe = {dev, vkpipe};
+}
+
+void ViewApp::initFwd() {
+	// render pass
+	auto& dev = device();
+	std::array<vk::AttachmentDescription, 2u> attachments;
+
+	// light scattering output format
+	attachments[0].format = lightFormat;
+	attachments[0].samples = vk::SampleCountBits::e1;
+	attachments[0].loadOp = vk::AttachmentLoadOp::load;
+	attachments[0].storeOp = vk::AttachmentStoreOp::store;
+	attachments[0].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+	attachments[0].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+	attachments[0].initialLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	attachments[0].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+
+	attachments[1].format = depthFormat();
+	attachments[1].samples = vk::SampleCountBits::e1;
+	attachments[1].loadOp = vk::AttachmentLoadOp::load;
+	attachments[1].storeOp = vk::AttachmentStoreOp::store;
+	attachments[1].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
+	attachments[1].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
+	attachments[1].initialLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	attachments[1].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+
+	// subpass
+	vk::AttachmentReference colorRef;
+	colorRef.attachment = 0u;
+	colorRef.layout = vk::ImageLayout::colorAttachmentOptimal;
+
+	vk::AttachmentReference depthRef;
+	depthRef.attachment = 1u;
+	depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
+
+	vk::SubpassDescription subpass;
+	subpass.colorAttachmentCount = 1u;
+	subpass.pColorAttachments = &colorRef;
+	subpass.pDepthStencilAttachment = &depthRef;
+
+	// TODO: probably needs a barrier
+	vk::RenderPassCreateInfo rpi;
+	rpi.attachmentCount = attachments.size();
+	rpi.pAttachments = attachments.data();
+	rpi.subpassCount = 1u;
+	rpi.pSubpasses = &subpass;
+
+	fwd_.pass = {dev, rpi};
+
+	// TODO: init pipeline and stuff for transparent objects
+	// currently only used for skybox
 }
 
 vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
@@ -1931,6 +2013,15 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		ssr_.target = {};
 	}
 
+	// fwd
+	attachments.clear();
+	attachments.push_back(lpass_.light.vkImageView());
+	attachments.push_back(depthTarget().vkImageView());
+	fbi = vk::FramebufferCreateInfo({}, fwd_.pass,
+		attachments.size(), attachments.data(),
+		size.width, size.height, 1);
+	fwd_.fb = {dev, fbi};
+
 	// create swapchain framebuffers
 	for(auto& buf : bufs) {
 		attachments.clear();
@@ -1991,6 +2082,12 @@ void ViewApp::updateDescriptors() {
 	cdsu.imageSampler({{{}, ssaoView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	cdsu.imageSampler({{{}, bloomView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	cdsu.imageSampler({{{}, gpass_.normal.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	cdsu.imageSampler({{{}, depthView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	cdsu.imageSampler({{{}, skybox_.irradiance().vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	if(params_.flags & flagSSAO) {
@@ -2402,6 +2499,25 @@ void ViewApp::record(const RenderBuffer& buf) {
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
 		queryPool_, 6u);
 
+	// fwd
+	{
+		vk::cmdBeginRenderPass(cb, {
+			fwd_.pass,
+			fwd_.fb,
+			{0u, 0u, width, height},
+			0, nullptr,
+		}, {});
+
+		vk::Viewport vp{0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
+		vk::cmdSetViewport(cb, 0, 1, vp);
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
+		skybox_.render(cb);
+		vk::cmdEndRenderPass(cb);
+	}
+
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 7u);
+
 	// bloom
 	if(params_.flags & flagBloom) {
 		// create emission mipmaps
@@ -2539,7 +2655,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 7u);
+		queryPool_, 8u);
 
 	// ssr pass
 	if(params_.flags & flagSSR) {
@@ -2569,7 +2685,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 8u);
+		queryPool_, 9u);
 
 	// combine pass
 	if(params_.mode == 0) {
@@ -2585,7 +2701,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
 			combine_.pipe);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
-			combine_.pipeLayout, 0, {combine_.ds}, {});
+			combine_.pipeLayout, 0, {sceneDs_, combine_.ds}, {});
 		vk::cmdDispatch(cb, std::ceil(width / 8.f), std::ceil(height / 8.f), 1u);
 		vpp::changeLayout(cb, target,
 			vk::ImageLayout::general,
@@ -2598,7 +2714,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 9u);
+		queryPool_, 10u);
 
 	// post process pass
 	{
@@ -2645,7 +2761,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 10u);
+		queryPool_, 11u);
 
 	App::afterRender(cb);
 	vk::endCommandBuffer(cb);
@@ -2703,15 +2819,14 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			params_.mode = (params_.mode + 1) % numModes;
 			updateRenderParams_ = true;
 			if(params_.mode == 0 || params_.mode == 1) {
-				App::scheduleRerecord();
+				resize_ = true; // recreate, rerecord
 			}
 			return true;
 		case ny::Keycode::l:
 			params_.mode = (params_.mode + numModes - 1) % numModes;
 			updateRenderParams_ = true;
 			if(params_.mode == 0 || params_.mode == numModes - 1) {
-				resize_ = true; // recreate
-				App::scheduleRerecord();
+				resize_ = true; // recreate, rerecord
 			}
 			return true;
 		case ny::Keycode::equals:
@@ -2766,8 +2881,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		params_.mode = diff;
 		updateRenderParams_ = true;
 		if(was0 || params_.mode == 0) {
-			resize_ = true; // recreate
-			App::scheduleRerecord();
+			resize_ = true; // recreate, rerecord
 		}
 	}
 
@@ -2819,7 +2933,7 @@ void ViewApp::updateDevice() {
 		doi::write(span, camera_.perspective.near);
 		doi::write(span, camera_.perspective.far);
 
-		// skybox_.updateDevice(fixedMatrix(camera_));
+		skybox_.updateDevice(fixedMatrix(camera_));
 
 		// depend on camera position
 		for(auto& l : dirLights_) {

@@ -31,14 +31,14 @@ Primitive::Primitive(const Shape& shape,
 	auto usage = vk::BufferUsageBits::vertexBuffer |
 		vk::BufferUsageBits::indexBuffer |
 		vk::BufferUsageBits::transferDst;
-	vertices_ = {dev.bufferAllocator(), size, usage, 0u, devMem};
+	vertices_ = {dev.bufferAllocator(), size, usage, devMem, 4u};
 	indexCount_ = shape.indices.size();
 	vertexCount_ = shape.positions.size();
 
 	// fill it
 	{
 		auto stage = vpp::SubBuffer{dev.bufferAllocator(), size,
-			vk::BufferUsageBits::transferSrc, 0u, hostMem};
+			vk::BufferUsageBits::transferSrc, hostMem};
 		auto map = stage.memoryMap();
 		auto span = map.span();
 
@@ -79,7 +79,7 @@ Primitive::Primitive(const Shape& shape,
 	// ubo
 	size = Primitive::uboSize; // ubo
 	usage = vk::BufferUsageBits::uniformBuffer;
-	ubo_ = {dev.bufferAllocator(), size, usage, 0u, hostMem};
+	ubo_ = {dev.bufferAllocator(), size, usage, hostMem};
 	updateDevice();
 
 	// descriptor
@@ -129,7 +129,7 @@ Primitive::Primitive(InitData& data, const tinygltf::Model& model,
 		vk::BufferUsageBits::transferDst;
 
 	dlg_assert(na.count == pa.count);
-	vertices_ = {vpp::defer, dev.bufferAllocator(), size, usage, 0u, devMem};
+	vertices_ = {vpp::defer, dev.bufferAllocator(), size, usage, devMem, 4u};
 	indexCount_ = ia.count;
 	vertexCount_ = na.count;
 
@@ -155,7 +155,7 @@ Primitive::Primitive(InitData& data, const tinygltf::Model& model,
 		auto uvSize = uva->count * sizeof(nytl::Vec2f); // uv coords
 		auto uvUsage = vk::BufferUsageBits::vertexBuffer |
 			vk::BufferUsageBits::transferDst;
-		uv_ = {vpp::defer, dev.bufferAllocator(), uvSize, uvUsage, 0u, devMem};
+		uv_ = {vpp::defer, dev.bufferAllocator(), uvSize, uvUsage, devMem, 4u};
 		stageSize += uvSize;
 
 		data.uvData.resize(uvSize);
@@ -167,12 +167,12 @@ Primitive::Primitive(InitData& data, const tinygltf::Model& model,
 	}
 
 	data.stage = vpp::SubBuffer{/*vpp::defer, */dev.bufferAllocator(),
-		stageSize, vk::BufferUsageBits::transferSrc, 0u, hostMem};
+		stageSize, vk::BufferUsageBits::transferSrc, hostMem};
 
 	// ubo
 	usage = vk::BufferUsageBits::uniformBuffer;
 	ubo_ = {vpp::defer, dev.bufferAllocator(), Primitive::uboSize, usage,
-		0u, hostMem};
+		hostMem};
 
 	// descriptor
 	ds_ = {vpp::defer, dev.descriptorAllocator(), dsLayout};

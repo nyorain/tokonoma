@@ -79,9 +79,9 @@ void main() {
 	vec3 v = normalize(scene.viewPos - fragPos);
 	vec3 light = cookTorrance(normal, -ldir, v, roughness, metallic,
 		albedo);
+	vec3 color = max(light * lcolor, 0.0);
 
 	// NOTE: we are currently wasting the alpha component
-	vec3 color = max(light * lcolor, 0.0);
 	fragColor = vec4(color, 0.0);
 
 	// TODO: move to extra pass; *after* all lightning was done

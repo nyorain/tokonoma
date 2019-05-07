@@ -221,7 +221,7 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		sizeof(nytl::Mat4f); // projection, view
 	ds_ = {dev.descriptorAllocator(), dsLayout};
 	ubo_ = {dev.bufferAllocator(), lightUboSize,
-		vk::BufferUsageBits::uniformBuffer, 0, hostMem};
+		vk::BufferUsageBits::uniformBuffer, hostMem};
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
@@ -370,7 +370,7 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		sizeof(this->data);
 	ds_ = {dev.descriptorAllocator(), dsLayout};
 	ubo_ = {dev.bufferAllocator(), lightUboSize,
-		vk::BufferUsageBits::uniformBuffer, 0, hostMem};
+		vk::BufferUsageBits::uniformBuffer, hostMem};
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
