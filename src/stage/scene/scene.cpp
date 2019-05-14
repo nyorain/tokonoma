@@ -11,8 +11,8 @@
 namespace doi {
 namespace {
 
-doi::Texture loadImage(const WorkBatcher& batcher,
-		Texture::InitData& data, const gltf::Image& tex,
+doi::Texture loadImage(Texture::InitData& data,
+		const WorkBatcher& wb, const gltf::Image& tex,
 		nytl::StringParam path, bool srgb) {
 	auto name = tex.name.empty() ?  tex.name : "'" + tex.name + "'";
 	dlg_info("  Loading image {}", name);
@@ -28,7 +28,7 @@ doi::Texture loadImage(const WorkBatcher& batcher,
 	if(!tex.uri.empty()) {
 		auto full = std::string(path);
 		full += tex.uri;
-		return {batcher, data, full, params};
+		return {data, wb, full, params};
 	}
 
 	// TODO: simplifying assumptions that are usually met
@@ -46,15 +46,15 @@ doi::Texture loadImage(const WorkBatcher& batcher,
 
 	std::vector<std::unique_ptr<std::byte[]>> layers;
 	layers.emplace_back(std::move(copy));
-	return {batcher, data, std::move(layers), format, extent, params};
+	return {data, wb, std::move(layers), format, extent, params};
 }
 
 } // anon namespace
 
-Scene::Scene(const WorkBatcher& batch, InitData& data, nytl::StringParam path,
+Scene::Scene(InitData& data, const WorkBatcher& wb, nytl::StringParam path,
 		const tinygltf::Model& model, const tinygltf::Scene& scene,
 		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
-	auto& dev = batch.dev;
+	auto& dev = wb.dev;
 
 	// load samplers
 	// TODO: optimization, low prio
@@ -109,21 +109,18 @@ Scene::Scene(const WorkBatcher& batch, InitData& data, nytl::StringParam path,
 		auto& d = data.images[i];
 		auto& img = images_[i];
 		dlg_assertm(img.needed, "Model has unused image");
-		images_[i].image = loadImage(batch, d, model.images[i], path, img.srgb);
-
-		// TODO
-		// images_[i].image.initAlloc(batch, d);
+		images_[i].image = loadImage(d, wb, model.images[i], path, img.srgb);
 	}
 
 	// load nodes tree recursively
 	for(auto& nodeid : scene.nodes) {
 		dlg_assert(unsigned(nodeid) < model.nodes.size());
 		auto& node = model.nodes[nodeid];
-		loadNode(batch, data, model, node, ri, matrix);
+		loadNode(data, wb, model, node, ri, matrix);
 	}
 }
 
-void Scene::loadNode(const WorkBatcher& batch, InitData& data,
+void Scene::loadNode(InitData& data, const WorkBatcher& wb,
 		const tinygltf::Model& model, const tinygltf::Node& node,
 		const SceneRenderInfo& ri, nytl::Mat4f matrix) {
 	if(!node.matrix.empty()) {
@@ -170,7 +167,7 @@ void Scene::loadNode(const WorkBatcher& batch, InitData& data,
 
 	for(auto nodeid : node.children) {
 		auto& child = model.nodes[nodeid];
-		loadNode(batch, data, model, child, ri, matrix);
+		loadNode(data, wb, model, child, ri, matrix);
 	}
 
 	if(node.mesh != -1) {
@@ -186,7 +183,7 @@ void Scene::loadNode(const WorkBatcher& batch, InitData& data,
 
 			auto id = primitives_.size() + 1;
 			auto& d = data.primitives.emplace_back();
-			auto p = Primitive(d, model, primitive,
+			auto p = Primitive(d, wb, model, primitive,
 				ri.primitiveDsLayout, mat, matrix, id);
 
 			primitives_.emplace_back(std::move(p));
@@ -194,23 +191,23 @@ void Scene::loadNode(const WorkBatcher& batch, InitData& data,
 	}
 }
 
-void Scene::initAlloc(const WorkBatcher& batch, InitData& data) {
+void Scene::init(InitData& data, const WorkBatcher& wb) {
 	dlg_assert(images_.size() == data.images.size());
 	dlg_assert(materials_.size() == data.materials.size() + 1); // + default mat
 	dlg_assert(primitives_.size() == data.primitives.size());
 
 	for(auto i = 0u; i < data.images.size(); ++i) {
-		images_[i].image.initAlloc(batch, data.images[i]);
+		images_[i].image.init(data.images[i], wb);
 	}
 
 	for(auto i = 0u; i < data.materials.size(); ++i) {
-		materials_[i].initAlloc(*this, data.materials[i]);
+		materials_[i].init(data.materials[i], *this);
 	}
 
 	for(auto i = 0u; i < data.primitives.size(); ++i) {
 		auto& p = primitives_[i];
 		auto& material = materials_[p.material()];
-		p.initAlloc(batch.cb, data.primitives[i]);
+		p.init(data.primitives[i], wb.cb);
 		if(!p.hasUV() && material.hasTexture()) {
 			auto msg = "primitive uses texture but material has no uv coords";
 			throw std::runtime_error(msg);

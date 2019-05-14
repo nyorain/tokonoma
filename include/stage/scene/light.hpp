@@ -3,10 +3,8 @@
 #include <stage/scene/primitive.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/mat.hpp>
-#include <vpp/framebuffer.hpp>
+#include <vpp/handles.hpp>
 #include <vpp/image.hpp>
-#include <vpp/renderPass.hpp>
-#include <vpp/pipeline.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 

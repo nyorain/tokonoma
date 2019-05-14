@@ -2,7 +2,8 @@
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outColor;
-layout(set = 0, binding = 0) uniform UBO {
+
+layout(push_constant) uniform Face {
 	vec3 x;
 	float _1; // padding
 	vec3 y;

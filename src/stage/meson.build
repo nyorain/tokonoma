@@ -34,13 +34,11 @@ stage_deps = [
 stage_src = [
 	'app.cpp',
 	'audio.cpp',
-	# 'render.cpp',
 	'window.cpp',
 	'camera.cpp',
 	'geometry.cpp',
 	'physics.cpp',
-	# 'texture.cpp',
-	'texture2.cpp',
+	'texture.cpp',
 	'image.cpp',
 
 	'scene/scene.cpp',

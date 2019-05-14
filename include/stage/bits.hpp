@@ -15,41 +15,40 @@ T read(const std::byte*& data) {
 	return ret;
 }
 
-// TODO: remove the non-const version.
-// Only needed due to missing Span 'nonconst -> const' constructor
-template<typename T>
-T read(nytl::Span<std::byte>& span) {
-	T ret;
-	dlg_assert(span.size() >= sizeof(ret));
-	std::memcpy(&ret, span.data(), sizeof(ret));
-	span = span.slice(sizeof(ret), span.size() - sizeof(ret));
-	return ret;
-}
+// TODO: can probably be removed
+// Was only needed for missing Span 'nonconst -> const' constructor
+// template<typename T>
+// T read(nytl::Span<std::byte>& span) {
+// 	T ret;
+// 	dlg_assert(span.size() >= sizeof(ret));
+// 	std::memcpy(&ret, span.data(), sizeof(ret));
+// 	span = span.last(span.size() - sizeof(ret));
+// 	return ret;
+// }
 
 template<typename T>
 T read(nytl::Span<const std::byte>& span) {
 	T ret;
 	dlg_assert(span.size() >= sizeof(ret));
 	std::memcpy(&ret, span.data(), sizeof(ret));
-	span = span.slice(sizeof(ret), span.size() - sizeof(ret));
+	span = span.last(span.size() - sizeof(ret));
 	return ret;
 }
 
-// TODO: not sure if this is valid with aliasing rules. check up!
 template<typename T>
 T& refRead(nytl::Span<std::byte>& span) {
 	T ret;
 	dlg_assert(span.size() >= sizeof(ret));
 	auto data = span.data();
-	span = span.slice(sizeof(ret), span.size() - sizeof(ret));
+	span = span.last(span.size() - sizeof(ret));
 	return *reinterpret_cast<T*>(data);
 }
 
 inline void write(nytl::Span<std::byte>& span, const std::byte* ptr,
 		std::size_t size) {
-	dlg_assert(span.size() >= size);
+	dlg_assert(std::size_t(span.size()) >= size);
 	std::memcpy(span.data(), ptr, size);
-	span = span.slice(size, span.size() - size);
+	span = span.last(span.size() - size);
 }
 
 template<typename T>
@@ -58,8 +57,8 @@ void write(nytl::Span<std::byte>& span, T&& data) {
 }
 
 inline void skip(nytl::Span<std::byte>& span, std::size_t bytes) {
-	dlg_assert(span.size() >= bytes);
-	span = span.slice(bytes, span.size() - bytes);
+	dlg_assert(std::size_t(span.size()) >= bytes);
+	span = span.last(span.size() - bytes);
 }
 
 template<typename T>

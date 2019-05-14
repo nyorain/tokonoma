@@ -5,7 +5,7 @@
 #include <stage/bits.hpp>
 #include <stage/transform.hpp>
 #include <vpp/vk.hpp>
-#include <vpp/pipelineInfo.hpp>
+#include <vpp/pipeline.hpp>
 #include <vpp/formats.hpp>
 #include <vpp/imageOps.hpp>
 #include <vpp/device.hpp>
@@ -100,16 +100,16 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	cubemapPcr.size = 4u;
 
 	data.pl = {dev,
-		{lightDsLayout, materialDsLayout, primitiveDsLayout},
-		{materialPcr, cubemapPcr}};
+		{{lightDsLayout, materialDsLayout, primitiveDsLayout}},
+		{{materialPcr, cubemapPcr}}};
 
 	// pipeline
 	vpp::ShaderModule vertShader(dev, stage_shadowmap_vert_data);
 	vpp::ShaderModule fragShader(dev, stage_shadowmap_frag_data);
-	vpp::GraphicsPipelineInfo gpi {data.rp, data.pl, {{
+	vpp::GraphicsPipelineInfo gpi {data.rp, data.pl, {{{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
-	}}, 0, vk::SampleCountBits::e1};
+	}}}, 0, vk::SampleCountBits::e1};
 
 	// see cubemap pipeline below
 	gpi.flags(vk::PipelineCreateBits::allowDerivatives);
@@ -171,10 +171,10 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	// requirement there) which adds complexity as well
 	vpp::ShaderModule cubeVertShader(dev, stage_shadowmapCube_vert_data);
 	vpp::ShaderModule cubeFragShader(dev, stage_shadowmapCube_frag_data);
-	vpp::GraphicsPipelineInfo cgpi {data.rp, data.pl, {{
+	vpp::GraphicsPipelineInfo cgpi {data.rp, data.pl, {{{
 		{cubeVertShader, vk::ShaderStageBits::vertex},
 		{cubeFragShader, vk::ShaderStageBits::fragment},
-	}}, 0, vk::SampleCountBits::e1};
+	}}}, 0, vk::SampleCountBits::e1};
 
 	cgpi.dynamic = gpi.dynamic;
 	cgpi.blend = gpi.blend;
@@ -195,21 +195,18 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
 		nytl::Vec3f viewPos, unsigned id) {
-	auto extent = vk::Extent3D{size_.x, size_.y, 0u};
-
 	// target
 	auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
 		vk::ImageUsageBits::sampled;
-	auto targetInfo = vpp::ViewableImageCreateInfo::general(dev,
-		extent, targetUsage, {data.depthFormat},
-		vk::ImageAspectBits::depth);
-	target_ = {dev, *targetInfo};
+	auto info = vpp::ViewableImageCreateInfo(data.depthFormat,
+		vk::ImageAspectBits::depth, {size_.x, size_.y}, targetUsage);
+	target_ = {dev, info};
 
 	// framebuffer
 	vk::FramebufferCreateInfo fbi {};
 	fbi.attachmentCount = 1;
-	fbi.width = extent.width;
-	fbi.height = extent.height;
+	fbi.width = size_.x;
+	fbi.height = size_.y;
 	fbi.layers = 1u;
 	fbi.pAttachments = &target_.vkImageView();
 	fbi.renderPass = data.rp;
@@ -227,12 +224,12 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	ldsu.imageSampler({{data.sampler, shadowMap(),
 		vk::ImageLayout::depthStencilReadOnlyOptimal}});
-	vpp::apply({ldsu});
+	ldsu.apply();
 
 	// light ball
 	auto cube = doi::Cube{{}, {1.f, 1.f, 1.f}};
 	auto shape = doi::generate(cube);
-	lightBall_ = {shape, primitiveDsLayout, 0u, lightBallMatrix(viewPos), id};
+	// lightBall_ = {shape, primitiveDsLayout, 0u, lightBallMatrix(viewPos), id};
 
 	updateDevice(viewPos);
 }
@@ -260,7 +257,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	auto pl = data.pl.vkHandle();
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pl, 0, {ds_}, {});
+		pl, 0, {{ds_.vkHandle()}}, {});
 
 	scene.render(cb, pl);
 	vk::cmdEndRenderPass(cb);
@@ -298,8 +295,8 @@ void DirLight::updateDevice(nytl::Vec3f viewPos) {
 	doi::write(span, this->data);
 	doi::write(span, lightMatrix(viewPos));
 
-	lightBall_.matrix = lightBallMatrix(viewPos);
-	lightBall_.updateDevice();
+	// lightBall_.matrix = lightBallMatrix(viewPos);
+	// lightBall_.updateDevice();
 }
 
 // PointLight
@@ -314,39 +311,39 @@ void DirLight::updateDevice(nytl::Vec3f viewPos) {
 PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
 		unsigned id, vk::ImageView noShadowMap) {
-	auto extent = vk::Extent3D{size_.x, size_.y, 0u};
 	if(!noShadowMap) {
 		this->data.flags |= lightFlagShadow;
 
 		// target
 		auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
 			vk::ImageUsageBits::transferSrc;
-		auto targetInfo = vpp::ViewableImageCreateInfo::general(dev,
-			extent, targetUsage, {data.depthFormat},
-			vk::ImageAspectBits::depth);
-		target_ = {dev, *targetInfo};
+		auto targetInfo = vpp::ViewableImageCreateInfo(data.depthFormat,
+			vk::ImageAspectBits::depth, {size_.x, size_.y}, targetUsage);
+		dlg_assert(vpp::supported(dev, targetInfo.img));
+		target_ = {dev, targetInfo};
 
 		// framebuffer
 		vk::FramebufferCreateInfo fbi {};
 		fbi.attachmentCount = 1;
-		fbi.width = extent.width;
-		fbi.height = extent.height;
+		fbi.width = size_.x;
+		fbi.height = size_.y;
 		fbi.layers = 1u;
 		fbi.pAttachments = &target_.vkImageView();
 		fbi.renderPass = data.rp;
 		fb_ = {dev, fbi};
 
 		// shadow map
-		targetInfo->img.arrayLayers = 6u;
-		targetInfo->img.flags = vk::ImageCreateBits::cubeCompatible;
-		targetInfo->img.usage = vk::ImageUsageBits::sampled |
+		targetInfo.img.arrayLayers = 6u;
+		targetInfo.img.flags = vk::ImageCreateBits::cubeCompatible;
+		targetInfo.img.usage = vk::ImageUsageBits::sampled |
 			vk::ImageUsageBits::transferDst;
-		targetInfo->view.subresourceRange.layerCount = 6u;
-		targetInfo->view.components = {};
-		targetInfo->view.viewType = vk::ImageViewType::cube;
-		shadowMap_ = {dev, *targetInfo};
+		targetInfo.view.subresourceRange.layerCount = 6u;
+		targetInfo.view.components = {};
+		targetInfo.view.viewType = vk::ImageViewType::cube;
+		shadowMap_ = {dev, targetInfo};
 
 		// initial layout change
+		/*
 		auto cb = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
 		vk::beginCommandBuffer(cb, {});
 		vpp::changeLayout(cb, shadowMap_.image(),
@@ -362,6 +359,7 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		submission.pCommandBuffers = &cb.vkHandle();
 		dev.queueSubmitter().add(submission);
 		dev.queueSubmitter().wait(dev.queueSubmitter().current());
+		*/
 	}
 
 	// setup light ds and ubo
@@ -376,12 +374,12 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	ldsu.imageSampler({{data.sampler, hasShadowMap() ? shadowMap() : noShadowMap,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	vpp::apply({ldsu});
+	ldsu.apply();
 
 	// primitive
 	auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
 	auto shape = doi::generateUV(sphere);
-	lightBall_ = {shape, primitiveDsLayout, 0u, lightBallMatrix(), id};
+	// lightBall_ = {shape, primitiveDsLayout, 0u, lightBallMatrix(), id};
 
 	updateDevice();
 }
@@ -472,16 +470,27 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	auto pl = data.pl.vkHandle();
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipeCube);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pl, 0, {ds_}, {});
+		pl, 0, {{ds_.vkHandle()}}, {});
 
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = shadowMap_.image();
+	barrier.oldLayout = vk::ImageLayout::undefined;
+	barrier.srcAccessMask = vk::AccessBits::shaderRead;
+	barrier.newLayout = vk::ImageLayout::transferDstOptimal;
+	barrier.dstAccessMask = vk::AccessBits::transferWrite;
+	barrier.subresourceRange = {vk::ImageAspectBits::depth, 0, 1, 0, 6u};
+	vk::cmdPipelineBarrier(cb,
+		vk::PipelineStageBits::allGraphics,
+		vk::PipelineStageBits::transfer,
+		{}, {}, {}, {{barrier}});
+
+	/*
 	vpp::changeLayout(cb, shadowMap_.image(),
 		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::allGraphics,
-		vk::AccessBits::shaderRead,
 		vk::ImageLayout::transferDstOptimal,
-		vk::PipelineStageBits::transfer,
 		vk::AccessBits::transferWrite,
 		{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
+	*/
 
 	// for(auto& normal : normals) {
 	for(std::uint32_t i = 0u; i < 6u; ++i) {
@@ -505,15 +514,28 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		scene.render(cb, pl);
 		vk::cmdEndRenderPass(cb);
 
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = target_.image();
+		barrier.oldLayout = vk::ImageLayout::depthStencilReadOnlyOptimal;
+		barrier.srcAccessMask = vk::AccessBits::depthStencilAttachmentWrite;
+		barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
+		barrier.dstAccessMask = vk::AccessBits::transferRead;
+		barrier.subresourceRange = {vk::ImageAspectBits::depth, 0, 1, 0, 1};
+		vk::cmdPipelineBarrier(cb,
+			vk::PipelineStageBits::allGraphics,
+			vk::PipelineStageBits::transfer,
+			{}, {}, {}, {{barrier}});
+
 		// TODO: transitions could be done in extra render pass
 		// copy from render target to shadow cube map
-		vpp::changeLayout(cb, target_.image(),
-			vk::ImageLayout::depthStencilReadOnlyOptimal,
-			vk::PipelineStageBits::allGraphics, {},
-			vk::ImageLayout::transferSrcOptimal,
-			vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferRead,
-			{vk::ImageAspectBits::depth, 0, 1, 0, 1});
+		// vpp::changeLayout(cb, target_.image(),
+		// 	vk::ImageLayout::depthStencilReadOnlyOptimal,
+		// 	vk::PipelineStageBits::allGraphics, {},
+		// 	vk::ImageLayout::transferSrcOptimal,
+		// 	vk::PipelineStageBits::transfer,
+		// 	vk::AccessBits::transferRead,
+		// 	{vk::ImageAspectBits::depth, 0, 1, 0, 1});
+
 		vk::ImageCopy copy {};
 		copy.extent = {size_.x, size_.y, 1};
 		copy.dstOffset = {0u, 0u, 0u};
@@ -527,28 +549,47 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdCopyImage(cb, target_.vkImage(),
 			vk::ImageLayout::transferSrcOptimal,
 			shadowMap_.vkImage(), vk::ImageLayout::transferDstOptimal,
-			{copy});
-		// TODO: needed?
-		vpp::changeLayout(cb, target_.image(),
-			vk::ImageLayout::transferSrcOptimal,
+			{{copy}});
+
+		barrier.oldLayout = vk::ImageLayout::transferSrcOptimal;
+		barrier.newLayout = vk::ImageLayout::depthStencilAttachmentOptimal;
+		barrier.srcAccessMask = vk::AccessBits::transferRead;
+		barrier.dstAccessMask =	vk::AccessBits::depthStencilAttachmentWrite |
+			vk::AccessBits::depthStencilAttachmentRead,
+		vk::cmdPipelineBarrier(cb,
 			vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferRead,
-			vk::ImageLayout::depthStencilAttachmentOptimal,
 			vk::PipelineStageBits::allGraphics,
-			vk::AccessBits::depthStencilAttachmentWrite |
-				vk::AccessBits::depthStencilAttachmentRead,
-			{vk::ImageAspectBits::depth, 0, 1, 0, 1});
+			{}, {}, {}, {{barrier}});
+
+		// vpp::changeLayout(cb, target_.image(),
+		// 	vk::ImageLayout::transferSrcOptimal,
+		// 	vk::PipelineStageBits::transfer,
+		// 	vk::AccessBits::transferRead,
+		// 	vk::ImageLayout::depthStencilAttachmentOptimal,
+		// 	vk::PipelineStageBits::allGraphics,
+		// 	vk::AccessBits::depthStencilAttachmentWrite |
+		// 		vk::AccessBits::depthStencilAttachmentRead,
+		// 	{vk::ImageAspectBits::depth, 0, 1, 0, 1});
 	}
 
-	// TODO
-	vpp::changeLayout(cb, shadowMap_.image(),
-		vk::ImageLayout::transferDstOptimal,
+	barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
+	barrier.srcAccessMask = vk::AccessBits::transferWrite;
+	barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	barrier.dstAccessMask = vk::AccessBits::shaderRead;
+	vk::cmdPipelineBarrier(cb,
 		vk::PipelineStageBits::transfer,
-		vk::AccessBits::transferWrite,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::fragmentShader,
-		vk::AccessBits::shaderRead,
-		{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
+		vk::PipelineStageBits::fragmentShader |
+			vk::PipelineStageBits::computeShader,
+		{}, {}, {}, {{barrier}});
+
+	// vpp::changeLayout(cb, shadowMap_.image(),
+	// 	vk::ImageLayout::transferDstOptimal,
+	// 	vk::PipelineStageBits::transfer,
+	// 	vk::AccessBits::transferWrite,
+	// 	vk::ImageLayout::shaderReadOnlyOptimal,
+	// 	vk::PipelineStageBits::fragmentShader,
+	// 	vk::AccessBits::shaderRead,
+	// 	{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
 }
 
 void PointLight::updateDevice() {
@@ -559,8 +600,8 @@ void PointLight::updateDevice() {
 		doi::write(span, lightMatrix(i));
 	}
 
-	lightBall_.matrix = lightBallMatrix();
-	lightBall_.updateDevice();
+	// lightBall_.matrix = lightBallMatrix();
+	// lightBall_.updateDevice();
 }
 
 } // namespace doi

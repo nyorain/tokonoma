@@ -5,6 +5,7 @@
 #include <stage/gltf.hpp>
 
 #include <vpp/vk.hpp>
+#include <vpp/submit.hpp>
 #include <vpp/bufferOps.hpp>
 
 #include <dlg/dlg.hpp>
@@ -14,7 +15,7 @@ namespace doi {
 // NOTE: currently some code duplication between constructors
 // hard to factor out into one function though
 // TODO: add deferred version of this constructor as well?
-Primitive::Primitive(const Shape& shape,
+Primitive::Primitive(const WorkBatcher& wb, const Shape& shape,
 		const vpp::TrDsLayout& dsLayout, unsigned material,
 		const nytl::Mat4f& mat, unsigned id) : matrix(mat), id_(id),
 			material_(material) {
@@ -31,13 +32,13 @@ Primitive::Primitive(const Shape& shape,
 	auto usage = vk::BufferUsageBits::vertexBuffer |
 		vk::BufferUsageBits::indexBuffer |
 		vk::BufferUsageBits::transferDst;
-	vertices_ = {dev.bufferAllocator(), size, usage, devMem, 4u};
+	vertices_ = {wb.alloc.bufDevice, size, usage, devMem, 8u};
 	indexCount_ = shape.indices.size();
 	vertexCount_ = shape.positions.size();
 
 	// fill it
 	{
-		auto stage = vpp::SubBuffer{dev.bufferAllocator(), size,
+		auto stage = vpp::SubBuffer{wb.alloc.bufStage, size,
 			vk::BufferUsageBits::transferSrc, hostMem};
 		auto map = stage.memoryMap();
 		auto span = map.span();
@@ -58,28 +59,17 @@ Primitive::Primitive(const Shape& shape,
 		}
 
 		// upload
-		auto& qs = dev.queueSubmitter();
-		auto cb = qs.device().commandAllocator().get(qs.queue().family());
-		vk::beginCommandBuffer(cb, {});
 		vk::BufferCopy region;
 		region.dstOffset = vertices_.offset();
 		region.srcOffset = stage.offset();
 		region.size = size;
-		vk::cmdCopyBuffer(cb, stage.buffer(), vertices_.buffer(), {region});
-		vk::endCommandBuffer(cb);
-
-		// execute
-		// TODO: could be batched with other work; we wait here
-		vk::SubmitInfo submission;
-		submission.commandBufferCount = 1;
-		submission.pCommandBuffers = &cb.vkHandle();
-		qs.wait(qs.add(submission));
+		vk::cmdCopyBuffer(wb.cb, stage.buffer(), vertices_.buffer(), {{region}});
 	}
 
 	// ubo
 	size = Primitive::uboSize; // ubo
 	usage = vk::BufferUsageBits::uniformBuffer;
-	ubo_ = {dev.bufferAllocator(), size, usage, hostMem};
+	ubo_ = {wb.alloc.bufHost, size, usage, hostMem};
 	updateDevice();
 
 	// descriptor
@@ -87,12 +77,12 @@ Primitive::Primitive(const Shape& shape,
 	auto& mubo = ubo_;
 	vpp::DescriptorSetUpdate odsu(ds_);
 	odsu.uniform({{mubo.buffer(), mubo.offset(), mubo.size()}});
-	vpp::apply({odsu});
 }
 
-Primitive::Primitive(InitData& data, const tinygltf::Model& model,
-		const tinygltf::Primitive& primitive, const vpp::TrDsLayout& dsLayout,
-		unsigned material, const nytl::Mat4f& mat, unsigned id) :
+Primitive::Primitive(InitData& data, const WorkBatcher& wb,
+		const tinygltf::Model& model, const tinygltf::Primitive& primitive,
+		const vpp::TrDsLayout& dsLayout, unsigned material,
+		const nytl::Mat4f& mat, unsigned id) :
 			matrix(mat), id_(id), material_(material) {
 
 	auto& dev = dsLayout.device();
@@ -129,7 +119,7 @@ Primitive::Primitive(InitData& data, const tinygltf::Model& model,
 		vk::BufferUsageBits::transferDst;
 
 	dlg_assert(na.count == pa.count);
-	vertices_ = {vpp::defer, dev.bufferAllocator(), size, usage, devMem, 4u};
+	vertices_ = {data.initVert, wb.alloc.bufDevice, size, usage, devMem, 8u};
 	indexCount_ = ia.count;
 	vertexCount_ = na.count;
 
@@ -155,7 +145,7 @@ Primitive::Primitive(InitData& data, const tinygltf::Model& model,
 		auto uvSize = uva->count * sizeof(nytl::Vec2f); // uv coords
 		auto uvUsage = vk::BufferUsageBits::vertexBuffer |
 			vk::BufferUsageBits::transferDst;
-		uv_ = {vpp::defer, dev.bufferAllocator(), uvSize, uvUsage, devMem, 4u};
+		uv_ = {data.initUv, wb.alloc.bufDevice, uvSize, uvUsage, devMem, 8u};
 		stageSize += uvSize;
 
 		data.uvData.resize(uvSize);
@@ -166,22 +156,22 @@ Primitive::Primitive(InitData& data, const tinygltf::Model& model,
 		}
 	}
 
-	data.stage = vpp::SubBuffer{/*vpp::defer, */dev.bufferAllocator(),
+	data.stage = vpp::SubBuffer{data.initStage, wb.alloc.bufStage,
 		stageSize, vk::BufferUsageBits::transferSrc, hostMem};
 
 	// ubo
 	usage = vk::BufferUsageBits::uniformBuffer;
-	ubo_ = {vpp::defer, dev.bufferAllocator(), Primitive::uboSize, usage,
-		hostMem};
+	ubo_ = {data.initUbo, wb.alloc.bufHost, Primitive::uboSize, usage,
+		hostMem, 16u};
 
 	// descriptor
-	ds_ = {vpp::defer, dev.descriptorAllocator(), dsLayout};
+	ds_ = {data.initDs, wb.alloc.ds, dsLayout};
 }
 
-void Primitive::initAlloc(vk::CommandBuffer cb, InitData& data) {
-	vertices_.init();
-	ubo_.init();
-	// data.stage.init();
+void Primitive::init(InitData& data, vk::CommandBuffer cb) {
+	vertices_.init(data.initVert);
+	ubo_.init(data.initUbo);
+	data.stage.init(data.initStage);
 
 	auto map = data.stage.memoryMap();
 	auto span = map.span();
@@ -191,10 +181,10 @@ void Primitive::initAlloc(vk::CommandBuffer cb, InitData& data) {
 	region.dstOffset = vertices_.offset();
 	region.srcOffset = data.stage.offset();
 	region.size = data.vertData.size();
-	vk::cmdCopyBuffer(cb, data.stage.buffer(), vertices_.buffer(), {region});
+	vk::cmdCopyBuffer(cb, data.stage.buffer(), vertices_.buffer(), {{region}});
 
 	if(!data.uvData.empty()) {
-		uv_.init();
+		uv_.init(data.initUv);
 		auto offset = span.data() - map.ptr();
 		doi::write(span, data.uvData.data(), data.uvData.size());
 
@@ -202,16 +192,15 @@ void Primitive::initAlloc(vk::CommandBuffer cb, InitData& data) {
 		region.dstOffset = uv_.offset();
 		region.srcOffset = data.stage.offset() + offset;
 		region.size = data.uvData.size();
-		vk::cmdCopyBuffer(cb, data.stage.buffer(), uv_.buffer(), {region});
+		vk::cmdCopyBuffer(cb, data.stage.buffer(), uv_.buffer(), {{region}});
 	}
 
 	updateDevice();
 
 	// descriptor
-	ds_.init();
+	ds_.init(data.initDs);
 	vpp::DescriptorSetUpdate odsu(ds_);
 	odsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
-	vpp::apply({odsu});
 }
 
 void Primitive::render(vk::CommandBuffer cb,
@@ -219,7 +208,7 @@ void Primitive::render(vk::CommandBuffer cb,
 	auto iOffset = vertices_.offset();
 	auto vOffset = iOffset + indexCount_ * sizeof(std::uint32_t);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pipeLayout, 2, {ds_}, {});
+		pipeLayout, 2, {{ds_.vkHandle()}}, {});
 
 	vk::cmdBindVertexBuffers(cb, 0, 1, {vertices_.buffer()}, {vOffset});
 

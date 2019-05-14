@@ -59,12 +59,11 @@ public:
 
 public:
 	Scene() = default;
-	Scene(const WorkBatcher&, InitData&, nytl::StringParam path,
+	Scene(InitData&, const WorkBatcher&, nytl::StringParam path,
 		const gltf::Model&, const gltf::Scene&, nytl::Mat4f matrix,
 		const SceneRenderInfo&);
 
-	void initAlloc(const WorkBatcher&, InitData&);
-	void initFinish(const WorkBatcher&, InitData&) {}
+	void init(InitData&, const WorkBatcher&);
 	void createImage(unsigned id, bool srgb);
 
 	void render(vk::CommandBuffer, vk::PipelineLayout) const;
@@ -81,7 +80,7 @@ public:
 	auto& defaultSampler() const { return defaultSampler_; }
 
 protected:
-	void loadNode(const WorkBatcher&, InitData&, const gltf::Model&,
+	void loadNode(InitData&, const WorkBatcher&, const gltf::Model&,
 		const gltf::Node&, const SceneRenderInfo&, nytl::Mat4f matrix);
 
 	vpp::Sampler defaultSampler_;

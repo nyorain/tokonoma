@@ -8,9 +8,6 @@
 #include <nytl/vec.hpp>
 
 // all functions only work for color only images
-// TODO: support additional usage flags instead of always assuming
-// pretty much everything
-// TODO: remove old functions
 
 namespace doi {
 
@@ -24,41 +21,10 @@ namespace doi {
 // The default format used when 'hdr = true' is passed is rgba16f, otherwise
 // will use rgba8.
 
-// Wrapper around stb load image function.
-// The returned datas format depends on the given channels and hdr but is
-// tightly packed.
-std::tuple<std::unique_ptr<std::byte[]>, vk::Extent2D> loadImage(
-	nytl::StringParam filename, unsigned channels = 4, bool hdr = false);
-
-// If an explicit format for the texture is given, it must be possible
-// to blit into it with vulkan (vulkan does not allow this for all
-// format conversions).
-vpp::ViewableImage loadTexture(const vpp::Device& dev, nytl::StringParam file,
-	bool srgb = true, bool hdr = false, bool mipmap = true);
-vpp::ViewableImage loadTexture(const vpp::Device& dev, nytl::StringParam file,
-	vk::Format format, bool inputSrgb = false, bool mipmap = true);
-vpp::ViewableImage loadTexture(const vpp::Device& dev, vk::Extent3D size,
-	vk::Format format, nytl::Span<const std::byte> data,
-	vk::Format dataFormat = {}, bool mipmap = true);
-
-// TODO: support mipmaps here as well
-// TODO: overload that takes data and sizes
-// creates an array of textures/a cubemap
-vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
-	nytl::Span<const nytl::StringParam> files, bool cubemap = false,
-	bool srgb = true, bool hdr = false);
-vpp::ViewableImage loadTextureArray(const vpp::Device& dev,
-	nytl::Span<const nytl::StringParam> files, vk::Format format,
-	bool cubemap = false, bool inputSrgb = false);
-
 // returns whether the given format an hold high dynamic range data, i.e.
 // has a float format and can store values >1.0.
 bool isHDR(vk::Format);
 bool isSRGB(vk::Format);
-
-// computes the number of mipmap levels needed for a full mipmap chain
-// for an image of the given size.
-unsigned mipmapLevels(const vk::Extent2D& extent);
 
 // Vulkan enums declared via static to not include vulkan headers
 struct TextureCreateParams {
@@ -80,8 +46,14 @@ struct TextureCreateParams {
 class Texture {
 public:
 	struct InitData {
+		vpp::ViewableImage::InitData initImage {};
+
 		vpp::SubBuffer stageBuf;
+		vpp::SubBuffer::InitData initStageBuf {};
+
 		vpp::Image stageImage;
+		vpp::Image::InitData initStageImage {};
+
 		vk::Format dstFormat;
 		nytl::Vec2ui size;
 		std::vector<std::unique_ptr<std::byte[]>> data;
@@ -94,34 +66,32 @@ public:
 	Texture() = default;
 	Texture(vpp::ViewableImage&& img) : image_(std::move(img)) {}
 
-	Texture(const vpp::Device& dev, nytl::StringParam file,
+	Texture(const WorkBatcher&, nytl::StringParam file,
 		const TextureCreateParams& = {});
-	Texture(const vpp::Device& dev, nytl::Span<const char* const> files,
+	Texture(const WorkBatcher&, nytl::Span<const char* const> files,
 		const TextureCreateParams& = {});
-	Texture(const vpp::Device&,
-		nytl::Span<const std::byte> data,
+	Texture(const WorkBatcher&, nytl::Span<const std::byte> data,
 		vk::Format dataFormat, const vk::Extent2D& size,
 		const TextureCreateParams& = {});
-	Texture(const vpp::Device&,
+	Texture(const WorkBatcher&,
 		std::vector<std::unique_ptr<std::byte[]>> dataLayers,
 		vk::Format dataFormat, const vk::Extent2D& size,
 		const TextureCreateParams& = {});
 
-	Texture(const WorkBatcher&, InitData&, nytl::StringParam file,
+	Texture(InitData&, const WorkBatcher&, nytl::StringParam file,
 		const TextureCreateParams& = {});
-	Texture(const WorkBatcher&, InitData&, nytl::Span<const char* const> files,
+	Texture(InitData&, const WorkBatcher&, nytl::Span<const char* const> files,
 		const TextureCreateParams& = {});
-	Texture(const WorkBatcher&, InitData&,
+	Texture(InitData&, const WorkBatcher&,
 		nytl::Span<const std::byte> data,
 		vk::Format dataFormat, const vk::Extent2D& size,
 		const TextureCreateParams& = {});
-	Texture(const WorkBatcher&, InitData&,
+	Texture(InitData&, const WorkBatcher&,
 		std::vector<std::unique_ptr<std::byte[]>> dataLayers,
 		vk::Format dataFormat, const vk::Extent2D& size,
 		const TextureCreateParams& = {});
 
-	void initAlloc(const WorkBatcher&, InitData&);
-	void initFinish(const WorkBatcher&, InitData&);
+	void init(InitData&, const WorkBatcher&);
 
 	auto& device() const { return image_.device(); }
 	auto& viewableImage() { return image_; }

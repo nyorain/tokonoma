@@ -31,6 +31,12 @@ public:
 		vpp::SubBuffer stage;
 		std::vector<std::byte> vertData;
 		std::vector<std::byte> uvData;
+
+		vpp::SubBuffer::InitData initStage;
+		vpp::SubBuffer::InitData initVert;
+		vpp::SubBuffer::InitData initUv;
+		vpp::SubBuffer::InitData initUbo;
+		vpp::TrDs::InitData initDs;
 	};
 
 	// transform matrix
@@ -39,13 +45,14 @@ public:
 
 public:
 	Primitive() = default;
-	Primitive(const Shape&, const vpp::TrDsLayout&, unsigned material,
+	Primitive(const WorkBatcher& wb,
+		const Shape&, const vpp::TrDsLayout&, unsigned material,
 		const nytl::Mat4f& transform, unsigned id);
-	Primitive(InitData&, const gltf::Model&,
+	Primitive(InitData&, const WorkBatcher& wb, const gltf::Model&,
 		const gltf::Primitive&, const vpp::TrDsLayout&, unsigned material,
 		const nytl::Mat4f& transform, unsigned id);
 
-	void initAlloc(vk::CommandBuffer, InitData&);
+	void init(InitData&, vk::CommandBuffer);
 	void render(vk::CommandBuffer cb, vk::PipelineLayout pipeLayout) const;
 	void updateDevice();
 

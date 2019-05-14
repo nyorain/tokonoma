@@ -62,7 +62,7 @@ Material::Material(const vpp::TrDsLayout& dsLayout,
 Material::Material(InitData& data, const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& dsLayout,
 		vk::ImageView dummyView, Scene& scene) {
-	ds_ = {vpp::defer, dsLayout.device().descriptorAllocator(), dsLayout};
+	ds_ = {data.initDs, dsLayout.device().descriptorAllocator(), dsLayout};
 
 	auto& pbr = material.values;
 	auto& add = material.additionalValues;
@@ -198,7 +198,7 @@ Material::Material(InitData& data, const gltf::Model& model,
 	}
 }
 
-void Material::initAlloc(const Scene& scene, InitData& data) {
+void Material::init(InitData& data, const Scene& scene) {
 	if(!normalTex_.view) {
 		dlg_assert(data.normal <= scene.images().size());
 		normalTex_.view = scene.images()[data.normal].image.vkImageView();
@@ -221,7 +221,7 @@ void Material::initAlloc(const Scene& scene, InitData& data) {
 			scene.images()[data.metalRoughness].image.vkImageView();
 	}
 
-	ds_.init();
+	ds_.init(data.initDs);
 	updateDs();
 }
 
@@ -264,7 +264,7 @@ void Material::bind(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 	vk::cmdPushConstants(cb, pl, vk::ShaderStageBits::fragment, 0,
 		sizeof(data), &data);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pl, 1, {ds_}, {});
+		pl, 1, {{ds_.vkHandle()}}, {});
 }
 
 } // namespace doi

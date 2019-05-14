@@ -7,10 +7,10 @@
 #include <vui/gui.hpp>
 #include <vpp/device.hpp>
 #include <vpp/physicalDevice.hpp>
-#include <vpp/renderPass.hpp>
-#include <vpp/instance.hpp>
+#include <vpp/handles.hpp>
 #include <vpp/formats.hpp>
 #include <vpp/vk.hpp>
+#include <vpp/submit.hpp>
 #include <vpp/debug.hpp>
 #include <ny/appContext.hpp>
 #include <ny/asyncRequest.hpp>
@@ -53,6 +53,19 @@ void translate(nytl::Mat4<T>& mat, nytl::Vec3<T> move) {
 	for(auto i = 0; i < 3; ++i) {
 		mat[i][3] += move[i];
 	}
+}
+
+// allow to set breakpoint for errors/warnings
+static unsigned dlgErrors = 0;
+static unsigned dlgWarnings = 0;
+void dlgHandler(const struct dlg_origin* origin, const char* string, void* data) {
+	if(origin->level == dlg_level_error) {
+		++dlgErrors;
+	} else if(origin->level == dlg_level_warn) {
+		++dlgWarnings;
+	}
+
+	dlg_default_output(origin, string, data);
 }
 
 /// GuiListener
@@ -179,7 +192,7 @@ struct App::Impl {
 
 	vpp::Instance instance;
 	std::optional<vpp::Device> device;
-	std::optional<vpp::DebugCallback> debugCallback;
+	std::optional<vpp::DebugMessenger> debugMessenger;
 
 	std::optional<MainWindow> window;
 	std::optional<RenderImpl> renderer;
@@ -210,6 +223,7 @@ App::App() = default;
 App::~App() = default;
 
 bool App::init(nytl::Span<const char*> args) {
+	dlg_set_handler(dlgHandler, nullptr);
 	impl_ = std::make_unique<Impl>();
 
 	// arguments
@@ -246,7 +260,7 @@ bool App::init(nytl::Span<const char*> args) {
 
 	// vulkan init: instance
 	auto iniExtensions = appContext().vulkanExtensions();
-	iniExtensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+	iniExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
 	// TODO: don't require 1.1 since it's not really needed for any app
 	// (just some tests with it in sen). Also not supported in vkpp yet
@@ -288,7 +302,7 @@ bool App::init(nytl::Span<const char*> args) {
 	// debug callback
 	auto& ini = impl_->instance;
 	if(args_.layers) {
-		impl_->debugCallback.emplace(ini);
+		impl_->debugMessenger.emplace(ini);
 	}
 
 	// init ny window
@@ -317,7 +331,7 @@ bool App::init(nytl::Span<const char*> args) {
 	vk::PhysicalDevice phdev {};
 	using std::get;
 	if(args_.phdev.index() == 0 && get<0>(args_.phdev) == DevType::choose) {
-		phdev = vpp::choose(phdevs, ini, vkSurf);
+		phdev = vpp::choose(phdevs, vkSurf);
 	} else {
 		auto i = args_.phdev.index();
 		vk::PhysicalDeviceType type;
@@ -351,7 +365,7 @@ bool App::init(nytl::Span<const char*> args) {
 	dlg_debug("Using device: {}", p.deviceName.data());
 
 	auto queueFlags = vk::QueueBits::compute | vk::QueueBits::graphics;
-	int queueFam = vpp::findQueueFamily(phdev, ini, vkSurf, queueFlags);
+	int queueFam = vpp::findQueueFamily(phdev, vkSurf, queueFlags);
 
 	vk::DeviceCreateInfo devInfo;
 	vk::DeviceQueueCreateInfo queueInfo({}, queueFam, 1, priorities);
@@ -444,8 +458,7 @@ bool App::init(nytl::Span<const char*> args) {
 		fontPath += "assets/Roboto-Regular.ttf";
 		// fontPath += "assets/OpenSans-Light.ttf";
 		// fontPath += "build/Lucida-Grande.ttf"; // nonfree
-		impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath, fontHeight);
-		impl_->fontAtlas->bake(rvgContext());
+		impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath);
 
 		// gui
 		impl_->guiListener.app(*this);

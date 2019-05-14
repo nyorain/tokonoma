@@ -28,6 +28,7 @@ public:
 		unsigned metalRoughness;
 		unsigned occlusion;
 		unsigned normal;
+		vpp::TrDs::InitData initDs;
 	};
 
 	static vk::PushConstantRange pcr();
@@ -42,7 +43,7 @@ public:
 	Material(InitData&, const gltf::Model&, const gltf::Material&,
 		const vpp::TrDsLayout&, vk::ImageView dummy, Scene& scene);
 
-	void initAlloc(const Scene&, InitData&);
+	void init(InitData&, const Scene&);
 
 	// Returns true if this material has *any* texture
 	bool hasTexture() const;
