@@ -55,10 +55,6 @@
 #include <cstdlib>
 #include <random>
 
-// TODO: fix vpp shared buffer fixes. Maybe test it in vpp...
-//   also fix formats.cpp: findSupported e.g. throws
-//   on error, the image type handling is really bad.
-//   NOTE: contains breaking change in formats.cpp
 // TODO: maybe do high pass on light output *after* blending.
 //   currently, when there are many light shining on a surface
 //   the surface gets bright (obviously) but is not added to
@@ -66,6 +62,9 @@
 //   requires additional pass though
 // TODO: re-add light scattering (per light?)
 //   even if per-light we can still apply if after lightning pass
+//   probably best to just use one buffer for all lights though, right?
+//   probably not a bad idea to use that buffer with additional blending
+//   as additional attachment in the light pass
 // TODO: we should be able to always use the same attenuation (or at least
 //   make it independent from radius) by normalizing distance from light
 //   (dividing by radius) before caluclating attunation
@@ -161,6 +160,8 @@
 //   maybe good for ssao or something?
 // TODO: look into vk_khr_multiview (promoted to vulkan 1.1?) for
 //   cubemap rendering (point lights, but also skybox transformation)
+// idea: just treat light scattering as emission? get the strong blur for free.
+//   probably way too strong though...
 
 // NOTE: investigate/compare deferred lightning elements?
 //   http://gameangst.com/?p=141
@@ -320,7 +321,7 @@ protected:
 	doi::Skybox skybox_;
 
 	// needed for point light rendering.
-	// TODO: also contained in skybox, share them somehow.
+	// TODO: also needed for skybox
 	vpp::SubBuffer boxIndices_;
 
 	// image view into the depth buffer that accesses all depth levels
@@ -1901,7 +1902,8 @@ vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 
 	// create the viewable image
 	// will set the created image in the view info for us
-	vpp::ViewableImage target = {device(), img, view};
+	vpp::ViewableImage target = {device(), img, view,
+		device().deviceMemoryTypes()};
 
 	return target;
 }
@@ -1915,6 +1917,7 @@ static constexpr auto defaultAttachmentUsage =
 void ViewApp::initBuffers(const vk::Extent2D& size,
 		nytl::Span<RenderBuffer> bufs) {
 	auto& dev = vulkanDevice();
+	auto devMem = dev.deviceMemoryTypes();
 	depthTarget() = createDepthTarget(size);
 
 	std::vector<vk::ImageView> attachments;
@@ -1931,7 +1934,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 			vk::ImageUsageFlags extraUsage = {}) {
 		auto info = getCreateInfo(format,
 			defaultAttachmentUsage | extraUsage);
-		img = {device(), info};
+		img = {device(), info, devMem};
 		attachments.push_back(img.vkImageView());
 	};
 
@@ -1949,7 +1952,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	auto info = getCreateInfo(emissionFormat, usage);
 	auto bloomLevels = std::min(maxBloomLevels, vpp::mipmapLevels(size));
 	info.img.mipLevels = 1 + bloomLevels;
-	gpass_.emission = {device(), info};
+	gpass_.emission = {device(), info, devMem};
 
 	attachments.push_back(gpass_.emission.vkImageView());
 	attachments.push_back(depthTarget().vkImageView()); // depth
@@ -1964,7 +1967,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		vk::ImageUsageBits::sampled;
 	info = getCreateInfo(ldepthFormat, usage);
 	info.img.mipLevels = depthMipLevels_;
-	gpass_.depth = {device(), info};
+	gpass_.depth = {device(), info, devMem};
 	attachments.push_back(gpass_.depth.vkImageView());
 
 	info.view.subresourceRange.levelCount = depthMipLevels_;
@@ -2033,7 +2036,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		info = getCreateInfo(emissionFormat, usage);
 		info.img.extent = {size.width / 2, size.height / 2, 1u};
 		info.img.mipLevels = bloomLevels;
-		bloom_.tmpTarget = {device(), info.img};
+		bloom_.tmpTarget = {device(), info.img, devMem};
 
 		bloomLevels_ = bloomLevels;
 		bloom_.emissionLevels.clear();
@@ -2073,7 +2076,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 			vk::ImageUsageBits::sampled |
 			vk::ImageUsageBits::inputAttachment;
 		info = getCreateInfo(ssrFormat, usage);
-		ssr_.target = {device(), info};
+		ssr_.target = {device(), info, devMem};
 	} else {
 		ssr_.target = {};
 	}

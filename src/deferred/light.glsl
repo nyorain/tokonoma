@@ -99,7 +99,7 @@ void main() {
 
 		// NOTE: this one turns out to be be best.
 		// the pow leads to pushing the color vector towards
-		// length 1 (higher power means stronger towards 1).
+		// length 1 (lower power means stronger towards 1).
 		// this is important since otherwise single well-lit pixels
 		// may create really bright bloom which leads to bloom popping
 		// when moving

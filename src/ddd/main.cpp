@@ -1,6 +1,5 @@
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/transform.hpp>
 #include <stage/texture.hpp>
@@ -22,9 +21,12 @@
 #include <ny/mouseButton.hpp>
 
 #include <vpp/sharedBuffer.hpp>
+#include <vpp/init.hpp>
 #include <vpp/trackedDescriptor.hpp>
+#include <vpp/submit.hpp>
+#include <vpp/vk.hpp>
+#include <vpp/commandAllocator.hpp>
 #include <vpp/formats.hpp>
-#include <vpp/pipelineInfo.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/bufferOps.hpp>
 #include <vpp/imageOps.hpp>
@@ -62,7 +64,24 @@ public:
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
 		auto hostMem = dev.hostMemoryTypes();
-		skybox_.init(dev, renderPass(), 0, samples());
+		vpp::DeviceMemoryAllocator memStage(dev);
+		vpp::BufferAllocator bufStage(memStage);
+
+		auto& qs = dev.queueSubmitter();
+		auto qfam = qs.queue().family();
+		auto cb = dev.commandAllocator().get(qfam);
+		vk::beginCommandBuffer(cb, {});
+
+		alloc_.emplace(dev);
+		auto& alloc = *this->alloc_;
+		doi::WorkBatcher batch{dev, cb, {
+				alloc.memDevice, alloc.memHost, memStage,
+				alloc.bufDevice, alloc.bufHost, bufStage,
+				dev.descriptorAllocator(),
+			}
+		};
+
+		skybox_.init(batch, renderPass(), 0, samples());
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -83,7 +102,7 @@ public:
 		std::memcpy(data.get(), idata.data(), 4u);
 		std::vector<std::unique_ptr<std::byte[]>> faces;
 		faces.emplace_back(std::move(data));
-		dummyTex_ = {dev, std::move(faces), vk::Format::r8g8b8a8Unorm,
+		dummyTex_ = {batch, std::move(faces), vk::Format::r8g8b8a8Unorm,
 			vk::Extent2D{1u, 1u}};
 
 		// per scense; view + projection matrix, lights
@@ -123,12 +142,12 @@ public:
 		lightDsLayout_ = {dev, lightBindings};
 
 		// pipeline layout consisting of all ds layouts and pcrs
-		pipeLayout_ = {dev, {
-			sceneDsLayout_,
-			materialDsLayout_,
-			primitiveDsLayout_,
-			lightDsLayout_,
-		}, {mpcr}};
+		pipeLayout_ = {dev, {{
+			sceneDsLayout_.vkHandle(),
+			materialDsLayout_.vkHandle(),
+			primitiveDsLayout_.vkHandle(),
+			lightDsLayout_.vkHandle(),
+		}}, {{mpcr}}};
 
 		vk::SpecializationMapEntry maxLightsEntry;
 		maxLightsEntry.size = sizeof(std::uint32_t);
@@ -141,10 +160,10 @@ public:
 
 		vpp::ShaderModule vertShader(dev, ddd_model_vert_data);
 		vpp::ShaderModule fragShader(dev, ddd_model_frag_data);
-		vpp::GraphicsPipelineInfo gpi {renderPass(), pipeLayout_, {{
+		vpp::GraphicsPipelineInfo gpi {renderPass(), pipeLayout_, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment, &fragSpec},
-		}}, 0, samples()};
+		}}}, 0, samples()};
 
 		constexpr auto stride = sizeof(Vertex);
 		vk::VertexInputBindingDescription bufferBindings[2] = {
@@ -187,14 +206,6 @@ public:
 
 		pipe_ = {dev, vkpipe};
 
-		// initialization setup.
-		auto& qs = dev.queueSubmitter();
-		auto qfam = qs.queue().family();
-		auto cb = dev.commandAllocator().get(qfam);
-		vk::beginCommandBuffer(cb, {});
-
-		doi::WorkBatcher batch{dev, cb};
-
 		// Load Model
 		auto s = sceneScale_;
 		auto mat = doi::scaleMat<4, float>({s, s, s});
@@ -208,18 +219,28 @@ public:
 		auto& model = *omodel;
 		auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
 		auto& sc = model.scenes[scene];
-		auto initScene = doi::Initializer<doi::Scene>(batch, path, model, sc,
+		auto initScene = vpp::Init<doi::Scene>(batch, path, model, sc,
 			mat, ri);
-		initScene.alloc(batch);
+		scene_.emplace(initScene.init(batch));
+
+		// box indices
+		std::array<std::uint16_t, 36> indices = {
+			0, 1, 2,  2, 1, 3, // front
+			1, 5, 3,  3, 5, 7, // right
+			2, 3, 6,  6, 3, 7, // top
+			4, 0, 6,  6, 0, 2, // left
+			4, 5, 0,  0, 5, 1, // bottom
+			5, 4, 7,  7, 4, 6, // back
+		};
+
+		boxIndices_ = {alloc.bufDevice,
+			36u * sizeof(std::uint16_t),
+			vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
+			dev.deviceMemoryTypes(), 4u};
+		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
 
 		vk::endCommandBuffer(cb);
-		vk::SubmitInfo si;
-		si.commandBufferCount = 1;
-		si.pCommandBuffers = &cb.vkHandle();
-		auto id = qs.add(si);
-		qs.wait(id);
-
-		scene_ = {initScene.finish(batch)};
+		qs.wait(qs.add(cb));
 
 		// add light primitive
 		lightMaterial_.emplace(materialDsLayout_,
@@ -231,7 +252,7 @@ public:
 			+ sizeof(nytl::Vec3f); // viewPos
 		sceneDs_ = {dev.descriptorAllocator(), sceneDsLayout_};
 		sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
-			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
+			vk::BufferUsageBits::uniformBuffer, hostMem};
 
 		// == example light ==
 		shadowData_ = doi::initShadowData(dev, depthFormat(),
@@ -246,8 +267,8 @@ public:
 
 		// descriptors
 		vpp::DescriptorSetUpdate sdsu(sceneDs_);
-		sdsu.uniform({{sceneUbo_.buffer(), sceneUbo_.offset(), sceneUbo_.size()}});
-		vpp::apply({sdsu});
+		sdsu.uniform({{{sceneUbo_}}});
+		sdsu.apply();
 
 		return true;
 	}
@@ -288,12 +309,15 @@ public:
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {sceneDs_}, {});
+			pipeLayout_, 0, {{sceneDs_.vkHandle()}}, {});
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 3, {light_.ds()}, {});
+			pipeLayout_, 3, {{light_.ds().vkHandle()}}, {});
 		scene_->render(cb, pipeLayout_);
 		lightMaterial_->bind(cb, pipeLayout_);
-		light_.lightBall().render(cb, pipeLayout_);
+		// light_.lightBall().render(cb, pipeLayout_);
+
+		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
+			boxIndices_.offset(), vk::IndexType::uint16);
 		skybox_.render(cb);
 	}
 
@@ -438,11 +462,27 @@ protected:
 	// args
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
+
+	vpp::SubBuffer boxIndices_;
+
+	struct Alloc {
+		vpp::DeviceMemoryAllocator memHost;
+		vpp::DeviceMemoryAllocator memDevice;
+
+		vpp::BufferAllocator bufHost;
+		vpp::BufferAllocator bufDevice;
+
+		Alloc(const vpp::Device& dev) :
+			memHost(dev), memDevice(dev),
+			bufHost(memHost), bufDevice(memDevice) {}
+	};
+
+	std::optional<Alloc> alloc_;
 };
 
 int main(int argc, const char** argv) {
 	ViewApp app;
-	if(!app.init({*argv, std::size_t(argc)})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 
