@@ -6,6 +6,7 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <nytl/mat.hpp>
+#include <nytl/vec.hpp>
 #include <nytl/stringParam.hpp>
 
 namespace doi {
@@ -29,7 +30,6 @@ protected:
 	void writeDs();
 	void initPipeline(const vpp::Device&, vk::RenderPass rp, unsigned subpass,
 		vk::SampleCountBits samples);
-	void createIrradiance();
 
 protected:
 	const vpp::Device* dev_;

@@ -136,6 +136,11 @@ executable('sen', [
 		sen_shaders,
 	], dependencies: stage_dep)
 
+executable('pbr', [
+		'src/pbr/main.cpp',
+		stage_shaders,
+	], dependencies: stage_dep)
+
 # executable('pg',
 # 	'src/playground/main2.cpp',
 # 	dependencies: stage_dep)

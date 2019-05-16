@@ -40,6 +40,7 @@ stage_src = [
 	'physics.cpp',
 	'texture.cpp',
 	'image.cpp',
+	'headless.cpp',
 
 	'scene/scene.cpp',
 	'scene/material.cpp',
@@ -47,6 +48,7 @@ stage_src = [
 	'scene/shape.cpp',
 	'scene/light.cpp',
 	'scene/skybox.cpp',
+	'scene/pbr.cpp',
 
 	stage_shaders,
 ]

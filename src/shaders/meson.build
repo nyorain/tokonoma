@@ -38,6 +38,8 @@ shaders_src = {
 		['shaders/equirectToCube.frag'],
 		['shaders/incolor.frag'],
 		['shaders/irradiance.frag'],
+		['shaders/irradiance.comp'],
+		['shaders/brdflut.comp'],
 		['shaders/texture.frag'],
 		['shaders/simple.vert'],
 	],

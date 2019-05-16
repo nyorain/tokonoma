@@ -273,7 +273,7 @@ bool App::init(nytl::Span<const char*> args) {
 
 	std::vector<const char*> layers;
 	if(args_.layers) {
-		layers.push_back("VK_LAYER_LUNARG_standard_validation");
+		layers.push_back("VK_LAYER_KHRONOS_validation");
 	}
 
 	if(args_.renderdoc) {
