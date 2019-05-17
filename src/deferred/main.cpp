@@ -2781,6 +2781,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 			ssr_.pipe);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 			ssr_.pipeLayout, 0, {{sceneDs_.vkHandle(), ssr_.ds.vkHandle()}}, {});
+		dlg_info("dispatch: {} {}", std::ceil(width / 8.f), std::ceil(height / 8.f));
 		vk::cmdDispatch(cb, std::ceil(width / 8.f), std::ceil(height / 8.f), 1);
 
 		barrier.oldLayout = vk::ImageLayout::general;

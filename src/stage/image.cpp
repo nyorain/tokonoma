@@ -1,173 +1,183 @@
 #include <stage/image.hpp>
+#include <stage/types.hpp>
+#include <stage/util.hpp>
 #include <dlg/dlg.hpp>
 #include <nytl/scope.hpp>
+#include <nytl/span.hpp>
+#include <vkpp/enums.hpp>
+#include <vpp/imageOps.hpp>
+#include <dlg/dlg.hpp>
 
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstdio>
-#include <csetjmp>
 
-#include <turbojpeg.h>
-#include <png.h>
+// make stbi std::unique_ptr<std::byte[]> compatible
+namespace {
+void* stbiRealloc(void* old, std::size_t newSize) {
+	delete[] (std::byte*) old;
+	return (void*) (new std::byte[newSize]);
+}
+} // anon namespace
+
+#define STBI_FREE(p) (delete[] (std::byte*) p)
+#define STBI_MALLOC(size) ((void*) new std::byte[size])
+#define STBI_REALLOC(p, size) (stbiRealloc((void*) p, size))
+#include "stb_image.h"
+
+using namespace doi::types;
 
 namespace doi {
 
-// TODO: unix only atm. Really efficient though, using mmap.
-// probably best to implement C-based alternative that is used on
-// non-unix (or non-linux; not sure how cross platform mmap is) platforms
-Error loadJpeg(nytl::StringParam filename, Image& img) {
-	auto fd = ::open(filename.c_str(), O_RDONLY);
-	if(fd < 0) {
-		// dlg_warn("Image file doesn't exist: '{}'", filename);
-		return Error::invalidPath;
+// ImageProvider api
+std::unique_ptr<ImageProvider> readStb(nytl::StringParam path, bool hdr) {
+	auto img = readImageStb(path, hdr);
+	if(!img.data) {
+		return {};
 	}
 
-	auto fdGuard = nytl::ScopeGuard([&]{ ::close(fd); });
-	auto len = ::lseek(fd, 0, SEEK_END);
-	if(len < 0) {
-		// dlg_warn("Can't seek on image '{}'", filename);
-		return Error::invalidPath;
-	}
-
-	auto data = ::mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, 0);
-	if(data == MAP_FAILED || !data) {
-		// dlg_warn("Can't mmap image '{}'", filename);
-		return Error::invalidPath;
-	}
-	auto mmapGuard = nytl::ScopeGuard([&]{ ::munmap(data, len); });
-	auto cdata = static_cast<unsigned char*>(data); // const
-
-	auto jpeg = ::tjInitDecompress();
-	if(!jpeg) {
-		// dlg_warn("Can't initialize jpeg decompressor ('{}')", filename);
-		return Error::internal;
-	}
-	auto jpegGuard = nytl::ScopeGuard([&]{ ::tjDestroy(jpeg); });
-
-	int width, height;
-	int res = ::tjDecompressHeader(jpeg, cdata, len, &width, &height);
-	if(res) {
-		// dlg_warn("Invalid jpeg header (error {}), probably not jpeg: '{}'",
-			// res, filename);
-		return Error::invalidType;
-	}
-
-	auto buffer = std::make_unique<std::byte[]>(width * height * 4);
-	auto ptr = reinterpret_cast<unsigned char*>(buffer.get());
-	res = ::tjDecompress2(jpeg, cdata, len, ptr, width, 0, height,
-		TJPF_RGBA, TJFLAG_FASTDCT);
-	if(res) {
-		// dlg_warn("Can't decompress jpeg (error {}): '{}'", res, filename);
-		return Error::internal;
-	}
-
-	img.width = width;
-	img.height = height;
-	img.data = std::move(buffer);
-	return Error::none;
+	return wrap(std::move(img));
 }
 
-Error loadPng(nytl::StringParam filename, Image& img) {
-	auto file = ::fopen(filename.c_str(), "rb");
-	if(!file) {
-		return Error::invalidPath;
-	}
-	auto fileGuard = nytl::ScopeGuard([&]{ ::fclose(file); });
+// TODO: the other loaders should respect hdr as well i guess...
+std::unique_ptr<ImageProvider> read(nytl::StringParam path, bool hdr) {
+	std::unique_ptr<ImageProvider> reader;
+	bool triedpng = false;
+	bool triedjpg = false;
+	bool triedktx = false;
 
-	unsigned char sig[8];
-	::fread(sig, 1, sizeof(sig), file);
-	if(::png_sig_cmp(sig, 0, sizeof(sig))) {
-    	return Error::invalidType;
-  	}
-
-	png_infop info = nullptr;
-	auto png = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr,
-		nullptr, nullptr);
-	if(!png) {
-    	return Error::invalidType;
-	}
-	auto pngGuard = nytl::ScopeGuard([&]{
-		::png_destroy_read_struct(&png, &info, nullptr);
-	});
-
-	info = png_create_info_struct(png);
-	if(!info) {
-    	return Error::invalidType;
+	// first try detecting the type based of suffix
+	if(has_suffix(path, ".png")) {
+		triedpng = true;
+		if(readPng(path, reader) == ReadError::none) {
+			return reader;
+		}
+	} else if(has_suffix(path, ".jpg") || has_suffix(path, ".jpeg")) {
+		triedjpg = true;
+		if(readJpeg(path, reader) == ReadError::none) {
+			return reader;
+		}
+	} else if(has_suffix(path, ".ktx")) {
+		triedktx = true;
+		if(readKtx(path, reader) == ReadError::none) {
+			return reader;
+		}
 	}
 
-	if(::setjmp(png_jmpbuf(png))) {
-		return Error::invalidType;
+	// then just try all remaining loaders
+	if(!triedpng) {
+		if(readPng(path, reader) == ReadError::none) {
+			return reader;
+		}
+	}
+	if(!triedjpg) {
+		if(readJpeg(path, reader) == ReadError::none) {
+			return reader;
+		}
+	}
+	if(!triedktx) {
+		if(readKtx(path, reader) == ReadError::none) {
+			return reader;
+		}
 	}
 
-	png_init_io(png, file);
-	png_set_sig_bytes(png, sizeof(sig));
-	png_read_info(png, info);
-
-	// always read rgba8
-	auto width = png_get_image_width(png, info);
-	auto height = png_get_image_height(png, info);
-	auto color_type = png_get_color_type(png, info);
-	auto bit_depth  = png_get_bit_depth(png, info);
-
-	if(bit_depth == 16) {
-		png_set_strip_16(png);
-	}
-
-	if(color_type == PNG_COLOR_TYPE_PALETTE) {
-		png_set_palette_to_rgb(png);
-	}
-
-	if(color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8) {
-		png_set_expand_gray_1_2_4_to_8(png);
-	}
-
-	if(png_get_valid(png, info, PNG_INFO_tRNS)) {
-		png_set_tRNS_to_alpha(png);
-	}
-
-	if(color_type == PNG_COLOR_TYPE_RGB ||
-			color_type == PNG_COLOR_TYPE_GRAY ||
-			color_type == PNG_COLOR_TYPE_PALETTE) {
-		png_set_filler(png, 0xFF, PNG_FILLER_AFTER);
-	}
-
-	if(color_type == PNG_COLOR_TYPE_GRAY ||
-			color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
-		png_set_gray_to_rgb(png);
-	}
-
-	png_read_update_info(png, info);
-
-	std::unique_ptr<png_bytep[]> rows;
-	std::unique_ptr<std::byte[]> buffer;
-	if(::setjmp(png_jmpbuf(png))) {
-		return Error::internal;
-	}
-
-	rows = std::make_unique<png_bytep[]>(height);
-	auto rowSize = png_get_rowbytes(png, info);
-	buffer = std::make_unique<std::byte[]>(height * rowSize);
-	auto ptr = reinterpret_cast<unsigned char*>(buffer.get());
-  	for(auto y = 0u; y < height; ++y) {
-		rows[y] = ptr + rowSize * y;
-	}
-
-	png_read_image(png, rows.get());
-
-	img.width = width;
-	img.height = height;
-	img.data = std::move(buffer);
-	return Error::none;
+	// stb is our last fallback
+	return readStb(path, hdr);
 }
 
-Error load(nytl::StringParam filename, Image& img) {
-	auto err = loadPng(filename, img);
-	if(err == Error::none) {
-		return err;
+// Image api
+Image readImageStb(nytl::StringParam path, bool hdr) {
+	constexpr auto channels = 4u; // TODO: make configurable
+	int width, height, ch;
+	std::byte* data;
+	Image ret;
+	if(hdr) {
+		auto fd = stbi_loadf(path.c_str(), &width, &height, &ch, channels);
+		data = reinterpret_cast<std::byte*>(fd);
+		ret.format = vk::Format::r8g8b8a8Unorm;
+	} else {
+		auto cd = stbi_load(path.c_str(), &width, &height, &ch, channels);
+		data = reinterpret_cast<std::byte*>(cd);
+		ret.format = vk::Format::r32g32b32a32Sfloat;
 	}
 
-	return loadJpeg(filename, img);
+	if(!data) {
+		dlg_warn("Failed to open texture file {}", path);
+
+		std::string err = "Could not load image from ";
+		err += path;
+		err += ": ";
+		err += stbi_failure_reason();
+		return ret;
+	}
+
+	ret.data.reset(data);
+	ret.size.x = width;
+	ret.size.y = height;
+	return ret;
+}
+
+
+Image readImage(nytl::StringParam path, bool hdr) {
+	auto provider = read(path, hdr);
+	if(!provider) {
+		return {};
+	}
+
+	return readImage(*provider);
+}
+
+Image readImage(ImageProvider& provider) {
+	dlg_assertlm(dlg_level_debug, provider.faces() == 1,
+		"readImage: discarding {} faces", provider.faces() - 1);
+	dlg_assertlm(dlg_level_debug, provider.layers() == 1,
+		"readImage: discarding {} layers", provider.layers() - 1);
+	dlg_assertlm(dlg_level_debug, provider.mipLevels() == 1,
+		"readImage: discarding {} mip levels", provider.mipLevels() - 1);
+
+	Image ret;
+	ret.format = provider.format();
+	ret.size = provider.size();
+
+	auto byteSize = ret.size.x * ret.size.y * vpp::formatSize(ret.format);
+	ret.data = std::make_unique<std::byte[]>(byteSize);
+	if(!provider.read({ret.data.get(), ret.data.get() + byteSize})) {
+		return {};
+	}
+
+	return ret;
+}
+
+class MemImageProvider : public ImageProvider {
+public:
+	Image image;
+
+public:
+	nytl::Vec2ui size() const override { return image.size; }
+	vk::Format format() const override { return image.format; }
+
+	nytl::Span<std::byte> read(unsigned face = 0, unsigned mip = 0,
+			unsigned layer = 0) override {
+		dlg_assert(face == 0 && mip == 0 && layer == 0);
+		auto byteSize = size().x * size().y * vpp::formatSize(format());
+		return {image.data.get(), image.data.get() + byteSize};
+	}
+
+	bool read(nytl::Span<std::byte> data,
+			unsigned face = 0, unsigned mip = 0, unsigned layer = 0) override {
+		dlg_assert(face == 0 && mip == 0 && layer == 0);
+		auto byteSize = size().x * size().y * vpp::formatSize(format());
+		dlg_assert(data.size() >= byteSize);
+		std::memcpy(data.data(), image.data.get(), byteSize);
+		return true;
+	}
+};
+
+std::unique_ptr<ImageProvider> wrap(Image&& image) {
+	auto ret = std::make_unique<MemImageProvider>();
+	ret->image = std::move(image);
+	return ret;
 }
 
 } // namespace doi

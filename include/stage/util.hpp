@@ -2,6 +2,7 @@
 
 #include <nytl/stringParam.hpp>
 #include <cstdlib>
+#include <string>
 
 // file: general utility that hasn't found a better place yet
 
@@ -18,6 +19,11 @@ bool stoi(nytl::StringParam string, T& val, unsigned base = 10) {
 
 	val = v;
 	return true;
+}
+
+inline bool has_suffix(std::string_view str, std::string_view suffix) {
+    return str.size() >= suffix.size() &&
+        str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 } // namespace doi

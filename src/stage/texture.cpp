@@ -12,37 +12,21 @@
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
 
-// stbi supports more format (especially hdr) but our own jpeg/png
-// loaders (using the libraries) are *way* faster.
-constexpr bool tryStageImage = true;
-
 // TODO(optimization): we could compare requested format with formats supported
 //   by stbi instead of blitting even e.g. for r8 formats (which are supported
 //   by stbi by passing channels=1)
 // TODO: support for compressed formats, low priority for now
-//   supporit ktx and dds formats, shouldn't be too hard
 // TODO: check if blit is supported in format flags
+// TODO: switch to image provider api, support ktx loading
 
-// make stbi std::unique_ptr<std::byte[]> compatible
-namespace {
-void* stbiRealloc(void* old, std::size_t newSize) {
-	delete[] (std::byte*) old;
-	return (void*) (new std::byte[newSize]);
-}
-} // anon namespace
-
-#define STBI_FREE(p) (delete[] (std::byte*) p)
-#define STBI_MALLOC(size) ((void*) new std::byte[size])
-#define STBI_REALLOC(p, size) (stbiRealloc((void*) p, size))
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wcast-align"
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_STATIC // needed, otherwise we mess with other usages
-#pragma GCC diagnostic ignored "-Wunused-function" // static functions
-#include "stb_image.h"
-#pragma GCC diagnostic pop
+// #pragma GCC diagnostic push
+// #pragma GCC diagnostic ignored "-Wcast-align"
+// #pragma GCC diagnostic ignored "-Wunused-parameter"
+// #define STB_IMAGE_IMPLEMENTATION
+// #define STB_IMAGE_STATIC // needed, otherwise we mess with other usages
+// #pragma GCC diagnostic ignored "-Wunused-function" // static functions
+// #include "stb_image.h"
+// #pragma GCC diagnostic pop
 
 namespace doi {
 using namespace doi::types;
@@ -53,57 +37,12 @@ const vk::ImageUsageFlags TextureCreateParams::defaultUsage =
 	vk::ImageUsageBits::inputAttachment;
 const vk::Format TextureCreateParams::defaultFormat = vk::Format::r8g8b8a8Srgb;
 
-std::tuple<std::unique_ptr<std::byte[]>, vk::Extent2D> loadImage(
-		nytl::StringParam filename, unsigned channels, bool hdr) {
-	if(tryStageImage && !hdr && channels == 4) {
-		Image image;
-		auto err = load(filename, image);
-		if(err == Error::none) {
-			vk::Extent2D ext{image.width, image.height};
-			return {std::move(image.data), ext};
-		} else {
-			dlg_debug("Loading image with internal loader failed: Error {}",
-				(unsigned) err);
-		}
-	}
-
-	dlg_assertlm(dlg_level_debug, stbi_is_hdr(filename.c_str()) == hdr,
-		"texture '{}' requires stbi hdr conversion", filename);
-
-	int width, height, ch;
-	std::byte* data;
-	if(hdr) {
-		auto fd = stbi_loadf(filename.c_str(), &width, &height, &ch, channels);
-		data = reinterpret_cast<std::byte*>(fd);
-	} else {
-		auto cd = stbi_load(filename.c_str(), &width, &height, &ch, channels);
-		data = reinterpret_cast<std::byte*>(cd);
-	}
-
-	if(!data) {
-		dlg_warn("Failed to open texture file {}", filename);
-
-		std::string err = "Could not load image from ";
-		err += filename;
-		err += ": ";
-		err += stbi_failure_reason();
-		throw std::runtime_error(err);
-	}
-
-	dlg_assert(width > 0 && height > 0);
-
-	vk::Extent2D extent;
-	extent.width = width;
-	extent.height = height;
-	return {std::unique_ptr<std::byte[]>(data), extent};
-}
-
 // texture
 Texture::Texture(InitData& data, const WorkBatcher& batcher,
 		nytl::StringParam file, const TextureCreateParams& params) {
 	auto hdr = isHDR(params.format);
 	auto srgb = isSRGB(params.format);
-	auto [imageData, imageSize] = loadImage(file, 4, hdr);
+	auto img = readImage(file, hdr);
 
 	auto dataFormat = hdr ?
 		vk::Format::r32g32b32a32Sfloat :
@@ -111,9 +50,9 @@ Texture::Texture(InitData& data, const WorkBatcher& batcher,
 			vk::Format::r8g8b8a8Srgb :
 			vk::Format::r8g8b8a8Unorm;
 	std::vector<std::unique_ptr<std::byte[]>> layers;
-	layers.emplace_back(std::move(imageData));
+	layers.emplace_back(std::move(img.data));
 	*this = {data, batcher, std::move(layers), dataFormat,
-		imageSize, params};
+		{img.size.x, img.size.y}, params};
 }
 
 Texture::Texture(InitData& data, const WorkBatcher& batcher,
@@ -132,7 +71,7 @@ Texture::Texture(InitData& data, const WorkBatcher& batcher,
 	vk::Extent2D size;
 
 	for(auto filename : files) {
-		auto [data, extent] = loadImage(filename, 4, hdr);
+		auto image = loadImage(filename, hdr);
 		dlg_assert(extent.width > 0 && extent.height > 0);
 		if(size.width == 0 || size.height == 0) {
 			size.width = extent.width;

@@ -4,6 +4,7 @@
 #include <stage/quaternion.hpp>
 #include <stage/transform.hpp>
 #include <stage/texture.hpp>
+#include <stage/util.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/image.hpp>
 #include <dlg/dlg.hpp>
@@ -234,11 +235,6 @@ void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 }
 
 // util
-bool has_suffix(const std::string_view& str, const std::string_view& suffix) {
-    return str.size() >= suffix.size() &&
-           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam at) {
 
 	// Load Model
