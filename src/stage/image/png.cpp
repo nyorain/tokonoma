@@ -142,4 +142,14 @@ ReadError readPng(nytl::StringParam path, PngReader& reader) {
 	return ReadError::none;
 }
 
+ReadError readPng(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
+	auto reader = std::make_unique<PngReader>();
+	auto err = readPng(path, *reader);
+	if(err == ReadError::none) {
+		ret = std::move(reader);
+	}
+
+	return err;
+}
+
 } // namespace doi

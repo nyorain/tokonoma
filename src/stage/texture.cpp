@@ -49,6 +49,7 @@ Texture::Texture(InitData& data, const WorkBatcher& batcher,
 		srgb ?
 			vk::Format::r8g8b8a8Srgb :
 			vk::Format::r8g8b8a8Unorm;
+	dlg_assert(vpp::formatSize(img.format) == vpp::formatSize(dataFormat));
 	std::vector<std::unique_ptr<std::byte[]>> layers;
 	layers.emplace_back(std::move(img.data));
 	*this = {data, batcher, std::move(layers), dataFormat,
@@ -71,26 +72,27 @@ Texture::Texture(InitData& data, const WorkBatcher& batcher,
 	vk::Extent2D size;
 
 	for(auto filename : files) {
-		auto image = loadImage(filename, hdr);
-		dlg_assert(extent.width > 0 && extent.height > 0);
+		auto img = readImage(filename, hdr);
+		dlg_assert(vpp::formatSize(img.format) == vpp::formatSize(dataFormat));
+		dlg_assert(img.size.x > 0 && img.size.y > 0);
 		if(size.width == 0 || size.height == 0) {
-			size.width = extent.width;
-			size.height = extent.height;
-		} else if(extent.width != size.width || extent.height != size.height) {
+			size.width = img.size.x;
+			size.height = img.size.y;
+		} else if(img.size.x != size.width || img.size.y != size.height) {
 			std::string msg = "Images for image array have different sizes:";
 			msg += "\n\tFirst image had size (";
 			msg += std::to_string(size.width);
 			msg += ",";
 			msg += std::to_string(size.height);
 			msg += "), while '" + std::string(filename) + "' has size (";
-			msg += std::to_string(extent.width);
+			msg += std::to_string(img.size.x);
 			msg += ",";
-			msg += std::to_string(extent.height);
+			msg += std::to_string(img.size.y);
 			msg += ").";
 			throw std::runtime_error(msg);
 		}
 
-		layers.push_back(std::move(data));
+		layers.push_back(std::move(img.data));
 	}
 
 	*this = {data, batcher, std::move(layers), dataFormat, size, params};

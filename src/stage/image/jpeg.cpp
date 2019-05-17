@@ -39,7 +39,7 @@ public:
 		if(mapped_) {
 			::munmap(mapped_, fileLength_);
 		}
-		if(fd_) {
+		if(fd_ > 0) {
 			::close(fd_);
 		}
 	}
@@ -74,15 +74,17 @@ public:
 };
 
 ReadError readJpeg(nytl::StringParam filename, JpegReader& reader) {
-	reader.fd_ = ::open(filename.c_str(), O_RDONLY);
-	if(reader.fd_ < 0) {
+	auto fd = ::open(filename.c_str(), O_RDONLY);
+	if(fd < 0) {
 		return ReadError::cantOpen;
 	}
+	reader.fd_ = fd;
 
-	reader.fileLength_ = ::lseek(reader.fd_, 0, SEEK_END);
-	if(reader.fileLength_ < 0) {
+	auto length = ::lseek(reader.fd_, 0, SEEK_END);
+	if(length < 0) {
 		return ReadError::internal;
 	}
+	reader.fileLength_ = length;
 
 	auto data = ::mmap(NULL, reader.fileLength_, PROT_READ, MAP_PRIVATE,
 		reader.fd_, 0);

@@ -135,7 +135,7 @@ u32 tftell(std::FILE* stream) {
 }
 
 // wip
-class KTXReader : public ImageProvider {
+class KtxReader : public ImageProvider {
 public:
 	vk::Format format_;
 	nytl::Vec2ui size_;
@@ -147,7 +147,7 @@ public:
 	std::vector<std::byte> tmpData_;
 
 public:
-	~KTXReader() {
+	~KtxReader() {
 		if(file_) {
 			::fclose(file_);
 		}
@@ -196,7 +196,7 @@ public:
 			tfseek(file_, address, SEEK_SET);
 			tfread(&imageSize, 1, iss, file_);
 			if(imageSize != mipSize) {
-				dlg_error("KTXLoader: unexpected imageSize {}, expected {}",
+				dlg_error("KtxReader: unexpected imageSize {}, expected {}",
 					imageSize, mipSize);
 				return false;
 			}
@@ -224,7 +224,7 @@ public:
 		tfseek(file_, address, SEEK_SET);
 		tfread(&imageSize, 1, iss, file_);
 		if(imageSize != mipSize) {
-			dlg_error("KTXLoader: unexpected imageSize {}, expected {}",
+			dlg_error("KtxReader: unexpected imageSize {}, expected {}",
 				imageSize, mipSize);
 			return false;
 		}
@@ -246,7 +246,7 @@ static constexpr std::array<u8, 12> ktxIdentifier = {
 	0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A
 };
 
-struct KTXHeader {
+struct KtxHeader {
 	u32 endianness;
 	u32 glType;
 	u32 glTypeSize;
@@ -262,10 +262,9 @@ struct KTXHeader {
 	u32 bytesKeyValueData;
 };
 
-ReadError readKtx(nytl::StringParam path, KTXReader& reader) {
+ReadError readKtx(nytl::StringParam path, KtxReader& reader) {
 	auto file = std::fopen(path.c_str(), "rb");
 	if(!file) {
-		std::fclose(file);
 		return ReadError::cantOpen;
 	}
 
@@ -280,8 +279,8 @@ ReadError readKtx(nytl::StringParam path, KTXReader& reader) {
 		return ReadError::invalidType;
 	}
 
-	KTXHeader header;
-	if(std::fread(&header, 1u, sizeof(KTXHeader), file) < sizeof(KTXHeader)) {
+	KtxHeader header;
+	if(std::fread(&header, 1u, sizeof(KtxHeader), file) < sizeof(KtxHeader)) {
 		std::fclose(file);
 		return ReadError::unexpectedEnd;
 	}
@@ -327,8 +326,8 @@ ReadError readKtx(nytl::StringParam path, KTXReader& reader) {
 	return ReadError::none;
 }
 
- ReadError readKtx(nytl::StringParam path, std::unique_ptr<ImageProvider> ret) {
-	auto reader = std::make_unique<KTXReader>();
+ReadError readKtx(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
+	auto reader = std::make_unique<KtxReader>();
 	auto err = readKtx(path, *reader);
 	if(err == ReadError::none) {
 		ret = std::move(reader);
@@ -359,7 +358,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 	auto faces = std::max(image.faces(), 1u);
 	auto fmtSize = vpp::formatSize(fmt);
 
-	KTXHeader header;
+	KtxHeader header;
 	header.endianness = ktxEndianess;
 	header.bytesKeyValueData = 0u;
 	header.pixelWidth = size.x;

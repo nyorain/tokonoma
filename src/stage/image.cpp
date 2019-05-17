@@ -24,7 +24,14 @@ void* stbiRealloc(void* old, std::size_t newSize) {
 #define STBI_FREE(p) (delete[] (std::byte*) p)
 #define STBI_MALLOC(size) ((void*) new std::byte[size])
 #define STBI_REALLOC(p, size) (stbiRealloc((void*) p, size))
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC // needed, otherwise we mess with other usages
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "stb_image.h"
+#pragma GCC diagnostic pop
 
 using namespace doi::types;
 
@@ -95,11 +102,11 @@ Image readImageStb(nytl::StringParam path, bool hdr) {
 	if(hdr) {
 		auto fd = stbi_loadf(path.c_str(), &width, &height, &ch, channels);
 		data = reinterpret_cast<std::byte*>(fd);
-		ret.format = vk::Format::r8g8b8a8Unorm;
+		ret.format = vk::Format::r32g32b32a32Sfloat;
 	} else {
 		auto cd = stbi_load(path.c_str(), &width, &height, &ch, channels);
 		data = reinterpret_cast<std::byte*>(cd);
-		ret.format = vk::Format::r32g32b32a32Sfloat;
+		ret.format = vk::Format::r8g8b8a8Unorm;
 	}
 
 	if(!data) {
