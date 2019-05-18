@@ -3,8 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "pbr.glsl"
 
-// layout(local_size_x_id = 0, local_size_y_id = 1) in;
-layout(local_size_x = 8, local_size_y = 8) in;
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
 layout(constant_id = 2) const uint sampleCount = 1024;
 
 // NOTE: we obviously only need rg8 but that is an extended

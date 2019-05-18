@@ -50,7 +50,7 @@ void Skybox::init(const WorkBatcher& wb, nytl::StringParam hdrFile,
 	// once anyways. Add option to loadTexture to allow that
 	auto params = doi::TextureCreateParams {};
 	params.format = vk::Format::r16g16b16a16Sfloat;
-	auto equirectImg = doi::Texture(wb, hdrFile, params);
+	auto equirectImg = doi::Texture(wb, read(hdrFile, true), params);
 	vpp::nameHandle(equirectImg.image(), "Skybox:equirectImg");
 
 	// convert equirectangular to cubemap
@@ -339,7 +339,7 @@ void Skybox::init(const WorkBatcher& wb, vk::RenderPass rp,
 	auto params = doi::TextureCreateParams{};
 	params.format = vk::Format::r8g8b8a8Srgb;
 	params.cubemap = true;
-	cubemap_ = {wb, nameStrings, params};
+	cubemap_ = {wb, readLayers(nameStrings, false), params};
 	writeDs();
 }
 

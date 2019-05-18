@@ -3,6 +3,7 @@
 #include <stage/util.hpp>
 #include <dlg/dlg.hpp>
 #include <nytl/scope.hpp>
+#include <nytl/vecOps.hpp>
 #include <nytl/span.hpp>
 #include <vkpp/enums.hpp>
 #include <vpp/imageOps.hpp>
@@ -32,8 +33,6 @@ void* stbiRealloc(void* old, std::size_t newSize) {
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "stb_image.h"
 #pragma GCC diagnostic pop
-
-using namespace doi::types;
 
 namespace doi {
 
@@ -157,45 +156,203 @@ Image readImage(ImageProvider& provider) {
 
 class MemImageProvider : public ImageProvider {
 public:
-	Image image;
-	nytl::Span<const std::byte> data;
+	struct MipLayerFace {
+		std::unique_ptr<std::byte[]> owned;
+		const std::byte* ref;
+	};
+
+	std::vector<MipLayerFace> data_;
+	unsigned layers_;
+	unsigned faces_;
+	unsigned mips_;
+	nytl::Vec2ui size_;
+	vk::Format format_;
 
 public:
-	nytl::Vec2ui size() const override { return image.size; }
-	vk::Format format() const override { return image.format; }
-
-	nytl::Span<const std::byte> read(unsigned face = 0, unsigned mip = 0,
-			unsigned layer = 0) override {
-		dlg_assert(face == 0 && mip == 0 && layer == 0);
-		return data;
+	u64 faceSize() const {
+		return size_.x * size_.y * vpp::formatSize(format_);
 	}
 
-	bool read(nytl::Span<std::byte> data,
-			unsigned face = 0, unsigned mip = 0, unsigned layer = 0) override {
-		dlg_assert(face == 0 && mip == 0 && layer == 0);
-		auto byteSize = size().x * size().y * vpp::formatSize(format());
-		dlg_assert(data.size() >= byteSize);
-		std::memcpy(data.data(), image.data.get(), byteSize);
+	unsigned layers() const override { return layers_; }
+	unsigned faces() const override { return faces_; }
+	unsigned mipLevels() const override { return mips_; }
+
+	nytl::Vec2ui size() const override { return size_; }
+	vk::Format format() const override { return format_; }
+
+	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0,
+			unsigned face = 0) override {
+		dlg_assert(face < faces() && mip < mipLevels() && layer < layers());
+		auto id = mip * (layers_ * faces_) + layer * faces_ + face;
+		return {data_[id].ref, data_[id].ref + faceSize()};
+	}
+
+	bool read(nytl::Span<std::byte> data, unsigned mip = 0,
+			unsigned layer = 0, unsigned face = 0) override {
+		dlg_assert(face < faces() && mip < mipLevels() && layer < layers());
+		auto id = mip * (layers_ * faces_) + layer * faces_ + face;
+
+		auto byteSize = faceSize();
+		dlg_assert(u64(data.size()) >= byteSize);
+		std::memcpy(data.data(), data_[id].ref, byteSize);
 		return true;
 	}
 };
 
 std::unique_ptr<ImageProvider> wrap(Image&& image) {
 	auto ret = std::make_unique<MemImageProvider>();
-	auto byteSize = image.size.x * image.size.y * vpp::formatSize(image.format);
-	ret->image = std::move(image);
-	ret->data = {ret->image.data.get(), ret->image.data.get() + byteSize};
+	ret->layers_ = ret->faces_ = ret->mips_ = 1u;
+	ret->format_ = image.format;
+	ret->size_ = image.size;
+	auto& data = ret->data_.emplace_back();
+	data.owned = std::move(image.data);
+	data.ref = data.owned.get();
 	return ret;
 }
 
 std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
-		nytl::Span<const std::byte> data) {
-	auto byteSize = size.x * size.y * vpp::formatSize(format);
-	dlg_assert(data.size() >= byteSize);
+		nytl::Span<const std::byte> span) {
+	dlg_assert(span.size() >= size.x * size.y * vpp::formatSize(format));
+
 	auto ret = std::make_unique<MemImageProvider>();
-	ret->data = data.first(byteSize);
-	ret->image.size = size;
-	ret->image.format = format;
+	ret->layers_ = ret->faces_ = ret->mips_ = 1u;
+	ret->format_ = format;
+	ret->size_ = size;
+	auto& data = ret->data_.emplace_back();
+	data.ref = span.data();
+	return ret;
+}
+
+std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
+		unsigned mips, unsigned layers, unsigned faces,
+		nytl::Span<std::unique_ptr<std::byte[]>> data) {
+	dlg_assert(data.size() == mips * layers * faces);
+	auto ret = std::make_unique<MemImageProvider>();
+	ret->mips_ = mips;
+	ret->layers_ = layers;
+	ret->faces_ = faces;
+	ret->format_ = format;
+	ret->size_ = size;
+	ret->data_.reserve(data.size());
+	for(auto& d : data) {
+		auto& rdi = ret->data_.emplace_back();
+		rdi.owned = std::move(d);
+		rdi.ref = rdi.owned.get();
+	}
+
+	return ret;
+}
+
+std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
+		unsigned mips, unsigned layers, unsigned faces,
+		nytl::Span<const std::byte* const> data) {
+	dlg_assert(data.size() == mips * layers * faces);
+	auto ret = std::make_unique<MemImageProvider>();
+	ret->mips_ = mips;
+	ret->layers_ = layers;
+	ret->faces_ = faces;
+	ret->format_ = format;
+	ret->size_ = size;
+	ret->data_.reserve(data.size());
+	for(auto& d : data) {
+		auto& rdi = ret->data_.emplace_back();
+		rdi.ref = d;
+	}
+
+	return ret;
+}
+
+// Layered
+class LayeredImageProvider : public ImageProvider {
+public:
+	std::vector<std::unique_ptr<ImageProvider>> layers_;
+	unsigned faces_ {};
+	unsigned mips_ {};
+	nytl::Vec2ui size_ {};
+	vk::Format format_ = vk::Format::undefined;
+
+public:
+	vk::Format format() const override { return format_; }
+	unsigned faces() const override { return faces_; }
+	unsigned mipLevels() const override { return mips_; }
+	unsigned layers() const override { return layers_.size(); }
+	nytl::Vec2ui size() const override { return size_; }
+
+	bool read(nytl::Span<std::byte> data, unsigned mip = 0, unsigned layer = 0,
+			unsigned face = 0) override {
+		dlg_assert(face < faces_ && mip < mips_ && layer < layers_.size());
+		return layers_[layer]->read(data, face, mip, 0);
+	}
+
+	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0,
+			unsigned face = 0) override {
+		dlg_assert(face < faces_ && mip < mips_ && layer < layers_.size());
+		return layers_[layer]->read(face, mip, 0);
+	}
+};
+
+std::unique_ptr<ImageProvider> readLayers(nytl::Span<const char* const> paths,
+		bool hdr) {
+	auto ret = std::make_unique<LayeredImageProvider>();
+	auto first = false;
+	for(auto& path : paths) {
+		auto provider = read(path, hdr);
+		if(!provider) {
+			return {};
+		}
+
+		if(first) {
+			first = false;
+			ret->format_ = provider->format();
+			ret->size_ = provider->size();
+			ret->faces_ = provider->faces();
+			ret->mips_ = provider->mipLevels();
+		} else {
+			// Make sure that this image has the same properties as the
+			// other images
+			auto isize = provider->size();
+			if(isize != ret->size_) {
+				auto msg = dlg::format(
+					"LayeredImageProvider: Image layer has different sizes:"
+					"\n\tFirst image had size {}"
+					"\n\t'{}' has size {}", ret->size_, path, isize);
+				throw std::runtime_error(msg);
+			}
+
+			auto iformat = provider->format();
+			if(iformat != ret->format_) {
+				auto msg = dlg::format(
+					"LayeredImageProvider: Image layer has different formats:"
+					"\n\tFirst image had format {}"
+					"\n\t'{}' has format {}",
+					(int) ret->format_, path, (int) iformat);
+				throw std::runtime_error(msg);
+			}
+
+			auto imips = provider->mipLevels();
+			if(imips != ret->mips_) {
+				auto msg = dlg::format(
+					"LayeredImageProvider: Image layer has different mip counts:"
+					"\n\tFirst image had mip count {}"
+					"\n\t'{}' has mip count {}",
+					(int) ret->mips_, path, (int) imips);
+				throw std::runtime_error(msg);
+			}
+
+			auto ifaces = provider->faces();
+			if(ifaces != ret->faces_) {
+				auto msg = dlg::format(
+					"LayeredImageProvider: Image layer has different face count:"
+					"\n\tFirst image had face count {}"
+					"\n\t'{}' has face count {}",
+					(int) ret->faces_, path, (int) ifaces);
+				throw std::runtime_error(msg);
+			}
+		}
+
+		ret->layers_.push_back(std::move(provider));
+	}
+
 	return ret;
 }
 

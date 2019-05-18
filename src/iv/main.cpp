@@ -1,7 +1,10 @@
 #include <stage/app.hpp>
 #include <stage/window.hpp>
 #include <stage/texture.hpp>
+#include <stage/bits.hpp>
 #include <stage/defer.hpp>
+#include <stage/camera.hpp>
+
 #include <vpp/handles.hpp>
 #include <vpp/submit.hpp>
 #include <vpp/queue.hpp>
@@ -10,11 +13,18 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/vk.hpp>
+
 #include <dlg/dlg.hpp>
+#include <ny/key.hpp>
+#include <ny/mouseButton.hpp>
+
 #include <argagg.hpp>
 
 #include <shaders/stage.fullscreen.vert.h>
 #include <shaders/stage.texture.frag.h>
+
+// TODO: allow selecting different mip layers/faces/array layers
+// also add cubemap visualization
 
 class ImageView : public doi::App {
 public:
@@ -61,20 +71,7 @@ public:
 		pipe_ = {dev, gpi.info()};
 
 		// load image
-		doi::WorkBatcher wb(dev);
-
-		auto& qs = dev.queueSubmitter();
-		auto qfam = qs.queue().family();
-		auto cb = dev.commandAllocator().get(qfam);
-		vk::beginCommandBuffer(cb, {});
-
-		doi::TextureCreateParams params;
-		params.format = vk::Format::r16g16b16a16Sfloat;
-		image_ = {wb, file_, params};
-
-		vk::endCommandBuffer(cb);
-		auto id = qs.add(cb);
-		qs.wait(id);
+		image_ = {dev, doi::read(file_)};
 
 		// ds
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
@@ -116,6 +113,49 @@ public:
 		App::update(delta);
 	}
 
+	/*
+	void updateDevice() override {
+		// update scene ubo
+		if(camera_.update) {
+			camera_.update = false;
+			// updateLights_ set to false below
+
+			auto map = cameraUbo_.memoryMap();
+			auto span = map.span();
+
+			doi::write(span, fixedMatrix(camera_));
+			doi::write(span, camera_.pos);
+		}
+	}
+	*/
+
+	void mouseMove(const ny::MouseMoveEvent& ev) override {
+		App::mouseMove(ev);
+		if(rotateView_) {
+			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			App::scheduleRedraw();
+		}
+	}
+
+	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+		if(App::mouseButton(ev)) {
+			return true;
+		}
+
+		if(ev.button == ny::MouseButton::left) {
+			rotateView_ = ev.pressed;
+			return true;
+		}
+
+		return false;
+	}
+
+	void resize(const ny::SizeEvent& ev) override {
+		App::resize(ev);
+		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+		camera_.update = true;
+	}
+
 	const char* name() const override { return "iv"; }
 
 protected:
@@ -127,6 +167,15 @@ protected:
 	vpp::TrDs ds_;
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
+	vpp::Pipeline boxPipe_;
+
+	unsigned layer_ {0};
+	unsigned mip_ {0};
+
+	// cubemap
+	vpp::SubBuffer cameraUbo_;
+	bool rotateView_;
+	doi::Camera camera_;
 };
 
 int main(int argc, const char** argv) {

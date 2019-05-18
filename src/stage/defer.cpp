@@ -2,15 +2,16 @@
 
 namespace doi {
 
-WorkBatcher::WorkBatcher(const vpp::Device& dev) : dev(dev),
-		alloc{
-			dev.deviceAllocator(),
-			dev.deviceAllocator(),
-			dev.deviceAllocator(),
-			dev.bufferAllocator(),
-			dev.bufferAllocator(),
-			dev.bufferAllocator(),
-			dev.descriptorAllocator()} {
+WorkBatcher WorkBatcher::createDefault(const vpp::Device& dev) {
+	return {dev, {}, {
+		dev.deviceAllocator(),
+		dev.deviceAllocator(),
+		dev.deviceAllocator(),
+		dev.bufferAllocator(),
+		dev.bufferAllocator(),
+		dev.bufferAllocator(),
+		dev.descriptorAllocator()
+	}};
 }
 
 } // namespace doi

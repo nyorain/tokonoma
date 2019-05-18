@@ -6,8 +6,6 @@
 #include <nytl/scope.hpp>
 #include <dlg/dlg.hpp>
 
-using namespace doi::types;
-
 // TODO: support for compressed formats and such
 
 namespace doi {
@@ -153,6 +151,12 @@ public:
 		}
 	}
 
+	u64 faceSize(unsigned mip) const {
+		auto w = std::max(size_.x >> mip, 1u);
+		auto h = std::max(size_.y >> mip, 1u);
+		return w * h * vpp::formatSize(format_);
+	}
+
 	nytl::Vec2ui size() const override { return size_; }
 	vk::Format format() const override { return format_; }
 	unsigned mipLevels() const override { return mipLevels_; }
@@ -161,13 +165,9 @@ public:
 		return std::max(arrayElements_, 1u);
 	}
 
-	nytl::Span<const std::byte> read(unsigned face = 0, unsigned mip = 0,
-			unsigned layer = 0) override {
-		nytl::Vec2ui size;
-		size.x = std::max(size_.x >> mip, 1u);
-		size.y = std::max(size_.y >> mip, 1u);
-		auto byteSize = size.x * size.y * vpp::formatSize(format_);
-		tmpData_.resize(byteSize);
+	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0,
+			unsigned face = 0) override {
+		tmpData_.resize(faceSize(mip));
 		if(read(tmpData_, face, mip, layer)) {
 			return tmpData_;
 		}
@@ -175,23 +175,18 @@ public:
 		return {};
 	}
 
-	bool read(nytl::Span<std::byte> data,
-			unsigned face = 0, unsigned mip = 0, unsigned layer = 0) override {
+	bool read(nytl::Span<std::byte> data, unsigned mip = 0,
+			unsigned layer = 0, unsigned face = 0) override {
 		errno = {};
 		dlg_assert(face < faces());
 		dlg_assert(mip < mipLevels());
 		dlg_assert(layer < layers());
-		auto fmtSize = vpp::formatSize(format_);
 
 		auto address = dataBegin_;
-		nytl::Vec2ui size;
 		u32 imageSize;
 		auto iss = sizeof(imageSize);
 		for(auto i = 0u; i < mip; ++i) {
-			size.x = std::max(size_.x >> i, 1u);
-			size.y = std::max(size_.y >> i, 1u);
-
-			auto faceSize = size.x * size.y * fmtSize;
+			auto faceSize = this->faceSize(i);
 			auto mipSize = faceSize;
 			faceSize = vpp::align(faceSize, 4u);
 			if(arrayElements_ != 0 || faces_ != 6) {
@@ -214,14 +209,12 @@ public:
 			address += mipSize;
 		}
 
-		size.x = std::max(size_.x >> mip, 1u);
-		size.y = std::max(size_.y >> mip, 1u);
-		auto byteSize = size.x * size.y * fmtSize;
+		auto byteSize = this->faceSize(mip);
 		auto faceSize = vpp::align(byteSize, 4u);
-		dlg_assert(data.size() >= byteSize);
+		dlg_assert(u64(data.size()) >= byteSize);
 
 		// debug imageSize reading
-		auto mipSize = arrayElements_ * faces_ * faceSize;
+		auto mipSize = layers() * faces_ * faceSize;
 		if(arrayElements_ == 0 && faces_ == 6) {
 			// ktx special case: imageSize only size of one face
 			mipSize = byteSize;
@@ -381,8 +374,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 	auto fmt = image.format();
 	auto size = image.size();
 	auto mips = std::max(image.mipLevels(), 1u);
-	auto layers = image.layers();
-	layers = layers > 1 ? layers : 0;
+	auto layers = std::max(image.layers(), 1u);
 	auto faces = std::max(image.faces(), 1u);
 	auto fmtSize = vpp::formatSize(fmt);
 
@@ -394,7 +386,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 	header.pixelDepth = 0;
 	header.numberFaces = faces;
 	header.numberMipmapLevels = mips;
-	header.numberArrayElements = layers;
+	header.numberArrayElements = layers > 1 ? layers : 0;
 	header.glTypeSize = fmtSize;
 
 	const FormatEntry* entry {};
@@ -426,7 +418,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 
 		// ktx exception: for this condition imagesize should only
 		// contain the size of *one face* instead of everything.
-		if(layers == 0 && faces == 6) {
+		if(header.numberArrayElements == 0 && faces == 6) {
 			write(&faceSize, sizeof(faceSize));
 		} else {
 			u32 fullSize = faceSize * layers * faces;
@@ -435,7 +427,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 
 		for(auto l = 0u; l < layers; ++l) {
 			for(auto f = 0u; f < faces; ++f) {
-				auto span = image.read(f, m, l); // fml
+				auto span = image.read(m, l, f);
 				if(span.size() != faceSize) {
 					return WriteError::readError;
 				}

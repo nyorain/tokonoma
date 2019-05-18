@@ -2,6 +2,7 @@
 #include <stage/scene/primitive.hpp>
 #include <stage/scene/material.hpp>
 #include <stage/quaternion.hpp>
+#include <stage/image.hpp>
 #include <stage/transform.hpp>
 #include <stage/texture.hpp>
 #include <stage/util.hpp>
@@ -18,6 +19,7 @@ doi::Texture loadImage(Texture::InitData& data,
 	auto name = tex.name.empty() ?  tex.name : "'" + tex.name + "'";
 	dlg_info("  Loading image {}", name);
 	auto params = TextureCreateParams {};
+	params.srgb = srgb;
 	params.format = srgb ?
 		vk::Format::r8g8b8a8Srgb :
 		vk::Format::r8g8b8a8Unorm;
@@ -29,25 +31,25 @@ doi::Texture loadImage(Texture::InitData& data,
 	if(!tex.uri.empty()) {
 		auto full = std::string(path);
 		full += tex.uri;
-		return {data, wb, full, params};
+		return {data, wb, read(full), params};
 	}
 
 	// TODO: simplifying assumptions that are usually met
 	dlg_assert(tex.component == 4);
 	dlg_assert(!tex.as_is);
 
-	vk::Extent2D extent;
-	extent.width = tex.width;
-	extent.height = tex.height;
+	// TODO: we only have to copy the image data here in case
+	// the gltf model is destroyed before the image finished initializtion...
+	Image img;
+	img.size.x = tex.width;
+	img.size.y = tex.height;
+	img.format = srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
 
-	auto format = srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
-	auto dataSize = extent.width * extent.height * 4u;
-	auto copy = std::make_unique<std::byte[]>(dataSize);
-	std::memcpy(copy.get(), tex.image.data(), dataSize);
+	auto dataSize = tex.width * tex.height * 4u;
+	img.data = std::make_unique<std::byte[]>(dataSize);
+	std::memcpy(img.data.get(), tex.image.data(), dataSize);
 
-	std::vector<std::unique_ptr<std::byte[]>> layers;
-	layers.emplace_back(std::move(copy));
-	return {data, wb, std::move(layers), format, extent, params};
+	return {data, wb, wrap(std::move(img)), params};
 }
 
 } // anon namespace

@@ -9,12 +9,18 @@
 #include <cstddef>
 #include <memory>
 
+// TODO: inconsistent error handling return value vs exception,
+// clean that up (in implementations as well). Document when
+// exceptions might be thrown
+
 namespace doi {
 
 /// Provides information and data of an image.
 /// Abstraction allows to load/save/copy images as flexibly as possible.
 class ImageProvider {
 public:
+	virtual ~ImageProvider() = default;
+
 	/// The size of the image.
 	virtual nytl::Vec2ui size() const = 0;
 
@@ -47,7 +53,7 @@ public:
 	/// Face, mip, layer must be below the respectively advertised counts.
 	/// Returns empty span on error. Also allowed to throw.
 	virtual nytl::Span<const std::byte> read(
-		unsigned face = 0, unsigned mip = 0, unsigned layer = 0) = 0;
+		unsigned mip = 0, unsigned layer = 0, unsigned face = 0) = 0;
 
 	/// Copies one full, tightly packed 2D image from the given face, mip, layer
 	/// into the provided data buffer. The provided data buffer must be
@@ -55,8 +61,27 @@ public:
 	/// Face, mip, layer must be below the respectively advertised counts.
 	/// Return false on error. Also allowed to throw.
 	virtual bool read(nytl::Span<std::byte> data,
-		unsigned face = 0, unsigned mip = 0, unsigned layer = 0) = 0;
+		unsigned mip = 0, unsigned layer = 0, unsigned face = 0) = 0;
 };
+
+/// Transforms the given image information into an image provider
+/// implementation. The provider will only reference the given data, it
+/// must stay valid until the provider is destroyed.
+std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
+	nytl::Span<const std::byte> data);
+
+/// Expects: data.size() == mips * layers * faces, with
+/// data for mip m, layer l, face f at data[m * layer * faces + l * faces + f].
+/// Will move the given data into the provider.
+std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
+	unsigned mips, unsigned layers, unsigned faces,
+	nytl::Span<std::unique_ptr<std::byte[]>> data);
+
+/// Alternative to function above, there the provider will only reference the
+/// given data, it must stay valid until the provider is destroyed.
+std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
+	unsigned mips, unsigned layers, unsigned faces,
+	nytl::Span<const std::byte* const> data);
 
 enum class ReadError {
 	none,
@@ -88,6 +113,21 @@ std::unique_ptr<ImageProvider> readStb(nytl::StringParam path,
 /// given path. If no format/backend succeeds, the returned unique ptr will be
 /// empty. The hdr parameter is just for stb fallback.
 std::unique_ptr<ImageProvider> read(nytl::StringParam path, bool hdr = false);
+std::unique_ptr<ImageProvider> readLayers(nytl::Span<const char* const> paths,
+	bool hdr = false);
+
+enum class WriteError {
+	none,
+	cantOpen,
+	cantWrite,
+	readError, // image provider failed reading/returned unexpected size
+	invalidFormat, // unexpected/unsupported format
+	internal,
+};
+
+WriteError writeKtx(nytl::StringParam path, ImageProvider&);
+
+
 
 /// More limited in-memory representation of an image.
 struct Image {
@@ -115,22 +155,5 @@ Image readImage(nytl::StringParam path, bool hdr = false);
 /// Transforms the given image into an image provider implementation.
 /// The provider will take ownership of the image.
 std::unique_ptr<ImageProvider> wrap(Image&& image);
-
-/// Transforms the given image information into an image provider
-/// implementation. The provider will only reference the given data, it
-/// must stay valid until the provider is destroyed.
-std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
-	nytl::Span<const std::byte> data);
-
-enum class WriteError {
-	none,
-	cantOpen,
-	cantWrite,
-	readError, // image provider failed reading/returned unexpected size
-	invalidFormat, // unexpected/unsupported format
-	internal,
-};
-
-WriteError writeKtx(nytl::StringParam path, ImageProvider&);
 
 } // namespace doi

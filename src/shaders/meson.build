@@ -35,9 +35,10 @@ shaders_src = {
 		['shaders/skybox.frag'],
 		['shaders/fullscreen.vert'],
 		['shaders/fullscreen_transform.vert'],
-		['shaders/equirectToCube.frag'],
+		['shaders/equirectToCube.frag'], # TODO: remove
+		['shaders/equirectToCube.comp'],
 		['shaders/incolor.frag'],
-		['shaders/irradiance.frag'],
+		['shaders/irradiance.frag'], # TODO: remove
 		['shaders/irradiance.comp'],
 		['shaders/brdflut.comp'],
 		['shaders/texture.frag'],

@@ -730,39 +730,24 @@ void ViewApp::initRenderData() {
 	// texture just a view into one of the dummy cube faces...
 	// TODO: those are required below (mainly by lights and by
 	//   materials, both should be fixable).
-	auto data = std::make_unique<std::byte[]>(4);
 	auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
-	std::memcpy(data.get(), idata.data(), 4u);
+	auto dptr = reinterpret_cast<const std::byte*>(idata.data());
+	auto span = nytl::as_bytes(nytl::span(idata));
+	auto p = doi::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+	doi::TextureCreateParams params;
+	params.format = vk::Format::r8g8b8a8Unorm;
+	dummyTex_ = {batch, std::move(p), params};
 
-	std::vector<std::unique_ptr<std::byte[]>> faces;
-	faces.emplace_back(std::move(data));
-	// auto initDummyTex = doi::Initializer<doi::Texture>(batch,
-	// 	std::move(faces), vk::Format::r8g8b8a8Unorm,
-	// 	vk::Extent2D{1u, 1u});
-	dummyTex_ = {batch, std::move(faces), vk::Format::r8g8b8a8Unorm,
-		vk::Extent2D{1u, 1u}};
 	vpp::nameHandle(dummyTex_.image(), "dummyTex.image");
 	vpp::nameHandle(dummyTex_.imageView(), "dummyTex.view");
 
-	faces.resize(6);
-	for(auto& f : faces) {
-		f = std::make_unique<std::byte[]>(4);
-		std::memcpy(f.get(), idata.data(), 4u);
-	}
-
-	auto params = doi::TextureCreateParams {};
+	auto faces = {dptr, dptr, dptr, dptr, dptr, dptr};
 	params.cubemap = true;
-	dummyCube_ = {batch, std::move(faces), vk::Format::r8g8b8a8Unorm,
-		vk::Extent2D{1u, 1u}, params};
+	p = doi::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, 1, 1, 6u, faces);
+	dummyCube_ = {batch, std::move(p), params};
+
 	vpp::nameHandle(dummyCube_.image(), "dummyCube.image");
 	vpp::nameHandle(dummyCube_.imageView(), "dummyCube.view");
-	// auto initDummyCube = doi::Initializer<doi::Texture>(batch,
-	// 	std::move(faces), vk::Format::r8g8b8a8Unorm, vk::Extent2D{1u, 1u});
-
-	// initDummyTex.alloc(batch);
-	// initDummyCube.alloc(batch);
-	// dummyTex_ = initDummyTex.finish(batch);
-	// dummyCube_ = initDummyCube.finish(batch);
 
 	// ubo and stuff
 	auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
@@ -1490,25 +1475,23 @@ ViewApp::SSAOInitData ViewApp::initSSAO(const doi::WorkBatcher& wb) {
 	// NOTE: we could use a r32g32f format, would be more efficent
 	// might not be supported though... we could pack it into somehow
 	auto noiseDim = 4u;
-	auto noiseSize = sizeof(nytl::Vec4f) * noiseDim * noiseDim;
-	auto noiseData = std::make_unique<std::byte[]>(noiseSize);
-	auto noise = reinterpret_cast<nytl::Vec4f*>(noiseData.get());
+	std::vector<nytl::Vec4f> noiseData;
+	noiseData.resize(noiseDim * noiseDim);
 	for(auto i = 0u; i < noiseDim * noiseDim; i++) {
-		noise[i] = nytl::Vec4f{
+		noiseData[i] = nytl::Vec4f{
 			rndDist(rndEngine) * 2.f - 1.f,
 			rndDist(rndEngine) * 2.f - 1.f,
 			0.0f, 0.0f
 		};
 	}
 
-	std::vector<std::unique_ptr<std::byte[]>> layers;
-	layers.emplace_back(std::move(noiseData));
-
-	// TODO: defer
+	// TODO: defer as well
+	auto format = vk::Format::r32g32b32a32Sfloat;
+	auto span = nytl::as_bytes(nytl::span(noiseData));
+	auto p = doi::wrap({noiseDim, noiseDim}, format, span);
 	auto params = doi::TextureCreateParams{};
-	params.format = vk::Format::r32g32b32a32Sfloat;
-	ssao_.noise = {wb, std::move(layers), vk::Format::r32g32b32a32Sfloat,
-		{noiseDim, noiseDim}, params};
+	params.format = format;
+	ssao_.noise = {wb, std::move(p), params};
 
 	ssao_.ds = {dev.descriptorAllocator(), ssao_.dsLayout};
 	return initData;

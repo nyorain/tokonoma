@@ -1,7 +1,7 @@
 #version 450
 
-#extension GL_GOOGLE_include_directive : enable
-#include "noise.glsl"
+// #extension GL_GOOGLE_include_directive : enable
+// #include "noise.glsl"
 
 layout(local_size_x_id = 0, local_size_y_id = 1) in;
 layout(constant_id = 2) const float sampleDelta = 0.025;

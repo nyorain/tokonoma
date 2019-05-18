@@ -12,8 +12,6 @@
 #include <cstdio>
 #include <vector>
 
-using namespace doi::types;
-
 namespace doi {
 
 class PngReader : public ImageProvider {
@@ -37,8 +35,8 @@ public:
 	nytl::Vec2ui size() const override { return size_; }
 	vk::Format format() const override { return vk::Format::r8g8b8a8Srgb; }
 
-	bool read(nytl::Span<std::byte> data, unsigned face,
-			unsigned mip, unsigned layer) override {
+	bool read(nytl::Span<std::byte> data, unsigned mip,
+			unsigned layer, unsigned face) override {
 		dlg_assert(face == 0);
 		dlg_assert(mip == 0);
 		dlg_assert(layer == 0);
@@ -63,8 +61,8 @@ public:
 		return true;
 	}
 
-	nytl::Span<const std::byte> read(unsigned face, unsigned mip,
-			unsigned layer) override {
+	nytl::Span<const std::byte> read(unsigned mip, unsigned layer,
+			unsigned face) override {
 		tmpData_.resize(size_.x * size_.y * vpp::formatSize(format()));
 		if(read(tmpData_, face, mip, layer)) {
 			return tmpData_;

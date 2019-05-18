@@ -2,6 +2,8 @@
 #include <stage/bits.hpp>
 #include <stage/types.hpp>
 #include <stage/image.hpp>
+#include <stage/texture.hpp>
+#include <stage/scene/pbr.hpp>
 
 #include <vpp/vk.hpp>
 #include <vpp/formats.hpp>
@@ -17,7 +19,7 @@
 
 #include <dlg/dlg.hpp>
 #include <nytl/vec.hpp>
-#include <nytl/tmpUtil.hpp>
+#include <nytl/tmpUtil.hpp> // TODO: remove; nytl::unused
 
 #include <shaders/stage.brdflut.comp.h>
 #include <iostream>
@@ -27,18 +29,29 @@
 
 using namespace doi::types;
 
-void saveBrdf(const char* filename, const vpp::Device& dev);
-void saveIrradiance(const char* infile, const char* outfile,
+vpp::Sampler linearSampler(const vpp::Device& dev);
+void saveBrdf(const char* outfile, const vpp::Device& dev);
+void saveCubemap(const char* equirect, const char* outfile,
+	const vpp::Device& dev);
+void saveIrradiance(const char* cubemap, const char* outfile,
+	const vpp::Device& dev);
+void saveConvoluted(const char* cubemap, const char* outfile,
 	const vpp::Device& dev);
 
 int main(int argc, const char** argv) {
 	auto parser = doi::HeadlessArgs::defaultParser();
 	parser.definitions.push_back({
 		"brdflut", {"--brdflut"},
-		"Write a brdflut to brdflut.ktx", 0});
+		"Write a brdf specular IBL lookup table to brdflut.ktx", 0});
+	parser.definitions.push_back({
+		"cubemap", {"--cubemap"},
+		"Generate a cubemap from an equirect environment map", 1});
 	parser.definitions.push_back({
 		"irradiance", {"--irradiance"},
 		"Load the given environment map and generate an irradiance map", 1});
+	parser.definitions.push_back({
+		"convolute", {"--convolute"},
+		"Convolute a cube environment map for specular IBL", 1});
 
 	auto usage = std::string("Usage: ") + argv[0] + " [options]\n\n";
 	argagg::parser_results result;
@@ -60,9 +73,14 @@ int main(int argc, const char** argv) {
 
 	auto args = doi::HeadlessArgs(result);
 	auto headless = doi::Headless(args);
+
 	auto& dev = *headless.device;
 	if(result.has_option("brdflut")) {
 		saveBrdf("brdflut.ktx", dev);
+	} else if(result.has_option("cubemap")) {
+		saveCubemap(result["cubemap"], "cubemap.ktx", dev);
+	} else if(result.has_option("convolute")) {
+		saveConvoluted(result["convolute"], "convolution.ktx", dev);
 	} else if(result.has_option("irradiance")) {
 		saveIrradiance(result["irradiance"], "irradiance.ktx", dev);
 	} else {
@@ -104,6 +122,7 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 		vk::ImageUsageBits::transferSrc;
 	auto info = vpp::ViewableImageCreateInfo(format,
 		vk::ImageAspectBits::color, {size, size}, usage);
+	auto sampleCount = 1024u;
 
 	dlg_assert(vpp::supported(dev, info.img));
 	auto lut = vpp::ViewableImage(dev, info, memBits);
@@ -123,7 +142,6 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 	// constexpr auto sampleCount = 1024u;
 	// spec constants for work group size seem to have problems in
 	// validation layers...
-	/*
 	std::array<vk::SpecializationMapEntry, 3> entries = {{
 		{0, 0, 4u},
 		{1, 4u, 4u},
@@ -141,12 +159,11 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 	spec.pData = constData;
 	spec.mapEntryCount = entries.size();
 	spec.pMapEntries = entries.data();
-	*/
 
 	vpp::ShaderModule shader(dev, stage_brdflut_comp_data);
 	vk::ComputePipelineCreateInfo cpi;
 	cpi.layout = pipeLayout;
-	// cpi.stage.pSpecializationInfo = &spec;
+	cpi.stage.pSpecializationInfo = &spec;
 	cpi.stage.module = shader;
 	cpi.stage.stage = vk::ShaderStageBits::compute;
 	cpi.stage.pName = "main";
@@ -210,8 +227,123 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 	dlg_assertm(res == doi::WriteError::none, (int) res);
 }
 
+vpp::Sampler linearSampler(const vpp::Device& dev) {
+	vk::SamplerCreateInfo sci;
+	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
+	sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
+	sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
+	sci.magFilter = vk::Filter::linear;
+	sci.minFilter = vk::Filter::linear;
+	sci.mipmapMode = vk::SamplerMipmapMode::linear;
+	sci.minLod = 0.0;
+	sci.maxLod = 100.0;
+	sci.anisotropyEnable = false;
+	return {dev, sci};
+}
+
+void saveCubemap(const char* equirectPath, const char* outfile,
+		const vpp::Device& dev) {
+	auto format = vk::Format::r16g16b16a16Sfloat;
+	auto size = 2048u;
+	doi::TextureCreateParams params;
+	params.format = format;
+	params.mipmaps = false;
+	auto equirect = doi::Texture(dev, equirectPath, params);
+
+	auto sampler = linearSampler(dev);
+	doi::Cubemapper cubemapper;
+	cubemapper.init(dev.deviceAllocator(), {size, size}, sampler);
+
+	auto& qs = dev.queueSubmitter();
+	auto cb = dev.commandAllocator().get(qs.queue().family());
+
+	vk::beginCommandBuffer(cb, {});
+	cubemapper.record(cb, equirect.imageView());
+	auto cubemap = cubemapper.finish();
+
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = cubemap.image();
+	barrier.oldLayout = vk::ImageLayout::general;
+	barrier.srcAccessMask = vk::AccessBits::shaderWrite;
+	barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
+	barrier.dstAccessMask = vk::AccessBits::transferRead;
+	barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 6};
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
+		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
+
+	// TODO: all faces!
+	auto stage = vpp::retrieveStaging(cb, cubemap.image(),
+		format, vk::ImageLayout::transferSrcOptimal,
+		{size, size, 1u}, {vk::ImageAspectBits::color});
+
+	vk::endCommandBuffer(cb);
+	qs.wait(qs.add(cb));
+
+	// write image
+	auto map = stage.memoryMap();
+	if(!map.coherent()) {
+		map.invalidate();
+	}
+
+	auto ptr = reinterpret_cast<const float*>(map.ptr());
+	nytl::unused(ptr);
+
+	auto provider = doi::wrap({size, size}, format, map.span());
+	auto res = doi::writeKtx(outfile, *provider);
+	dlg_assertm(res == doi::WriteError::none, (int) res);
+}
+
+void saveConvoluted(const char* cubemap, const char* outfile,
+		const vpp::Device& dev) {
+	dlg_fatal("convolution not implemented yet");
+	nytl::unused(cubemap, outfile, dev);
+}
+
 void saveIrradiance(const char* infile, const char* outfile,
 		const vpp::Device& dev) {
-	nytl::unused(infile, outfile, dev);
-	// TODO
+	auto format = vk::Format::r16g16b16a16Sfloat;
+	auto size = 2048u;
+	doi::TextureCreateParams params;
+	params.format = format;
+	params.mipmaps = false;
+	auto envmap = doi::Texture(dev, infile, params);
+
+	auto sampler = linearSampler(dev);
+	doi::Irradiancer irradiancer;
+	irradiancer.init(dev.deviceAllocator(), {size, size}, sampler);
+
+	auto& qs = dev.queueSubmitter();
+	auto cb = dev.commandAllocator().get(qs.queue().family());
+
+	vk::beginCommandBuffer(cb, {});
+	irradiancer.record(cb, envmap.imageView());
+	auto irradiance = irradiancer.finish();
+
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = irradiance.image();
+	barrier.oldLayout = vk::ImageLayout::general;
+	barrier.srcAccessMask = vk::AccessBits::shaderWrite;
+	barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
+	barrier.dstAccessMask = vk::AccessBits::transferRead;
+	barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 6};
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
+		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
+
+	// TODO: all faces!
+	auto stage = vpp::retrieveStaging(cb, irradiance.image(),
+		format, vk::ImageLayout::transferSrcOptimal,
+		{size, size, 1u}, {vk::ImageAspectBits::color});
+
+	vk::endCommandBuffer(cb);
+	qs.wait(qs.add(cb));
+
+	// write image
+	auto map = stage.memoryMap();
+	if(!map.coherent()) {
+		map.invalidate();
+	}
+
+	auto provider = doi::wrap({size, size}, format, map.span());
+	auto res = doi::writeKtx(outfile, *provider);
+	dlg_assertm(res == doi::WriteError::none, (int) res);
 }
