@@ -12,7 +12,7 @@ layout(push_constant) uniform Face {
 	vec3 y;
 	float _2; // padding
 	vec3 z; // normal, cube map face
-} dir;
+} pcr;
 
 layout(set = 0, binding = 0, rgba16f) uniform writeonly imageCube outCol;
 layout(set = 0, binding = 1) uniform samplerCube envMap;
@@ -30,7 +30,7 @@ void main() {
 	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
 	uv = 2 * uv - 1;
 
-	vec3 normal = normalize(dir.z + uv.x * dir.x + uv.y * dir.y);
+	vec3 normal = normalize(pcr.z + uv.x * pcr.x + uv.y * pcr.y);
 	normal.y *= -1.f;
 
 	vec3 accum = vec3(0.0);  
@@ -70,6 +70,6 @@ void main() {
 	// }
 	// accum /= total;
 
-	imageStore(outCol, ivec3(pixel, dir.face), vec4(accum, 1.0));
+	imageStore(outCol, ivec3(pixel, pcr.face), vec4(accum, 1.0));
 }
 

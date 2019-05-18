@@ -21,25 +21,103 @@
 #include <shaders/stage.skybox.frag.h>
 #include <shaders/stage.irradiance.frag.h>
 
-// implementation in texture.cpp
-// #pragma GCC diagnostic push
-// #pragma GCC diagnostic ignored "-Wcast-align"
-// #pragma GCC diagnostic ignored "-Wunused-parameter"
-// #define STB_IMAGE_IMPLEMENTATION
-// #include "stb_image.h"
-// #pragma GCC diagnostic pop
-
-// TODO: allow reusing sampler (if passing in init method)
-// TODO: allow passing filename/base/something...
-// TODO: allow loading panorama data
-// https://stackoverflow.com/questions/29678510/convert-21-equirectangular-panorama-to-cube-map
-// TODO: use WorkBatcher allocators
-// TODO: support deferred initialization
-
 namespace doi {
 
-// TODO: write a stage tool that converts hdr equirectangular to hdr
-// cubemaps
+// Environment
+Environment::Environment(InitData& data, const WorkBatcher& wb,
+		nytl::StringParam envMapPath, nytl::StringParam irradiancePath,
+		vk::RenderPass rp, unsigned subpass,
+		vk::Sampler linear, vk::SampleCountBits samples) {
+	auto& dev = wb.dev;
+
+	// textures
+	doi::TextureCreateParams params;
+	params.cubemap = true;
+	params.format = vk::Format::r16g16b16a16Sfloat;
+	auto envProvider = doi::read(envMapPath, true);
+	convolutionMipmaps_ = envProvider->mipLevels();
+	envMap_ = {data.initEnvMap, wb, std::move(envProvider), params};
+	irradiance_ = {data.initIrradiance, wb, doi::read(irradiancePath, true),
+		params};
+
+	// pipe
+	// ds layout
+	auto bindings = {
+		vpp::descriptorBinding(
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::vertex),
+		vpp::descriptorBinding(
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &linear),
+	};
+
+	dsLayout_ = {dev, bindings};
+	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
+
+	vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);
+	vpp::ShaderModule fragShader(dev, stage_skybox_frag_data);
+	vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{{
+		{vertShader, vk::ShaderStageBits::vertex},
+		{fragShader, vk::ShaderStageBits::fragment},
+	}}}, subpass, samples};
+
+	// TODO: some of these rather temporary workarounds for the
+	// deferred renderer
+	gpi.depthStencil.depthTestEnable = true;
+	gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+	gpi.depthStencil.depthWriteEnable = false;
+	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+	// gpi.rasterization.cullMode = vk::CullModeBits::back;
+	// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+
+	vk::PipelineColorBlendAttachmentState blendAttachment;
+	blendAttachment.blendEnable = true;
+	blendAttachment.colorBlendOp = vk::BlendOp::add;
+	blendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
+	blendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
+	blendAttachment.colorWriteMask =
+			vk::ColorComponentBits::r |
+			vk::ColorComponentBits::g |
+			vk::ColorComponentBits::b |
+			vk::ColorComponentBits::a;
+	gpi.blend.pAttachments = &blendAttachment;
+
+	pipe_ = {dev, gpi.info()};
+
+	// ubo
+	auto uboSize = sizeof(nytl::Mat4f);
+	ubo_ = {data.initUbo, dev.bufferAllocator(), uboSize,
+		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+
+	ds_ = {data.initDs, dev.descriptorAllocator(), dsLayout_};
+}
+
+void Environment::init(InitData& data, const WorkBatcher& wb) {
+	envMap_.init(data.initEnvMap, wb);
+	irradiance_.init(data.initIrradiance, wb);
+	ubo_.init(data.initUbo);
+	ds_.init(data.initDs);
+
+	vpp::DescriptorSetUpdate dsu(ds_);
+	dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+	dsu.imageSampler({{{}, envMap_.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+}
+
+void Environment::render(vk::CommandBuffer cb) {
+	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+		pipeLayout_, 0, {{ds_.vkHandle()}}, {});
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
+	vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
+}
+
+void Environment::updateDevice(const nytl::Mat4f& viewProj) {
+	auto map = ubo_.memoryMap();
+	auto span = map.span();
+	doi::write(span, viewProj);
+}
+
+// Skybox
 void Skybox::init(const WorkBatcher& wb, nytl::StringParam hdrFile,
 		vk::RenderPass rp, unsigned subpassID, vk::SampleCountBits samples) {
 	auto& dev = wb.dev;

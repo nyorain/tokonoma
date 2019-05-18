@@ -70,15 +70,27 @@ protected:
 /// Renders them as mipmap levels onto the cubemap.
 class EnvironmentMapFilter {
 public:
+	/// The given image must have r16g16b16a16Sfloat format.
+	/// The first mip level must be in shaderReadOnlyOptimal layout,
+	/// all others in general layout. Layouts won't be changed.
 	void record(const vpp::Device& dev, vk::CommandBuffer cb,
-		vk::Image envImage, vk::ImageView envView, unsigned mipLevels);
+		vk::Image envImage, vk::ImageView envView, vk::Sampler linear,
+		unsigned mipLevels, nytl::Vec2ui size);
 
 protected:
-	vpp::ImageView mipViews_;
+	static constexpr auto groupDimSize = 8u;
+	static constexpr auto sampleCount = 1024u;
+
 	vpp::TrDsLayout dsLayout_;
-	vpp::TrDs ds_;
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_; // compute
+
+	struct Mip {
+		vpp::ImageView view;
+		vpp::TrDs ds;
+	};
+
+	std::vector<Mip> mips_;
 };
 
 } // namesapce doi

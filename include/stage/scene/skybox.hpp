@@ -24,7 +24,46 @@ constexpr std::array<u16, 36> boxInsideIndices = {
 	5, 4, 7,  7, 4, 6, // back
 };
 
-class Skybox {
+/// Loads environment
+class Environment {
+public:
+	struct InitData {
+		doi::Texture::InitData initEnvMap;
+		doi::Texture::InitData initIrradiance;
+		vpp::SubBuffer::InitData initUbo;
+		vpp::TrDs::InitData initDs;
+	};
+
+public:
+	Environment() = default;
+	Environment(InitData&, const WorkBatcher& wb, nytl::StringParam envMapPath,
+		nytl::StringParam irradiancePath, vk::RenderPass rp, unsigned subpass,
+		vk::Sampler linear, vk::SampleCountBits samples);
+	void init(InitData&, const WorkBatcher&);
+
+	// Requires caller to bind cube index buffer with boxInsideIndices
+	void render(vk::CommandBuffer cb);
+	void updateDevice(const nytl::Mat4f& viewProj);
+
+	auto& envMap() const { return envMap_; }
+	auto& irradiance() const { return irradiance_; }
+	auto convolutionMipmaps() const { return convolutionMipmaps_; }
+
+protected:
+	doi::Texture envMap_; // contains specular ibl mip maps
+	doi::Texture irradiance_;
+
+	vpp::SubBuffer ubo_;
+	vpp::TrDsLayout dsLayout_;
+	vpp::TrDs ds_;
+	vpp::PipelineLayout pipeLayout_;
+	vpp::Pipeline pipe_;
+	unsigned convolutionMipmaps_;
+};
+
+// TODO: remove
+class [[deprecated("Precompute and use Environment instead")]]
+Skybox {
 public:
 	void init(const WorkBatcher& wb, nytl::StringParam hdrFile,
 		vk::RenderPass rp, unsigned subpass, vk::SampleCountBits samples);
@@ -58,5 +97,6 @@ protected:
 
 	vpp::ViewableImage irradiance_;
 };
+
 
 } // namespace doi

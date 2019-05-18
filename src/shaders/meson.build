@@ -40,6 +40,7 @@ shaders_src = {
 		['shaders/incolor.frag'],
 		['shaders/irradiance.frag'], # TODO: remove
 		['shaders/irradiance.comp'],
+		['shaders/convolute.comp'],
 		['shaders/brdflut.comp'],
 		['shaders/texture.frag'],
 		['shaders/simple.vert'],

@@ -184,21 +184,21 @@ public:
 
 		auto address = dataBegin_;
 		u32 imageSize;
-		auto iss = sizeof(imageSize);
 		for(auto i = 0u; i < mip; ++i) {
 			auto faceSize = this->faceSize(i);
-			auto mipSize = faceSize;
-			faceSize = vpp::align(faceSize, 4u);
-			if(arrayElements_ != 0 || faces_ != 6) {
-				mipSize = layers() * faces_ * faceSize;
+			auto mipSize = layers() * faces_ * vpp::align(faceSize, 4u);
+			auto expectedImageSize = faceSize;
+			if(arrayElements_ == 0 && faces_ == 6) {
+				// ktx special cubemap imageSize case
+				expectedImageSize = faceSize;
 			}
 
 			// debug imageSize reading
 			tfseek(file_, address, SEEK_SET);
-			tfread(&imageSize, 1, iss, file_);
-			if(imageSize != mipSize) {
+			tfread(&imageSize, 1, sizeof(imageSize), file_);
+			if(imageSize != expectedImageSize) {
 				dlg_error("KtxReader: unexpected imageSize {}, expected {}",
-					imageSize, mipSize);
+					imageSize, expectedImageSize);
 				return false;
 			}
 
@@ -221,7 +221,7 @@ public:
 		}
 
 		tfseek(file_, address, SEEK_SET);
-		tfread(&imageSize, 1, iss, file_);
+		tfread(&imageSize, 1, sizeof(imageSize), file_);
 		if(imageSize != mipSize) {
 			dlg_error("KtxReader: unexpected imageSize {}, expected {}",
 				imageSize, mipSize);
@@ -421,7 +421,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 		if(header.numberArrayElements == 0 && faces == 6) {
 			write(&faceSize, sizeof(faceSize));
 		} else {
-			u32 fullSize = faceSize * layers * faces;
+			u32 fullSize = vpp::align(faceSize, 4u) * layers * faces;
 			write(&fullSize, sizeof(fullSize));
 		}
 
@@ -429,6 +429,8 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 			for(auto f = 0u; f < faces; ++f) {
 				auto span = image.read(m, l, f);
 				if(span.size() != faceSize) {
+					dlg_debug("invalid ImageProvider read size: "
+						"got {}, expected {}", span.size(), faceSize);
 					return WriteError::readError;
 				}
 

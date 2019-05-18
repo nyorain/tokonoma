@@ -253,7 +253,9 @@ public:
 		if(recreateView_) {
 			recreateView_ = false;
 			vk::ImageViewCreateInfo viewInfo;
-			viewInfo.viewType = vk::ImageViewType::e2d;
+			viewInfo.viewType = cubemap_ ?
+				vk::ImageViewType::cube :
+				vk::ImageViewType::e2d;
 			viewInfo.format = format_;
 			viewInfo.image = image_;
 			viewInfo.subresourceRange.aspectMask = vk::ImageAspectBits::color;
@@ -315,6 +317,16 @@ public:
 			layer_ = (layer_ + layerCount_ - 1) % layerCount_;
 			recreateView_ = true;
 			dlg_info("Showing layer {}", layer_);
+			App::scheduleRedraw();
+		} else if(ev.keycode == ny::Keycode::up) {
+			level_ = (level_ + 1) % levelCount_;
+			recreateView_ = true;
+			dlg_info("Showing level {}", level_);
+			App::scheduleRedraw();
+		} else if(ev.keycode == ny::Keycode::down) {
+			level_ = (level_ + levelCount_ - 1) % levelCount_;
+			recreateView_ = true;
+			dlg_info("Showing level {}", level_);
 			App::scheduleRedraw();
 		} else {
 			return false;

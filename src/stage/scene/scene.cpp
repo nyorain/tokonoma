@@ -23,6 +23,9 @@ doi::Texture loadImage(Texture::InitData& data,
 	params.format = srgb ?
 		vk::Format::r8g8b8a8Srgb :
 		vk::Format::r8g8b8a8Unorm;
+	// full mipmap chain
+	params.mipLevels = 0;
+	params.fillMipmaps = true;
 
 	// TODO: we could support additional formats like r8 or r8g8.
 	// check tex.pixel_type. Also support other image parameters

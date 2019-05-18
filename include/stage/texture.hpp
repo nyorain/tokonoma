@@ -94,6 +94,7 @@ public:
 
 		vk::Format dstFormat;
 		std::unique_ptr<ImageProvider> image;
+		vk::Format dataFormat; // may have toggles srgb
 		unsigned levels {}; // how many levels in total, >0
 		unsigned layers {}; // how many layers/faces in total, >0
 		unsigned fillLevels {}; // how many pre-filled levels, >0
@@ -113,33 +114,6 @@ public:
 		const TextureCreateParams& = {});
 	Texture(InitData&, const WorkBatcher&, std::unique_ptr<ImageProvider> img,
 		const TextureCreateParams& = {});
-
-	// Texture(const vpp::Device& dev, nytl::StringParam file,
-	// 	const TextureCreateParams& = {});
-	// Texture(const WorkBatcher&, std::unique_ptr<ImageProvider> image,
-	// 	const TextureCreateParams& = {});
-	// Texture(const WorkBatcher&, nytl::Span<const char* const> files,
-	// 	const TextureCreateParams& = {});
-	// Texture(const WorkBatcher&, nytl::Span<const std::byte> data,
-	// 	vk::Format dataFormat, const vk::Extent2D& size,
-	// 	const TextureCreateParams& = {});
-	// Texture(const WorkBatcher&,
-	// 	std::vector<std::unique_ptr<std::byte[]>> dataLayers,
-	// 	vk::Format dataFormat, const vk::Extent2D& size,
-	// 	const TextureCreateParams& = {});
-//
-	// Texture(InitData&, const WorkBatcher&, nytl::StringParam file,
-	// 	const TextureCreateParams& = {});
-	// Texture(InitData&, const WorkBatcher&, nytl::Span<const char* const> files,
-	// 	const TextureCreateParams& = {});
-	// Texture(InitData&, const WorkBatcher&,
-	// 	nytl::Span<const std::byte> data,
-	// 	vk::Format dataFormat, const vk::Extent2D& size,
-	// 	const TextureCreateParams& = {});
-	// Texture(InitData&, const WorkBatcher&,
-	// 	std::vector<std::unique_ptr<std::byte[]>> dataLayers,
-	// 	vk::Format dataFormat, const vk::Extent2D& size,
-	// 	const TextureCreateParams& = {});
 
 	void init(InitData&, const WorkBatcher&);
 

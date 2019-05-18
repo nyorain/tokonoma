@@ -19,7 +19,6 @@
 
 #include <dlg/dlg.hpp>
 #include <nytl/vec.hpp>
-#include <nytl/tmpUtil.hpp> // TODO: remove; nytl::unused
 
 #include <shaders/stage.brdflut.comp.h>
 #include <iostream>
@@ -28,6 +27,9 @@
 #include <stage/stb_image_write.h>
 
 using namespace doi::types;
+
+// TODO: create normal envmap mipmaps before convolution/irradiance?
+//   should help with bright dots (but didn't for irradiance, strangely)
 
 vpp::Sampler linearSampler(const vpp::Device& dev);
 void saveBrdf(const char* outfile, const vpp::Device& dev);
@@ -313,19 +315,12 @@ void saveCubemap(const char* equirectPath, const char* outfile,
 	dlg_assertm(res == doi::WriteError::none, (int) res);
 }
 
-void saveConvoluted(const char* cubemap, const char* outfile,
-		const vpp::Device& dev) {
-	dlg_fatal("convolution not implemented yet");
-	nytl::unused(cubemap, outfile, dev);
-}
-
 void saveIrradiance(const char* infile, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
 	auto size = 32u;
 	doi::TextureCreateParams params;
 	params.format = format;
-	params.mipLevels = 1u;
 	params.cubemap = true;
 	auto envmap = doi::Texture(dev, doi::read(infile, true), params);
 
@@ -379,3 +374,124 @@ void saveIrradiance(const char* infile, const char* outfile,
 	auto res = doi::writeKtx(outfile, *provider);
 	dlg_assertm(res == doi::WriteError::none, (int) res);
 }
+
+void saveConvoluted(const char* cubemap, const char* outfile,
+		const vpp::Device& dev) {
+	auto format = vk::Format::r16g16b16a16Sfloat;
+	auto p = doi::read(cubemap, true);
+	auto size = p->size();
+	auto full = int(vpp::mipmapLevels({size.x, size.y})) - 4;
+	unsigned mipLevels = std::max(full, 1);
+	dlg_assert(mipLevels > 1);
+
+	doi::TextureCreateParams params;
+	params.format = format;
+	params.cubemap = true;
+	params.mipLevels = mipLevels;
+	params.fillMipmaps = false;
+	params.view.levelCount = 1u;
+	params.usage = params.defaultUsage | vk::ImageUsageBits::storage;
+
+	auto envmap = doi::Texture(dev, std::move(p), params);
+
+	auto sampler = linearSampler(dev);
+	doi::EnvironmentMapFilter convoluter;
+
+	auto& qs = dev.queueSubmitter();
+	auto cb = dev.commandAllocator().get(qs.queue().family());
+
+	vk::beginCommandBuffer(cb, {});
+
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = envmap.image();
+	barrier.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	barrier.srcAccessMask = {};
+	barrier.newLayout = vk::ImageLayout::general;
+	barrier.dstAccessMask = vk::AccessBits::shaderWrite;
+	barrier.subresourceRange =
+		{vk::ImageAspectBits::color, 1, mipLevels - 1, 0, 6};
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
+		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
+
+	convoluter.record(dev, cb, envmap.image(), envmap.imageView(),
+		sampler, mipLevels, size);
+
+	barrier.oldLayout = vk::ImageLayout::general;
+	barrier.srcAccessMask = vk::AccessBits::shaderWrite;
+	barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
+	barrier.dstAccessMask = vk::AccessBits::transferRead;
+	barrier.subresourceRange =
+		{vk::ImageAspectBits::color, 1, mipLevels - 1, 0, 6};
+
+	auto barrier1 = barrier;
+	barrier1.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	barrier1.srcAccessMask = vk::AccessBits::shaderRead;
+	barrier1.newLayout = vk::ImageLayout::transferSrcOptimal;
+	barrier1.dstAccessMask = vk::AccessBits::transferRead;
+	barrier1.subresourceRange =
+		{vk::ImageAspectBits::color, 0, 1, 0, 6};
+
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
+		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier, barrier1}});
+
+	auto fmtSize = vpp::formatSize(format);
+	// over approximation of all mip levels (the times 2)
+	auto totalSize = 2 * 6u * size.x * size.y * fmtSize;
+	auto align = dev.properties().limits.optimalBufferCopyOffsetAlignment;
+	align = std::max<vk::DeviceSize>(align, fmtSize);
+	auto stage = vpp::SubBuffer(dev.bufferAllocator(), totalSize,
+		vk::BufferUsageBits::transferDst, dev.hostMemoryTypes(), align);
+	auto map = stage.memoryMap();
+	auto off = 0u;
+
+	std::vector<const std::byte*> pointers;
+	std::vector<vk::BufferImageCopy> copies;
+	pointers.reserve(6 * mipLevels);
+	copies.reserve(mipLevels);
+
+	for(auto m = 0u; m < mipLevels; ++m) {
+		nytl::Vec2ui msize;
+		msize.x = std::max(size.x >> m, 1u);
+		msize.y = std::max(size.y >> m, 1u);
+		auto faceSize = fmtSize * msize.x * msize.y;
+
+		auto& copy = copies.emplace_back();
+		copy.bufferOffset = stage.offset() + off;
+		copy.imageExtent = {msize.x, msize.y, 1u};
+		copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
+		copy.imageSubresource.baseArrayLayer = 0u;
+		copy.imageSubresource.layerCount = 6u;
+		copy.imageSubresource.mipLevel = m;
+
+		for(auto f = 0u; f < 6u; ++f) {
+			pointers.push_back(map.ptr() + off + f * faceSize);
+		}
+
+		off += faceSize * 6;
+		dlg_assert(off <= totalSize);
+	}
+
+	vk::cmdCopyImageToBuffer(cb, envmap.image(),
+		vk::ImageLayout::transferSrcOptimal, stage.buffer(), copies);
+
+	vk::BufferMemoryBarrier bbarrier;
+	bbarrier.buffer = stage.buffer();
+	bbarrier.offset = stage.offset();
+	bbarrier.size = stage.size();
+	bbarrier.srcAccessMask = vk::AccessBits::transferWrite;
+	bbarrier.dstAccessMask = vk::AccessBits::hostRead;
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
+		vk::PipelineStageBits::host, {}, {}, {{bbarrier}}, {});
+
+	vk::endCommandBuffer(cb);
+	qs.wait(qs.add(cb));
+
+	if(!map.coherent()) {
+		map.invalidate();
+	}
+
+	auto provider = doi::wrap(size, format, mipLevels, 1, 6, pointers);
+	auto res = doi::writeKtx(outfile, *provider);
+	dlg_assertm(res == doi::WriteError::none, (int) res);
+}
+

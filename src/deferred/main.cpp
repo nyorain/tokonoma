@@ -1,6 +1,7 @@
 #include <stage/app.hpp>
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
+#include <stage/types.hpp>
 #include <stage/window.hpp>
 #include <stage/transform.hpp>
 #include <stage/texture.hpp>
@@ -184,6 +185,8 @@
 //   in the reflection. Could be fixed by reading the emission buffer
 //   during ssr but that's probably really not worth it!
 
+using namespace doi::types;
+
 class ViewApp : public doi::App {
 public:
 	using Vertex = doi::Primitive::Vertex;
@@ -227,12 +230,13 @@ public:
 
 	// see various post processing or screen space shaders
 	struct RenderParams {
-		std::uint32_t mode = 0u;
-		std::uint32_t flags {flagFXAA};
+		u32 mode = 0u;
+		u32 flags {flagFXAA};
 		float aoFactor {0.05f};
 		float ssaoPow {3.f};
-		std::uint32_t tonemap {2};
+		u32 tonemap {2};
 		float exposure {1.f};
+		u32 convolutionLods;
 	};
 
 	static const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
@@ -318,7 +322,8 @@ protected:
 	bool updateLights_ {true};
 	bool updateDescriptors_ {false};
 
-	doi::Skybox skybox_;
+	doi::Texture brdfLut_;
+	doi::Environment env_;
 
 	// needed for point light rendering.
 	// TODO: also needed for skybox
@@ -794,11 +799,10 @@ void ViewApp::initRenderData() {
 	qpi.queryType = vk::QueryType::timestamp;
 	queryPool_ = {dev, qpi};
 
-	// hdr skybox
-	// skybox_.init(dev, "../assets/kloofendal2k.hdr", fwd_.pass, 0u, samples());
-	skybox_.init(batch, "/home/nyorain/art/assets/apt2k.hdr", fwd_.pass, 0u,
-		samples());
-
+	// environment
+	vpp::Init<doi::Environment> initEnv(batch, "convolution.ktx",
+		"irradiance.ktx", fwd_.pass, 0u, linearSampler_, samples());
+	vpp::Init<doi::Texture> initBrdfLut(batch, doi::read("brdflut.ktx"));
 	vpp::Init<vpp::SubBuffer> initBoxIndices(alloc.bufDevice,
 		36u * sizeof(std::uint16_t),
 		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
@@ -838,6 +842,10 @@ void ViewApp::initRenderData() {
 	selectionStage_ = initSelectionStage.init();
 	sceneDs_ = initSceneDs.init();
 	sceneUbo_ = initSceneUbo.init();
+	env_ = initEnv.init(batch);
+	brdfLut_ = initBrdfLut.init(batch);
+
+	params_.convolutionLods = env_.convolutionMipmaps();
 
 	// cb
 	std::array<std::uint16_t, 36> indices = {
@@ -1725,6 +1733,12 @@ void ViewApp::initCombine() {
 		vpp::descriptorBinding( // irradiance
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
+		vpp::descriptorBinding( // envMap
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
+		vpp::descriptorBinding( // brdf
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
 	};
 
 	combine_.dsLayout = {dev, combineBindings};
@@ -2136,7 +2150,11 @@ void ViewApp::updateDescriptors() {
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	cdsu.imageSampler({{{}, depthView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	cdsu.imageSampler({{{}, skybox_.irradiance().vkImageView(),
+	cdsu.imageSampler({{{}, env_.irradiance().vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	cdsu.imageSampler({{{}, env_.envMap().vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	cdsu.imageSampler({{{}, brdfLut_.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	if(params_.flags & flagSSAO) {
@@ -2568,7 +2586,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 			boxIndices_.offset(), vk::IndexType::uint16);
-		skybox_.render(cb);
+		env_.render(cb);
 		vk::cmdEndRenderPass(cb);
 	}
 
@@ -3035,7 +3053,7 @@ void ViewApp::updateDevice() {
 		doi::write(span, camera_.perspective.near);
 		doi::write(span, camera_.perspective.far);
 
-		skybox_.updateDevice(fixedMatrix(camera_));
+		env_.updateDevice(fixedMatrix(camera_));
 
 		// depend on camera position
 		for(auto& l : dirLights_) {

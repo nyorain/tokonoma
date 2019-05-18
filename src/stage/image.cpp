@@ -169,8 +169,10 @@ public:
 	vk::Format format_;
 
 public:
-	u64 faceSize() const {
-		return size_.x * size_.y * vpp::formatSize(format_);
+	u64 faceSize(unsigned mip) const {
+		auto w = std::max(size_.x >> mip, 1u);
+		auto h = std::max(size_.y >> mip, 1u);
+		return w * h * vpp::formatSize(format_);
 	}
 
 	unsigned layers() const override { return layers_; }
@@ -184,7 +186,7 @@ public:
 			unsigned face = 0) override {
 		dlg_assert(face < faces() && mip < mipLevels() && layer < layers());
 		auto id = mip * (layers_ * faces_) + layer * faces_ + face;
-		return {data_[id].ref, data_[id].ref + faceSize()};
+		return {data_[id].ref, data_[id].ref + faceSize(mip)};
 	}
 
 	bool read(nytl::Span<std::byte> data, unsigned mip = 0,
@@ -192,7 +194,7 @@ public:
 		dlg_assert(face < faces() && mip < mipLevels() && layer < layers());
 		auto id = mip * (layers_ * faces_) + layer * faces_ + face;
 
-		auto byteSize = faceSize();
+		auto byteSize = faceSize(mip);
 		dlg_assert(u64(data.size()) >= byteSize);
 		std::memcpy(data.data(), data_[id].ref, byteSize);
 		return true;
