@@ -174,7 +174,7 @@ void Texture::init(InitData& data, const WorkBatcher& wb) {
 	ivi.subresourceRange.levelCount = data.view.levelCount;
 	if(data.cubemap) {
 		ivi.viewType = vk::ImageViewType::cube;
-	} else if(layerCount > 1) {
+	} else if(ivi.subresourceRange.layerCount > 1) {
 		ivi.viewType = vk::ImageViewType::e2dArray;
 	} else {
 		ivi.viewType = vk::ImageViewType::e2d;

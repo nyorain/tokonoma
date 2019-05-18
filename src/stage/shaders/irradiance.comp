@@ -8,13 +8,13 @@ layout(constant_id = 2) const float sampleDelta = 0.025;
 
 layout(push_constant) uniform Face {
 	vec3 x;
-	float _1; // padding
+	uint face;
 	vec3 y;
 	float _2; // padding
 	vec3 z; // normal, cube map face
 } dir;
 
-layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D outCol;
+layout(set = 0, binding = 0, rgba16f) uniform writeonly imageCube outCol;
 layout(set = 0, binding = 1) uniform samplerCube envMap;
 
 const float pi = 3.1415926535897932;
@@ -28,6 +28,7 @@ void main() {
 
 	vec2 pixelSize = 1.f / size;
 	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+	uv = 2 * uv - 1;
 
 	vec3 normal = normalize(dir.z + uv.x * dir.x + uv.y * dir.y);
 	normal.y *= -1.f;
@@ -69,6 +70,6 @@ void main() {
 	// }
 	// accum /= total;
 
-	imageStore(outCol, ivec2(pixel), vec4(accum, 1.0));
+	imageStore(outCol, ivec3(pixel, dir.face), vec4(accum, 1.0));
 }
 

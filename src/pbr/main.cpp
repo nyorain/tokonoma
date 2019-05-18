@@ -52,6 +52,9 @@ int main(int argc, const char** argv) {
 	parser.definitions.push_back({
 		"convolute", {"--convolute"},
 		"Convolute a cube environment map for specular IBL", 1});
+	parser.definitions.push_back({
+		"output", {"--output", "-o"},
+		"The file to write the output to. Otherwise default is used", 1});
 
 	auto usage = std::string("Usage: ") + argv[0] + " [options]\n\n";
 	argagg::parser_results result;
@@ -75,14 +78,23 @@ int main(int argc, const char** argv) {
 	auto headless = doi::Headless(args);
 
 	auto& dev = *headless.device;
+	std::optional<const char*> output;
+	if(result.has_option("output")) {
+		output = result["output"];
+	}
+
 	if(result.has_option("brdflut")) {
-		saveBrdf("brdflut.ktx", dev);
+		auto out = output.value_or("brdflut.ktx");
+		saveBrdf(out, dev);
 	} else if(result.has_option("cubemap")) {
-		saveCubemap(result["cubemap"], "cubemap.ktx", dev);
+		auto out = output.value_or("cubemap.ktx");
+		saveCubemap(result["cubemap"], out, dev);
 	} else if(result.has_option("convolute")) {
-		saveConvoluted(result["convolute"], "convolution.ktx", dev);
+		auto out = output.value_or("convolution.ktx");
+		saveConvoluted(result["convolute"], out, dev);
 	} else if(result.has_option("irradiance")) {
-		saveIrradiance(result["irradiance"], "irradiance.ktx", dev);
+		auto out = output.value_or("irradiance.ktx");
+		saveIrradiance(result["irradiance"], out, dev);
 	} else {
 		dlg_fatal("No command given!");
 		argagg::fmt_ostream help(std::cerr);
@@ -247,8 +259,8 @@ void saveCubemap(const char* equirectPath, const char* outfile,
 	auto size = 2048u;
 	doi::TextureCreateParams params;
 	params.format = format;
-	params.mipmaps = false;
-	auto equirect = doi::Texture(dev, equirectPath, params);
+	params.mipLevels = 1u;
+	auto equirect = doi::Texture(dev, doi::read(equirectPath), params);
 
 	auto sampler = linearSampler(dev);
 	doi::Cubemapper cubemapper;
@@ -271,10 +283,9 @@ void saveCubemap(const char* equirectPath, const char* outfile,
 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
 		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
 
-	// TODO: all faces!
-	auto stage = vpp::retrieveStaging(cb, cubemap.image(),
+	auto stage = vpp::retrieveStagingLayers(cb, cubemap.image(),
 		format, vk::ImageLayout::transferSrcOptimal,
-		{size, size, 1u}, {vk::ImageAspectBits::color});
+		{size, size, 1u}, {vk::ImageAspectBits::color, 0, 0, 6});
 
 	vk::endCommandBuffer(cb);
 	qs.wait(qs.add(cb));
@@ -285,10 +296,19 @@ void saveCubemap(const char* equirectPath, const char* outfile,
 		map.invalidate();
 	}
 
-	auto ptr = reinterpret_cast<const float*>(map.ptr());
-	nytl::unused(ptr);
+	auto faceSize = vpp::formatSize(format) * size * size;
+	dlg_assert(map.size() == faceSize * 6);
+	const auto* const ptr = map.ptr();
+	auto ptrs = {
+		ptr + 0 * faceSize,
+		ptr + 1 * faceSize,
+		ptr + 2 * faceSize,
+		ptr + 3 * faceSize,
+		ptr + 4 * faceSize,
+		ptr + 5 * faceSize,
+	};
 
-	auto provider = doi::wrap({size, size}, format, map.span());
+	auto provider = doi::wrap({size, size}, format, 1, 1, 6, {ptrs});
 	auto res = doi::writeKtx(outfile, *provider);
 	dlg_assertm(res == doi::WriteError::none, (int) res);
 }
@@ -302,11 +322,12 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 void saveIrradiance(const char* infile, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
-	auto size = 2048u;
+	auto size = 32u;
 	doi::TextureCreateParams params;
 	params.format = format;
-	params.mipmaps = false;
-	auto envmap = doi::Texture(dev, infile, params);
+	params.mipLevels = 1u;
+	params.cubemap = true;
+	auto envmap = doi::Texture(dev, doi::read(infile, true), params);
 
 	auto sampler = linearSampler(dev);
 	doi::Irradiancer irradiancer;
@@ -329,10 +350,9 @@ void saveIrradiance(const char* infile, const char* outfile,
 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
 		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
 
-	// TODO: all faces!
-	auto stage = vpp::retrieveStaging(cb, irradiance.image(),
+	auto stage = vpp::retrieveStagingLayers(cb, irradiance.image(),
 		format, vk::ImageLayout::transferSrcOptimal,
-		{size, size, 1u}, {vk::ImageAspectBits::color});
+		{size, size, 1u}, {vk::ImageAspectBits::color, 0, 0, 6u});
 
 	vk::endCommandBuffer(cb);
 	qs.wait(qs.add(cb));
@@ -343,7 +363,19 @@ void saveIrradiance(const char* infile, const char* outfile,
 		map.invalidate();
 	}
 
-	auto provider = doi::wrap({size, size}, format, map.span());
+	auto faceSize = vpp::formatSize(format) * size * size;
+	dlg_assert(map.size() == faceSize * 6);
+	const auto* const ptr = map.ptr();
+	auto ptrs = {
+		ptr + 0 * faceSize,
+		ptr + 1 * faceSize,
+		ptr + 2 * faceSize,
+		ptr + 3 * faceSize,
+		ptr + 4 * faceSize,
+		ptr + 5 * faceSize,
+	};
+
+	auto provider = doi::wrap({size, size}, format, 1, 1, 6, {ptrs});
 	auto res = doi::writeKtx(outfile, *provider);
 	dlg_assertm(res == doi::WriteError::none, (int) res);
 }

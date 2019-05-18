@@ -30,6 +30,7 @@ void main() {
 
 	vec2 pixelSize = 1.f / size;
 	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+	uv = 2 * uv - 1;
 
 	vec3 pos = normalize(dir.z + uv.x * dir.x + uv.y * dir.y);
     uv = equirectTexCoord(pos);

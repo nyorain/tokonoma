@@ -40,7 +40,7 @@ protected:
 class Irradiancer {
 public:
 	void init(vpp::DeviceMemoryAllocator&, const nytl::Vec2ui& faceSize,
-		vk::Sampler linear, float sampleDelta = 0.025);
+		vk::Sampler linear, float sampleDelta = 0.01);
 	void record(vk::CommandBuffer cb, vk::ImageView environment);
 
 	/// Returns (moves) the irradiance map.

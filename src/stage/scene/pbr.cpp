@@ -34,13 +34,15 @@ vpp::ViewableImageCreateInfo cubemapCreateInfo(nytl::Vec2ui size) {
 }
 
 // https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
-// NOTE: mainly through testing...
+// the directions vectors are like table 26 (chapter 15.6.4) in the vulkan
+// spec, except that the y axis is always the opposite, since up
+// is (0, 1, 0) for us, not (0, -1, 0) as it is per default in vulkan.
 constexpr struct CubeFace {
 	nytl::Vec3f x;
-	u32 face;
+	u32 face; // id of the face
 	nytl::Vec3f y;
 	float _pad0; // padding
-	nytl::Vec3f z;
+	nytl::Vec3f z; // direction of the face
 } faces[] = {
 	{{0, 0, -1}, 0u, {0, 1, 0}, 0.f, {1, 0, 0}},
 	{{0, 0, 1}, 1u, {0, 1, 0}, 0.f, {-1, 0, 0}},
@@ -171,7 +173,7 @@ void Irradiancer::init(vpp::DeviceMemoryAllocator& alloc,
 		vpp::descriptorBinding( // output image, irradiance
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
-		vpp::descriptorBinding( // environment map
+		vpp::descriptorBinding( // environment cube map
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::compute, -1, 1, &linear),
 	};
