@@ -5,6 +5,7 @@
 #include <stage/defer.hpp>
 #include <stage/types.hpp>
 #include <stage/camera.hpp>
+#include <stage/scene/skybox.hpp>
 
 #include <vpp/handles.hpp>
 #include <vpp/submit.hpp>
@@ -138,17 +139,10 @@ public:
 			// indices
 			auto usage = vk::BufferUsageBits::indexBuffer |
 				vk::BufferUsageBits::transferDst;
-			boxIndices_ = {dev.bufferAllocator(), 36 * sizeof(u16),
+			auto inds = doi::boxInsideIndices;
+			boxIndices_ = {dev.bufferAllocator(), sizeof(inds),
 				usage, dev.deviceMemoryTypes(), 4u};
-			std::array<u16, 36> indices = {
-				0, 1, 2,  2, 1, 3, // front
-				1, 5, 3,  3, 5, 7, // right
-				2, 3, 6,  6, 3, 7, // top
-				4, 0, 6,  6, 0, 2, // left
-				4, 5, 0,  0, 5, 1, // bottom
-				5, 4, 7,  7, 4, 6, // back
-			};
-			boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
+			boxIndicesStage = vpp::fillStaging(cb, boxIndices_, inds);
 
 			// pipeline
 			vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);

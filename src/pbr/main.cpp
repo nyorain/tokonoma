@@ -256,11 +256,11 @@ vpp::Sampler linearSampler(const vpp::Device& dev) {
 void saveCubemap(const char* equirectPath, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
-	auto size = 2048u;
+	auto size = 1024u;
 	doi::TextureCreateParams params;
 	params.format = format;
 	params.mipLevels = 1u;
-	auto equirect = doi::Texture(dev, doi::read(equirectPath), params);
+	auto equirect = doi::Texture(dev, doi::read(equirectPath, true), params);
 
 	auto sampler = linearSampler(dev);
 	doi::Cubemapper cubemapper;
