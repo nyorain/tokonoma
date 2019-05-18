@@ -141,6 +141,10 @@ executable('pbr', [
 		stage_shaders,
 	], dependencies: stage_dep)
 
+executable('iv',
+	'src/iv/main.cpp',
+	dependencies: stage_dep)
+
 # executable('pg',
 # 	'src/playground/main2.cpp',
 # 	dependencies: stage_dep)

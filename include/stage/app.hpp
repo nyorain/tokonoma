@@ -14,7 +14,7 @@
 #include <string>
 #include <optional>
 
-namespace argagg {
+namespace argagg { // fwd
 	struct parser;
 	struct parser_results;
 } // namespace argagg
@@ -24,7 +24,6 @@ namespace doi {
 // fwd
 class MainWindow;
 class Renderer;
-struct RendererCreateInfo;
 
 /// Implements basic setup and main loop.
 class App : public nytl::NonMovable {
@@ -86,6 +85,7 @@ protected:
 	// enable the supported ones.
 	virtual bool features(vk::PhysicalDeviceFeatures& enable,
 		const vk::PhysicalDeviceFeatures& supported);
+
 
 	// == Render stuff ==
 	// Called after the vulkan device is initialized but before any

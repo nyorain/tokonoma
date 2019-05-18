@@ -62,7 +62,7 @@ public:
 		return res == 0;
 	}
 
-	nytl::Span<std::byte> read(unsigned face, unsigned mip,
+	nytl::Span<const std::byte> read(unsigned face, unsigned mip,
 			unsigned layer) override {
 		tmpData_.resize(size_.x * size_.y * vpp::formatSize(format()));
 		if(read(tmpData_, face, mip, layer)) {

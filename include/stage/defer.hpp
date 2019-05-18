@@ -21,6 +21,10 @@ struct WorkBatcher {
 		vpp::DescriptorAllocator& ds;
 	} alloc;
 
+	/// Initializes all allocators with the devices defaults.
+	/// CommandBuffer will be left empty.
+	WorkBatcher(const vpp::Device& dev);
+
 	// TODO: util
 	// void finish(); // automatically call in destructor?
 };

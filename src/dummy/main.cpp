@@ -1,11 +1,10 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 
 class DummyApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -19,11 +18,13 @@ public:
 	void update(double delta) override {
 		App::update(delta);
 	}
+
+	const char* name() const override { return "dummy"; }
 };
 
 int main(int argc, const char** argv) {
 	DummyApp app;
-	if(!app.init({"dummy", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

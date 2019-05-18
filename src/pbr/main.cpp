@@ -1,6 +1,7 @@
 #include <stage/headless.hpp>
 #include <stage/bits.hpp>
 #include <stage/types.hpp>
+#include <stage/image.hpp>
 
 #include <vpp/vk.hpp>
 #include <vpp/formats.hpp>
@@ -16,6 +17,7 @@
 
 #include <dlg/dlg.hpp>
 #include <nytl/vec.hpp>
+#include <nytl/tmpUtil.hpp>
 
 #include <shaders/stage.brdflut.comp.h>
 #include <iostream>
@@ -23,29 +25,20 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stage/stb_image_write.h>
 
-// NOTE: we don't need an hdr format since the values are always
-// between 0.0 and 1.0.
-// TODO: in some parts, the map is detailed, in others not at all.
-// we can probably get away with reducing the texture size to
-// something like 128x128 (or even smaller) but that may bring
-// issues in the higher detail areas... we could run a function
-// over the inputs first? like a pow or something? we need high precision
-// for low values so if we map with pow(input, 2) (or even more) we should
-// be ok with a smaller texture size.
-// we linearly interpolate when using the texture.
-// try it out though
-//
-// A small image size is important since the texture may be almost
-// randomly sampled for surfaces with a highly varying normal
-// map i guess... (or highly varying roughness but that's not so
-// common)
-
 using namespace doi::types;
 
-void saveBrdf(unsigned size, const char* filename, const vpp::Device& dev);
+void saveBrdf(const char* filename, const vpp::Device& dev);
+void saveIrradiance(const char* infile, const char* outfile,
+	const vpp::Device& dev);
 
 int main(int argc, const char** argv) {
 	auto parser = doi::HeadlessArgs::defaultParser();
+	parser.definitions.push_back({
+		"brdflut", {"--brdflut"},
+		"Write a brdflut to brdflut.ktx", 0});
+	parser.definitions.push_back({
+		"irradiance", {"--irradiance"},
+		"Load the given environment map and generate an irradiance map", 1});
 
 	auto usage = std::string("Usage: ") + argv[0] + " [options]\n\n";
 	argagg::parser_results result;
@@ -67,13 +60,42 @@ int main(int argc, const char** argv) {
 
 	auto args = doi::HeadlessArgs(result);
 	auto headless = doi::Headless(args);
-	// saveBrdf(512, "brdflut.hdr", *headless.device);
-	saveBrdf(512, "brdflut.png", *headless.device);
+	auto& dev = *headless.device;
+	if(result.has_option("brdflut")) {
+		saveBrdf("brdflut.ktx", dev);
+	} else if(result.has_option("irradiance")) {
+		saveIrradiance(result["irradiance"], "irradiance.ktx", dev);
+	} else {
+		dlg_fatal("No command given!");
+		argagg::fmt_ostream help(std::cerr);
+		help << usage << parser << std::endl;
+		return -1;
+	}
+
+	return 0;
 }
 
 
 // BRDF lut
-void saveBrdf(unsigned size, const char* filename, const vpp::Device& dev) {
+// NOTE: we don't need an hdr format since the values are always
+// between 0.0 and 1.0.
+// TODO: in some parts, the map is detailed, in others not at all.
+// we can probably get away with reducing the texture size to
+// something like 128x128 (or even smaller) but that may bring
+// issues in the higher detail areas... we could run a function
+// over the inputs first? like a pow or something? we need high precision
+// for low values so if we map with pow(input, 2) (or even more) we should
+// be ok with a smaller texture size.
+// we linearly interpolate when using the texture.
+// try it out though
+//
+// A small image size is important since the texture may be almost
+// randomly sampled for surfaces with a highly varying normal
+// map i guess... (or highly varying roughness but that's not so
+// common)
+void saveBrdf(const char* filename, const vpp::Device& dev) {
+	constexpr static auto size = 512u;
+
 	// gen brdf
 	auto memBits = dev.deviceMemoryTypes();
 	auto format = vk::Format::r8g8b8a8Unorm;
@@ -182,5 +204,14 @@ void saveBrdf(unsigned size, const char* filename, const vpp::Device& dev) {
 	}
 
 	// auto ptr = reinterpret_cast<float*>(map.ptr());
-	stbi_write_png(filename, size, size, 4, map.ptr(), size * 4);
+	// stbi_write_png(filename, size, size, 4, map.ptr(), size * 4);
+	auto provider = doi::wrap({size, size}, format, map.span());
+	auto res = doi::writeKtx(filename, *provider);
+	dlg_assertm(res == doi::WriteError::none, (int) res);
+}
+
+void saveIrradiance(const char* infile, const char* outfile,
+		const vpp::Device& dev) {
+	nytl::unused(infile, outfile, dev);
+	// TODO
 }

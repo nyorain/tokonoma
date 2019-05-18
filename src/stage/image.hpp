@@ -46,7 +46,7 @@ public:
 	/// call.
 	/// Face, mip, layer must be below the respectively advertised counts.
 	/// Returns empty span on error. Also allowed to throw.
-	virtual nytl::Span<std::byte> read(
+	virtual nytl::Span<const std::byte> read(
 		unsigned face = 0, unsigned mip = 0, unsigned layer = 0) = 0;
 
 	/// Copies one full, tightly packed 2D image from the given face, mip, layer
@@ -65,6 +65,7 @@ enum class ReadError {
 	internal,
 	unexpectedEnd,
 	invalidEndianess,
+	empty,
 
 	ktxInvalidFormat, // ktx: unsupported/unknown format
 	ktxDepth, // ktx: format has depth
@@ -114,6 +115,12 @@ Image readImage(nytl::StringParam path, bool hdr = false);
 /// Transforms the given image into an image provider implementation.
 /// The provider will take ownership of the image.
 std::unique_ptr<ImageProvider> wrap(Image&& image);
+
+/// Transforms the given image information into an image provider
+/// implementation. The provider will only reference the given data, it
+/// must stay valid until the provider is destroyed.
+std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
+	nytl::Span<const std::byte> data);
 
 enum class WriteError {
 	none,

@@ -41,18 +41,21 @@ const vk::Format TextureCreateParams::defaultFormat = vk::Format::r8g8b8a8Srgb;
 Texture::Texture(InitData& data, const WorkBatcher& batcher,
 		nytl::StringParam file, const TextureCreateParams& params) {
 	auto hdr = isHDR(params.format);
-	auto srgb = isSRGB(params.format);
 	auto img = readImage(file, hdr);
+	if(img.size.x == 0 || img.size.y == 0) {
+		std::string err = "Couldn't load ";
+		err += file;
+		throw std::runtime_error(err);
+	}
 
-	auto dataFormat = hdr ?
-		vk::Format::r32g32b32a32Sfloat :
-		srgb ?
-			vk::Format::r8g8b8a8Srgb :
-			vk::Format::r8g8b8a8Unorm;
-	dlg_assert(vpp::formatSize(img.format) == vpp::formatSize(dataFormat));
+	if(isSRGB(img.format) != isSRGB(params.format)) {
+		dlg_debug("toggling format srgb");
+		img.format = toggleSRGB(img.format);
+	}
+
 	std::vector<std::unique_ptr<std::byte[]>> layers;
 	layers.emplace_back(std::move(img.data));
-	*this = {data, batcher, std::move(layers), dataFormat,
+	*this = {data, batcher, std::move(layers), img.format,
 		{img.size.x, img.size.y}, params};
 }
 
@@ -60,21 +63,37 @@ Texture::Texture(InitData& data, const WorkBatcher& batcher,
 		nytl::Span<const char* const> files,
 		const TextureCreateParams& params) {
 	auto hdr = isHDR(params.format);
-	auto srgb = isSRGB(params.format);
-	auto dataFormat = hdr ?
-		vk::Format::r32g32b32a32Sfloat :
-		srgb ?
-			vk::Format::r8g8b8a8Srgb :
-			vk::Format::r8g8b8a8Unorm;
 
 	std::vector<std::unique_ptr<std::byte[]>> layers;
 	layers.reserve(files.size());
 	vk::Extent2D size;
+	vk::Format dataFormat = vk::Format::undefined;
 
 	for(auto filename : files) {
 		auto img = readImage(filename, hdr);
-		dlg_assert(vpp::formatSize(img.format) == vpp::formatSize(dataFormat));
-		dlg_assert(img.size.x > 0 && img.size.y > 0);
+
+		if(img.size.x == 0 || img.size.y == 0) {
+			std::string err = "Couldn't load ";
+			err += filename;
+			throw std::runtime_error(err);
+		}
+
+		if(isSRGB(img.format) != isSRGB(params.format)) {
+			dlg_debug("toggling format srgb");
+			img.format = toggleSRGB(img.format);
+		}
+
+		if(dataFormat == vk::Format::undefined) {
+			dataFormat = img.format;
+		} else if(img.format != dataFormat) {
+			std::string err = "Images for image array have different formats: ";
+			err += "\n\tFirst image has vkFormat ";
+			err += std::to_string((int) dataFormat);
+			err += ", while '" + std::string(filename) + "' has format ";
+			err += std::to_string((int) img.format);
+			throw std::runtime_error(err);
+		}
+
 		if(size.width == 0 || size.height == 0) {
 			size.width = img.size.x;
 			size.height = img.size.y;
@@ -132,7 +151,7 @@ Texture::Texture(InitData& data, const WorkBatcher& batcher,
 		data.cubemap = true;
 	}
 
-	dlg_assert(vpp::supported(batcher.dev, info.img));
+	dlg_assert(vpp::supported(batcher.dev, info.img, features));
 	auto devBits = batcher.dev.deviceMemoryTypes();
 	auto hostBits = batcher.dev.hostMemoryTypes();
 	image_ = {data.initImage, batcher.dev, info.img, devBits,
@@ -440,9 +459,38 @@ bool isSRGB(vk::Format format) {
 		case vk::Format::r8g8Srgb:
 		case vk::Format::r8g8b8Srgb:
 		case vk::Format::r8g8b8a8Srgb:
+		case vk::Format::b8g8r8a8Srgb:
 			return true;
 		default:
 			return false;
+	}
+}
+
+vk::Format toggleSRGB(vk::Format format) {
+	switch(format) {
+		case vk::Format::r8Srgb:
+			return vk::Format::r8Unorm;
+		case vk::Format::r8g8Srgb:
+			return vk::Format::r8g8Unorm;
+		case vk::Format::r8g8b8Srgb:
+			return vk::Format::r8g8b8Unorm;
+		case vk::Format::r8g8b8a8Srgb:
+			return vk::Format::r8g8b8a8Unorm;
+		case vk::Format::b8g8r8a8Srgb:
+			return vk::Format::b8g8r8a8Unorm;
+
+		case vk::Format::r8Unorm:
+			return vk::Format::r8Srgb;
+		case vk::Format::r8g8Unorm:
+			return vk::Format::r8g8Srgb;
+		case vk::Format::r8g8b8Unorm:
+			return vk::Format::r8g8b8Srgb;
+		case vk::Format::r8g8b8a8Unorm:
+			return vk::Format::r8g8b8a8Srgb;
+		case vk::Format::b8g8r8a8Unorm:
+			return vk::Format::b8g8r8a8Srgb;
+
+		default: return format;
 	}
 }
 

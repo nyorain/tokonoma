@@ -247,7 +247,11 @@ bool App::init(nytl::Span<const char*> args) {
 			return false;
 		}
 
-		handleArgs(result);
+		if(!handleArgs(result)) {
+			argagg::fmt_ostream help(std::cerr);
+			help << usage << parser << std::endl;
+			return false;
+		}
 	}
 
 	// init

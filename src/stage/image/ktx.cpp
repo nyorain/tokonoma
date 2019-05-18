@@ -108,7 +108,7 @@ void tfread(void* buffer, std::size_t size, std::size_t count,
 void tfwrite(void* buffer, std::size_t size, std::size_t count,
 		std::FILE* stream) {
 	auto res = std::fwrite(buffer, size, count, stream);
-	if(res != size * count) {
+	if(res != count) {
 		dlg_error("fwrite: {} ({})", res, std::strerror(errno));
 		throw std::runtime_error("fwrite failed");
 	}
@@ -141,7 +141,7 @@ public:
 	nytl::Vec2ui size_;
 	u32 mipLevels_;
 	u32 faces_;
-	u32 arrayElements_;
+	u32 arrayElements_; // 0 for non array textures
 	std::FILE* file_;
 	u64 dataBegin_;
 	std::vector<std::byte> tmpData_;
@@ -157,9 +157,11 @@ public:
 	vk::Format format() const override { return format_; }
 	unsigned mipLevels() const override { return mipLevels_; }
 	unsigned faces() const override { return faces_; }
-	unsigned layers() const override { return arrayElements_; }
+	unsigned layers() const override {
+		return std::max(arrayElements_, 1u);
+	}
 
-	nytl::Span<std::byte> read(unsigned face = 0, unsigned mip = 0,
+	nytl::Span<const std::byte> read(unsigned face = 0, unsigned mip = 0,
 			unsigned layer = 0) override {
 		nytl::Vec2ui size;
 		size.x = std::max(size_.x >> mip, 1u);
@@ -189,8 +191,12 @@ public:
 			size.x = std::max(size_.x >> i, 1u);
 			size.y = std::max(size_.y >> i, 1u);
 
-			auto faceSize = vpp::align(size.x * size.y * fmtSize, 4u);
-			auto mipSize = arrayElements_ * faces_ * faceSize;
+			auto faceSize = size.x * size.y * fmtSize;
+			auto mipSize = faceSize;
+			faceSize = vpp::align(faceSize, 4u);
+			if(arrayElements_ != 0 || faces_ != 6) {
+				mipSize = layers() * faces_ * faceSize;
+			}
 
 			// debug imageSize reading
 			tfseek(file_, address, SEEK_SET);
@@ -241,7 +247,7 @@ public:
 	}
 };
 
-static constexpr u32 ktxEndianess = 0x40302010;
+static constexpr u32 ktxEndianess = 0x04030201;
 static constexpr std::array<u8, 12> ktxIdentifier = {
 	0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A
 };
@@ -285,7 +291,7 @@ ReadError readKtx(nytl::StringParam path, KtxReader& reader) {
 		return ReadError::unexpectedEnd;
 	}
 
-	if(header.endianness != 0x40302010) {
+	if(header.endianness != ktxEndianess) {
 		// In this case the file was written in non-native endianess
 		// we could support it but that will be a lot of work
 		// Just error out for now
@@ -300,11 +306,31 @@ ReadError readKtx(nytl::StringParam path, KtxReader& reader) {
 		return ReadError::ktxDepth;
 	}
 
+	if(header.pixelWidth == 0) {
+		dlg_debug("KTX pixelWidth == 0");
+		std::fclose(file);
+		return ReadError::empty;
+	}
+
+	if(header.glFormat == 0) {
+		dlg_warn("KTX compressed format, not supported yet");
+		std::fclose(file);
+		return ReadError::ktxInvalidFormat;
+	}
+
 	reader.file_ = file;
+
+	// numberArrayElements == 0 has a special meaning for the imageSize
+	// field, so don't set it to 1 if zero. Will be done in Reader
 	reader.arrayElements_ = header.numberArrayElements;
-	reader.faces_ = header.numberFaces;
-	reader.mipLevels_ = header.numberMipmapLevels;
-	reader.size_ = {header.pixelWidth, header.pixelHeight};
+	reader.faces_ = std::max(header.numberFaces, 1u);
+
+	// NOTE: when numberMipmapLevels is zero, ktx specifies the loader
+	// should generate mipmaps. We could probably forward that information
+	// somehow? but in the end i guess the application knows whether or
+	// not it wants mipmaps, right?
+	reader.mipLevels_ = std::max(header.numberMipmapLevels, 1u);
+	reader.size_ = {header.pixelWidth, std::max(header.pixelHeight, 1u)};
 
 	auto glFormat = GLInternalFormat(header.glInternalFormat);
 	reader.format_ = vulkanFromGLFormat(glFormat);
@@ -338,14 +364,15 @@ ReadError readKtx(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
 
 // save
 WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
-	auto file = ::fopen(path.c_str(), "rb");
+	auto file = ::fopen(path.c_str(), "wb");
 	if(!file) {
 		return WriteError::cantOpen;
 	}
 
 	auto fileGuard = nytl::ScopeGuard([&]{ ::fclose(file); });
 #define write(data, size)\
-	if(::fwrite(data, size, 1, file) < size) { \
+	if(::fwrite(data, size, 1, file) < 1) { \
+		dlg_debug("fwrite failed"); \
 		return WriteError::cantWrite; \
 	}
 
@@ -354,7 +381,8 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 	auto fmt = image.format();
 	auto size = image.size();
 	auto mips = std::max(image.mipLevels(), 1u);
-	auto layers = std::max(image.layers(), 1u);
+	auto layers = image.layers();
+	layers = layers > 1 ? layers : 0;
 	auto faces = std::max(image.faces(), 1u);
 	auto fmtSize = vpp::formatSize(fmt);
 
@@ -398,7 +426,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 
 		// ktx exception: for this condition imagesize should only
 		// contain the size of *one face* instead of everything.
-		if(layers == 1 && faces == 6) {
+		if(layers == 0 && faces == 6) {
 			write(&faceSize, sizeof(faceSize));
 		} else {
 			u32 fullSize = faceSize * layers * faces;

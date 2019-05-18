@@ -20,11 +20,14 @@ namespace doi {
 // the caller can still use stbi_is_hdr(filename) manually before calling this.
 // The default format used when 'hdr = true' is passed is rgba16f, otherwise
 // will use rgba8.
+// NOTE: none of the functions/classes have support for compressed/packed
+// images.
 
 // returns whether the given format an hold high dynamic range data, i.e.
 // has a float format and can store values >1.0.
 bool isHDR(vk::Format);
 bool isSRGB(vk::Format);
+vk::Format toggleSRGB(vk::Format);
 
 // Vulkan enums declared via static to not include vulkan headers
 struct TextureCreateParams {

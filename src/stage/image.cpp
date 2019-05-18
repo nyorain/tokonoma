@@ -110,12 +110,11 @@ Image readImageStb(nytl::StringParam path, bool hdr) {
 	}
 
 	if(!data) {
-		dlg_warn("Failed to open texture file {}", path);
-
-		std::string err = "Could not load image from ";
+		std::string err = "STB could not load image from ";
 		err += path;
 		err += ": ";
 		err += stbi_failure_reason();
+		dlg_warn("{}", err);
 		return ret;
 	}
 
@@ -159,16 +158,16 @@ Image readImage(ImageProvider& provider) {
 class MemImageProvider : public ImageProvider {
 public:
 	Image image;
+	nytl::Span<const std::byte> data;
 
 public:
 	nytl::Vec2ui size() const override { return image.size; }
 	vk::Format format() const override { return image.format; }
 
-	nytl::Span<std::byte> read(unsigned face = 0, unsigned mip = 0,
+	nytl::Span<const std::byte> read(unsigned face = 0, unsigned mip = 0,
 			unsigned layer = 0) override {
 		dlg_assert(face == 0 && mip == 0 && layer == 0);
-		auto byteSize = size().x * size().y * vpp::formatSize(format());
-		return {image.data.get(), image.data.get() + byteSize};
+		return data;
 	}
 
 	bool read(nytl::Span<std::byte> data,
@@ -183,7 +182,20 @@ public:
 
 std::unique_ptr<ImageProvider> wrap(Image&& image) {
 	auto ret = std::make_unique<MemImageProvider>();
+	auto byteSize = image.size.x * image.size.y * vpp::formatSize(image.format);
 	ret->image = std::move(image);
+	ret->data = {ret->image.data.get(), ret->image.data.get() + byteSize};
+	return ret;
+}
+
+std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
+		nytl::Span<const std::byte> data) {
+	auto byteSize = size.x * size.y * vpp::formatSize(format);
+	dlg_assert(data.size() >= byteSize);
+	auto ret = std::make_unique<MemImageProvider>();
+	ret->data = data.first(byteSize);
+	ret->image.size = size;
+	ret->image.format = format;
 	return ret;
 }
 
