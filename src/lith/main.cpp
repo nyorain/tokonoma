@@ -30,6 +30,12 @@
 #include <shaders/senr.frag.h>
 #include <shaders/sen.comp.h>
 
+// NOTE: started this as full-featured raytracing app based on the ideas
+// from sen. Didn't go anywhere though (when i tried to at least somewhat
+// correctly model the brdf and noticed that the sen model is just
+// really not good...).
+// doesn't compile, should probably be deleted
+
 class Lith : public doi::App {
 public:
 	bool init(const doi::AppSettings& settings) override {

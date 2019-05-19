@@ -1,7 +1,6 @@
 #include "network.hpp"
 
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/transform.hpp>
 #include <stage/window.hpp>
@@ -14,8 +13,10 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/pipeline.hpp>
-#include <vpp/pipelineInfo.hpp>
 #include <vpp/bufferOps.hpp>
+#include <vpp/submit.hpp>
+#include <vpp/commandAllocator.hpp>
+#include <vpp/vk.hpp>
 
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
@@ -123,11 +124,13 @@ public:
 		auto& dev = vulkanDevice();
 
 		// resources
-		textures_ = doi::loadTextureArray(dev, {
+		auto images = {
 			"../assets/iro/test.png",
 			"../assets/iro/spawner.png",
 			"../assets/iro/ample.png",
-			"../assets/iro/velocity.png"});
+			"../assets/iro/velocity.png"};
+		auto p = doi::read(images);
+		textures_ = std::move(doi::Texture(dev, std::move(p)).viewableImage());
 
 		vk::SamplerCreateInfo samplerInfo {};
 		samplerInfo.minFilter = vk::Filter::linear;
@@ -157,7 +160,7 @@ public:
 		};
 
 		compDsLayout_ = {dev, compDsBindings};
-		compPipeLayout_ = {dev, {compDsLayout_}, {}};
+		compPipeLayout_ = {dev, {{compDsLayout_.vkHandle()}}, {}};
 
 		// graphics
 		auto gfxDsBindings = {
@@ -173,8 +176,8 @@ public:
 		};
 
 		gfxDsLayout_ = {dev, gfxDsBindings};
-		gfxPipeLayout_ = {dev, {gfxDsLayout_},
-			{{vk::ShaderStageBits::fragment, 0u, sizeof(nytl::Vec3f)}}};
+		gfxPipeLayout_ = {dev, {{gfxDsLayout_.vkHandle()}},
+			{{{vk::ShaderStageBits::fragment, 0u, sizeof(nytl::Vec3f)}}}};
 
 		// pipes
 		if(!initCompPipe(false)) {
@@ -192,7 +195,7 @@ public:
 		// ubo
 		auto uboSize = sizeof(nytl::Mat4f);
 		gfxUbo_ = {dev.bufferAllocator(), uboSize,
-			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
+			vk::BufferUsageBits::uniformBuffer, hostMem};
 
 		// init fields, storage
 		fields_ = initFields();
@@ -202,17 +205,20 @@ public:
 		auto usage = vk::BufferUsageFlags(vk::BufferUsageBits::storageBuffer);
 		auto storageSize = fields_.size() * sizeof(fields_[0]);
 		storageOld_ = {dev.bufferAllocator(), storageSize,
-			usage | vk::BufferUsageBits::transferDst, 0, hostMem};
-		vpp::writeMap430(storageOld_, vpp::raw(*fields_.data(), fields_.size()));
-		fieldsMap_ = storageOld_.memoryMap();
+			usage | vk::BufferUsageBits::transferDst, hostMem};
+		{
+			fieldsMap_ = storageOld_.memoryMap();
+			auto size = fields_.size() * sizeof(fields_[0]);
+			std::memcpy(fieldsMap_.ptr(), fields_.data(), size);
+		}
 
 		usage |= vk::BufferUsageBits::transferSrc | vk::BufferUsageBits::vertexBuffer;
-		storageNew_ = {dev.bufferAllocator(), storageSize, usage, 0, devMem};
+		storageNew_ = {dev.bufferAllocator(), storageSize, usage, devMem};
 
 		// player buf
 		usage = vk::BufferUsageBits::storageBuffer;
 		auto playerSize = sizeof(Player) * 2 + sizeof(u32);
-		playerBuffer_ = {dev.bufferAllocator(), playerSize, usage, 0, hostMem};
+		playerBuffer_ = {dev.bufferAllocator(), playerSize, usage, hostMem};
 
 		{
 			Player init;
@@ -240,12 +246,12 @@ public:
 			gfxUbo_.offset(), gfxUbo_.size()}});
 		gfxDsUpdate.imageSampler({{{}, textures_.vkImageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		vpp::apply({compDsUpdate, gfxDsUpdate});
+		vpp::apply({{{compDsUpdate}, {gfxDsUpdate}}});
 
 		// indirect selected buffer
 		selectedIndirect_ = {dev.bufferAllocator(),
 			sizeof(vk::DrawIndirectCommand),
-			vk::BufferUsageBits::indirectBuffer, 0, hostMem};
+			vk::BufferUsageBits::indirectBuffer, hostMem};
 
 		// upload buffer
 		// XXX: start size? implement dynamic resizing!
@@ -302,7 +308,7 @@ public:
 		compCb_ = dev.commandAllocator().get(qfamily);
 		vk::beginCommandBuffer(compCb_, {});
 		vk::cmdBindDescriptorSets(compCb_, vk::PipelineBindPoint::compute,
-			compPipeLayout_, 0, {compDs_}, {});
+			compPipeLayout_, 0, {{compDs_.vkHandle()}}, {});
 		vk::cmdBindPipeline(compCb_, vk::PipelineBindPoint::compute, compPipe_);
 		vk::cmdDispatch(compCb_, fieldCount_ / 32, 1, 1);
 
@@ -315,14 +321,14 @@ public:
 		vk::cmdPipelineBarrier(compCb_,
 			vk::PipelineStageBits::computeShader,
 			vk::PipelineStageBits::transfer,
-			{}, {}, {barrier}, {});
+			{}, {}, {{barrier}}, {});
 
 		vk::BufferCopy region;
 		region.srcOffset = storageNew_.offset();
 		region.dstOffset = storageOld_.offset();
 		region.size = storageOld_.size();
 		vk::cmdCopyBuffer(compCb_, storageNew_.buffer(), storageOld_.buffer(),
-			{region});
+			{{region}});
 
 		vk::endCommandBuffer(compCb_);
 	}
@@ -386,10 +392,10 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			gfxPipeLayout_, 0, {gfxDs_}, {});
+			gfxPipeLayout_, 0, {{gfxDs_.vkHandle()}}, {});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfxPipe_);
-		vk::cmdBindVertexBuffers(cb, 0, {storageNew_.buffer()},
-			{storageNew_.offset()});
+		vk::cmdBindVertexBuffers(cb, 0, {{storageNew_.buffer().vkHandle()}},
+			{{storageNew_.offset()}});
 
 		const nytl::Vec3f black = {0.f, 0.f, 0.f};
 		vk::cmdPushConstants(cb, gfxPipeLayout_, vk::ShaderStageBits::fragment,
@@ -531,7 +537,7 @@ public:
 		fieldsMap_.invalidate();
 		auto ptr = reinterpret_cast<Field*>(fieldsMap_.ptr());
 		auto size = fieldsMap_.size() / sizeof(Field);
-		return {ptr, size};
+		return {ptr, ptr + size};
 	}
 
 	void updateDevice() override {
@@ -858,11 +864,10 @@ public:
 		}
 
 		auto&& rp = renderPass();
-		vpp::GraphicsPipelineInfo gpi(rp,
-			gfxPipeLayout_, {{
+		vpp::GraphicsPipelineInfo gpi(rp, gfxPipeLayout_, {{{
 				{modv, vk::ShaderStageBits::vertex},
-				{modf, vk::ShaderStageBits::fragment}}},
-			0, samples());
+				{modf, vk::ShaderStageBits::fragment}
+		}}}, 0, samples());
 
 		constexpr auto fieldStride = sizeof(Field);
 		vk::VertexInputBindingDescription bufferBinding {
@@ -1036,7 +1041,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	HexApp app;
-	if(!app.init({*argv, std::size_t(argc)})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 	app.run();

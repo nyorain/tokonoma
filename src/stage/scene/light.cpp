@@ -200,7 +200,7 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		vk::ImageUsageBits::sampled;
 	auto info = vpp::ViewableImageCreateInfo(data.depthFormat,
 		vk::ImageAspectBits::depth, {size_.x, size_.y}, targetUsage);
-	target_ = {dev, info};
+	target_ = {dev.devMemAllocator(), info};
 
 	// framebuffer
 	vk::FramebufferCreateInfo fbi {};
@@ -320,7 +320,7 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		auto targetInfo = vpp::ViewableImageCreateInfo(data.depthFormat,
 			vk::ImageAspectBits::depth, {size_.x, size_.y}, targetUsage);
 		dlg_assert(vpp::supported(dev, targetInfo.img));
-		target_ = {dev, targetInfo};
+		target_ = {dev.devMemAllocator(), targetInfo};
 
 		// framebuffer
 		vk::FramebufferCreateInfo fbi {};
@@ -340,7 +340,7 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 		targetInfo.view.subresourceRange.layerCount = 6u;
 		targetInfo.view.components = {};
 		targetInfo.view.viewType = vk::ImageViewType::cube;
-		shadowMap_ = {dev, targetInfo};
+		shadowMap_ = {dev.devMemAllocator(), targetInfo};
 
 		// initial layout change
 		/*

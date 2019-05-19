@@ -139,7 +139,7 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 	auto sampleCount = 1024u;
 
 	dlg_assert(vpp::supported(dev, info.img));
-	auto lut = vpp::ViewableImage(dev, info, memBits);
+	auto lut = vpp::ViewableImage(dev.devMemAllocator(), info, memBits);
 	vpp::nameHandle(lut.image(), "BRDF Lookup Table");
 
 	// init pipeline
@@ -266,7 +266,7 @@ void saveCubemap(const char* equirectPath, const char* outfile,
 
 	auto sampler = linearSampler(dev);
 	doi::Cubemapper cubemapper;
-	cubemapper.init(dev.deviceAllocator(), {size, size}, sampler);
+	cubemapper.init(dev.devMemAllocator(), {size, size}, sampler);
 
 	auto& qs = dev.queueSubmitter();
 	auto cb = dev.commandAllocator().get(qs.queue().family());
@@ -326,7 +326,7 @@ void saveIrradiance(const char* infile, const char* outfile,
 
 	auto sampler = linearSampler(dev);
 	doi::Irradiancer irradiancer;
-	irradiancer.init(dev.deviceAllocator(), {size, size}, sampler);
+	irradiancer.init(dev.devMemAllocator(), {size, size}, sampler);
 
 	auto& qs = dev.queueSubmitter();
 	auto cb = dev.commandAllocator().get(qs.queue().family());

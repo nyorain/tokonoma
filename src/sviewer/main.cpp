@@ -1,5 +1,4 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/bits.hpp>
 #include <stage/util.hpp>
@@ -9,7 +8,7 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
-#include <vpp/pipelineInfo.hpp>
+#include <vpp/vk.hpp>
 #include <vpp/util/file.hpp>
 
 #include <ny/key.hpp>
@@ -31,7 +30,7 @@ class ViewerApp : public doi::App {
 public:
 	static constexpr auto cacheFile = "sviewer.cache";
 
-	bool init(const nytl::Span<const char*> args) override {
+	bool init(nytl::Span<const char*> args) override {
 		if(!doi::App::init(args)) {
 			return false;
 		}
@@ -39,7 +38,7 @@ public:
 		auto& dev = vulkanDevice();
 		auto mem = dev.hostMemoryTypes();
 		ubo_ = {dev.bufferAllocator(), sizeof(float) * 64, // should be 'nough
-			vk::BufferUsageBits::uniformBuffer, 0, mem};
+			vk::BufferUsageBits::uniformBuffer, mem};
 
 		auto renderBindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
@@ -52,7 +51,7 @@ public:
 		vk::PipelineLayoutCreateInfo plInfo;
 		plInfo.setLayoutCount = 1;
 		plInfo.pSetLayouts = pipeSets.begin();
-		pipeLayout_ = {dev, {dsLayout_}, {}};
+		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 		vertShader_ = {dev, stage_fullscreen_vert_data};
 
 		cache_ = {dev, cacheFile};
@@ -148,7 +147,7 @@ public:
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipeline_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {ds_.vkHandle()}, {});
+			pipeLayout_, 0, {{ds_.vkHandle()}}, {});
 		vk::cmdDraw(cb, 6, 1, 0, 0);
 	}
 
@@ -171,14 +170,12 @@ public:
 
 	void initPipe(vpp::ShaderModule frag) {
 		auto& dev = vulkanDevice();
-		auto rp = renderer().renderPass();
-		vpp::GraphicsPipelineInfo pipeInfo(rp, pipeLayout_, {{
+		vpp::GraphicsPipelineInfo pipeInfo(renderPass(), pipeLayout_, {{{
 			{vertShader_, vk::ShaderStageBits::vertex},
 			{frag, vk::ShaderStageBits::fragment}
-		}});
+		}}});
 
-		auto pipes = vk::createGraphicsPipelines(dev, cache_,  {pipeInfo.info()});
-		pipeline_ = {dev, pipes[0]};
+		pipeline_ = {dev, pipeInfo.info(), cache_};
 		vpp::save(dev, cache_, cacheFile);
 	}
 
@@ -221,7 +218,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	ViewerApp app;
-	if(!app.init({*argv, std::size_t(argc)})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

@@ -112,8 +112,7 @@ Texture::Texture(InitData& data, const WorkBatcher& wb,
 	dlg_assert(vpp::supported(wb.dev, info.img, features));
 	auto devBits = wb.dev.deviceMemoryTypes();
 	auto hostBits = wb.dev.hostMemoryTypes();
-	image_ = {data.initImage, wb.dev, info.img, devBits,
-		&wb.alloc.memDevice};
+	image_ = {data.initImage, wb.alloc.memDevice, info.img, devBits};
 
 	data.view = params.view;
 	if(data.view.layerCount == 0) {
@@ -142,8 +141,8 @@ Texture::Texture(InitData& data, const WorkBatcher& wb,
 		info.img.arrayLayers = layers;
 		info.img.initialLayout = vk::ImageLayout::preinitialized;
 		dlg_assert(vpp::supported(wb.dev, info.img));
-		data.stageImage = {data.initStageImage, wb.dev, info.img,
-			hostBits, &wb.alloc.memStage};
+		data.stageImage = {data.initStageImage, wb.alloc.memStage, info.img,
+			hostBits};
 		vpp::nameHandle(data.stageImage, "Texture:stageImage");
 	} else {
 		auto fmtSize = vpp::formatSize(dataFormat);

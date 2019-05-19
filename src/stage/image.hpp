@@ -113,8 +113,11 @@ std::unique_ptr<ImageProvider> readStb(nytl::StringParam path,
 /// given path. If no format/backend succeeds, the returned unique ptr will be
 /// empty. The hdr parameter is just for stb fallback.
 std::unique_ptr<ImageProvider> read(nytl::StringParam path, bool hdr = false);
-std::unique_ptr<ImageProvider> readLayers(nytl::Span<const char* const> paths,
-	bool hdr = false);
+
+/// Reads multiple images from the given paths.
+/// If asFaces is true, will load them as faces, otherwise as layers.
+std::unique_ptr<ImageProvider> read(nytl::Span<const char* const> paths,
+	bool asFaces = false, bool hdr = false);
 
 enum class WriteError {
 	none,

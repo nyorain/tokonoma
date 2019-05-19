@@ -1,5 +1,4 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/bits.hpp>
 #include <stage/transform.hpp>
@@ -10,7 +9,6 @@
 #include <vpp/bufferOps.hpp>
 #include <vpp/formats.hpp>
 #include <vpp/imageOps.hpp>
-#include <vpp/pipelineInfo.hpp>
 
 #include <nytl/mat.hpp>
 #include <nytl/matOps.hpp>
@@ -113,7 +111,7 @@ void PredPrey::readSettings() {
 
 	for(auto& s : settings_) {
 		try {
-			*s.second = std::stof(s.first->utf8());
+			*s.second = std::stof(std::string(s.first->utf8()));
 		} catch(const std::exception& err) {
 			dlg_error("Invalid float: {}", s.first->utf8());
 		}
@@ -155,7 +153,7 @@ void PredPrey::display(vui::dat::Folder& folder) {
 		auto name = tf.utf8();
 		dlg_debug("Trying to save {}", name);
 		try {
-			auto out = std::ofstream("saved/predprey/" + name);
+			auto out = std::ofstream("saved/predprey/" + std::string(name));
 			for(auto& s : settings_) {
 				out << *s.second << "\n";
 			}
@@ -170,7 +168,7 @@ void PredPrey::display(vui::dat::Folder& folder) {
 		auto name = tf.utf8();
 		dlg_debug("Trying to load {}", name);
 		try {
-			auto in = std::ifstream("saved/predprey/" + name);
+			auto in = std::ifstream("saved/predprey/" + std::string(name));
 			for(auto& s : settings_) {
 				in >> *s.second;
 				in.ignore(1); // newline
@@ -208,7 +206,7 @@ void PredPrey::initBuffers(unsigned add) {
 	Automaton::initBuffers(add);
 	auto memBits = device().hostMemoryTypes();
 	ubo_ = {device().bufferAllocator(), sizeof(float) * 6,
-		vk::BufferUsageBits::uniformBuffer, 16u, memBits};
+		vk::BufferUsageBits::uniformBuffer, memBits, 16u};
 }
 
 std::pair<bool, vk::Semaphore> PredPrey::updateDevice() {
@@ -272,8 +270,8 @@ void PredPrey::update(double delta) {
 	if(uploadField_ && selected_) {
 		uploadField_ = false;
 		try {
-			std::uint8_t x = std::stof(preyField_->textfield().utf8());
-			std::uint8_t y = std::stof(predField_->textfield().utf8());
+			std::uint8_t x = std::stof(std::string(preyField_->textfield().utf8()));
+			std::uint8_t y = std::stof(std::string(predField_->textfield().utf8()));
 			set(*selected_, {std::byte{x}, std::byte{y}});
 		} catch(const std::exception& err) {
 			dlg_error("Invalid float. '{}'", err.what());
@@ -281,7 +279,7 @@ void PredPrey::update(double delta) {
 	}
 }
 
-
+// TODO: not finished yet
 class Ant : public Automaton {
 public:
 	Ant() = default;
@@ -302,7 +300,7 @@ protected:
 		std::vector<uint32_t> movement;
 	} params_;
 	vpp::SubBuffer ubo_;
-	vpp::SubBuffer storage_; // contains current positions
+	// vpp::SubBuffer storage_; // contains current positions
 };
 
 
@@ -358,12 +356,12 @@ protected:
 
 class AutomatonApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
-		automaton_.init(vulkanDevice(), renderer().renderPass());
+		automaton_.init(vulkanDevice(), renderPass());
 
 		mat_ = nytl::identity<4, float>();
 		automaton_.transform(mat_);
@@ -536,13 +534,15 @@ public:
 		return true;
 	}
 
+	const char* name() const override { return "automaton"; }
+
 protected:
 	float facOld_ {1.f};
 	bool paused_ {};
 	bool oneStep_ {};
 	nytl::Mat4f mat_;
-	// PredPrey automaton_;
-	Ant automaton_;
+	PredPrey automaton_;
+	// Ant automaton_;
 
 	bool mouseDown_ {};
 	nytl::Vec2f dragged_ {};
@@ -551,7 +551,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	AutomatonApp app;
-	if(!app.init({"automaton", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

@@ -1,12 +1,10 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/bits.hpp>
 #include <stage/util.hpp>
 #include <argagg.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
-#include <vpp/pipelineInfo.hpp>
 #include <vpp/descriptor.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/bufferOps.hpp>
@@ -62,18 +60,18 @@ public:
 
 		gfxDsLayout_ = {dev, gfxBindings};
 		gfxDs_ = {dev.descriptorAllocator(), gfxDsLayout_};
-		gfxPipelineLayout_ = {dev, {gfxDsLayout_}, {}};
+		gfxPipelineLayout_ = {dev, {{gfxDsLayout_.vkHandle()}}, {}};
 
 		auto usage = nytl::Flags(vk::BufferUsageBits::uniformBuffer);
 		auto mem = dev.memoryTypeBits(vk::MemoryPropertyBits::hostVisible);
-		gfxUbo_ = {device().bufferAllocator(), gfxUboSize, usage, 0u, mem};
+		gfxUbo_ = {device().bufferAllocator(), gfxUboSize, usage, mem};
 
 		vpp::ShaderModule vertShader(device(), ps_ps_vert_data);
 		vpp::ShaderModule fragShader(device(), ps_ps_frag_data);
-		vpp::GraphicsPipelineInfo gpi {rp, gfxPipelineLayout_, {{
+		vpp::GraphicsPipelineInfo gpi {rp, gfxPipelineLayout_, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
-		}}, 0, samples};
+		}}}, 0, samples};
 
 		constexpr auto stride = sizeof(Particle);
 		vk::VertexInputBindingDescription bufferBinding {
@@ -111,7 +109,7 @@ public:
 
 		compDsLayout_ = {dev, compBindings};
 		compDs_ = {dev.descriptorAllocator(), compDsLayout_};
-		compPipelineLayout_ = {dev, {compDsLayout_}, {}};
+		compPipelineLayout_ = {dev, {{compDsLayout_.vkHandle()}}, {}};
 
 		if (!reloadShader()) { // init compute pipeline
 			throw std::runtime_error("could not load shader, see errors");
@@ -121,7 +119,7 @@ public:
 		auto bufSize = compUboSize;
 		usage = vk::BufferUsageBits::uniformBuffer;
 		mem = dev.memoryTypeBits(vk::MemoryPropertyBits::hostVisible);
-		compUbo_ = {device().bufferAllocator(), bufSize, usage, 0u, mem};
+		compUbo_ = {device().bufferAllocator(), bufSize, usage, mem};
 
 		vpp::DescriptorSetUpdate update1(compDs_);
 
@@ -129,31 +127,28 @@ public:
 		this->count(count, &update1);
 
 		// write descriptor
-		update1.uniform({{compUbo_.buffer(), compUbo_.offset(),
-			compUbo_.size()}});
+		update1.uniform({{{compUbo_}}});
 
 		vpp::DescriptorSetUpdate update2(gfxDs_);
-		update2.uniform({{gfxUbo_.buffer(), gfxUbo_.offset(),
-			gfxUbo_.size()}});
+		update2.uniform({{{gfxUbo_}}});
 
-		vpp::apply({update1, update2});
-
+		vpp::apply({{{update1}, {update2}}});
 		count_ = count;
 	}
 
 	void compute(vk::CommandBuffer cb) {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, compPipeline_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
-			compPipelineLayout_, 0, {compDs_}, {});
+			compPipelineLayout_, 0, {{compDs_.vkHandle()}}, {});
 		vk::cmdDispatch(cb, count_ / 256, 1, 1);
 	}
 
 	void render(vk::CommandBuffer cb) {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfxPipeline_);
-		vk::cmdBindVertexBuffers(cb, 0, {particleBuffer_.buffer()},
-			{particleBuffer_.offset()});
+		vk::cmdBindVertexBuffers(cb, 0, {{particleBuffer_.buffer().vkHandle()}},
+			{{particleBuffer_.offset()}});
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			gfxPipelineLayout_, 0, {gfxDs_}, {});
+			gfxPipelineLayout_, 0, {{gfxDs_.vkHandle()}}, {});
 		vk::cmdDraw(cb, count_, 1, 0, 0);
 	}
 
@@ -217,7 +212,7 @@ public:
 			| vk::BufferUsageBits::storageBuffer
 			| vk::BufferUsageBits::transferDst;
 		particleBuffer_ = {device().bufferAllocator(), bufSize,
-			usage, 0u, mem};
+			usage, mem};
 		count_ = count;
 
 		std::optional<vpp::DescriptorSetUpdate> localUpdate {};
@@ -226,8 +221,7 @@ public:
 			update = &*localUpdate;
 		}
 
-		update->storage({{particleBuffer_.buffer(), particleBuffer_.offset(),
-			particleBuffer_.size()}});
+		update->storage({{{particleBuffer_}}});
 	}
 
 	const vpp::Device& device() const {
@@ -272,7 +266,7 @@ public:
 		auto tfChangeProp = [&](auto& prop) {
 			return [&](auto& tf) {
 				try {
-					prop = std::stof(tf.utf8());
+					prop = std::stof(std::string(tf.utf8()));
 					system_.paramsChanged = true;
 				} catch(const std::exception& err) {
 					dlg_error("Invalid float: {}", tf.utf8());
@@ -370,7 +364,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	ParticlesApp app;
-	if(!app.init({*argv, std::size_t(argc)})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

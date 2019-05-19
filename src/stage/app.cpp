@@ -595,7 +595,7 @@ vpp::ViewableImage App::createDepthTarget(const vk::Extent2D& size) {
 
 	// create the viewable image
 	// will set the created image in the view info for us
-	return {vulkanDevice(), img, view};
+	return {vulkanDevice().devMemAllocator(), img, view};
 }
 
 vpp::ViewableImage App::createMultisampleTarget(const vk::Extent2D& size) {
@@ -631,7 +631,7 @@ vpp::ViewableImage App::createMultisampleTarget(const vk::Extent2D& size) {
 
 	// create the viewable image
 	// will set the created image in the view info for us
-	return {vulkanDevice(), img, view};
+	return {vulkanDevice().devMemAllocator(), img, view};
 }
 
 std::vector<vk::ClearValue> App::clearValues() {

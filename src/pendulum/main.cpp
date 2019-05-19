@@ -1,5 +1,4 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 
 #include <rvg/shapes.hpp>
@@ -113,7 +112,7 @@ public:
 			auto& t = at.template create<Textfield>(name, start).textfield();
 			t.onSubmit = [&, name](auto& tf) {
 				try {
-					value = std::stof(tf.utf8());
+					value = std::stof(std::string(tf.utf8()));
 				} catch(const std::exception& err) {
 					dlg_error("Invalid float for {}: {}", name, tf.utf8());
 					return;
@@ -291,7 +290,7 @@ protected:
 // main
 int main(int argc, const char** argv) {
 	PendulumApp app;
-	if(!app.init({*argv, std::size_t(argc)})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

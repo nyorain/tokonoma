@@ -67,7 +67,7 @@ void Cubemapper::init(vpp::DeviceMemoryAllocator& alloc,
 	auto memBits = dev.deviceMemoryTypes();
 	auto info = cubemapCreateInfo(size_);
 	dlg_assert(vpp::supported(dev, info.img));
-	cubemap_ = {initCubemap_, dev, info.img, memBits, &alloc};
+	cubemap_ = {initCubemap_, alloc, info.img, memBits};
 	vpp::nameHandle(cubemap_.image(), "Cubemapper:cubemap");
 
 	// layouts
@@ -166,7 +166,7 @@ void Irradiancer::init(vpp::DeviceMemoryAllocator& alloc,
 	auto memBits = dev.deviceMemoryTypes();
 	auto info = cubemapCreateInfo(size_);
 	dlg_assert(vpp::supported(dev, info.img));
-	irradiance_ = {initIrradiance_, dev, info.img, memBits, &alloc};
+	irradiance_ = {initIrradiance_, alloc, info.img, memBits};
 	vpp::nameHandle(irradiance_.image(), "Irradiancer:irradiance");
 
 	// init pipeline

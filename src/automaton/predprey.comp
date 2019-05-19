@@ -10,8 +10,7 @@ layout(binding = 2) uniform UBO {
 	vec2 wander;
 } ubo;
 
-// TODO: don't normalize floats, no reason for it
-// normalize in vertex renderer instead
+// TODO: don't normalize floats, no reason for it; remove 100 * x
 void wander(ivec2 neighbor, vec2 o, inout vec2 v, ivec2 size) {
 	// if(neighbor.x < 0 || neighbor.y < 0 || neighbor.x > size.x || neight.y > size.y) {
 	if(neighbor != clamp(neighbor, ivec2(0, 0), ivec2(size - 1))) {

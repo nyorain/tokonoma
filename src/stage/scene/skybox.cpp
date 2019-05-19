@@ -215,7 +215,7 @@ void Skybox::init(const WorkBatcher& wb, nytl::StringParam hdrFile,
 	imgi.view.subresourceRange.layerCount = 6u;
 	imgi.view.viewType = vk::ImageViewType::cube;
 	dlg_assert(vpp::supported(dev, imgi.img));
-	cubemap_ = {vpp::ViewableImage{dev, imgi}};
+	cubemap_ = {vpp::ViewableImage{dev.devMemAllocator(), imgi}};
 	vpp::nameHandle(cubemap_.image(), "Skybox:cubemap");
 
 	// ds data
@@ -306,7 +306,7 @@ void Skybox::init(const WorkBatcher& wb, nytl::StringParam hdrFile,
 	info.view.subresourceRange.layerCount = 6u;
 	info.view.viewType = vk::ImageViewType::cube;
 	dlg_assert(vpp::supported(dev, info.img));
-	irradiance_ = {dev, info};
+	irradiance_ = {dev.devMemAllocator(), info};
 
 	vpp::TrDs irradianceDs(wb.alloc.ds, dsLayout_);
 
@@ -417,7 +417,7 @@ void Skybox::init(const WorkBatcher& wb, vk::RenderPass rp,
 	auto params = doi::TextureCreateParams{};
 	params.format = vk::Format::r8g8b8a8Srgb;
 	params.cubemap = true;
-	cubemap_ = {wb, readLayers(nameStrings, false), params};
+	cubemap_ = {wb, read(nameStrings, true, false), params};
 	writeDs();
 }
 

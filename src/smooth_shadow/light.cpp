@@ -2,7 +2,6 @@
 #include <stage/bits.hpp>
 
 #include <vpp/formats.hpp>
-#include <vpp/pipelineInfo.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/debug.hpp>
 

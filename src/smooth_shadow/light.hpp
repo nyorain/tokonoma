@@ -3,9 +3,8 @@
 #include <stage/geometry.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
-#include <vpp/framebuffer.hpp>
+#include <vpp/handles.hpp>
 #include <vpp/pipeline.hpp>
-#include <vpp/renderPass.hpp>
 #include <vpp/image.hpp>
 #include <nytl/vec.hpp>
 

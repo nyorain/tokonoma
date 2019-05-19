@@ -210,17 +210,17 @@ void Primitive::render(vk::CommandBuffer cb,
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 		pipeLayout, 2, {{ds_.vkHandle()}}, {});
 
-	vk::cmdBindVertexBuffers(cb, 0, 1, {vertices_.buffer()}, {vOffset});
+	vk::cmdBindVertexBuffers(cb, 0, 1, vertices_.buffer(), vOffset);
 
 	if(uv_.size() > 0) {
-		vk::cmdBindVertexBuffers(cb, 1, 1, {uv_.buffer()}, {uv_.offset()});
+		vk::cmdBindVertexBuffers(cb, 1, 1, uv_.buffer(), uv_.offset());
 	} else {
 		// in this case we bind the vertex (pos + normal) buffer as
 		// uv buffer. This is obviously utter garbage but allows us
 		// to use just one pipeline. If we land here, the material of
 		// this primitive uses no textures so uv coords are irrevelant.
 		// The size of position+normals will always be larger than of uv coords.
-		vk::cmdBindVertexBuffers(cb, 1, 1, {vertices_.buffer()}, {vOffset});
+		vk::cmdBindVertexBuffers(cb, 1, 1, vertices_.buffer(), vOffset);
 	}
 
 	vk::cmdBindIndexBuffer(cb, vertices_.buffer(), iOffset, vk::IndexType::uint32);

@@ -1,5 +1,4 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <dlg/dlg.hpp>
 
@@ -93,7 +92,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	DummyApp app;
-	if(!app.init({*argv, std::size_t(argc)})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

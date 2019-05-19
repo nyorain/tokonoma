@@ -213,6 +213,7 @@ public:
 	static constexpr unsigned flagBloom = (1u << 3u);
 	static constexpr unsigned flagFXAA = (1u << 4u);
 	static constexpr unsigned flagDiffuseIBL = (1u << 5u);
+	static constexpr unsigned flagSpecularIBL = (1u << 6u);
 
 	static constexpr unsigned modeNormal = 0u;
 	static constexpr unsigned modeAlbedo = 1u;
@@ -232,7 +233,7 @@ public:
 	struct RenderParams {
 		u32 mode = 0u;
 		u32 flags {flagFXAA};
-		float aoFactor {0.05f};
+		float aoFactor {0.5f};
 		float ssaoPow {3.f};
 		u32 tonemap {2};
 		float exposure {1.f};
@@ -608,6 +609,13 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		updateRenderParams_ = true;
 	};
 
+	auto& cb7 = pp.create<Checkbox>("Specular IBL").checkbox();
+	cb7.set(params_.flags & flagSpecularIBL);
+	cb7.onToggle = [&](auto&) {
+		params_.flags ^= flagSpecularIBL;
+		updateRenderParams_ = true;
+	};
+
 	// light selection
 	vuiPanel_ = &panel;
 	selected_.folder = &panel.create<Folder>("Light");
@@ -736,7 +744,6 @@ void ViewApp::initRenderData() {
 	// TODO: those are required below (mainly by lights and by
 	//   materials, both should be fixable).
 	auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
-	auto dptr = reinterpret_cast<const std::byte*>(idata.data());
 	auto span = nytl::as_bytes(nytl::span(idata));
 	auto p = doi::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
 	doi::TextureCreateParams params;
@@ -746,6 +753,7 @@ void ViewApp::initRenderData() {
 	vpp::nameHandle(dummyTex_.image(), "dummyTex.image");
 	vpp::nameHandle(dummyTex_.imageView(), "dummyTex.view");
 
+	auto dptr = reinterpret_cast<const std::byte*>(idata.data());
 	auto faces = {dptr, dptr, dptr, dptr, dptr, dptr};
 	params.cubemap = true;
 	p = doi::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, 1, 1, 6u, faces);
@@ -1899,7 +1907,7 @@ vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 
 	// create the viewable image
 	// will set the created image in the view info for us
-	vpp::ViewableImage target = {device(), img, view,
+	vpp::ViewableImage target = {device().devMemAllocator(), img, view,
 		device().deviceMemoryTypes()};
 
 	return target;
@@ -1931,7 +1939,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 			vk::ImageUsageFlags extraUsage = {}) {
 		auto info = getCreateInfo(format,
 			defaultAttachmentUsage | extraUsage);
-		img = {device(), info, devMem};
+		img = {device().devMemAllocator(), info, devMem};
 		attachments.push_back(img.vkImageView());
 	};
 
@@ -1949,7 +1957,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	auto info = getCreateInfo(emissionFormat, usage);
 	auto bloomLevels = std::min(maxBloomLevels, vpp::mipmapLevels(size));
 	info.img.mipLevels = 1 + bloomLevels;
-	gpass_.emission = {device(), info, devMem};
+	gpass_.emission = {device().devMemAllocator(), info, devMem};
 
 	attachments.push_back(gpass_.emission.vkImageView());
 	attachments.push_back(depthTarget().vkImageView()); // depth
@@ -1964,7 +1972,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		vk::ImageUsageBits::sampled;
 	info = getCreateInfo(ldepthFormat, usage);
 	info.img.mipLevels = depthMipLevels_;
-	gpass_.depth = {device(), info, devMem};
+	gpass_.depth = {device().devMemAllocator(), info, devMem};
 	attachments.push_back(gpass_.depth.vkImageView());
 
 	info.view.subresourceRange.levelCount = depthMipLevels_;
@@ -2033,7 +2041,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		info = getCreateInfo(emissionFormat, usage);
 		info.img.extent = {size.width / 2, size.height / 2, 1u};
 		info.img.mipLevels = bloomLevels;
-		bloom_.tmpTarget = {device(), info.img, devMem};
+		bloom_.tmpTarget = {device().devMemAllocator(), info.img, devMem};
 
 		bloomLevels_ = bloomLevels;
 		bloom_.emissionLevels.clear();
@@ -2073,7 +2081,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 			vk::ImageUsageBits::sampled |
 			vk::ImageUsageBits::inputAttachment;
 		info = getCreateInfo(ssrFormat, usage);
-		ssr_.target = {device(), info, devMem};
+		ssr_.target = {device().devMemAllocator(), info, devMem};
 	} else {
 		ssr_.target = {};
 	}

@@ -95,15 +95,12 @@ public:
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
 		sampler_ = {dev, sci};
 
-		// dummyTex_ = doi::loadTexture(dev, {1, 1, 1},
-		// 	vk::Format::r8g8b8a8Unorm, {ptr, data.size()});
-		auto data = std::make_unique<std::byte[]>(4);
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
-		std::memcpy(data.get(), idata.data(), 4u);
-		std::vector<std::unique_ptr<std::byte[]>> faces;
-		faces.emplace_back(std::move(data));
-		dummyTex_ = {batch, std::move(faces), vk::Format::r8g8b8a8Unorm,
-			vk::Extent2D{1u, 1u}};
+		auto span = nytl::as_bytes(nytl::span(idata));
+		auto p = doi::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+		doi::TextureCreateParams params;
+		params.format = vk::Format::r8g8b8a8Unorm;
+		dummyTex_ = {batch, std::move(p), params};
 
 		// per scense; view + projection matrix, lights
 		auto sceneBindings = {

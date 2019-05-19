@@ -15,21 +15,19 @@ T read(const std::byte*& data) {
 	return ret;
 }
 
-// TODO: can probably be removed
-// Was only needed for missing Span 'nonconst -> const' constructor
-// template<typename T>
-// T read(nytl::Span<std::byte>& span) {
-// 	T ret;
-// 	dlg_assert(span.size() >= sizeof(ret));
-// 	std::memcpy(&ret, span.data(), sizeof(ret));
-// 	span = span.last(span.size() - sizeof(ret));
-// 	return ret;
-// }
+template<typename T>
+T read(nytl::Span<std::byte>& span) {
+	T ret;
+	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
+	std::memcpy(&ret, span.data(), sizeof(ret));
+	span = span.last(span.size() - sizeof(ret));
+	return ret;
+}
 
 template<typename T>
 T read(nytl::Span<const std::byte>& span) {
 	T ret;
-	dlg_assert(span.size() >= sizeof(ret));
+	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
 	std::memcpy(&ret, span.data(), sizeof(ret));
 	span = span.last(span.size() - sizeof(ret));
 	return ret;
@@ -38,7 +36,7 @@ T read(nytl::Span<const std::byte>& span) {
 template<typename T>
 T& refRead(nytl::Span<std::byte>& span) {
 	T ret;
-	dlg_assert(span.size() >= sizeof(ret));
+	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
 	auto data = span.data();
 	span = span.last(span.size() - sizeof(ret));
 	return *reinterpret_cast<T*>(data);

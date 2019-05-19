@@ -57,9 +57,9 @@ void main() {
 	if(depth != 1.f && params.aoFactor > 0.f) {
 		vec4 vAlbedo = texture(albedoTex, uv);
 		vec3 albedo = vAlbedo.rgb;
-		vec3 ambient = albedo;
+		vec3 ambient = vec3(0.0);
 
-		if((params.flags & flagDiffuseIBL) != 0) {
+		if((params.flags & (flagDiffuseIBL | flagSpecularIBL)) != 0) {
 			vec4 vNormal = texture(normalTex, uv);
 			vec3 normal = decodeNormal(vNormal.xy);
 			float roughness = vNormal.w;
@@ -81,18 +81,30 @@ void main() {
 			kD *= 1.0 - metallic;
 
 			// ambient irradiance
-			vec3 irradiance = texture(irradianceMap, normal).rgb;
-			vec3 diffuse = kD * irradiance * albedo;
+			if((params.flags & flagDiffuseIBL) != 0) {
+				vec3 irradiance = texture(irradianceMap, normal).rgb;
+				vec3 diffuse = kD * irradiance * albedo;
+				ambient += diffuse;
+			} else {
+				ambient += 0.125 * albedo;
+			}
 
 			// specular
-			vec3 R = reflect(viewDir, normal);
-			float lod = roughness * params.convolutionLods;
-			vec3 filtered = textureLod(envMap, R, lod).rgb;   
-			vec2 brdfParams = vec2(cosTheta, roughness);
-			vec2 brdf = texture(brdfLut, brdfParams).rg;
-			vec3 specular = filtered * (kS * brdf.x + brdf.y);
-			  
-			ambient = diffuse + specular;
+			if((params.flags & flagSpecularIBL) != 0) {
+				vec3 R = reflect(viewDir, normal);
+				float lod = roughness * params.convolutionLods;
+				vec3 filtered = textureLod(envMap, R, lod).rgb;   
+				vec2 brdfParams = vec2(cosTheta, roughness);
+				vec2 brdf = texture(brdfLut, brdfParams).rg;
+				vec3 specular = filtered * (kS * brdf.x + brdf.y);
+				ambient += specular;
+			} else {
+				ambient += 0.125 * albedo;
+			}
+		} else {
+			// NOTE: random factor to make the brightness for ibl/non-ibl
+			// ao roughly equal.
+			ambient = 0.25 * albedo;
 		}
 
 		float ao = params.aoFactor * vAlbedo.w;

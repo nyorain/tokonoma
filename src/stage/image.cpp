@@ -264,11 +264,13 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
 	return ret;
 }
 
-// Layered
-class LayeredImageProvider : public ImageProvider {
+// Multi
+class MultiImageProvider : public ImageProvider {
 public:
-	std::vector<std::unique_ptr<ImageProvider>> layers_;
+	std::vector<std::unique_ptr<ImageProvider>> providers_;
+	bool asFaces_ {};
 	unsigned faces_ {};
+	unsigned layers_ {};
 	unsigned mips_ {};
 	nytl::Vec2ui size_ {};
 	vk::Format format_ = vk::Format::undefined;
@@ -277,26 +279,37 @@ public:
 	vk::Format format() const override { return format_; }
 	unsigned faces() const override { return faces_; }
 	unsigned mipLevels() const override { return mips_; }
-	unsigned layers() const override { return layers_.size(); }
+	unsigned layers() const override { return layers_; }
 	nytl::Vec2ui size() const override { return size_; }
 
 	bool read(nytl::Span<std::byte> data, unsigned mip = 0, unsigned layer = 0,
 			unsigned face = 0) override {
-		dlg_assert(face < faces_ && mip < mips_ && layer < layers_.size());
-		return layers_[layer]->read(data, face, mip, 0);
+		dlg_assert(face < faces_ && mip < mips_ && layer < layers_);
+		if(asFaces_) {
+			return providers_[face]->read(data, mip, layer, 0);
+		} else {
+			return providers_[layer]->read(data, mip, 0, face);
+		}
 	}
 
 	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0,
 			unsigned face = 0) override {
-		dlg_assert(face < faces_ && mip < mips_ && layer < layers_.size());
-		return layers_[layer]->read(face, mip, 0);
+		dlg_assert(face < faces_ && mip < mips_ && layer < layers_);
+		if(asFaces_) {
+			return providers_[face]->read(mip, layer, 0);
+		} else {
+			return providers_[layer]->read(mip, 0, face);
+		}
 	}
 };
 
-std::unique_ptr<ImageProvider> readLayers(nytl::Span<const char* const> paths,
-		bool hdr) {
-	auto ret = std::make_unique<LayeredImageProvider>();
-	auto first = false;
+std::unique_ptr<ImageProvider> read(nytl::Span<const char* const> paths,
+		bool asFaces, bool hdr) {
+	auto ret = std::make_unique<MultiImageProvider>();
+	auto first = true;
+	ret->asFaces_ = asFaces;
+	(asFaces ? ret->faces_ : ret->layers_) = paths.size();
+
 	for(auto& path : paths) {
 		auto provider = read(path, hdr);
 		if(!provider) {
@@ -307,52 +320,77 @@ std::unique_ptr<ImageProvider> readLayers(nytl::Span<const char* const> paths,
 			first = false;
 			ret->format_ = provider->format();
 			ret->size_ = provider->size();
-			ret->faces_ = provider->faces();
 			ret->mips_ = provider->mipLevels();
+			if(asFaces) {
+				ret->layers_ = provider->layers();
+			} else {
+				ret->faces_ = provider->faces();
+			}
 		} else {
+			auto imgName = asFaces ? "face" : "layer";
 			// Make sure that this image has the same properties as the
 			// other images
 			auto isize = provider->size();
 			if(isize != ret->size_) {
 				auto msg = dlg::format(
-					"LayeredImageProvider: Image layer has different sizes:"
+					"LayeredImageProvider: Image {} has different sizes:"
 					"\n\tFirst image had size {}"
-					"\n\t'{}' has size {}", ret->size_, path, isize);
+					"\n\t'{}' has size {}", imgName, ret->size_, path, isize);
 				throw std::runtime_error(msg);
 			}
 
 			auto iformat = provider->format();
 			if(iformat != ret->format_) {
 				auto msg = dlg::format(
-					"LayeredImageProvider: Image layer has different formats:"
+					"LayeredImageProvider: Image {} has different formats:"
 					"\n\tFirst image had format {}"
 					"\n\t'{}' has format {}",
-					(int) ret->format_, path, (int) iformat);
+					imgName, (int) ret->format_, path, (int) iformat);
 				throw std::runtime_error(msg);
 			}
 
 			auto imips = provider->mipLevels();
 			if(imips != ret->mips_) {
 				auto msg = dlg::format(
-					"LayeredImageProvider: Image layer has different mip counts:"
+					"LayeredImageProvider: Image {} has different mip counts:"
 					"\n\tFirst image had mip count {}"
 					"\n\t'{}' has mip count {}",
-					(int) ret->mips_, path, (int) imips);
+					imgName, (int) ret->mips_, path, (int) imips);
 				throw std::runtime_error(msg);
 			}
 
-			auto ifaces = provider->faces();
-			if(ifaces != ret->faces_) {
-				auto msg = dlg::format(
-					"LayeredImageProvider: Image layer has different face count:"
-					"\n\tFirst image had face count {}"
-					"\n\t'{}' has face count {}",
-					(int) ret->faces_, path, (int) ifaces);
-				throw std::runtime_error(msg);
+			if(asFaces) {
+				auto ilayers = provider->layers();
+				if(ilayers != ret->layers_) {
+					auto msg = dlg::format(
+						"LayeredImageProvider: Image {} has different layer count:"
+						"\n\tFirst image had layer count {}"
+						"\n\t'{}' has layer count {}",
+						imgName, (int) ret->layers_, path, (int) ilayers);
+					throw std::runtime_error(msg);
+				}
+			} else {
+				auto ifaces = provider->faces();
+				if(ifaces != ret->faces_) {
+					auto msg = dlg::format(
+						"LayeredImageProvider: Image {} has different face count:"
+						"\n\tFirst image had face count {}"
+						"\n\t'{}' has face count {}",
+						imgName, (int) ret->faces_, path, (int) ifaces);
+					throw std::runtime_error(msg);
+				}
 			}
 		}
 
-		ret->layers_.push_back(std::move(provider));
+		if(asFaces) {
+			dlg_assertlm(dlg_level_warn, provider->faces() == 1u,
+				"{} faces will not be accessible", provider->faces() - 1);
+		} else {
+			dlg_assertlm(dlg_level_warn, provider->layers() == 1u,
+				"{} layers will not be accessible", provider->layers() - 1);
+		}
+
+		ret->providers_.push_back(std::move(provider));
 	}
 
 	return ret;
