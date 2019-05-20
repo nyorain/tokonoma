@@ -17,6 +17,7 @@
 #include <shaders/stage.shadowmapCube.frag.h>
 
 // TODO: some duplication between dir and point light
+// TODO: use allocators from work batcher
 
 namespace doi {
 
@@ -192,9 +193,11 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 }
 
 // DirLight
-DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
+DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
 		nytl::Vec3f viewPos, unsigned id) {
+	auto& dev = wb.dev;
+
 	// target
 	auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
 		vk::ImageUsageBits::sampled;
@@ -227,9 +230,10 @@ DirLight::DirLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	ldsu.apply();
 
 	// light ball
-	auto cube = doi::Cube{{}, {1.f, 1.f, 1.f}};
+	auto cube = doi::Cube{{}, {0.2f, 0.2f, 0.2f}};
 	auto shape = doi::generate(cube);
-	// lightBall_ = {shape, primitiveDsLayout, 0u, lightBallMatrix(viewPos), id};
+	lightBall_ = {wb, shape, primitiveDsLayout, 0u,
+		lightBallMatrix(viewPos), id};
 
 	updateDevice(viewPos);
 }
@@ -264,7 +268,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 }
 
 nytl::Mat4f DirLight::lightBallMatrix(nytl::Vec3f viewPos) const {
-	return translateMat(viewPos - 25.f * nytl::normalized(this->data.dir));
+	return translateMat(viewPos - 5.f * nytl::normalized(this->data.dir));
 }
 
 nytl::Mat4f DirLight::lightMatrix(nytl::Vec3f viewPos) const {
@@ -295,8 +299,8 @@ void DirLight::updateDevice(nytl::Vec3f viewPos) {
 	doi::write(span, this->data);
 	doi::write(span, lightMatrix(viewPos));
 
-	// lightBall_.matrix = lightBallMatrix(viewPos);
-	// lightBall_.updateDevice();
+	lightBall_.matrix = lightBallMatrix(viewPos);
+	lightBall_.updateDevice();
 }
 
 // PointLight
@@ -308,9 +312,10 @@ void DirLight::updateDevice(nytl::Vec3f viewPos) {
 // unrealistic. For rendering directly into the cube map we'd need 6
 // framebuffers which may also waste resources (but that may be an alternative
 // worth investigating... we'd still need 6 seperate renderpasses though)
-PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
+PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
 		unsigned id, vk::ImageView noShadowMap) {
+	auto& dev = wb.dev;
 	if(!noShadowMap) {
 		this->data.flags |= lightFlagShadow;
 
@@ -379,7 +384,7 @@ PointLight::PointLight(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	// primitive
 	auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
 	auto shape = doi::generateUV(sphere);
-	// lightBall_ = {shape, primitiveDsLayout, 0u, lightBallMatrix(), id};
+	lightBall_ = {wb, shape, primitiveDsLayout, 0u, lightBallMatrix(), id};
 
 	updateDevice();
 }
@@ -600,8 +605,8 @@ void PointLight::updateDevice() {
 		doi::write(span, lightMatrix(i));
 	}
 
-	// lightBall_.matrix = lightBallMatrix();
-	// lightBall_.updateDevice();
+	lightBall_.matrix = lightBallMatrix();
+	lightBall_.updateDevice();
 }
 
 } // namespace doi

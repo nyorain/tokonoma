@@ -303,10 +303,10 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	// accum = clamp(accum, 0.0, 1.0);
 	// accum = smoothstep(0.1, 1.0, accum);
 
-	// NOTE: random factors (especially the 35 seems weird...)
+	// NOTE: random factors
 	// currently tuned for directional light
 	// float fac = 10 * mieScattering(ldv, -0.7);
-	float fac = 10 * phase_mie(ldv, -0.4);
+	float fac = 25 * phase_mie(ldv, -0.4);
 	fac *= ldv;
 
 	// nice small "sun" in addition to the all around scattering

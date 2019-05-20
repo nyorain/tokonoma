@@ -42,7 +42,7 @@ public:
 
 public:
 	DirLight() = default;
-	DirLight(const vpp::Device&, const vpp::TrDsLayout& matDsLayout,
+	DirLight(const WorkBatcher&, const vpp::TrDsLayout& matDsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
 		nytl::Vec3f viewPos, unsigned id);
 
@@ -81,7 +81,7 @@ public:
 public:
 	// TODO: remove redundant vpp::Device
 	PointLight() = default;
-	PointLight(const vpp::Device&, const vpp::TrDsLayout& matLayout,
+	PointLight(const WorkBatcher&, const vpp::TrDsLayout& matLayout,
 		const vpp::TrDsLayout& primitiveLayout, const ShadowData& data,
 		unsigned id, vk::ImageView noShadowMap = {});
 

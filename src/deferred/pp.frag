@@ -20,6 +20,7 @@ layout(set = 0, binding = 1) uniform sampler2D colorTex;
 layout(set = 0, binding = 2) uniform sampler2D ssrTex;
 layout(set = 0, binding = 3) uniform sampler2D bloomTex;
 layout(set = 0, binding = 4) uniform sampler2D depthTex;
+layout(set = 0, binding = 5) uniform sampler2D scatterTex;
 
 // http://filmicworlds.com/blog/filmic-tonemapping-operators/
 // has a nice preview of different tonemapping operators
@@ -123,6 +124,25 @@ void main() {
 		}
 
 		color.rgb += bloomSum;
+	}
+
+	// apply scattering
+	// TODO: blur in different pass? we don't need that strong of blur though
+	if((params.flags & flagScattering) != 0) {
+		const float scatterFac = 2 / 25.f;
+		float scatter = 0.f;
+		int range = 1;
+		vec2 texelSize = 1.f / textureSize(scatterTex, 0);
+		for(int x = -range; x <= range; ++x) {
+			for(int y = -range; y <= range; ++y) {
+				vec2 off = texelSize * vec2(x, y);
+				scatter += texture(scatterTex, uv + off).r;
+			}
+		}
+
+		int total = ((2 * range + 1) * (2 * range + 1));
+		scatter /= total;
+		color.rgb += scatterFac * scatter * vec3(0.9, 0.8, 0.6); // TODO: should be light color
 	}
 
 	fragColor = vec4(tonemap(color.rgb), 1.0);

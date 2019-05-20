@@ -68,16 +68,21 @@
 //   as additional attachment in the light pass
 // TODO: we should be able to always use the same attenuation (or at least
 //   make it independent from radius) by normalizing distance from light
-//   (dividing by radius) before caluclating attunation
-// TODO: re-add skybox and transparent objects in forward pass.
+//   (dividing by radius) before caluclating attunation.
+//   currently done, has some problems as well though, fix those.
+//     -> how to handle light attenuation for point lights?
+//      see scene.glsl:attenuation, does it make sense to give each light
+//      its own parameters? normalize distance by radius before passing
+//      it to attenuation? parameters that work fine for a normalized
+//      distance are (1, 8, 128), but then lights are rather weak
+// TODO: transparent objects in forward pass.
 //   the objects from that pass will have no effect on ssao or ssr,
 //   no other way to do it. That means that you will never see a transparent
-//   object in a reflection... (todo: you should see the skybox though!
-//   how to handle that?)
+//   object in a reflection...
 //   An alternative idea is to use 2 forward passes: one for almost opaque
 //   objects that can be aproximated as opaque for ssr/ssao sakes and then
 //   (after reading the buffers for ss algorithms) another forward pass
-//   for almost-transparent objects. Probably not worht it though
+//   for almost-transparent objects. Probably not worth it though
 // TODO: parameterize all (currently somewhat random) values and factors
 //   (especially in artefact-prone screen space shaders)
 // TODO: re-add (fix for point light) the shadowmap-based light
@@ -87,27 +92,25 @@
 //   which is guaranteed to be supported? and then encode it
 // TODO: point light scattering currently doesn't support the ldv value,
 //   i.e. view-dir dependent scattering only based on attenuation
-// TODO: support light scattering for every light (add a light flag for it).
+// TODO: support light scattering for every light (add a light flag for it)?
 //   For point lights, we only have to scatter in the light volume.
 //   Probably can't combine it with the volume rasterization step in the
 //   light pass though, so have to render the box twice.
+//   not sure if really worth it for point lights though
 // TODO: cascaded shadow maps for directional lights
 //   Allow to set the shadow map size for all lights. Or automatically
 //   dynamically allocate shadow maps per frame (but also see the
 //   only one shadow map at all thing).
-// TODO: fix theoretical synchronization issues
+// TODO: fix theoretical synchronization issues (markes as todo in code)
 // TODO: do we really need depth mip levels anywhere? test if it really
 //   brings ssao performance improvement. Otherwise we are wasting this
 //   whole "depth mip map levels" thing
 // TODO: blur ssr in extra pass (with compute shader shared memory,
 //   see ssrBlur.comp wip). Should hopefully improve performance
 //   and allow for greater blur. Also distribute factors (compute guass +
-//   depth difference) via shared variables
-// TODO: how to handle light attenuation for point lights?
-//   see scene.glsl:attenuation, does it make sense to give each light
-//   its own parameters? normalize distance by radius before passing
-//   it to attenuation? parameters that work fine for a normalized
-//   distance are (1, 8, 128), but then lights are rather weak
+//   depth difference) via shared variables.
+//   maybe just generate mipmaps for light buffer, i guess that is how
+//   it's usually done.
 
 // low prio:
 // TODO: look at adding smaa. That needs multiple post processing
@@ -232,8 +235,8 @@ public:
 	// see various post processing or screen space shaders
 	struct RenderParams {
 		u32 mode = 0u;
-		u32 flags {flagFXAA};
-		float aoFactor {0.5f};
+		u32 flags {flagFXAA | flagDiffuseIBL | flagSpecularIBL};
+		float aoFactor {0.1f};
 		float ssaoPow {3.f};
 		u32 tonemap {2};
 		float exposure {1.f};
@@ -568,15 +571,6 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		App::scheduleRerecord();
 	};
 
-	// auto& cb2 = pp.create<Checkbox>("scattering").checkbox();
-	// cb2.set(pp_.params.flags & flagScattering);
-	// cb2.onToggle = [&](auto&) {
-	// 	pp_.params.flags ^= flagScattering;
-	// 	pp_.updateParams = true;
-	// 	updateDescriptors_ = true;
-	// 	App::scheduleRerecord();
-	// };
-
 	auto& cb3 = pp.create<Checkbox>("SSR").checkbox();
 	cb3.set(params_.flags & flagSSR);
 	cb3.onToggle = [&](auto&) {
@@ -614,6 +608,15 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	cb7.onToggle = [&](auto&) {
 		params_.flags ^= flagSpecularIBL;
 		updateRenderParams_ = true;
+	};
+
+	auto& cb8 = pp.create<Checkbox>("Scattering").checkbox();
+	cb8.set(params_.flags & flagScattering);
+	cb8.onToggle = [&](auto&) {
+		params_.flags ^= flagScattering;
+		updateRenderParams_ = true;
+		App::resize_ = true; // recreate
+		App::scheduleRerecord();
 	};
 
 	// light selection
@@ -879,6 +882,26 @@ void ViewApp::initRenderData() {
 		vk::PipelineStageBits::bottomOfPipe,
 		{}, {}, {}, {{barrier}});
 
+	// add lights
+	// TODO: creation not deferred
+	if(pointLight) {
+		auto& l = pointLights_.emplace_back(batch, lightDsLayout_,
+			primitiveDsLayout_, shadowData_, currentID_++);
+		l.data.position = {-1.8f, 6.0f, -2.f};
+		l.data.color = {2.f, 1.7f, 0.8f};
+		l.data.attenuation = {1.f, 0.3f, 0.1f};
+		l.data.radius = 10.f;
+		l.updateDevice();
+		// pp_.params.scatterLightColor = 0.1f * l.data.color;
+	} else {
+		auto& l = dirLights_.emplace_back(batch, lightDsLayout_,
+			primitiveDsLayout_, shadowData_, camera_.pos, currentID_++);
+		l.data.dir = {-3.8f, -9.2f, -5.2f};
+		l.data.color = {2.f, 1.7f, 0.8f};
+		l.updateDevice(camera_.pos);
+		// pp_.params.scatterLightColor = 0.05f * l.data.color;
+	}
+
 	// submit and wait
 	// NOTE: we could do something on the cpu meanwhile
 	vk::endCommandBuffer(cb);
@@ -897,24 +920,6 @@ void ViewApp::initRenderData() {
 		nytl::Vec{0.f, 0.f, 0.0f, 0.f}, 0.f, 0.f, false,
 		nytl::Vec{1.f, 0.9f, 0.5f});
 
-	// TODO: defer as well
-	if(pointLight) {
-		auto& l = pointLights_.emplace_back(dev, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, currentID_++);
-		l.data.position = {-1.8f, 6.0f, -2.f};
-		l.data.color = {2.f, 1.7f, 0.8f};
-		l.data.attenuation = {1.f, 0.3f, 0.1f};
-		l.data.radius = 10.f;
-		l.updateDevice();
-		// pp_.params.scatterLightColor = 0.1f * l.data.color;
-	} else {
-		auto& l = dirLights_.emplace_back(dev, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, camera_.pos, currentID_++);
-		l.data.dir = {-3.8f, -9.2f, -5.2f};
-		l.data.color = {2.f, 1.7f, 0.8f};
-		l.updateDevice(camera_.pos);
-		// pp_.params.scatterLightColor = 0.05f * l.data.color;
-	}
 }
 
 void ViewApp::initGPass() {
@@ -1268,6 +1273,7 @@ void ViewApp::initLPass() {
 	lgpi.blend = pgpi.blend;
 	lgpi.depthStencil = pgpi.depthStencil;
 	lgpi.assembly = pgpi.assembly;
+	lgpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 
 	// create the pipes
 	vk::GraphicsPipelineCreateInfo infos[] = {pgpi.info(), lgpi.info()};
@@ -1328,9 +1334,14 @@ void ViewApp::initPPass() {
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
 		// depth (for ssr), use nearest sampler as ssr does
-		vpp::descriptorBinding( // bloom
+		vpp::descriptorBinding( // depth
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
+		// light scattering, no guassian blur atm, could use either sampler i
+		// guess?
+		vpp::descriptorBinding( // light scattering
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
 	};
 
 	pp_.dsLayout = {dev, ppInputBindings};
@@ -2125,8 +2136,8 @@ void ViewApp::updateDescriptors() {
 	bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
 	auto ssaoView = (params_.flags & flagSSAO) ?
 		ssao_.target.vkImageView() : dummyTex_.vkImageView();
-	// auto scatterView = (pp_.params.flags & flagScattering) ?
-		// scatter_.target.vkImageView() : dummyTex_.vkImageView();
+	auto scatterView = (params_.flags & flagScattering) ?
+		scatter_.target.vkImageView() : dummyTex_.vkImageView();
 	auto depthView = needDepth ?  depthMipView_ : gpass_.depth.vkImageView();
 	auto bloomView = (params_.flags & flagBloom) ?
 		bloom_.fullBloom : gpass_.emission.vkImageView();
@@ -2142,6 +2153,8 @@ void ViewApp::updateDescriptors() {
 	pdsu.imageSampler({{{}, bloomView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	pdsu.imageSampler({{{}, depthView,
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	pdsu.imageSampler({{{}, scatterView,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
 	auto& cdsu = updates.emplace_back(combine_.ds);
@@ -2343,17 +2356,17 @@ void ViewApp::record(const RenderBuffer& buf) {
 			gpass_.pipeLayout, 0, {{sceneDs_.vkHandle()}}, {});
 		scene_.render(cb, gpass_.pipeLayout);
 
-		/*
-		// NOTE: ideally, don't render these in gbuffer pass but later
-		// on with different lightning?
-		lightMaterial_->bind(cb, gpass_.pipeLayout);
-		for(auto& l : pointLights_) {
-			l.lightBall().render(cb, gpass_.pipeLayout);
-		}
-		for(auto& l : dirLights_) {
-			l.lightBall().render(cb, gpass_.pipeLayout);
-		}
-		*/
+		// render light balls with emission material
+		// NOTE: rendering them messes with light scattering since
+		// then the light source is *inside* something (small).
+		// disabled for now, although it shows bloom nicely
+		// lightMaterial_->bind(cb, gpass_.pipeLayout);
+		// for(auto& l : pointLights_) {
+		// 	l.lightBall().render(cb, gpass_.pipeLayout);
+		// }
+		// for(auto& l : dirLights_) {
+		// 	l.lightBall().render(cb, gpass_.pipeLayout);
+		// }
 
 		vk::cmdEndRenderPass(cb);
 	}
@@ -2929,7 +2942,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 	switch(ev.keycode) {
 		case ny::Keycode::m: // move light here
 			if(!dirLights_.empty()) {
-				dirLights_[0].data.dir = -camera_.pos;
+				dirLights_[0].data.dir = -nytl::normalized(camera_.pos);
 			} else {
 				pointLights_[0].data.position = camera_.pos;
 			}
@@ -2965,6 +2978,8 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			params_.exposure /= 1.1f;
 			updateRenderParams_ = true;
 			return true;
+		// TODO: re-add with work batcher
+		/*
 		case ny::Keycode::comma: {
 			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
 				primitiveDsLayout_, shadowData_, currentID_++);
@@ -2989,7 +3004,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			l.updateDevice();
 			App::scheduleRerecord();
 			break;
-		} case ny::Keycode::f: {
+		} */case ny::Keycode::f: {
 			timings_.hidden ^= true;
 			timings_.bg.disable(timings_.hidden);
 			for(auto& t : timings_.texts) {
