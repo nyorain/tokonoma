@@ -3,9 +3,13 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "geometry.glsl"
 
-layout(binding = 0) uniform sampler2D tex;
 layout(location = 0) in vec2 in_uv;
 layout(location = 0) out vec4 out_color;
+
+layout(set = 0, binding = 0) uniform sampler2D tex;
+layout(set = 0, binding = 1) uniform UBO {
+	vec2 mousePos;
+} ubo;
 
 const uint TypeForward = 1u;
 const uint TypeVelocity = 2u;
@@ -27,9 +31,12 @@ void main() {
 	if(type.type == TypeForward) {
 		out_color.rgb = read.rgb;
 	} else if(type.type == TypeLightDensity) {
+		// NOTE: probably best to do in an extra pass with way lower sample
+		// count and some noise. Then blur here.
+
 		const float step = 0.001;
 		const float radius = 0.01;
-		const vec2 light = vec2(0.5, 0.5);
+		const vec2 light = ubo.mousePos;
 		const float densityFac = 20.f;
 
 		// NOTE: alternative: ignore smoke over light
@@ -48,16 +55,17 @@ void main() {
 		}
 
 		accum = clamp(accum, 0, 1);
-		float lightFac = lightFalloff(light, in_uv, radius, 2.0,
-				vec3(0.1, 10, 20), 0.f, true);
+		// float lightFac = lightFalloff(light, in_uv, radius, 2.0,
+		// 		vec3(0.1, 10, 20), 0.f, true);
+		float lightFac = 1.0;
 
-		// out_color.rgb = vec3(texture(tex, in_uv).r);
-		out_color.rgb = vec3(1, 0.9, 0.4) * vec3(lightFac * accum);
-		out_color.rgb = pow(out_color.rgb, vec3(2.2)); // gamma
+		// out_color.rgb = vec3(1, 0.9, 0.6) * vec3(lightFac * accum);
+		// out_color.rgb -= read.rgb;
+		// out_color.rgb = pow(out_color.rgb, vec3(2.2)); // gamma
 
 		// #2: to make smoke hide somke behind it
-		// out_color.rgb += vec3(lightFac);
-		// out_color.rgb *= vec3(accum);
+		out_color.rgb = vec3(lightFac - texture(tex, in_uv).r);
+		out_color.rgb *= vec3(accum);
 	} else if(type.type == TypeVelocity) {
 		// #2 velocity using hsv
 		vec2 vel = texture(tex, in_uv).xy;

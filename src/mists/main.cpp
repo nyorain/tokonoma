@@ -94,7 +94,7 @@ public:
 			metals_.back().paint = {rvgContext(), metalPaint_};
 
 			auto& font = gui().font();
-			metals_.back().label = {rvgContext(), label, font, {}};
+			metals_.back().label = {rvgContext(), {}, label, font, 14.f};
 		};
 
 		createMetal({2, 2}, {0.05, 0.05}, 0.5f, "h");
@@ -412,7 +412,7 @@ void ContactListener::EndContact(b2Contact*) {
 
 int main(int argc, const char** argv) {
 	Mists app;
-	if(!app.init({*argv, std::size_t(argc)})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

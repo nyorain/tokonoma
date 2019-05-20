@@ -112,11 +112,6 @@ shaders_src = {
 	  ['senpt.frag', include_glsl],
 	  ['sen.comp', include_glsl],
 	],
-	'lith': [
-	  ['lith.frag', include_glsl],
-	  ['lith.vert'],
-	  ['lith.comp', include_glsl],
-	],
 	'deferred': [
 	  ['gbuf.vert', deferred_glsl],
 	  ['gbuf.frag', deferred_glsl],

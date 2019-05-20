@@ -789,8 +789,8 @@ void ViewApp::initRenderData() {
 	imgi.tiling = vk::ImageTiling::linear;
 	imgi.usage = vk::ImageUsageBits::transferDst;
 	imgi.samples = vk::SampleCountBits::e1;
-	vpp::Init<vpp::Image> initSelectionStage(dev, imgi, dev.hostMemoryTypes(),
-		&batch.alloc.memHost);
+	vpp::Init<vpp::Image> initSelectionStage(batch.alloc.memHost, imgi,
+		dev.hostMemoryTypes());
 
 	selectionCb_ = dev.commandAllocator().get(qfam,
 		vk::CommandPoolCreateBits::resetCommandBuffer);

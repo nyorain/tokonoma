@@ -1,6 +1,5 @@
 #include "light.hpp"
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/bits.hpp>
 #include <stage/transform.hpp>
@@ -13,7 +12,7 @@
 #include <ny/appContext.hpp>
 #include <ny/keyboardContext.hpp>
 #include <vpp/vk.hpp>
-#include <vpp/pipelineInfo.hpp>
+#include <vpp/pipeline.hpp>
 #include <dlg/dlg.hpp>
 
 #include <optional>
@@ -33,7 +32,7 @@ public:
 		auto& device = vulkanDevice();
 		ubo_ = vpp::SubBuffer(device.bufferAllocator(),
 			sizeof(nytl::Mat4f), vk::BufferUsageBits::uniformBuffer,
-			4u, device.hostMemoryTypes());
+			device.hostMemoryTypes(), 4u);
 
 		auto viewLayoutBindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
@@ -127,11 +126,10 @@ public:
 		auto combineFragment = vpp::ShaderModule(device,
 			smooth_shadow_light_pp_frag_data);
 
-		vpp::GraphicsPipelineInfo combinePipeInfo(renderPass(),
-			pp_.pipeLayout, vpp::ShaderProgram({
+		vpp::GraphicsPipelineInfo combinePipeInfo(renderPass(), pp_.pipeLayout, {{{
 				{combineVertex, vk::ShaderStageBits::vertex},
 				{combineFragment, vk::ShaderStageBits::fragment}
-		}), 0, samples());
+		}}}, 0, samples());
 
 		combinePipeInfo.assembly.topology = vk::PrimitiveTopology::triangleFan;
 
@@ -145,7 +143,7 @@ public:
 
 		auto uboSize = sizeof(float) * 19;
 		pp_.ubo = {device.bufferAllocator(), uboSize,
-			vk::BufferUsageBits::uniformBuffer, 4u, device.hostMemoryTypes()};
+			vk::BufferUsageBits::uniformBuffer, device.hostMemoryTypes(), 4u};
 
 		auto imgview = lightSystem().renderTarget().vkImageView();
 		ppDsUpdate.imageSampler({{{}, imgview,
@@ -164,7 +162,7 @@ public:
 			auto& t = at.template create<Textfield>(name, start).textfield();
 			t.onSubmit = [&, name](auto& tf) {
 				try {
-					value = std::stof(tf.utf8());
+					value = std::stof(std::string(tf.utf8()));
 				} catch(const std::exception& err) {
 					dlg_error("Invalid float for {}: {}", name, tf.utf8());
 					return;
@@ -201,18 +199,18 @@ public:
 	void beforeRender(vk::CommandBuffer cb) override {
 		App::beforeRender(cb);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			lightSystem().lightPipeLayout(), 0, {viewDs_}, {});
+			lightSystem().lightPipeLayout(), 0, {{viewDs_.vkHandle()}}, {});
 		lightSystem().renderLights(cb);
 	}
 
 	void render(vk::CommandBuffer cb) override {
 		App::render(cb);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pp_.pipeLayout, 0, {pp_.ds}, {});
+			pp_.pipeLayout, 0, {{pp_.ds.vkHandle()}}, {});
 
 		auto lightds = currentLight_->lightDs();
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pp_.pipeLayout, 1, {lightds}, {});
+			pp_.pipeLayout, 1, {{lightds}}, {});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
 		vk::cmdDraw(cb, 4, 1, 0, 0);
 		gui().draw(cb);
@@ -324,7 +322,7 @@ protected:
 // main
 int main(int argc, const char** argv) {
 	SSSApp app;
-	if(!app.init({*argv, std::size_t(argc)})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 
