@@ -3,10 +3,9 @@
 #pragma once
 
 #include <stage/defer.hpp>
+#include <stage/bits.hpp>
 #include <stage/texture.hpp>
-
-#include <stage/scene/scene.hpp> // only doi::Scene fwd needed
-#include <stage/scene/light.hpp> // only doi::*Light fwd needed
+#include <stage/types.hpp>
 
 #include <vpp/vk.hpp>
 #include <vpp/sharedBuffer.hpp>
@@ -14,11 +13,16 @@
 #include <vpp/handles.hpp>
 #include <vpp/image.hpp>
 
+// TODO: support destroying pass render buffers like previously
+// done on deferred. Only create them is needed/pass is active.
+
+using namespace doi::types;
+
 struct RenderTarget {
 	// Define when a resource was modified the last time.
 	// Required when a pass wants to make those changes visible.
 	vk::AccessFlags writeAccess {};
-	vk::PipelineStageFlags writeStages {};
+	vk::PipelineStageFlags writeStages {vk::PipelineStageBits::topOfPipe};
 
 	// Define when a resource was read the last time, after being written.
 	// Required when a pass itself modifies the resource, it must first
@@ -33,15 +37,30 @@ struct RenderTarget {
 	vk::ImageView view; // optional
 };
 
-void transitionRead(vk::CommandBuffer cb, RenderTarget& target,
+// TODO: move to own file. Maybe move whole utility to stage/render.hpp?
+inline void transitionRead(vk::CommandBuffer cb, RenderTarget& target,
 		vk::ImageLayout newLayout, vk::PipelineStageFlags stages,
 		vk::AccessFlags access, vk::ImageSubresourceRange subres =
 			{vk::ImageAspectBits::color, 0, 1, 0, 1}) {
 	// in this case there already was a sufficient barrier in place
-	if(target.layout == newLayout &&
-			(target.readAccess & access) &&
-			(target.readStages & stages)) {
-		return;
+	if(target.layout == newLayout) {
+		// Neither of these optimizations is correct since then we still
+		// don't know if it's guaranteed that a pipeline from the write access
+		// to reading in 'stage' via 'access' was made. Maybe readAccess
+		// and readStages were modified by multiple different read
+		// transitions; may not be equivalent.
+		// if((target.readAccess & access) && (target.readStages & stages)) {
+		// if((target.readAccess == access) && (target.readStages == stages)) {
+		// 	return;
+		// }
+
+		// when nothing was written, we don't need a barrier if the
+		// layout doesn't change. useful for dummy images
+		if(!target.writeAccess) {
+			target.readAccess |= access;
+			target.readStages |= stages;
+			return;
+		}
 	}
 
 	vk::ImageMemoryBarrier barrier;
@@ -59,7 +78,7 @@ void transitionRead(vk::CommandBuffer cb, RenderTarget& target,
 	target.readAccess |= access;
 }
 
-void transitionWrite(vk::CommandBuffer cb, RenderTarget& target,
+inline void transitionWrite(vk::CommandBuffer cb, RenderTarget& target,
 		vk::ImageLayout newLayout, vk::PipelineStageFlags stages,
 		vk::AccessFlags access, vk::ImageSubresourceRange subres =
 			{vk::ImageAspectBits::color, 0, 1, 0, 1}) {
@@ -79,6 +98,30 @@ void transitionWrite(vk::CommandBuffer cb, RenderTarget& target,
 	target.writeStages = stages;
 	target.writeAccess = access;
 }
+
+
+// Pipeline specialization info the compute group size.
+struct ComputeGroupSizeSpec {
+	inline ComputeGroupSizeSpec(u32 x, u32 y, u32 idx = 0, u32 idy = 1) {
+		entries = {{
+			{idx, 0, 4u},
+			{idy, 4u, 4u},
+		}};
+
+		auto span = nytl::Span<std::byte>(data);
+		doi::write(span, x);
+		doi::write(span, y);
+
+		spec.dataSize = sizeof(data);
+		spec.pData = data.data();
+		spec.mapEntryCount = entries.size();
+		spec.pMapEntries = entries.data();
+	}
+
+	std::array<std::byte, 8> data;
+	std::array<vk::SpecializationMapEntry, 2> entries;
+	vk::SpecializationInfo spec;
+};
 
 struct PassCreateInfo {
 	const doi::WorkBatcher& wb;

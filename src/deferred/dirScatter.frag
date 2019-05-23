@@ -6,6 +6,8 @@
 #include "scatter.glsl"
 #include "pbr.glsl"
 
+const bool depthScatter = false;
+
 layout(location = 0) in vec2 uv;
 layout(location = 0) out float scatter;
 
@@ -24,7 +26,9 @@ layout(set = 2, binding = 0, row_major) uniform LightBuf {
 layout(set = 2, binding = 1) uniform sampler2DShadow shadowTex;
 
 float shadowMap(vec3 worldPos) {
-	return dirShadow(shadowTex, worldPos, 0); // no pcf
+	const int pcf = 0; // no pcf
+	vec3 lsPos = sceneMap(light.proj, worldPos);
+	return dirShadow(shadowTex, lsPos, pcf);
 }
 
 void main() {
@@ -38,24 +42,30 @@ void main() {
 	vec3 v = normalize(pos - scene.viewPos); // view direction
 	vec3 viewToLight = -light.dir; // normalized on cpu
 	float ldv = dot(viewToLight, v);
-	if(ldv < 0) {
-		scatter = 0.f;
-		return;
-	}
 
-	// TODO: mapping not fragment shader dependent but relative
-	// expensive, could be done in vertex shader (or cpu but
-	// has to be refreshed every time viewPos changes...)
-	// mapped position of a directional light
-	vec3 mappedLightPos = sceneMap(scene.proj, scene.viewPos - light.dir);
-	if(clamp(mappedLightPos, 0.0, 1.0) != mappedLightPos) {
-		// in this case the light is behind the camera, there
-		// will be no depth scattering.
-		scatter = 0.f;
-		return;
-	}
+	if(depthScatter) {
+		if(ldv < 0) {
+			scatter = 0.f;
+			return;
+		}
 
-	// lightDepth on far plane, everything in front of it
-	scatter = lightScatterDepth(uv, mappedLightPos.xy,
-		999.f, ldv, depthTex, ldepth);
+		// TODO: mapping not fragment shader dependent but relative
+		// expensive, could be done in vertex shader (or cpu but
+		// has to be refreshed every time viewPos changes...)
+		// mapped position of a directional light
+		vec3 mappedLightPos = sceneMap(scene.proj, scene.viewPos - light.dir);
+		if(clamp(mappedLightPos, 0.0, 1.0) != mappedLightPos) {
+			// in this case the light is behind the camera, there
+			// will be no depth scattering.
+			scatter = 0.f;
+			return;
+		}
+
+		// lightDepth on far plane, everything in front of it
+		scatter = lightScatterDepth(uv, mappedLightPos.xy,
+			999.f, ldv, depthTex, ldepth);
+	} else {
+		vec2 pixel = gl_FragCoord.xy;
+		scatter = lightScatterShadow(scene.viewPos, pos, ldv, pixel);
+	}
 }

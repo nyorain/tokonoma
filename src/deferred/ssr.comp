@@ -18,10 +18,6 @@ layout(set = 1, binding = 1) uniform sampler2D normalTex;
 layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D outData;
 // layout(set = 1, binding = 2, rgba32f) uniform writeonly image2D outData;
 
-// TODO: parameters should be configurable; most based on scene size
-// getting these right is extremely important, ssr succeeds or fails
-// depending on these!
-//
 // marchSteps: linear marching steps to find surface hit,
 //   if too low, we might "march" completely through objects, i.e.
 //   completely miss out on possible reflections
@@ -35,11 +31,14 @@ layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D outData;
 // When either startStepSize or stepFactor gets too large, hits may
 // be skipped and objects disappear from ssr, flicker on object/camera
 // movement or have extremely aliased edges.
-const uint marchSteps = 16u; // linear marching steps
-const uint binsSteps = 4u; // binary search steps after found hit interval
-const float startStepSize = 0.05;
-const float stepFactor = 1.1;
-const float dthreshold = 0.05; // linear depth threshold
+layout(set = 1, binding = 3) uniform UBO {
+	uint marchSteps;
+	uint binsSteps;
+	float startStepSize;
+	float stepFactor;
+	float dthreshold;
+	float roughnessFacPow;
+} params;
 
 // TODO: add binary search end condition?: when pixel distance
 //   on depthTex between lower and upper bounds positions is
@@ -85,11 +84,11 @@ void main() {
 
 	// ssr
 	vec3 v = normalize(fragPos - scene.viewPos);	
-	vec3 reflDir = normalize(reflect(v, normal)); // TODO: normalize not needed
+	vec3 reflDir = reflect(v, normal);
 	float fac = 1 - dot(-v, normal); // the steeper we look, the less reflections
-	fac *= 1 - roughness;
+	fac *= pow(1 - roughness, params.roughnessFacPow);
 
-	float stepSize = startStepSize;
+	float stepSize = params.startStepSize;
 	vec3 pos = fragPos;
 	vec2 hitUV = vec2(0, 0);
 	float blur = 0;
@@ -98,11 +97,11 @@ void main() {
 	// we don't want to hit the original surface
 	pos += stepSize * reflDir;
 
-	for(uint i = 0u; i < marchSteps; ++i) {
+	for(uint i = 0u; i < params.marchSteps; ++i) {
 		// TODO: we should make sure that we step *at least* one pixel.
 		vec3 lpos = pos; // last position
 		pos += stepSize * reflDir;
-		stepSize *= stepFactor;
+		stepSize *= params.stepFactor;
 		vec3 uv = sceneMap(scene.proj, pos);
 		if(uv != clamp(uv, 0.0, 1.0)) {
 			// the ray went out of bounds, no hit
@@ -121,7 +120,7 @@ void main() {
 		// the hit point with higher accuracy.
 		// Our solution always is in [lpos, pos]
 		vec3 mid;
-		for(uint j = 0; j < binsSteps; ++j) {
+		for(uint j = 0; j < params.binsSteps; ++j) {
 			mid = 0.5 * (lpos + pos);
 			uv = sceneMap(scene.proj, mid);
 			// we don't have to check if uv is in screen space bounds
@@ -144,13 +143,13 @@ void main() {
 		// performance in non-hit cases. Probably best to put it in
 		// binary search loop as termination condition
 		float diff = abs(marchZ - sampleZ);
-		if(diff > dthreshold) {
+		if(diff > params.dthreshold) {
 			// we might find a better spot later on
 			pos = apos; // reset to before bsearch
 			continue;
 		}
 
-		fac *= smoothstep(-dthreshold, -0.8 * dthreshold, -diff);
+		fac *= smoothstep(-params.dthreshold, -0.8 * params.dthreshold, -diff);
 
 		// check the normal of the found hit point. If dot(normal, rayDir)
 		// is greater 0, that means we hit the surface from the back.

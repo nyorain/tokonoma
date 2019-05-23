@@ -1,3 +1,4 @@
+// TODO: make mie param configurable
 
 // TODO: maybe more efficient to pass pattern as texture?
 const float ditherPattern[4][4] = {
@@ -106,8 +107,10 @@ float shadowMap(vec3 worldPos);
 // To work, the shadowMap(worldPos) function has to be defined in the
 // calling shader.
 float lightScatterShadow(vec3 viewPos, vec3 pos, float ldv, vec2 pixel) {
-	// NOTE: first attempt at light scattering
+	// first attempt at shadow-map based light scattering
 	// http://www.alexandre-pestana.com/volumetric-lights/
+	// TODO: here we probably really profit from different mipmaps
+	// or some other optimizations... takes really long atm.
 	vec3 rayStart = viewPos;
 	vec3 rayEnd = pos;
 	vec3 ray = rayEnd - rayStart;
@@ -117,7 +120,7 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, float ldv, vec2 pixel) {
 	rayLength = min(rayLength, 10.f);
 	ray = rayDir * rayLength;
 
-	const uint steps = 20u;
+	const uint steps = 10u;
 	vec3 step = ray / steps;
 	rayStart += 0.01 * random(rayEnd) * step;
 
@@ -135,7 +138,7 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, float ldv, vec2 pixel) {
 		ipos += step;
 	}
 
-	accum *= 25 * phase_mie(ldv, -0.4);
+	accum *= phase_mie(ldv, 0.25);
 	accum /= steps;
 	accum = clamp(accum, 0.0, 1.0);
 	return accum;

@@ -24,6 +24,8 @@ layout(set = 0, binding = 0) uniform UBO {
 	float ssaoPow;
 	uint _tonemap;
 	float exposure;
+	uint _convolutionLods;
+	float bloomStrength;
 } params;
 
 layout(set = 0, binding = 1) uniform sampler2D inAlbedo;
@@ -76,8 +78,10 @@ void main() {
 			uint bloomLevels = textureQueryLevels(inBloom);
 			vec3 bloomSum = vec3(0.0);
 			for(uint i = 0u; i < bloomLevels; ++i) {
-				// float fac = 1.f / (1 + i);
-				float fac = 1.f;
+				float fac = params.bloomStrength;
+				if((params.flags & flagBloomDecrease) != 0) {
+					fac /= (1 + i);
+				}
 				bloomSum += fac * textureLod(inBloom, uv, i).rgb;
 			}
 			// tonemapping needed here

@@ -17,6 +17,7 @@ const uint flagBloom = (1u << 3u);
 const uint flagFXAA = (1u << 4u);
 const uint flagDiffuseIBL = (1u << 5u);
 const uint flagSpecularIBL = (1u << 6u);
+const uint flagBloomDecrease = (1u << 7u);
 
 // struct Light {
 // 	vec3 pos; // position for point light, direction of dir light

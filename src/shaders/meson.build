@@ -16,7 +16,8 @@ scene_glsl = files(
 )
 
 deferred_glsl = include_glsl + scene_glsl + files(
-	'../deferred/light.glsl'
+	'../deferred/light.glsl',
+	'../deferred/scatter.glsl'
 )
 
 # shader specifications

@@ -14,6 +14,9 @@ layout(set = 0, binding = 0) uniform Params {
 	float ssaoPow;
 	uint tonemap;
 	float exposure;
+	uint _convolutionLods;
+	float bloomStrength;
+	float scatterStrength;
 } params;
 
 layout(set = 0, binding = 1) uniform sampler2D colorTex;
@@ -115,13 +118,14 @@ void main() {
 	// apply bloom
 	// first level was already applied in combine.frag
 	if((params.flags & flagBloom) != 0) {
-		// float bfac = 1.f;
 		uint bloomLevels = textureQueryLevels(bloomTex);
 		vec3 bloomSum = vec3(0.0);
 		for(uint i = 0u; i < bloomLevels; ++i) {
-			// float fac = bfac / (1 + i);
-			// bloomSum += fac * textureLod(bloomTex, uv, i).rgb;
-			bloomSum += textureLod(bloomTex, uv, i).rgb;
+			float fac = params.bloomStrength;
+			if((params.flags & flagBloomDecrease) != 0) {
+				fac /= (1 + i);
+			}
+			bloomSum += fac * textureLod(bloomTex, uv, i).rgb;
 		}
 
 		color.rgb += bloomSum;
@@ -130,7 +134,8 @@ void main() {
 	// apply scattering
 	// TODO: blur in different pass? we don't need that strong of blur though
 	if((params.flags & flagScattering) != 0) {
-		const float scatterFac = 2 / 25.f;
+		// const float scatterFac = 1 / 25.f;
+		const float scatterFac = params.scatterStrength;
 		float scatter = 0.f;
 		int range = 1;
 		vec2 texelSize = 1.f / textureSize(scatterTex, 0);

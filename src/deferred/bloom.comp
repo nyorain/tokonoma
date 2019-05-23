@@ -1,11 +1,18 @@
 #version 450
 
-// TODO: make configurable
-layout(local_size_x = 32, local_size_y = 32) in;
-const float highPassThreshold = 0.5;
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+
+const uint normManhattan = 1;
+const uint normEuclidean = 2;
+const uint normMax = 3;
 
 layout(set = 0, binding = 0) uniform sampler2D inLight;
 layout(set = 0, binding = 1, rgba16f) uniform image2D outBloom;
+layout(set = 0, binding = 2) uniform UBO {
+	float highPassThreshold;
+	float bloomPow;
+	uint norm;
+} ubo;
 
 void main() {
 	uvec2 pixel = gl_GlobalInvocationID.xy;
@@ -19,13 +26,16 @@ void main() {
 	vec4 bloom = imageLoad(outBloom, ivec2(pixel));
 	vec3 light = texture(inLight, uv).rgb;
 
-	// NOTE: not sure which norm works best here
-	// should probably try all out; make this demo-configurable
-	// float l = color.r + color.g + color.b;
-	float l = length(light);
-	// float l = max(color.r, max(color.g, color.b));
+	float l;
+	if(ubo.norm == normManhattan) {
+		l = light.r + light.g + light.b;
+	} else if(ubo.norm == normEuclidean) {
+		l = length(light);
+	} else if(ubo.norm == normMax) {
+		l = max(light.r, max(light.g, light.b));
+	}
 
-	if(l <= highPassThreshold) { // nothing to do here
+	if(l <= ubo.highPassThreshold) {
 		return;
 	}
 
@@ -40,7 +50,7 @@ void main() {
 	// this is important since otherwise single well-lit pixels
 	// may create really bright bloom which leads to bloom popping
 	// when moving
-	light *= pow(l - highPassThreshold, 0.4) / l;
+	light *= pow(l - ubo.highPassThreshold, ubo.bloomPow) / l;
 	bloom.rgb += light;
 	imageStore(outBloom, ivec2(pixel), bloom);
 }

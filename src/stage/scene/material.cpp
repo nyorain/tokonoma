@@ -185,7 +185,6 @@ Material::Material(InitData& data, const gltf::Model& model,
 			if(auto m = add.find("alphaCutoff"); m != add.end()) {
 				dlg_assert(m->second.has_number_value);
 				alphaCutoff_ = m->second.number_value;
-				dlg_info("{}", alphaCutoff_);
 			}
 		}
 	}

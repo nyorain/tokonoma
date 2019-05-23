@@ -1,9 +1,8 @@
-// WIP: rendering utilities
-
 #pragma once
 
 #include <vpp/fwd.hpp>
 #include <initializer_list>
+#include <array>
 
 namespace doi {
 

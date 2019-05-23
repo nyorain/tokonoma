@@ -50,20 +50,18 @@ void main() {
 	// float ldv = dot(viewToLight, posToLight);
 
 	vec3 mappedLightPos = sceneMap(scene.proj, light.pos);
-	// TODO: mapping not fragment shader dependent but somewhat
-	// expensive, could be done in vertex shader (or cpu but
-	// has to be refreshed every time viewPos changes...)
-	// mapped position of a directional light
-	// TODO: we *do* want scattering when light is behind camera
-	// for shadowmap based scattering. fix that
-	if(clamp(mappedLightPos, 0.0, 1.0) != mappedLightPos) {
-		// in this case the light is behind the camera, there
-		// will be no depth scattering.
-		scatter = 0.f;
-		return;
-	}
-
 	if(depthScatter) {
+		// TODO: mapping not fragment shader dependent but somewhat
+		// expensive, could be done in vertex shader (or cpu but
+		// has to be refreshed every time viewPos changes...)
+		// mapped position of a directional light
+		if(clamp(mappedLightPos, 0.0, 1.0) != mappedLightPos) {
+			// in this case the light is behind the camera, there
+			// will be no depth scattering.
+			scatter = 0.f;
+			return;
+		}
+
 		float lightDepth = depthtoz(mappedLightPos.z, scene.near, scene.far);
 		scatter = lightScatterDepth(uv, mappedLightPos.xy,
 			lightDepth, ldv, depthTex, ldepth);
@@ -72,10 +70,6 @@ void main() {
 		scatter = lightScatterShadow(scene.viewPos, pos, ldv, pixel);
 	}
 
-	// TODO
-	scatter *= 5;
-
-	/*
 	// attentuation volume
 	// TODO: document how the projection here works
 	vec4 projpl = scene.invProj * vec4(suv, mappedLightPos.z, 1.0);
@@ -83,5 +77,4 @@ void main() {
 	float dist = distance(light.pos, projpl.xyz);
 	// scatter *= attenuation(dist, light.attenuation);
 	scatter *= attenuation(dist, light.radius);
-	*/
 }
