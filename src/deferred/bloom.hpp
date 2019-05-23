@@ -4,18 +4,35 @@
 #include <stage/render.hpp>
 #include <vpp/shader.hpp>
 #include <vpp/formats.hpp>
+#include <vpp/debug.hpp>
 #include <dlg/dlg.hpp>
 
 #include <shaders/deferred.bloom.comp.h>
 #include <shaders/deferred.gblur.comp.h>
 
+// TODO: allow to set highPassThreshold (in blur.comp) and choose
+//   between different highpass filters (see blur.comp)
+// TODO: allow to choose whether or not higher mipmap levels are
+//   additionally blended in weeker
+
 /// Bright-color-pass filter for bloom. Blurs the bloom/emission buffer
 /// on multiple mip map levels.
 class BloomPass {
 public:
-	static constexpr unsigned maxLevels = 4u;
 	static constexpr unsigned groupSize = 32u;
-	static constexpr bool mipBlurred = true;
+
+	/// Influences how the bloom mipmap levels are generated.
+	/// When true, will first blur, then create mipmaps. That results
+	/// in a somewhat stronger overall blur for higher mipmap levels and
+	/// a stronger bloom effect. When false, will first
+	/// create all mipmap levels, then blur them all (independently).
+	/// Rerecord needed when changed.
+	bool mipBlurred = true;
+
+	/// Maximum number of mipmap levels (will only be less if render
+	/// buffer is too small, shouldn't be the case).
+	/// Buffer recreation needed when changed.
+	unsigned maxLevels = 3u;
 
 	// static constexpr vk::Format format = GeometryPass::emissionFormat;
 	static constexpr vk::Format format = vk::Format::r16g16b16a16Sfloat;
@@ -34,11 +51,11 @@ public:
 
 public:
 	BloomPass() = default;
-	BloomPass(InitData&, const PassCreateInfo&);
+	void create(InitData&, const PassCreateInfo&);
 	void init(InitData&, const PassCreateInfo&);
 
-	void createBuffers(InitBufferData&, const vk::Extent2D&,
-		const doi::WorkBatcher&);
+	void createBuffers(InitBufferData&, const doi::WorkBatcher&,
+		const vk::Extent2D&);
 	void initBuffers(InitBufferData&, vk::ImageView lightInput);
 
 	// Returns the bloom target in transferSrc/general layout,
@@ -47,6 +64,7 @@ public:
 	RenderTarget record(vk::CommandBuffer cb, RenderTarget& emission,
 		RenderTarget& light, vk::Extent2D);
 
+	vk::ImageView fullView() const { return fullView_; }
 	unsigned levelCount() const { return levelCount_; }
 
 protected:
@@ -81,7 +99,7 @@ protected:
 };
 
 // impl
-BloomPass::BloomPass(InitData& data, const PassCreateInfo& info) {
+void BloomPass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
 
@@ -92,23 +110,26 @@ BloomPass::BloomPass(InitData& data, const PassCreateInfo& info) {
 		vpp::descriptorBinding( // input light buffer
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
-		vpp::descriptorBinding( // output color, blurred
+		vpp::descriptorBinding( // output color
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute)
 	};
 
 	filter_.dsLayout = {dev, filterBindings};
 	filter_.pipeLayout = {dev, {{filter_.dsLayout.vkHandle()}}, {}};
+	vpp::nameHandle(filter_.dsLayout, "BloomPass:filter_.dsLayout");
+	vpp::nameHandle(filter_.pipeLayout, "BloomPass:filter_.pipeLayout");
 
 	// pipe
 	vpp::ShaderModule filterShader(dev, deferred_bloom_comp_data);
 
 	vk::ComputePipelineCreateInfo cpi;
-	cpi.layout = blur_.pipeLayout;
+	cpi.layout = filter_.pipeLayout;
 	cpi.stage.module = filterShader;
 	cpi.stage.stage = vk::ShaderStageBits::compute;
 	cpi.stage.pName = "main";
 	filter_.pipe = {dev, cpi};
+	vpp::nameHandle(filter_.pipe, "BloomPass:filter_.pipe");
 
 	// blur
 	auto blurBindings = {
@@ -128,6 +149,8 @@ BloomPass::BloomPass(InitData& data, const PassCreateInfo& info) {
 
 	blur_.dsLayout = {dev, blurBindings};
 	blur_.pipeLayout = {dev, {{blur_.dsLayout.vkHandle()}}, {{pcr}}};
+	vpp::nameHandle(blur_.dsLayout, "BloomPass:blur_.dsLayout");
+	vpp::nameHandle(blur_.pipeLayout, "BloomPass:blur_.pipeLayout");
 
 	// pipe
 	vpp::ShaderModule blurShader(dev, deferred_gblur_comp_data);
@@ -137,6 +160,7 @@ BloomPass::BloomPass(InitData& data, const PassCreateInfo& info) {
 	cpi.stage.stage = vk::ShaderStageBits::compute;
 	cpi.stage.pName = "main";
 	blur_.pipe = {dev, cpi};
+	vpp::nameHandle(blur_.pipeLayout, "BloomPass:blur_.pipe");
 
 	// descriptors
 	filter_.ds = {data.initFilterDs, wb.alloc.ds, filter_.dsLayout};
@@ -154,16 +178,25 @@ BloomPass::BloomPass(InitData& data, const PassCreateInfo& info) {
 
 void BloomPass::init(InitData& data, const PassCreateInfo&) {
 	filter_.ds.init(data.initFilterDs);
+	vpp::nameHandle(blur_.pipeLayout, "BloomPass:filter_.ds");
+
 	for(auto i = 0u; i < maxLevels; ++i) {
 		tmpLevels_[i].ds.init(data.initTmpLevels[i]);
 		targetLevels_[i].ds.init(data.initTargetLevels[i]);
+		vpp::nameHandle(tmpLevels_[i].ds,
+			dlg::format("BloomPass:tmpLevels_[{}].ds", i).c_str());
+		vpp::nameHandle(targetLevels_[i].ds,
+			dlg::format("BloomPass:targetLevels_[{}].ds", i).c_str());
 	}
 }
 
-void BloomPass::createBuffers(InitBufferData& data, const vk::Extent2D& size,
-		const doi::WorkBatcher& wb) {
+void BloomPass::createBuffers(InitBufferData& data, const doi::WorkBatcher& wb,
+		const vk::Extent2D& size) {
 	auto& dev = blur_.pipe.device();
-	auto usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled;
+	auto usage = vk::ImageUsageBits::storage |
+		vk::ImageUsageBits::sampled |
+		vk::ImageUsageBits::transferSrc |
+		vk::ImageUsageBits::transferDst;
 	auto info = vpp::ViewableImageCreateInfo(format,
 		vk::ImageAspectBits::color, size, usage);
 	dlg_assert(vpp::supported(dev, info.img));
@@ -178,10 +211,27 @@ void BloomPass::createBuffers(InitBufferData& data, const vk::Extent2D& size,
 	tmpTarget_ = {data.initTmpTarget, wb.alloc.memDevice, info.img,
 		dev.deviceMemoryTypes()};
 	data.viewInfo = info.view;
+
+	// yeah, we don't defer ds initialization here but it shouldn't matter
+	// really since this only happens when maxLevels is increased
+	if(levelCount_ >= tmpLevels_.size()) {
+		dlg_assert(tmpLevels_.size() == targetLevels_.size());
+		auto start = tmpLevels_.size();
+		tmpLevels_.resize(levelCount_);
+		targetLevels_.resize(levelCount_);
+		for(auto i = start; i < levelCount_; ++i) {
+			tmpLevels_[i].ds = {wb.alloc.ds, blur_.dsLayout};
+			targetLevels_[i].ds = {wb.alloc.ds, blur_.dsLayout};
+		}
+	}
 }
 
 void BloomPass::initBuffers(InitBufferData& data, vk::ImageView lightInput) {
 	auto& dev = blur_.pipe.device();
+	target_.init(data.initTarget);
+	tmpTarget_.init(data.initTmpTarget);
+	vpp::nameHandle(target_, "BloomPass:target_");
+	vpp::nameHandle(tmpTarget_, "BloomPass:tmpTarget_");
 
 	auto ivi = data.viewInfo;
 	for(auto i = 0u; i < levelCount_; ++i) {
@@ -195,8 +245,9 @@ void BloomPass::initBuffers(InitBufferData& data, vk::ImageView lightInput) {
 		vpp::DescriptorSetUpdate dsu(tmpLevels_[i].ds);
 		dsu.imageSampler({{{}, targetLevels_[i].view,
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.storage({{{}, targetLevels_[i].view,
+		dsu.storage({{{}, tmpLevels_[i].view,
 			vk::ImageLayout::general}});
+		dsu.apply();
 
 		dsu = {targetLevels_[i].ds};
 		dsu.imageSampler({{{}, tmpLevels_[i].view,
@@ -209,6 +260,7 @@ void BloomPass::initBuffers(InitBufferData& data, vk::ImageView lightInput) {
 	ivi.subresourceRange.baseMipLevel = 0;
 	ivi.subresourceRange.levelCount = levelCount_;
 	fullView_ = {dev, ivi};
+	vpp::nameHandle(fullView_, "BloomPass:fullView_");
 
 	vpp::DescriptorSetUpdate dsu(filter_.ds);
 	dsu.imageSampler({{{}, lightInput,
@@ -218,13 +270,15 @@ void BloomPass::initBuffers(InitBufferData& data, vk::ImageView lightInput) {
 }
 
 void BloomPass::recordBlur(vk::CommandBuffer cb, unsigned mip, vk::Extent2D size) {
+	vpp::DebugLabel debugLabel(cb, dlg::format("recordBlur:{}", mip).c_str());
+
 	auto& tmpl = tmpLevels_[mip];
 	auto& targetl = targetLevels_[mip];
 
 	std::uint32_t horizontal = 1u;
 	vk::cmdPushConstants(cb, blur_.pipeLayout, vk::ShaderStageBits::compute,
 		0, 4, &horizontal);
-	doi::cmdBindComputeDescriptors(cb, blur_.pipeLayout, {tmpl.ds});
+	doi::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {tmpl.ds});
 
 	auto w = std::max(size.width >> (mip + 1), 1u);
 	auto h = std::max(size.height >> (mip + 1), 1u);
@@ -246,11 +300,11 @@ void BloomPass::recordBlur(vk::CommandBuffer cb, unsigned mip, vk::Extent2D size
 		{}, {}, {}, {{barrier}});
 
 	barrier.image = target_;
-	barrier.oldLayout = vk::ImageLayout::undefined; // overwritten
+	barrier.oldLayout = vk::ImageLayout::undefined; // overwrite
 	barrier.srcAccessMask = vk::AccessBits::shaderWrite;
 	barrier.newLayout = vk::ImageLayout::general;
 	barrier.dstAccessMask = vk::AccessBits::shaderWrite;
-	barrier.subresourceRange.baseMipLevel = mip + 1;
+	barrier.subresourceRange.baseMipLevel = mip;
 	vk::cmdPipelineBarrier(cb,
 		vk::PipelineStageBits::computeShader,
 		vk::PipelineStageBits::computeShader,
@@ -259,12 +313,14 @@ void BloomPass::recordBlur(vk::CommandBuffer cb, unsigned mip, vk::Extent2D size
 	horizontal = 0u;
 	vk::cmdPushConstants(cb, blur_.pipeLayout, vk::ShaderStageBits::compute,
 		0, 4, &horizontal);
-	doi::cmdBindComputeDescriptors(cb, blur_.pipeLayout, {targetl.ds});
+	doi::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {targetl.ds});
 	vk::cmdDispatch(cb, cx, cy, 1);
 }
 
-void BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
+RenderTarget BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 		RenderTarget& light, vk::Extent2D size) {
+	vpp::DebugLabel debugLabel(cb, "BloomPass");
+
 	unsigned w = size.width;
 	unsigned h = size.height;
 
@@ -286,7 +342,8 @@ void BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 	barrier.image = tmpTarget_;
 	barrier.subresourceRange.layerCount = 1;
 	barrier.subresourceRange.levelCount = levelCount_;
-	barrier.oldLayout = vk::ImageLayout::undefined;
+	barrier.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+	barrier.oldLayout = vk::ImageLayout::undefined; // overwritten
 	barrier.srcAccessMask = {};
 	barrier.newLayout = vk::ImageLayout::general;
 	barrier.dstAccessMask = vk::AccessBits::shaderWrite;
@@ -343,7 +400,7 @@ void BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 		blit.dstOffsets[1].y = h;
 		blit.dstOffsets[1].z = 1u;
 
-		vk::cmdBlitImage(cb, target_, vk::ImageLayout::transferSrcOptimal,
+		vk::cmdBlitImage(cb, src, vk::ImageLayout::transferSrcOptimal,
 			target_, vk::ImageLayout::transferDstOptimal, {{blit}},
 			vk::Filter::linear);
 
@@ -367,7 +424,7 @@ void BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 				vk::PipelineStageBits::computeShader,
 				{}, {}, {}, {{barrier}});
 
-			doi::cmdBindComputeDescriptors(cb, filter_.pipeLayout, {filter_.ds});
+			doi::cmdBindComputeDescriptors(cb, filter_.pipeLayout, 0, {filter_.ds});
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, filter_.pipe);
 			vk::cmdDispatch(cb,
 				std::ceil(w / float(groupSize)),
@@ -381,7 +438,6 @@ void BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 		if(mipBlurred) {
 			// blurring initially reads from target_, so make
 			// it shaderReadOnlyOptimal
-			barrier.image = target_;
 			barrier.oldLayout = layout;
 			barrier.srcAccessMask = srcAccess;
 			barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
@@ -391,7 +447,7 @@ void BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 				{}, {}, {}, {{barrier}});
 
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, blur_.pipe);
-			recordBlur(cb, 0, size);
+			recordBlur(cb, i, size);
 
 			// from recordBur
 			layout = vk::ImageLayout::general;
@@ -441,16 +497,5 @@ void BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 		ret.writeStages = vk::PipelineStageBits::computeShader;
 	}
 
-	// make all target layers readonly
-	// barrier.image = target_;
-	// barrier.oldLayout = layout;
-	// barrier.srcAccessMask = srcAccess;
-	// barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	// barrier.dstAccessMask = vk::AccessBits::shaderRead;
-	// barrier.subresourceRange.baseMipLevel = 1u;
-	// barrier.subresourceRange.levelCount = bloomLevels;
-	// vk::cmdPipelineBarrier(cb,
-	// 	vk::PipelineStageBits::allCommands,
-	// 	vk::PipelineStageBits::allCommands,
-	// 	{}, {}, {}, {{barrier}});
+	return ret;
 }

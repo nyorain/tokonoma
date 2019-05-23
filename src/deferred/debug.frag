@@ -26,30 +26,31 @@ layout(set = 0, binding = 0) uniform UBO {
 	float exposure;
 } params;
 
-layout(set = 0, binding = 1, input_attachment_index = 1) uniform subpassInput inAlbedo;
-layout(set = 0, binding = 2, input_attachment_index = 2) uniform subpassInput inNormal;
-layout(set = 0, binding = 3, input_attachment_index = 3) uniform subpassInput inDepth;
-layout(set = 0, binding = 4, input_attachment_index = 4) uniform subpassInput inSSAO;
-layout(set = 0, binding = 5, input_attachment_index = 5) uniform subpassInput inSSR;
-layout(set = 0, binding = 6) uniform sampler2D bloomTex;
+layout(set = 0, binding = 1) uniform sampler2D inAlbedo;
+layout(set = 0, binding = 2) uniform sampler2D inNormal;
+layout(set = 0, binding = 3) uniform sampler2D inDepth;
+layout(set = 0, binding = 4) uniform sampler2D inSSAO;
+layout(set = 0, binding = 5) uniform sampler2D inSSR;
+layout(set = 0, binding = 6) uniform sampler2D inEmission;
+layout(set = 0, binding = 7) uniform sampler2D inBloom;
 
 void main() {
-	vec4 albedo = subpassLoad(inAlbedo);
-	vec4 normal = subpassLoad(inNormal);
-	vec4 ssao = subpassLoad(inSSAO);
-	vec4 ssr = subpassLoad(inSSR);
-	vec4 depth = subpassLoad(inDepth);
-	vec4 emission = textureLod(bloomTex, uv, 0);
+	vec4 albedo = texture(inAlbedo, uv);
+	vec4 normal = texture(inNormal, uv);
+	vec4 ssao = texture(inSSAO, uv);
+	vec4 ssr = texture(inSSR, uv);
+	vec4 depth = texture(inDepth, uv);
+	vec4 emission = texture(inEmission, uv);
 
 	switch(params.mode) {
 		case modeAlbedo:
-			fragColor = vec4(subpassLoad(inAlbedo).rgb, 1.0);
+			fragColor = vec4(albedo.rgb, 1.0);
 			break;
 		case modeNormals:
 			fragColor = vec4(0.5 + 0.5 * decodeNormal(normal.xy), 1.0);
 			break;
 		case modeRoughness:
-			fragColor = vec4(vec3(subpassLoad(inNormal).w), 1.0);
+			fragColor = vec4(vec3(normal.w), 1.0);
 			break;
 		case modeMetalness:
 			fragColor = vec4(vec3(emission.w), 1.0);
@@ -62,7 +63,7 @@ void main() {
 			fragColor = vec4(ao * col, 1.0);
 			break;
 		} case modeSSR:
-			fragColor = vec4(ssr.w * (ssr.xy / textureSize(bloomTex, 0)), ssr.z, 1.0);
+			fragColor = vec4(ssr.w * (ssr.xy / textureSize(inBloom, 0)), ssr.z, 1.0);
 			// fragColor = vec4(ssr.xy / textureSize(bloomTex, 0), ssr.w, 1.0);
 			break;
 		case modeDepth:
@@ -72,12 +73,14 @@ void main() {
 			fragColor = vec4(emission.rgb, 1.0);
 			break;
 		case modeBloom: {
-			uint bloomLevels = textureQueryLevels(bloomTex);
+			uint bloomLevels = textureQueryLevels(inBloom);
 			vec3 bloomSum = vec3(0.0);
 			for(uint i = 0u; i < bloomLevels; ++i) {
-				float fac = 1.f / (1 + i);
-				bloomSum += fac * textureLod(bloomTex, uv, i).rgb;
+				// float fac = 1.f / (1 + i);
+				float fac = 1.f;
+				bloomSum += fac * textureLod(inBloom, uv, i).rgb;
 			}
+			// tonemapping needed here
 			bloomSum = 1.0 - exp(-params.exposure * bloomSum);
 			fragColor = vec4(bloomSum, 1.0);
 			break;

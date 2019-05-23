@@ -22,7 +22,7 @@
 namespace doi {
 
 // Environment
-Environment::Environment(InitData& data, const WorkBatcher& wb,
+void Environment::create(InitData& data, const WorkBatcher& wb,
 		nytl::StringParam envMapPath, nytl::StringParam irradiancePath,
 		vk::RenderPass rp, unsigned subpass,
 		vk::Sampler linear, vk::SampleCountBits samples) {

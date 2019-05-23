@@ -15,14 +15,13 @@ void getLightParams(vec3 viewPos, vec3 fragPos,
 
 layout(location = 0) noperspective in vec2 uv;
 layout(location = 0) out vec4 fragColor;
-layout(location = 1) out vec4 outEmission;
 
 // scene
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj;
 	mat4 invProj;
 	vec3 viewPos;
-	float _near, _far;
+	float near, far;
 } scene;
 
 // gbuffers
@@ -41,8 +40,7 @@ void main() {
 	// return;
 
 	fragColor = vec4(0.0);
-	outEmission = vec4(0.0);
-	float depth = subpassLoad(inDepth).r;
+	float depth = ztodepth(subpassLoad(inDepth).r, scene.near, scene.far);
 	if(depth == 1) { // nothing rendered in gbufs here
 		return;
 	}
@@ -83,27 +81,4 @@ void main() {
 
 	// NOTE: we are currently wasting the alpha component
 	fragColor = vec4(color, 0.0);
-
-	// TODO: move to extra pass; *after* all lightning was done
-	// for all lights!
-	// high pass for bloom/emission
-	const float highPassThreshold = 0.5;
-	// float l = color.r + color.g + color.b;
-	float l = length(color);
-	// float l = max(color.r, max(color.g, color.b));
-	if(l > highPassThreshold) {
-		// color *= pow(1 - (highPassThreshold / l), 2);
-		// color *= 1 - (highPassThreshold / l);
-		// color *= smoothstep(0.0, 1.0, l - highPassThreshold);
-		// color *= (l - highPassThreshold);
-
-		// NOTE: this one turns out to be be best.
-		// the pow leads to pushing the color vector towards
-		// length 1 (lower power means stronger towards 1).
-		// this is important since otherwise single well-lit pixels
-		// may create really bright bloom which leads to bloom popping
-		// when moving
-		color *= pow(l - highPassThreshold, 0.4) / l;
-		outEmission = vec4(color, 0.0);
-	}
 }

@@ -9,7 +9,7 @@
 #include <stage/scene/shape.hpp>
 #include <stage/scene/scene.hpp>
 #include <stage/scene/light.hpp>
-#include <stage/scene/skybox.hpp>
+#include <stage/scene/environment.hpp>
 #include <argagg.hpp>
 
 #include <stage/scene/scene.hpp>
@@ -81,8 +81,6 @@ public:
 			}
 		};
 
-		skybox_.init(batch, renderPass(), 0, samples());
-
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
 		sci.addressModeU = vk::SamplerAddressMode::repeat;
@@ -94,6 +92,11 @@ public:
 		sci.maxLod = 0.25;
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
 		sampler_ = {dev, sci};
+
+		doi::Environment::InitData initEnv;
+		environment_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx",
+			renderPass(), 0u, sampler_, samples());
+		environment_.init(initEnv, batch);
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
@@ -236,9 +239,6 @@ public:
 			dev.deviceMemoryTypes(), 4u};
 		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
 
-		vk::endCommandBuffer(cb);
-		qs.wait(qs.add(cb));
-
 		// add light primitive
 		lightMaterial_.emplace(materialDsLayout_,
 			dummyTex_.vkImageView(), scene_->defaultSampler(),
@@ -255,12 +255,15 @@ public:
 		shadowData_ = doi::initShadowData(dev, depthFormat(),
 			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 			doi::Material::pcr());
-		light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_, 0u};
+		light_ = {batch, lightDsLayout_, primitiveDsLayout_, shadowData_, 0u};
 		// light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_,
 		// 	camera_.pos, *lightMaterial_};
 		// light_.data.dir = {5.8f, -12.0f, 4.f};
 		light_.data.position = {0.f, 5.0f, 0.f};
 		updateLight_ = true;
+
+		vk::endCommandBuffer(cb);
+		qs.wait(qs.add(cb));
 
 		// descriptors
 		vpp::DescriptorSetUpdate sdsu(sceneDs_);
@@ -315,7 +318,7 @@ public:
 
 		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 			boxIndices_.offset(), vk::IndexType::uint16);
-		skybox_.render(cb);
+		environment_.render(cb);
 	}
 
 	void update(double dt) override {
@@ -404,7 +407,7 @@ public:
 			doi::write(span, matrix(camera_));
 			doi::write(span, camera_.pos);
 
-			skybox_.updateDevice(fixedMatrix(camera_));
+			environment_.updateDevice(fixedMatrix(camera_));
 
 			updateLight_ = true;
 		}
@@ -454,7 +457,7 @@ protected:
 	// light ball
 	std::optional<doi::Material> lightMaterial_;
 
-	doi::Skybox skybox_;
+	doi::Environment environment_;
 
 	// args
 	std::string modelname_ {};

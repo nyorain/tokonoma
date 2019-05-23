@@ -39,6 +39,7 @@ stage_src = [
 	'geometry.cpp',
 	'physics.cpp',
 	'texture.cpp',
+	'render.cpp',
 	'headless.cpp',
 	'defer.cpp',
 

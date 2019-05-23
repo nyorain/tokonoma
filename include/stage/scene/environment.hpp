@@ -25,6 +25,7 @@ constexpr std::array<u16, 36> boxInsideIndices = {
 };
 
 /// Loads environment
+/// Not movable due to ds layout.
 class Environment {
 public:
 	struct InitData {
@@ -36,10 +37,13 @@ public:
 
 public:
 	Environment() = default;
-	Environment(InitData&, const WorkBatcher& wb, nytl::StringParam envMapPath,
+	void create(InitData&, const WorkBatcher& wb, nytl::StringParam envMapPath,
 		nytl::StringParam irradiancePath, vk::RenderPass rp, unsigned subpass,
 		vk::Sampler linear, vk::SampleCountBits samples);
 	void init(InitData&, const WorkBatcher&);
+
+	Environment(Environment&&) = delete;
+	Environment& operator=(Environment&&) = delete;
 
 	// Requires caller to bind cube index buffer with boxInsideIndices
 	void render(vk::CommandBuffer cb);
