@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "scene.glsl"
+#include "scatter.glsl"
 #include "pbr.glsl"
 
 layout(location = 0) in vec2 uv;
@@ -20,6 +21,11 @@ layout(set = 1, binding = 0) uniform sampler2D depthTex;
 layout(set = 2, binding = 0, row_major) uniform LightBuf {
 	DirLight light;
 };
+layout(set = 2, binding = 1) uniform sampler2DShadow shadowTex;
+
+float shadowMap(vec3 worldPos) {
+	return dirShadow(shadowTex, worldPos, 0); // no pcf
+}
 
 void main() {
 	vec2 suv = 2 * uv - 1;

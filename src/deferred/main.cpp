@@ -57,6 +57,7 @@
 #include <cstdlib>
 #include <random>
 
+// TODO: environment map specular ibl: filter from mipmaps to avoid artefacts
 // TODO: re-add light scattering (per light?)
 //   even if per-light we can still apply if after lightning pass
 //   probably best to just use one buffer for all lights though, right?
@@ -203,7 +204,7 @@ public:
 	// static constexpr auto ssrFormat = vk::Format::r32g32b32a32Sfloat;
 	static constexpr auto ssrFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto ssaoSampleCount = 16u;
-	static constexpr auto pointLight = false;
+	static constexpr auto pointLight = true;
 	static constexpr auto maxBloomLevels = 4u;
 
 	// pp.frag
@@ -2392,13 +2393,13 @@ void ViewApp::record(const RenderBuffer& buf) {
 		// disabled for now, although it shows bloom nicely.
 		// Probably best to render it in the last pass, together
 		// with the skybox. Should use the depth buffer correctly though!
-		// lightMaterial_->bind(cb, gpass_.pipeLayout);
-		// for(auto& l : pointLights_) {
-		// 	l.lightBall().render(cb, gpass_.pipeLayout);
-		// }
-		// for(auto& l : dirLights_) {
-		// 	l.lightBall().render(cb, gpass_.pipeLayout);
-		// }
+		lightMaterial_->bind(cb, gpass_.pipeLayout);
+		for(auto& l : pointLights_) {
+			l.lightBall().render(cb, gpass_.pipeLayout);
+		}
+		for(auto& l : dirLights_) {
+			l.lightBall().render(cb, gpass_.pipeLayout);
+		}
 
 		vk::cmdEndRenderPass(cb);
 	}
@@ -2639,7 +2640,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 			boxIndices_.offset(), vk::IndexType::uint16);
-		env_.render(cb);
+		// env_.render(cb);
 		vk::cmdEndRenderPass(cb);
 	}
 

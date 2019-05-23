@@ -5,7 +5,7 @@
 #include <stage/defer.hpp>
 #include <stage/types.hpp>
 #include <stage/camera.hpp>
-#include <stage/scene/skybox.hpp>
+#include <stage/scene/environment.hpp>
 
 #include <vpp/handles.hpp>
 #include <vpp/submit.hpp>

@@ -65,7 +65,7 @@ protected:
 	vpp::Pipeline pipe_; // compute
 };
 
-// TODO: not yet implemented
+// TODO: filter from mipmaps to avoid artefacts
 /// Prefilters an environment map for specular ibl.
 /// Renders them as mipmap levels onto the cubemap.
 class EnvironmentMapFilter {

@@ -3,7 +3,10 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "scene.glsl"
+#include "scatter.glsl"
 #include "pbr.glsl"
+
+const bool depthScatter = false;
 
 layout(location = 0) in vec2 uv;
 layout(location = 0) out float scatter;
@@ -21,9 +24,15 @@ layout(set = 2, binding = 0, row_major) uniform LightBuf {
 	PointLight light;
 };
 
+layout(set = 2, binding = 1) uniform samplerCubeShadow shadowCube;
+
+float shadowMap(vec3 worldPos) {
+	return pointShadow(shadowCube, light.pos, light.radius, worldPos);
+}
+
 void main() {
 	float ldepth = texture(depthTex, uv).r;
-	float depth = ztodepth(ldepth, scene.near, scene.far); // TODO
+	float depth = ztodepth(ldepth, scene.near, scene.far);
 	vec2 suv = 2 * uv - 1;
 	suv.y *= -1.f; // flip y
 	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
@@ -40,11 +49,13 @@ void main() {
 	// vec3 posToLight = normalize(light.pos - pos);
 	// float ldv = dot(viewToLight, posToLight);
 
+	vec3 mappedLightPos = sceneMap(scene.proj, light.pos);
 	// TODO: mapping not fragment shader dependent but somewhat
 	// expensive, could be done in vertex shader (or cpu but
 	// has to be refreshed every time viewPos changes...)
 	// mapped position of a directional light
-	vec3 mappedLightPos = sceneMap(scene.proj, light.pos);
+	// TODO: we *do* want scattering when light is behind camera
+	// for shadowmap based scattering. fix that
 	if(clamp(mappedLightPos, 0.0, 1.0) != mappedLightPos) {
 		// in this case the light is behind the camera, there
 		// will be no depth scattering.
@@ -52,10 +63,19 @@ void main() {
 		return;
 	}
 
-	float lightDepth = depthtoz(mappedLightPos.z, scene.near, scene.far);
-	scatter = lightScatterDepth(uv, mappedLightPos.xy,
-		lightDepth, ldv, depthTex, ldepth);
+	if(depthScatter) {
+		float lightDepth = depthtoz(mappedLightPos.z, scene.near, scene.far);
+		scatter = lightScatterDepth(uv, mappedLightPos.xy,
+			lightDepth, ldv, depthTex, ldepth);
+	} else {
+		vec2 pixel = gl_FragCoord.xy;
+		scatter = lightScatterShadow(scene.viewPos, pos, ldv, pixel);
+	}
 
+	// TODO
+	scatter *= 5;
+
+	/*
 	// attentuation volume
 	// TODO: document how the projection here works
 	vec4 projpl = scene.invProj * vec4(suv, mappedLightPos.z, 1.0);
@@ -63,4 +83,5 @@ void main() {
 	float dist = distance(light.pos, projpl.xyz);
 	// scatter *= attenuation(dist, light.attenuation);
 	scatter *= attenuation(dist, light.radius);
+	*/
 }
