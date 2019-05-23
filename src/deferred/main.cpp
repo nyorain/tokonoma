@@ -11,7 +11,7 @@
 #include <stage/scene/shape.hpp>
 #include <stage/scene/light.hpp>
 #include <stage/scene/scene.hpp>
-#include <stage/scene/skybox.hpp>
+#include <stage/scene/environment.hpp>
 #include <argagg.hpp>
 
 #include <vui/gui.hpp>
@@ -106,7 +106,7 @@
 //   brings ssao performance improvement. Otherwise we are wasting this
 //   whole "depth mip map levels" thing
 // TODO: blur ssr in extra pass (with compute shader shared memory,
-//   see ssrBlur.comp wip). Should hopefully improve performance
+//   see ssrBlur.comp wip)? Might improve performance
 //   and allow for greater blur. Also distribute factors (compute guass +
 //   depth difference) via shared variables.
 //   maybe just generate mipmaps for light buffer, i guess that is how
@@ -198,7 +198,7 @@ public:
 	static constexpr auto normalsFormat = vk::Format::r16g16b16a16Snorm;
 	static constexpr auto albedoFormat = vk::Format::r8g8b8a8Srgb;
 	static constexpr auto emissionFormat = vk::Format::r16g16b16a16Sfloat;
-	// static constexpr auto emissionFormat = vk::Format::r8Unorm;
+	// static constexpr auto emissionFormat = vk::Format::r8g8b8a8Unorm;
 	static constexpr auto ssaoFormat = vk::Format::r8Unorm;
 	static constexpr auto scatterFormat = vk::Format::r8Unorm;
 	static constexpr auto ldepthFormat = vk::Format::r16Sfloat;
@@ -289,6 +289,22 @@ public:
 	}
 
 protected:
+	// TODO: add vpp methods to merge them to one (or into the default
+	// one) after initialization
+	struct Alloc {
+		vpp::DeviceMemoryAllocator memHost;
+		vpp::DeviceMemoryAllocator memDevice;
+
+		vpp::BufferAllocator bufHost;
+		vpp::BufferAllocator bufDevice;
+
+		Alloc(const vpp::Device& dev) :
+			memHost(dev), memDevice(dev),
+			bufHost(memHost), bufDevice(memDevice) {}
+	};
+
+	std::optional<Alloc> alloc;
+
 	vpp::TrDsLayout sceneDsLayout_;
 	vpp::TrDsLayout primitiveDsLayout_;
 	vpp::TrDsLayout materialDsLayout_;
@@ -346,22 +362,6 @@ protected:
 
 	vpp::QueryPool queryPool_ {};
 	std::uint32_t timestampBits_ {};
-
-	// TODO: add vpp methods to merge them to one (or into the default
-	// one) after initialization
-	struct Alloc {
-		vpp::DeviceMemoryAllocator memHost;
-		vpp::DeviceMemoryAllocator memDevice;
-
-		vpp::BufferAllocator bufHost;
-		vpp::BufferAllocator bufDevice;
-
-		Alloc(const vpp::Device& dev) :
-			memHost(dev), memDevice(dev),
-			bufHost(memHost), bufDevice(memDevice) {}
-	};
-
-	std::optional<Alloc> alloc;
 
 	// point light selection. 0 if invalid
 	unsigned currentID_ {}; // for id giving
@@ -440,7 +440,9 @@ protected:
 		vpp::Pipeline pointPipe;
 		vpp::Pipeline dirPipe;
 
-		// TODO: we might want to allow per-light scattering
+		// we might want to allow per-light scattering
+		// render all scattering into this texture? but then
+		// it would have to be a color texture
 		vpp::ViewableImage target;
 		vpp::Framebuffer fb;
 	} scatter_;
@@ -452,9 +454,14 @@ protected:
 	};
 
 	struct {
-		vpp::TrDsLayout dsLayout;
-		vpp::PipelineLayout pipeLayout;
-		vpp::Pipeline pipe;
+		vpp::TrDsLayout filterDsLayout;
+		vpp::PipelineLayout filterPipeLayout;
+		vpp::Pipeline filterPipe;
+
+		vpp::TrDsLayout blurDsLayout;
+		vpp::PipelineLayout blurPipeLayout;
+		vpp::Pipeline blurPipe;
+
 		vpp::Image tmpTarget;
 		std::vector<BloomLevel> tmpLevels;
 		std::vector<BloomLevel> emissionLevels;
@@ -890,7 +897,8 @@ void ViewApp::initRenderData() {
 		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.attenuation = {1.f, 0.3f, 0.1f};
-		l.data.radius = 10.f;
+		// light radius must be smaller than far plane / 2
+		l.data.radius = 9.f;
 		l.updateDevice();
 		// pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
@@ -2359,7 +2367,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 		// render light balls with emission material
 		// NOTE: rendering them messes with light scattering since
 		// then the light source is *inside* something (small).
-		// disabled for now, although it shows bloom nicely
+		// disabled for now, although it shows bloom nicely.
+		// Probably best to render it in the last pass, together
+		// with the skybox. Should use the depth buffer correctly though!
 		// lightMaterial_->bind(cb, gpass_.pipeLayout);
 		// for(auto& l : pointLights_) {
 		// 	l.lightBall().render(cb, gpass_.pipeLayout);
@@ -3149,7 +3159,7 @@ void ViewApp::updateDevice() {
 	// read the one pixel from the normals buffer (containing the primitive id)
 	// where the mouse was pressed
 	if(selectionPos_) {
-		// TODO
+		// TODO: readd this
 		/*
 		auto pos = *selectionPos_;
 		selectionPos_ = {};

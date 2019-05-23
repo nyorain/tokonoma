@@ -36,7 +36,7 @@ layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D outData;
 // be skipped and objects disappear from ssr, flicker on object/camera
 // movement or have extremely aliased edges.
 const uint marchSteps = 16u; // linear marching steps
-const uint binsSteps = 8u; // binary search steps after found hit interval
+const uint binsSteps = 4u; // binary search steps after found hit interval
 const float startStepSize = 0.05;
 const float stepFactor = 1.1;
 const float dthreshold = 0.05; // linear depth threshold
@@ -99,6 +99,7 @@ void main() {
 	pos += stepSize * reflDir;
 
 	for(uint i = 0u; i < marchSteps; ++i) {
+		// TODO: we should make sure that we step *at least* one pixel.
 		vec3 lpos = pos; // last position
 		pos += stepSize * reflDir;
 		stepSize *= stepFactor;

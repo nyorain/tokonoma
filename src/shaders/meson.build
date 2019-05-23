@@ -35,10 +35,8 @@ shaders_src = {
 		['shaders/skybox.frag'],
 		['shaders/fullscreen.vert'],
 		['shaders/fullscreen_transform.vert'],
-		['shaders/equirectToCube.frag'], # TODO: remove
 		['shaders/equirectToCube.comp'],
 		['shaders/incolor.frag'],
-		['shaders/irradiance.frag'], # TODO: remove
 		['shaders/irradiance.comp'],
 		['shaders/convolute.comp'],
 		['shaders/brdflut.comp'],
@@ -124,6 +122,7 @@ shaders_src = {
 	  ['pointScatter.frag', deferred_glsl],
 	  ['dirScatter.frag', deferred_glsl],
 	  ['gblur.comp', deferred_glsl],
+	  ['bloom.comp', deferred_glsl],
 	  ['ssr.comp', deferred_glsl],
 	  ['combine.comp', deferred_glsl],
 	  ['debug.frag', deferred_glsl],

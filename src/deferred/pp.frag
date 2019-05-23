@@ -115,12 +115,13 @@ void main() {
 	// apply bloom
 	// first level was already applied in combine.frag
 	if((params.flags & flagBloom) != 0) {
-		float bfac = 1.f;
+		// float bfac = 1.f;
 		uint bloomLevels = textureQueryLevels(bloomTex);
 		vec3 bloomSum = vec3(0.0);
 		for(uint i = 1u; i < bloomLevels; ++i) {
-			float fac = bfac / (1 + i);
-			bloomSum += fac * textureLod(bloomTex, uv, i).rgb;
+			// float fac = bfac / (1 + i);
+			// bloomSum += fac * textureLod(bloomTex, uv, i).rgb;
+			bloomSum += textureLod(bloomTex, uv, i).rgb;
 		}
 
 		color.rgb += bloomSum;

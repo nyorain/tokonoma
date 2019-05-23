@@ -6,6 +6,7 @@
 layout(local_size_x = 32, local_size_y = 32) in;
 layout(set = 0, binding = 0) uniform sampler2D inCol;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outCol;
+// layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outCol;
 
 layout(push_constant) uniform Params {
 	uint horizontal;

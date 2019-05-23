@@ -96,7 +96,7 @@ public:
 	bool hasShadowMap() const { return data.flags & lightFlagShadow; }
 
 protected:
-	nytl::Vec2ui size_ {512u, 512u}; // per side
+	nytl::Vec2ui size_ {256u, 256u}; // per side
 	vpp::ViewableImage target_; // normal depth buffer for rendering
 	vpp::ViewableImage shadowMap_; // cube map
 	vpp::Framebuffer fb_;
