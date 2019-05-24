@@ -338,7 +338,7 @@ bool App::init(nytl::Span<const char*> args) {
 		phdev = vpp::choose(phdevs, vkSurf);
 	} else {
 		auto i = args_.phdev.index();
-		vk::PhysicalDeviceType type;
+		vk::PhysicalDeviceType type = {};
 		if(i == 0) {
 			type = get<0>(args_.phdev) == DevType::igpu ?
 				vk::PhysicalDeviceType::integratedGpu :

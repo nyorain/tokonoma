@@ -41,7 +41,7 @@ void main() {
 
 	fragColor = vec4(0.0);
 	float depth = ztodepth(subpassLoad(inDepth).r, scene.near, scene.far);
-	if(depth == 1) { // nothing rendered in gbufs here
+	if(depth >= 1) { // nothing rendered in gbufs here
 		return;
 	}
 

@@ -138,6 +138,8 @@ struct PassCreateInfo {
 		vk::Sampler linear;
 		vk::Sampler nearest;
 	} samplers;
+
+	vk::ShaderModule fullscreenVertShader;
 };
 
 /*

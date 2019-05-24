@@ -154,9 +154,10 @@ Texture::Texture(InitData& data, const WorkBatcher& wb,
 			dataSize += layers * fmtSize * isize.x * isize.y;
 		}
 
+		auto align = fmtSize;
 		auto usage = vk::BufferUsageBits::transferSrc;
 		data.stageBuf = {data.initStageBuf, wb.alloc.bufStage, dataSize,
-			usage, hostBits};
+			usage, hostBits, align};
 	}
 }
 

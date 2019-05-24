@@ -3,7 +3,6 @@
 #include "pass.hpp"
 #include <stage/render.hpp>
 #include <stage/types.hpp>
-#include <dlg/dlg.hpp>
 
 using namespace doi::types;
 
@@ -62,6 +61,7 @@ public:
 	void createBuffers(InitBufferData&, const doi::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::ImageView ldepth,
 		vk::ImageView normals);
+	vk::ImageView targetView() const { return target_.imageView(); }
 
 	/// Inputs:
 	/// - depth: used as shaderReadOnlyOptimal; sampled
@@ -71,8 +71,6 @@ public:
 	RenderTarget record(vk::CommandBuffer, RenderTarget& depth,
 		RenderTarget& normals, vk::DescriptorSet sceneDs, vk::Extent2D);
 	void updateDevice();
-
-	vk::ImageView targetView() const { return target_.imageView(); }
 
 protected:
 	vpp::TrDsLayout dsLayout_;

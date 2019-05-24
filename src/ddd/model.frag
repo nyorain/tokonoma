@@ -8,7 +8,8 @@
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec3 inLightPos; // position from pov light; for shadow
-layout(location = 3) in vec2 inUV;
+layout(location = 3) in vec2 inTexCoord0;
+layout(location = 4) in vec2 inTexCoord1;
 
 layout(location = 0) out vec4 outCol;
 
@@ -48,7 +49,8 @@ vec3 getNormal() {
 		return n;
 	}
 
-	return tbnNormal(n, inPos, inUV, normalTex);
+	vec2 uv = (material.normalCoords == 0u) ? inTexCoord0 : inTexCoord1;
+	return tbnNormal(n, inPos, uv, normalTex);
 }
 
 void main() {
@@ -56,7 +58,8 @@ void main() {
 		discard;
 	}
 
-	vec4 albedo = material.albedo * texture(albedoTex, inUV);
+	vec2 auv = (material.albedoCoords == 0u) ? inTexCoord0 : inTexCoord1;
+	vec4 albedo = material.albedo * texture(albedoTex, auv);
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}
@@ -66,12 +69,13 @@ void main() {
 		normal *= -1;
 	}
 
-	// TODO: actually use them...
-	vec4 mr = texture(metalRoughTex, inUV);
+	vec2 mruv = (material.metalRoughCoords == 0u) ? inTexCoord0 : inTexCoord1;
+	vec4 mr = texture(metalRoughTex, mruv);
 	float metalness = material.metallic * mr.b;
 	float roughness = material.roughness * mr.g;
 
-	float ambientFac = 0.1 * texture(occlusionTex, inUV).r;
+	vec2 ouv = (material.occlusionCoords == 0u) ? inTexCoord0 : inTexCoord1;
+	float ambientFac = 0.1 * texture(occlusionTex, ouv).r;
 	// float diffuseFac = 0.5f;
 	// float specularFac = 0.5f;
 	// float shininess = 64.f;

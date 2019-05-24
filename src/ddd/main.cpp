@@ -165,27 +165,7 @@ public:
 			{fragShader, vk::ShaderStageBits::fragment, &fragSpec},
 		}}}, 0, samples()};
 
-		constexpr auto stride = sizeof(Vertex);
-		vk::VertexInputBindingDescription bufferBindings[2] = {
-			{0, stride, vk::VertexInputRate::vertex},
-			{1, sizeof(float) * 2, vk::VertexInputRate::vertex} // uv
-		};
-
-		vk::VertexInputAttributeDescription attributes[3] {};
-		attributes[0].format = vk::Format::r32g32b32Sfloat; // pos
-
-		attributes[1].format = vk::Format::r32g32b32Sfloat; // normal
-		attributes[1].offset = sizeof(float) * 3; // pos
-		attributes[1].location = 1;
-
-		attributes[2].format = vk::Format::r32g32Sfloat; // uv
-		attributes[2].location = 2;
-		attributes[2].binding = 1;
-
-		gpi.vertex.pVertexAttributeDescriptions = attributes;
-		gpi.vertex.vertexAttributeDescriptionCount = 3u;
-		gpi.vertex.pVertexBindingDescriptions = bufferBindings;
-		gpi.vertex.vertexBindingDescriptionCount = 2u;
+		gpi.vertex = doi::Primitive::vertexInfo();
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 		gpi.depthStencil.depthTestEnable = true;

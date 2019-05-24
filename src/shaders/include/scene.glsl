@@ -64,22 +64,26 @@ struct MaterialPcr {
 // obviously requires the near and far plane values that were used
 // in the perspective projection.
 // depth expected in standard vulkan range [0,1]
-float depthtoz(float depth, float near, float far) {
-	// if(depth >= 1.f) { // TODO: hack
-		// return 1000.f;
-	// }
-	return near * far / (far + near - depth * (far - near));
-}
-float ztodepth(float z, float near, float far) {
-	if(z >= 999.f) { // TODO: hack
-		return 1.f;
-	}
-	return (near + far - near * far / z) / (far - near);
-}
 // NOTE: we could implement an alternative version that uses the projection
 // matrix for depthtoz. But we always use the premultiplied
 // projectionView matrix and we can't get the information out of that.
+float depthtoz(float depth, float near, float far) {
+	return near * far / (far + near - depth * (far - near));
+}
+float ztodepth(float z, float near, float far) {
+	return (near + far - near * far / z) / (far - near);
+}
 
+// Reconstructs the fragment position in world space from the it's uv coord,
+// the sampled depth ([0,1]) for this fragment and the scenes inverse viewProj.
+// uv expected to have it's origin topleft, while world coord system has
+// up y axis
+vec3 reconstructWorldPos(vec2 uv, mat4 invViewProj, float depth) {
+	vec2 suv = 2 * uv - 1;
+	suv.y *= -1.f; // flip y, different directions in screen/world space
+	vec4 pos4 = invViewProj * vec4(suv, depth, 1.0);
+	return pos4.xyz / pos4.w;
+}
 
 // computes shadow for directional light
 // returns (1 - shadow), i.e. the light factor

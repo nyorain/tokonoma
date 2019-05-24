@@ -1,5 +1,6 @@
 #include "bloom.hpp"
 #include "ssr.hpp"
+#include "ssao.hpp"
 
 #include <stage/app.hpp>
 #include <stage/render.hpp>
@@ -58,6 +59,12 @@
 #include <cstdlib>
 #include <random>
 
+// list of additional stuff:
+// - depth of field
+// - lens flare
+// - exposure adaption (not sure what the name was)
+
+// TODO: correctly use byRegion dependency flag where possible
 // TODO: environment map specular ibl: filter from mipmaps to avoid artefacts
 // TODO: re-add light scattering (per light?)
 //   even if per-light we can still apply if after lightning pass
@@ -249,10 +256,12 @@ public:
 	};
 
 public:
+	/*
 	struct SSAOInitData {
 		vpp::SubBuffer samplesStage;
 		vpp::SubBuffer noiseStage;
 	};
+	*/
 
 	bool init(const nytl::Span<const char*> args) override;
 	void initRenderData() override;
@@ -260,8 +269,8 @@ public:
 	void initGPass();
 	void initLPass();
 	void initPPass();
-	SSAOInitData initSSAO(const doi::WorkBatcher& batcher);
-	void initSSAOBlur();
+	// SSAOInitData initSSAO(const doi::WorkBatcher& batcher);
+	// void initSSAOBlur();
 	void initScattering();
 	void initCombine();
 	void initDebug();
@@ -408,6 +417,7 @@ protected:
 		vpp::Pipeline pipe;
 	} pp_;
 
+	/*
 	// ssao
 	struct {
 		vpp::RenderPass pass;
@@ -430,6 +440,7 @@ protected:
 			vpp::Pipeline pipe;
 		} blur;
 	} ssao_;
+	*/
 
 	// light scattering
 	struct {
@@ -449,6 +460,7 @@ protected:
 
 	BloomPass bloom_;
 	SSRPass ssr_;
+	SSAOPass ssao_;
 
 	// combining compute pass
 	struct {
@@ -742,12 +754,16 @@ void ViewApp::initRenderData() {
 	initGPass(); // geometry to g buffers
 	initLPass(); // per light: using g buffers for shading
 	initPPass(); // post processing, combining
+	/*
 	auto ssaoData = initSSAO(batch); // ssao
 	initSSAOBlur(); // gaussian blur pass over ssao
+	*/
 	initScattering(); // light scattering/volumentric light shafts/god rays
 	initCombine(); // combining pass
 	initDebug(); // init debug pipeline/pass
 	initFwd(); // init forward pass for skybox and transparent objects
+
+	vpp::ShaderModule fullVertShader(dev, stage_fullscreen_vert_data);
 
 	// bloom
 	PassCreateInfo passInfo {
@@ -760,7 +776,8 @@ void ViewApp::initRenderData() {
 		}, {
 			linearSampler_,
 			nearestSampler_,
-		}
+		},
+		fullVertShader
 	};
 
 	BloomPass::InitData bloomData;
@@ -768,6 +785,9 @@ void ViewApp::initRenderData() {
 
 	SSRPass::InitData ssrData;
 	ssr_.create(ssrData, passInfo);
+
+	SSAOPass::InitData ssaoData;
+	ssao_.create(ssaoData, passInfo);
 
 	// dummy texture for materials that don't have a texture
 	// TODO: we could just create the dummy cube and make the dummy
@@ -879,6 +899,7 @@ void ViewApp::initRenderData() {
 	// allocate
 	bloom_.init(bloomData, passInfo);
 	ssr_.init(ssrData, passInfo);
+	ssao_.init(ssaoData, passInfo);
 
 	scene_ = initScene.init(batch);
 	boxIndices_ = initBoxIndices.init();
@@ -1379,6 +1400,7 @@ void ViewApp::initPPass() {
 	pp_.pipe = {dev, vkpipe};
 }
 
+/*
 ViewApp::SSAOInitData ViewApp::initSSAO(const doi::WorkBatcher& wb) {
 	SSAOInitData initData;
 	auto& dev = vulkanDevice();
@@ -1574,6 +1596,7 @@ void ViewApp::initSSAOBlur() {
 
 	ssao_.blur.pipe = {dev, vkpipe};
 }
+*/
 
 void ViewApp::initScattering() {
 	// render pass
@@ -1949,6 +1972,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		size.width, size.height, 1);
 	lpass_.fb = {dev, fbi};
 
+	/*
 	// ssao buf
 	if(params_.flags & flagSSAO) {
 		attachments.clear();
@@ -1971,6 +1995,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		ssao_.blur.target = {};
 		ssao_.blur.fb = {};
 	}
+	*/
 
 	// scatter buf
 	if(params_.flags & flagScattering) {
@@ -2003,9 +2028,14 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	SSRPass::InitBufferData ssrData;
 	ssr_.createBuffers(ssrData, wb, size);
 
+	SSAOPass::InitBufferData ssaoData;
+	ssao_.createBuffers(ssaoData, wb, size);
+
 	bloom_.initBuffers(bloomData, lpass_.light.imageView());
 	ssr_.initBuffers(ssrData, gpass_.depth.imageView(),
 		gpass_.normal.imageView());
+	ssao_.initBuffers(ssaoData, gpass_.depth.vkImageView(),
+		gpass_.normal.imageView(), size);
 
 	// fwd
 	attachments.clear();
@@ -2044,7 +2074,7 @@ void ViewApp::updateDescriptors() {
 
 	bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
 	auto ssaoView = (params_.flags & flagSSAO) ?
-		ssao_.target.vkImageView() : dummyTex_.vkImageView();
+		ssao_.targetView() : dummyTex_.vkImageView();
 	auto scatterView = (params_.flags & flagScattering) ?
 		scatter_.target.vkImageView() : dummyTex_.vkImageView();
 	auto depthView = needDepth ?  depthMipView_ : gpass_.depth.vkImageView();
@@ -2088,6 +2118,7 @@ void ViewApp::updateDescriptors() {
 	cdsu.imageSampler({{{}, brdfLut_.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 
+	/*
 	if(params_.flags & flagSSAO) {
 		auto& ssdsu = updates.emplace_back(ssao_.ds);
 		ssdsu.uniform({{{ssao_.samples}}});
@@ -2110,6 +2141,7 @@ void ViewApp::updateDescriptors() {
 		ssbvdsu.imageSampler({{{}, depthView,
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 	}
+	*/
 
 	if(params_.flags & flagScattering) {
 		auto& sdsu = updates.emplace_back(scatter_.ds);
@@ -2262,6 +2294,20 @@ void ViewApp::record(const RenderBuffer& buf) {
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
 		queryPool_, 2u);
 
+	RenderTarget ldepth;
+	ldepth.image = gpass_.depth.image();
+	ldepth.view = gpass_.depth.imageView();
+	ldepth.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	ldepth.writeAccess = vk::AccessBits::colorAttachmentWrite;
+	ldepth.writeStages = vk::PipelineStageBits::colorAttachmentOutput;
+
+	RenderTarget normals;
+	normals.image = gpass_.normal.image();
+	normals.view = gpass_.normal.imageView();
+	normals.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	normals.writeAccess = vk::AccessBits::colorAttachmentWrite;
+	normals.writeStages = vk::PipelineStageBits::colorAttachmentOutput;
+
 	// TODO: add back in if needed
 	// create depth mipmaps
 	/*
@@ -2337,6 +2383,12 @@ void ViewApp::record(const RenderBuffer& buf) {
 		queryPool_, 3u);
 
 	// ssao
+	RenderTarget ssao;
+	if(params_.flags & flagSSAO) {
+		ssao = ssao_.record(cb, ldepth, normals, size, sceneDs_);
+	}
+
+	/*
 	if(params_.flags & flagSSAO) {
 		vk::cmdBeginRenderPass(cb, {
 			ssao_.pass,
@@ -2402,6 +2454,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		vk::cmdEndRenderPass(cb);
 	}
+	*/
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
 		queryPool_, 4u);
@@ -2525,23 +2578,9 @@ void ViewApp::record(const RenderBuffer& buf) {
 		queryPool_, 8u);
 
 	// ssr pass
-	RenderTarget depth;
-	depth.image = gpass_.depth.image();
-	depth.view = gpass_.depth.imageView();
-	depth.layout = vk::ImageLayout::shaderReadOnlyOptimal;
-	depth.writeAccess = vk::AccessBits::colorAttachmentWrite;
-	depth.writeStages = vk::PipelineStageBits::colorAttachmentOutput;
-
-	RenderTarget normal;
-	normal.image = lpass_.light.image();
-	normal.view = lpass_.light.imageView();
-	normal.layout = vk::ImageLayout::shaderReadOnlyOptimal;
-	normal.writeAccess = vk::AccessBits::colorAttachmentWrite;
-	normal.writeStages = vk::PipelineStageBits::colorAttachmentOutput;
-
 	RenderTarget ssr;
 	if(params_.flags & flagSSR) {
-		ssr = ssr_.record(cb, depth, normal, sceneDs_, {width, height});
+		ssr = ssr_.record(cb, ldepth, normals, sceneDs_, {width, height});
 	}
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
@@ -2551,6 +2590,12 @@ void ViewApp::record(const RenderBuffer& buf) {
 	transitionRead(cb, emission, vk::ImageLayout::shaderReadOnlyOptimal,
 		vk::PipelineStageBits::computeShader | vk::PipelineStageBits::fragmentShader,
 		vk::AccessBits::shaderRead);
+
+	if(params_.flags & flagSSAO) {
+		transitionRead(cb, ssao, vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::computeShader | vk::PipelineStageBits::fragmentShader,
+			vk::AccessBits::shaderRead);
+	}
 
 	// combine pass
 	if(params_.mode == 0) {

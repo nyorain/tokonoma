@@ -17,7 +17,9 @@ scene_glsl = files(
 
 deferred_glsl = include_glsl + scene_glsl + files(
 	'../deferred/light.glsl',
-	'../deferred/scatter.glsl'
+	'../deferred/scatter.glsl',
+	'../deferred/ssao.glsl',
+	'../deferred/ssaoBlur.glsl',
 )
 
 # shader specifications
@@ -119,7 +121,9 @@ shaders_src = {
 	  ['pointLight.vert', deferred_glsl],
 	  ['dirLight.frag', deferred_glsl],
 	  ['ssao.frag', deferred_glsl],
+	  ['ssao.comp', deferred_glsl],
 	  ['ssaoBlur.frag', deferred_glsl],
+	  ['ssaoBlur.comp', deferred_glsl],
 	  ['pointScatter.frag', deferred_glsl],
 	  ['dirScatter.frag', deferred_glsl],
 	  ['gblur.comp', deferred_glsl],

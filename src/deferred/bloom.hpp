@@ -3,7 +3,6 @@
 #include "pass.hpp"
 #include <stage/render.hpp>
 #include <stage/types.hpp>
-#include <dlg/dlg.hpp>
 
 using namespace doi::types;
 
@@ -48,7 +47,7 @@ public:
 
 	/// See bloom.comp
 	struct {
-		float highPassThreshold = 0.5f;
+		float highPassThreshold = 0.25f;
 		float bloomPow = 0.8f;
 		u32 norm = normEuclid;
 	} params;
