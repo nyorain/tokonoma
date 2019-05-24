@@ -6,11 +6,10 @@
 
 namespace doi {
 
-
 vk::PushConstantRange Material::pcr() {
 	vk::PushConstantRange pcr;
 	pcr.offset = 0;
-	pcr.size = sizeof(float) * 11;
+	pcr.size = sizeof(PCR);
 	pcr.stageFlags = vk::ShaderStageBits::fragment;
 	return pcr;
 }
@@ -41,13 +40,13 @@ Material::Material(const vpp::TrDsLayout& dsLayout,
 		vk::ImageView dummy, vk::Sampler dummySampler, nytl::Vec4f albedo,
 		float roughness, float metalness, bool doubleSided,
 		nytl::Vec3f emission) {
-	albedo_ = albedo;
-	roughness_ = roughness;
-	metalness_ = metalness;
+	pcr_.albedo = albedo;
+	pcr_.roughness = roughness;
+	pcr_.metalness = metalness;
 	if(doubleSided) {
-		flags_ |= Flags::doubleSided;
+		pcr_.flags |= flagDoubleSided;
 	}
-	emission_ = emission;
+	pcr_.emission = emission;
 
 	albedoTex_ = {dummy, dummySampler};
 	metalnessRoughnessTex_ = {dummy, dummySampler};
@@ -68,7 +67,7 @@ Material::Material(InitData& data, const gltf::Model& model,
 	auto& add = material.additionalValues;
 	if(auto color = pbr.find("baseColorFactor"); color != pbr.end()) {
 		auto c = color->second.ColorFactor();
-		albedo_ = nytl::Vec4f{
+		pcr_.albedo = nytl::Vec4f{
 			float(c[0]),
 			float(c[1]),
 			float(c[2]),
@@ -77,27 +76,33 @@ Material::Material(InitData& data, const gltf::Model& model,
 
 	if(auto roughness = pbr.find("roughnessFactor"); roughness != pbr.end()) {
 		dlg_assert(roughness->second.has_number_value);
-		roughness_ = roughness->second.Factor();
+		pcr_.roughness = roughness->second.Factor();
 	}
 
 	if(auto metal = pbr.find("metallicFactor"); metal != pbr.end()) {
 		dlg_assert(metal->second.has_number_value);
-		metalness_ = metal->second.Factor();
+		pcr_.metalness = metal->second.Factor();
 	}
 
 	if(auto em = add.find("emissiveFactor"); em != add.end()) {
 		auto c = em->second.ColorFactor();
-		emission_ = {float(c[0]), float(c[1]), float(c[2])};
+		pcr_.emission = {float(c[0]), float(c[1]), float(c[2])};
 	}
 
-	// TODO: we really should allocate textures at once, using
-	// deferred initialization
-	// TODO: loading images like that prevents us from parallalizing
-	// image loading. Work on that. Maybe first make a list
-	// of what images are needed, then parallalize loading (from disk),
-	// then submit and wait for command buffers, then finish initialization
-	// materials (i.e. write descriptor sets)
-	auto getTex = [&](const gltf::Texture& tex, bool srgb, vk::Sampler& sampler) {
+	auto getTex = [&](const gltf::Parameter& p, bool srgb,
+			vk::Sampler& sampler, u32& coord) {
+		coord = p.TextureTexCoord();
+		dlg_assert(coord <= 1);
+		if(coord == 0) {
+			pcr_.flags |= flagNeedsTexCoords0;
+		} else if(coord == 1) {
+			pcr_.flags |= flagNeedsTexCoords1;
+		}
+
+		auto texid = p.TextureIndex();
+		dlg_assert(texid != -1);
+		auto& tex = model.textures[texid];
+
 		sampler = scene.defaultSampler().vkHandle();
 		if(tex.sampler >= 0) {
 			dlg_assert(unsigned(tex.sampler) < scene.samplers().size());
@@ -110,61 +115,38 @@ Material::Material(InitData& data, const gltf::Model& model,
 		return id;
 	};
 
-	if(auto color = pbr.find("baseColorTexture"); color != pbr.end()) {
-		dlg_assertm(color->second.TextureTexCoord() == 0,
-			"only one set of texture coordinates supported");
-		auto tex = color->second.TextureIndex();
-		dlg_assert(tex != -1);
-		data.albedo = getTex(model.textures[tex], true, albedoTex_.sampler);
-		flags_ |= Flags::textured;
+	if(auto tex = pbr.find("baseColorTexture"); tex != pbr.end()) {
+		data.albedo = getTex(tex->second, true,
+			albedoTex_.sampler, pcr_.albedoCoords);
 	} else {
 		albedoTex_ = {dummyView, scene.defaultSampler()};
 	}
 
-	if(auto rm = pbr.find("metallicRoughnessTexture"); rm != pbr.end()) {
-		dlg_assertm(rm->second.TextureTexCoord() == 0,
-			"only one set of texture coordinates supported");
-		auto tex = rm->second.TextureIndex();
-		dlg_assert(tex != -1);
-		data.metalRoughness = getTex(model.textures[tex], false,
-			metalnessRoughnessTex_.sampler);
-		flags_ |= Flags::textured;
+	if(auto tex = pbr.find("metallicRoughnessTexture"); tex != pbr.end()) {
+		data.metalRoughness = getTex(tex->second, false,
+			metalnessRoughnessTex_.sampler, pcr_.metalRoughCoords);
 	} else {
 		metalnessRoughnessTex_ = {dummyView, scene.defaultSampler()};
 	}
 
-	// TODO: we could also respect the "strength" parameters of
-	// (at least some?) textures
-	if(auto rm = add.find("normalTexture"); rm != add.end()) {
-		dlg_assertm(rm->second.TextureTexCoord() == 0,
-			"only one set of texture coordinates supported");
-		auto tex = rm->second.TextureIndex();
-		dlg_assert(tex != -1);
-		data.normal = getTex(model.textures[tex], false, normalTex_.sampler);
-		flags_ |= Flags::textured;
-		flags_ |= Flags::normalMap;
+	if(auto tex = add.find("normalTexture"); tex != add.end()) {
+		data.normal = getTex(tex->second, false, normalTex_.sampler,
+			pcr_.normalsCoords);
+		pcr_.flags |= flagNormalMap;
 	} else {
 		normalTex_ = {dummyView, scene.defaultSampler()};
 	}
 
-	if(auto rm = add.find("occlusionTexture"); rm != add.end()) {
-		dlg_assertm(rm->second.TextureTexCoord() == 0,
-			"only one set of texture coordinates supported");
-		auto tex = rm->second.TextureIndex();
-		dlg_assert(tex != -1);
-		data.occlusion = getTex(model.textures[tex], false, occlusionTex_.sampler);
-		flags_ |= Flags::textured;
+	if(auto tex = add.find("occlusionTexture"); tex != add.end()) {
+		data.occlusion = getTex(tex->second, false, occlusionTex_.sampler,
+			pcr_.occlusionCoords);
 	} else {
 		occlusionTex_ = {dummyView, scene.defaultSampler()};
 	}
 
-	if(auto rm = add.find("emissiveTexture"); rm != add.end()) {
-		dlg_assertm(rm->second.TextureTexCoord() == 0,
-			"only one set of texture coordinates supported");
-		auto tex = rm->second.TextureIndex();
-		dlg_assert(tex != -1);
-		data.emission = getTex(model.textures[tex], true, emissionTex_.sampler);
-		flags_ |= Flags::textured;
+	if(auto tex = add.find("emissiveTexture"); tex != add.end()) {
+		data.emission = getTex(tex->second, true, emissionTex_.sampler,
+			pcr_.emissionCoords);
 	} else {
 		emissionTex_ = {dummyView, scene.defaultSampler()};
 	}
@@ -179,12 +161,12 @@ Material::Material(InitData& data, const gltf::Model& model,
 			// value to at least somewhat mimic MASK mode in this case
 			// as well. Probably not a good idea, just implement sorting
 			dlg_warn("BLEND alphaMode not yet fully supported");
-			alphaCutoff_ = 0.0001f;
+			pcr_.alphaCutoff = 0.0001f;
 		} else if(alphaMode == "MASK") {
-			alphaCutoff_ = 0.5; // default per gltf
+			pcr_.alphaCutoff = 0.5; // default per gltf
 			if(auto m = add.find("alphaCutoff"); m != add.end()) {
 				dlg_assert(m->second.has_number_value);
-				alphaCutoff_ = m->second.number_value;
+				pcr_.alphaCutoff = m->second.number_value;
 			}
 		}
 	}
@@ -192,7 +174,7 @@ Material::Material(InitData& data, const gltf::Model& model,
 	// doubleSided, default is false
 	if(auto d = add.find("doubleSided"); d != add.end()) {
 		if(d->second.bool_value) {
-			flags_ |= Flags::doubleSided;
+			pcr_.flags |= flagDoubleSided;
 		}
 	}
 }
@@ -239,29 +221,9 @@ void Material::updateDs() {
 	write(emissionTex_);
 }
 
-bool Material::hasTexture() const {
-	return flags_ & Flags::textured;
-}
-
 void Material::bind(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
-	struct {
-		nytl::Vec4f albedo;
-		float roughness;
-		float metalness;
-		std::uint32_t flags;
-		float alphaCutoff;
-		nytl::Vec3f emission;
-	} data = {
-		albedo_,
-		roughness_,
-		metalness_,
-		flags_.value(),
-		alphaCutoff_,
-		emission_,
-	};
-
 	vk::cmdPushConstants(cb, pl, vk::ShaderStageBits::fragment, 0,
-		sizeof(data), &data);
+		sizeof(pcr_), &pcr_);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 		pl, 1, {{ds_.vkHandle()}}, {});
 }

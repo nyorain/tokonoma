@@ -119,6 +119,11 @@
 //   moving camera around?
 
 // lower prio optimizations:
+// TODO(optimization): the shadow pipelines currently bind and pass through
+//   both tex coords, also have normals declared as input (which they don't
+//   need). implement alternative primitive rendering mode, where it
+//   just binds the texCoords buffer needed for albedo, and then use
+//   a vertex input with just one texCoord and without normals in light
 // TODO(optimization): look into textureOffset/textureLodOffset functions for
 //   shaders. We use this functionality really often, might get
 //   something for free there
@@ -1073,22 +1078,7 @@ void ViewApp::initGPass() {
 		{fragShader, vk::ShaderStageBits::fragment},
 	}}}, 0};
 
-	constexpr auto stride = sizeof(Vertex);
-	vk::VertexInputBindingDescription bufferBindings[2] = {
-		{0, stride, vk::VertexInputRate::vertex},
-		{1, sizeof(float) * 2, vk::VertexInputRate::vertex} // uv
-	};
-
-	vk::VertexInputAttributeDescription attributes[3] {};
-	attributes[0].format = vk::Format::r32g32b32Sfloat; // pos
-
-	attributes[1].format = vk::Format::r32g32b32Sfloat; // normal
-	attributes[1].offset = sizeof(float) * 3; // pos
-	attributes[1].location = 1;
-
-	attributes[2].format = vk::Format::r32g32Sfloat; // uv
-	attributes[2].location = 2;
-	attributes[2].binding = 1;
+	gpi.vertex = doi::Primitive::vertexInfo();
 
 	// we don't blend in the gbuffers; simply overwrite
 	auto blendAttachments = {
@@ -1100,11 +1090,6 @@ void ViewApp::initGPass() {
 
 	gpi.blend.attachmentCount = blendAttachments.size();
 	gpi.blend.pAttachments = blendAttachments.begin();
-
-	gpi.vertex.pVertexAttributeDescriptions = attributes;
-	gpi.vertex.vertexAttributeDescriptionCount = 3u;
-	gpi.vertex.pVertexBindingDescriptions = bufferBindings;
-	gpi.vertex.vertexBindingDescriptionCount = 2u;
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 	gpi.depthStencil.depthTestEnable = true;

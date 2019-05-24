@@ -46,11 +46,11 @@ public:
 	// getting these right is extremely important, ssr succeeds or fails
 	// depending on these!
 	struct {
-		u32 marchSteps = 16u;
+		u32 marchSteps = 32u;
 		u32 binarySearchSteps = 4u;
-		float startStepSize = 0.025;
+		float startStepSize = 0.02;
 		float stepFactor = 1.1;
-		float ldepthThreshold = 0.05;
+		float ldepthThreshold = 0.01;
 		float roughnessFacPow = 1.f;
 	} params;
 

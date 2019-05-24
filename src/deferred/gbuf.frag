@@ -6,8 +6,9 @@
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
-layout(location = 2) in vec2 inUV;
-layout(location = 3) in float inLinDepth;
+layout(location = 2) in vec2 inTexCoord0;
+layout(location = 3) in vec2 inTexCoord1;
+layout(location = 4) in float inLinDepth;
 
 layout(location = 0) out vec4 outNormal; // xy: encoded normal, z: matID, w: roughness
 layout(location = 1) out vec4 outAlbedo; // rgb: albedo, w: occlusion
@@ -44,7 +45,8 @@ vec3 getNormal() {
 		return n;
 	}
 
-	return tbnNormal(n, inPos, inUV, normalTex);
+	vec2 uv = (material.normalCoords == 0u) ? inTexCoord0 : inTexCoord1;
+	return tbnNormal(n, inPos, uv, normalTex);
 }
 
 void main() {
@@ -53,7 +55,8 @@ void main() {
 		discard;
 	}
 
-	vec4 albedo = material.albedo * texture(albedoTex, inUV);
+	vec2 auv = (material.albedoCoords == 0u) ? inTexCoord0 : inTexCoord1;
+	vec4 albedo = material.albedo * texture(albedoTex, auv);
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}
@@ -64,13 +67,19 @@ void main() {
 	}
 
 	outNormal.xy = encodeNormal(normal);
-	outAlbedo.rgb = albedo.rgb;
-	outEmission.xyz = material.emission * texture(emissionTex, inUV).rgb;
-
 	outNormal.z = 2.f * (model.id / 65536.0) - 1.f; // snorm format
-	outAlbedo.w = texture(occlusionTex, inUV).r;
 
-	vec4 mr = texture(metalRoughTex, inUV);
+	outAlbedo.rgb = albedo.rgb;
+
+	vec2 euv = (material.emissionCoords == 0u) ? inTexCoord0 : inTexCoord1;
+	outEmission.xyz = material.emission * texture(emissionTex, euv).rgb;
+
+	vec2 ouv = (material.occlusionCoords == 0u) ? inTexCoord0 : inTexCoord1;
+	outAlbedo.w = texture(occlusionTex, ouv).r;
+
+	vec2 mruv = (material.metalRoughCoords == 0u) ? inTexCoord0 : inTexCoord1;
+	vec4 mr = texture(metalRoughTex, mruv);
+
 	// components as specified by gltf spec
 	// NOTE: use only half the range (normal and emissions gbufs are 16f)
 	outNormal.w = material.roughness * mr.g;

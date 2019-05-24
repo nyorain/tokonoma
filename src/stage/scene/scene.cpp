@@ -214,9 +214,13 @@ void Scene::init(InitData& data, const WorkBatcher& wb) {
 		auto& p = primitives_[i];
 		auto& material = materials_[p.material()];
 		p.init(data.primitives[i], wb.cb);
-		if(!p.hasUV() && material.hasTexture()) {
-			auto msg = "primitive uses texture but material has no uv coords";
-			throw std::runtime_error(msg);
+		if(!p.hasTexCoords0() && material.needsTexCoords0()) {
+			throw std::runtime_error("material uses texCoords0 but primitive "
+				"doesn't provide them");
+		}
+		if(!p.hasTexCoords1() && material.needsTexCoords1()) {
+			throw std::runtime_error("material uses texCoords1 but primitive "
+				"doesn't provide them");
 		}
 	}
 }

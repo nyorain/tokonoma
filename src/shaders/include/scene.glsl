@@ -45,13 +45,19 @@ struct PointLight {
 	mat4 proj[6]; // global -> cubemap [side i] light space
 };
 
+// size: 64
 struct MaterialPcr {
 	vec4 albedo;
+	vec3 emission;
+	uint flags;
 	float roughness;
 	float metallic;
-	uint flags;
 	float alphaCutoff;
-	vec3 emission;
+	uint albedoCoords;
+	uint emissionCoords;
+	uint normalCoords;
+	uint metalRoughCoords;
+	uint occlusionCoords;
 };
 
 // returns the z value belonging to the given depth buffer value

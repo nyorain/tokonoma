@@ -12,6 +12,29 @@
 
 namespace doi {
 
+const vk::PipelineVertexInputStateCreateInfo& Primitive::vertexInfo() {
+	static constexpr auto stride = sizeof(doi::Primitive::Vertex);
+	static constexpr vk::VertexInputBindingDescription bindings[3] = {
+		{0, stride, vk::VertexInputRate::vertex},
+		{1, sizeof(float) * 2, vk::VertexInputRate::vertex}, // texCoords0
+		{2, sizeof(float) * 2, vk::VertexInputRate::vertex}, // texCoords1
+	};
+
+	static constexpr vk::VertexInputAttributeDescription attributes[4] = {
+		{0, 0, vk::Format::r32g32b32a32Sfloat, 0}, // pos
+		{1, 0, vk::Format::r32g32b32a32Sfloat, sizeof(float) * 3}, // normal
+		{2, 1, vk::Format::r32g32Sfloat, 0}, // texCoord0
+		{3, 2, vk::Format::r32g32Sfloat, 0}, // texCoord1
+	};
+
+	static const vk::PipelineVertexInputStateCreateInfo ret = {{},
+		3, bindings,
+		4, attributes
+	};
+
+	return ret;
+}
+
 // NOTE: currently some code duplication between constructors
 // hard to factor out into one function though
 // TODO: add deferred version of this constructor as well?
@@ -88,7 +111,11 @@ Primitive::Primitive(InitData& data, const WorkBatcher& wb,
 	auto& dev = dsLayout.device();
 	auto ip = primitive.attributes.find("POSITION");
 	auto in = primitive.attributes.find("NORMAL");
-	auto iuv = primitive.attributes.find("TEXCOORD_0"); // TODO: support more coords
+	auto itc0 = primitive.attributes.find("TEXCOORD_0");
+	auto itc1 = primitive.attributes.find("TEXCOORD_1");
+
+	// TODO: we could manually compute normals, flat normals are good
+	// enough in this case. But we could also an algorith smooth normals
 	if(ip == primitive.attributes.end() || in == primitive.attributes.end()) {
 		throw std::runtime_error("primitve doesn't have POSITION or NORMAL");
 	}
@@ -103,8 +130,10 @@ Primitive::Primitive(InitData& data, const WorkBatcher& wb,
 	}
 	auto& ia = model.accessors[primitive.indices];
 
-	auto* uva = iuv == primitive.attributes.end() ?
-		nullptr : &model.accessors[iuv->second];
+	auto* tc0a = itc0 == primitive.attributes.end() ?
+		nullptr : &model.accessors[itc0->second];
+	auto* tc1a = itc1 == primitive.attributes.end() ?
+		nullptr : &model.accessors[itc1->second];
 
 	// compute total buffer size
 	auto size = 0u;
@@ -141,16 +170,32 @@ Primitive::Primitive(InitData& data, const WorkBatcher& wb,
 	}
 
 	auto stageSize = size;
-	if(uva) {
-		auto uvSize = uva->count * sizeof(nytl::Vec2f); // uv coords
-		auto uvUsage = vk::BufferUsageBits::vertexBuffer |
-			vk::BufferUsageBits::transferDst;
-		uv_ = {data.initUv, wb.alloc.bufDevice, uvSize, uvUsage, devMem, 8u};
-		stageSize += uvSize;
+	auto texCoordsUsage = vk::BufferUsageBits::vertexBuffer |
+		vk::BufferUsageBits::transferDst;
+	if(tc0a) {
+		dlg_assert(tc0a->count == pa.count);
+		auto size = tc0a->count * sizeof(nytl::Vec2f); // uv coords
+		texCoords0_ = {data.initTexCoords0, wb.alloc.bufDevice, size,
+			texCoordsUsage, devMem, 8u};
+		stageSize += size;
 
-		data.uvData.resize(uvSize);
-		auto span = nytl::Span<std::byte>(data.uvData);
-		auto uvr = doi::range<2, float>(model, *uva);
+		data.texCoord0Data.resize(size);
+		auto span = nytl::Span<std::byte>(data.texCoord0Data);
+		auto uvr = doi::range<2, float>(model, *tc0a);
+		for(auto uv : uvr) {
+			doi::write(span, uv);
+		}
+	}
+	if(tc1a) {
+		dlg_assert(tc1a->count == pa.count);
+		auto size = tc1a->count * sizeof(nytl::Vec2f); // uv coords
+		texCoords1_ = {data.initTexCoords1, wb.alloc.bufDevice, size,
+			texCoordsUsage, devMem, 8u};
+		stageSize += size;
+
+		data.texCoord1Data.resize(size);
+		auto span = nytl::Span<std::byte>(data.texCoord1Data);
+		auto uvr = doi::range<2, float>(model, *tc1a);
 		for(auto uv : uvr) {
 			doi::write(span, uv);
 		}
@@ -183,16 +228,29 @@ void Primitive::init(InitData& data, vk::CommandBuffer cb) {
 	region.size = data.vertData.size();
 	vk::cmdCopyBuffer(cb, data.stage.buffer(), vertices_.buffer(), {{region}});
 
-	if(!data.uvData.empty()) {
-		uv_.init(data.initUv);
+	if(!data.texCoord0Data.empty()) {
+		texCoords0_.init(data.initTexCoords0);
 		auto offset = span.data() - map.ptr();
-		doi::write(span, data.uvData.data(), data.uvData.size());
+		doi::write(span, data.texCoord0Data.data(), data.texCoord0Data.size());
 
 		vk::BufferCopy region;
-		region.dstOffset = uv_.offset();
+		region.dstOffset = texCoords0_.offset();
 		region.srcOffset = data.stage.offset() + offset;
-		region.size = data.uvData.size();
-		vk::cmdCopyBuffer(cb, data.stage.buffer(), uv_.buffer(), {{region}});
+		region.size = data.texCoord0Data.size();
+		vk::cmdCopyBuffer(cb, data.stage.buffer(),
+			texCoords0_.buffer(), {{region}});
+	}
+	if(!data.texCoord1Data.empty()) {
+		texCoords1_.init(data.initTexCoords1);
+		auto offset = span.data() - map.ptr();
+		doi::write(span, data.texCoord1Data.data(), data.texCoord1Data.size());
+
+		vk::BufferCopy region;
+		region.dstOffset = texCoords1_.offset();
+		region.srcOffset = data.stage.offset() + offset;
+		region.size = data.texCoord1Data.size();
+		vk::cmdCopyBuffer(cb, data.stage.buffer(),
+			texCoords1_.buffer(), {{region}});
 	}
 
 	updateDevice();
@@ -210,19 +268,24 @@ void Primitive::render(vk::CommandBuffer cb,
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 		pipeLayout, 2, {{ds_.vkHandle()}}, {});
 
-	vk::cmdBindVertexBuffers(cb, 0, 1, vertices_.buffer(), vOffset);
+	// for each texture coordinate that is not provided, we simply
+	// bind the vertices_ buffer as dummy buffer (vulkan needs something),
+	// but we won't use that data in the shaders.
+	// The size of position+normals will always be larger than of uv coords.
+	auto vb = vertices_.buffer().vkHandle();
+	std::array<vk::Buffer, 3> bufs = {vb, vb, vb};
+	std::array<vk::DeviceSize, 3> offsets = {vOffset, vOffset, vOffset};
 
-	if(uv_.size() > 0) {
-		vk::cmdBindVertexBuffers(cb, 1, 1, uv_.buffer(), uv_.offset());
-	} else {
-		// in this case we bind the vertex (pos + normal) buffer as
-		// uv buffer. This is obviously utter garbage but allows us
-		// to use just one pipeline. If we land here, the material of
-		// this primitive uses no textures so uv coords are irrevelant.
-		// The size of position+normals will always be larger than of uv coords.
-		vk::cmdBindVertexBuffers(cb, 1, 1, vertices_.buffer(), vOffset);
+	if(texCoords0_.size() > 0) {
+		bufs[1] = texCoords0_.buffer();
+		offsets[1] = texCoords0_.offset();
+	}
+	if(texCoords1_.size() > 0) {
+		bufs[2] = texCoords1_.buffer();
+		offsets[2] = texCoords1_.offset();
 	}
 
+	vk::cmdBindVertexBuffers(cb, 0, bufs, offsets);
 	vk::cmdBindIndexBuffer(cb, vertices_.buffer(), iOffset, vk::IndexType::uint32);
 	vk::cmdDrawIndexed(cb, indexCount_, 1, 0, 0, 0);
 }

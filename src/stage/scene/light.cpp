@@ -22,7 +22,7 @@
 namespace doi {
 
 // needs to be the same as in shadowmapCube.vert
-constexpr auto pcrOffsetFaceID = 44u;
+constexpr auto pcrOffsetFaceID = 64u;
 
 ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		vk::DescriptorSetLayout lightDsLayout,
@@ -114,25 +114,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 
 	// see cubemap pipeline below
 	gpi.flags(vk::PipelineCreateBits::allowDerivatives);
-
-	constexpr auto stride = sizeof(doi::Primitive::Vertex);
-	vk::VertexInputBindingDescription bufferBindings[2] = {
-		{0, stride, vk::VertexInputRate::vertex},
-		{1, sizeof(float) * 2, vk::VertexInputRate::vertex} // uv
-	};
-
-	vk::VertexInputAttributeDescription attributes[2];
-	attributes[0].format = vk::Format::r32g32b32Sfloat; // pos
-
-	attributes[1].format = vk::Format::r32g32Sfloat; // uv
-	attributes[1].location = 1;
-	attributes[1].binding = 1;
-
-	gpi.vertex.pVertexAttributeDescriptions = attributes;
-	gpi.vertex.vertexAttributeDescriptionCount = 2u;
-	gpi.vertex.pVertexBindingDescriptions = bufferBindings;
-	gpi.vertex.vertexBindingDescriptionCount = 2u;
-
+	gpi.vertex = doi::Primitive::vertexInfo();
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 	gpi.depthStencil.depthTestEnable = true;

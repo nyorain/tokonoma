@@ -30,14 +30,18 @@ public:
 	struct InitData {
 		vpp::SubBuffer stage;
 		std::vector<std::byte> vertData;
-		std::vector<std::byte> uvData;
+		std::vector<std::byte> texCoord0Data;
+		std::vector<std::byte> texCoord1Data;
 
 		vpp::SubBuffer::InitData initStage;
 		vpp::SubBuffer::InitData initVert;
-		vpp::SubBuffer::InitData initUv;
+		vpp::SubBuffer::InitData initTexCoords0;
+		vpp::SubBuffer::InitData initTexCoords1;
 		vpp::SubBuffer::InitData initUbo;
 		vpp::TrDs::InitData initDs;
 	};
+
+	static const vk::PipelineVertexInputStateCreateInfo& vertexInfo();
 
 	// transform matrix
 	// must call updateDevice when changed
@@ -57,14 +61,16 @@ public:
 	void updateDevice();
 
 	unsigned material() const { return material_; }
-	bool hasUV() const { return uv_.size() != 0; }
+	bool hasTexCoords0() const { return texCoords0_.size() != 0; }
+	bool hasTexCoords1() const { return texCoords1_.size() != 0; }
 	auto id() const { return id_; }
 
 protected:
 	unsigned indexCount_ {};
 	unsigned vertexCount_ {};
 	vpp::SubBuffer vertices_; // indices + vertices
-	vpp::SubBuffer uv_; // uv coords (optional)
+	vpp::SubBuffer texCoords0_; // optional
+	vpp::SubBuffer texCoords1_; // optional
 	vpp::SubBuffer ubo_; // different buffer since on mappable mem
 	vpp::TrDs ds_;
 	unsigned id_;
