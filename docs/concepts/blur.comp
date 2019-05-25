@@ -43,8 +43,8 @@ void main() {
 
 	// wait for all invocations to complete reads
 	// apparently both are needed: https://stackoverflow.com/questions/39393560
-	barrier();
 	memoryBarrierShared();
+	barrier();
 
 	// phase 2: blur, using the gathered data
 	vec3 col = vec3(0.0);

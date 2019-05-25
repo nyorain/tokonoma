@@ -26,14 +26,6 @@ public:
 	static constexpr auto luminanceFormat = vk::Format::r16Sfloat;
 	static constexpr auto groupDimSize = 8u;
 
-	// Whether to use correct average calculation. If compute shaders
-	// can be used, this will not hurt performance (should even be faster),
-	// but otherwise it may have major performance hit.
-	// If this is false, will simply generate mipmaps and use the
-	// value of the last mip level, which is *not accurate* for
-	// non-power-of-two targets.
-	static constexpr bool correct = true;
-
 	struct InitData {
 		vpp::TrDs::InitData initDs;
 		vpp::SubBuffer::InitData initDstBuffer;
@@ -76,7 +68,6 @@ protected:
 	struct MipLevel {
 		vpp::ImageView view;
 		vpp::TrDs ds;
-		vpp::Framebuffer fb; // graphics pipe only
 	};
 
 	struct {
@@ -84,6 +75,5 @@ protected:
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 		std::vector<MipLevel> levels;
-		vpp::RenderPass rp; // graphics pipe only
 	} mip_;
 };

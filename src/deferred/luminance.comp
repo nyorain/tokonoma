@@ -15,5 +15,7 @@ void main() {
 	}
 
 	vec3 col = imageLoad(inLight, ivec2(pixel)).rgb;
-	imageStore(outLuminance, ivec2(pixel), vec4(dot(col, pcr.luminance)));
+	float luminance = dot(col, pcr.luminance);
+	luminance = clamp(log2(luminance), -100.f, 100.f);
+	imageStore(outLuminance, ivec2(pixel), vec4(luminance));
 }
