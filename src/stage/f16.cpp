@@ -2,6 +2,7 @@
 #include <stage/types.hpp>
 #include <cstring>
 #include <cmath>
+#include <dlg/dlg.hpp> // todo
 
 namespace doi {
 
@@ -67,6 +68,7 @@ f16::operator float() const {
 		fexp = exp + 112; // (2^7 - 1) - (2^5 - 1) = 112
 		fmantissa = mantissa << 13; // 23 - 10 = 13
 	} else { // c.exp == 31: infinity or nan
+		dlg_info("nana: {} {} {}", (u32) sign, (u32) exp, (u32) mantissa);
 		fexp = 0xFFu;
 		fmantissa = (mantissa == 0) ? 0 : 1;
 	}

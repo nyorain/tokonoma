@@ -4,8 +4,12 @@
 #include "scene.glsl"
 #include "pbr.glsl"
 
-// TODO: how to choose the best workgroup size? make it configurable!
-layout(local_size_x = 8, local_size_y = 8) in;
+const uint flagDiffuseIBL = (1u << 0u);
+const uint flagSpecularIBL = (1u << 1u);
+const uint flagEmission = (1u << 2u);
+const uint flagSSAO = (1u << 3u);
+
+layout(local_size_x_id = 0, local_size_x_id = 1) in;
 layout(set = 0, binding = 0, row_major) uniform SceneUbo {
 	mat4 proj;
 	mat4 invProj;
@@ -15,25 +19,25 @@ layout(set = 0, binding = 0, row_major) uniform SceneUbo {
 
 layout(set = 1, binding = 0, rgba16f) uniform image2D outCol;
 
-layout(set = 1, binding = 1) uniform Params {
-	uint mode;
+layout(set = 1, binding = 1) uniform sampler2D albedoTex;
+layout(set = 1, binding = 3) uniform sampler2D emissionTex;
+layout(set = 1, binding = 5) uniform sampler2D linDepthTex;
+layout(set = 1, binding = 4) uniform sampler2D normalTex;
+layout(set = 1, binding = 2) uniform sampler2D ssaoTex;
+
+layout(set = 1, binding = 6) uniform samplerCube irradianceMap;
+layout(set = 1, binding = 7) uniform samplerCube envMap;
+layout(set = 1, binding = 8) uniform sampler2D brdfLut;
+
+layout(set = 1, binding = 9) uniform Params {
 	uint flags;
-	float aoFactor;
+	float factor;
 	float ssaoPow;
-	uint tonemap;
-	float exposure;
-	uint convolutionLods; // TODO: rather constant or specialization constant?
 } params;
 
-layout(set = 1, binding = 2) uniform sampler2D albedoTex;
-layout(set = 1, binding = 3) uniform sampler2D ssaoTex;
-layout(set = 1, binding = 4) uniform sampler2D emissionTex;
-layout(set = 1, binding = 5) uniform sampler2D normalTex;
-layout(set = 1, binding = 6) uniform sampler2D linDepthTex;
-
-layout(set = 1, binding = 7) uniform samplerCube irradianceMap;
-layout(set = 1, binding = 8) uniform samplerCube envMap;
-layout(set = 1, binding = 9) uniform sampler2D brdfLut;
+layout(push_constant) uniform PCR {
+	uint filteredEnvLods;
+} pcr;
 
 void main() {
 	uvec2 pixel = gl_GlobalInvocationID.xy;
@@ -49,11 +53,13 @@ void main() {
 	// apply emission
 	vec4 vEmission = textureLod(emissionTex, uv, 0);
 	vec3 emission = vEmission.rgb;
-	color.rgb += emission;
+	if((params.flags & flagEmission) != 0) {
+		color.rgb += emission;
+	}
 
 	float ld = textureLod(linDepthTex, uv, 0).r;
 	float depth = ztodepth(ld, scene.near, scene.far);
-	if(depth != 1.f && params.aoFactor > 0.f) {
+	if(depth != 1.f && params.factor > 0.f) {
 		vec4 vAlbedo = texture(albedoTex, uv);
 		vec3 albedo = vAlbedo.rgb;
 		vec3 ambient = vec3(0.0);
@@ -92,7 +98,7 @@ void main() {
 			// specular
 			if((params.flags & flagSpecularIBL) != 0) {
 				vec3 R = reflect(viewDir, normal);
-				float lod = roughness * params.convolutionLods;
+				float lod = roughness * pcr.filteredEnvLods;
 				vec3 filtered = textureLod(envMap, R, lod).rgb;   
 				vec2 brdfParams = vec2(cosTheta, roughness);
 				vec2 brdf = texture(brdfLut, brdfParams).rg;
@@ -107,7 +113,7 @@ void main() {
 			ambient = 0.25 * albedo;
 		}
 
-		float ao = params.aoFactor * vAlbedo.w;
+		float ao = params.factor * vAlbedo.w;
 		if((params.flags & flagSSAO) != 0) {
 			ao *= pow(texture(ssaoTex, uv).r, params.ssaoPow);
 		}
@@ -115,9 +121,6 @@ void main() {
 		color.rgb += ao * ambient;
 	}
 
-	// write back
-	// temporary hack: use the alpha component for luminance
-	// see discussion at https://stackoverflow.com/questions/596216/formula-to-determine-brightness-of-rgb-color
-	color.a = clamp(log2(0.2 * color.r + 0.7 * color.g + 0.1 * color.b), -100.f, 100.f);
 	imageStore(outCol, ivec2(pixel), color);
 }
+

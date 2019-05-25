@@ -1,0 +1,145 @@
+#include "ao.hpp"
+#include <vpp/debug.hpp>
+#include <vpp/shader.hpp>
+#include <vpp/formats.hpp>
+#include <vpp/pipeline.hpp>
+#include <dlg/dlg.hpp>
+
+#include <shaders/deferred.ao.comp.h>
+
+void AOPass::create(InitData& data, const PassCreateInfo& info) {
+	auto& wb = info.wb;
+	auto& dev = wb.dev;
+
+	auto combineBindings = {
+		vpp::descriptorBinding( // target
+			vk::DescriptorType::storageImage,
+			vk::ShaderStageBits::compute),
+		vpp::descriptorBinding( // ubo
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::compute),
+		vpp::descriptorBinding( // albedo
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // ssao
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // emission
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // normal
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // linear depth
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // irradiance
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+		vpp::descriptorBinding( // envMap
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+		vpp::descriptorBinding( // brdflut
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+	};
+
+	dsLayout_ = {dev, combineBindings};
+	ds_ = {data.initDs, wb.alloc.ds, dsLayout_};
+
+	vk::PushConstantRange pcr;
+	pcr.offset = 0;
+	pcr.size = 4u;
+	pcr.stageFlags = vk::ShaderStageBits::compute;
+	pipeLayout_ = {dev, {{
+		info.dsLayouts.scene.vkHandle(),
+		dsLayout_.vkHandle()
+	}}, {}};
+
+	vpp::nameHandle(dsLayout_, "AOPass:dsLayout_");
+	vpp::nameHandle(pipeLayout_, "AOPass:pipeLayout_");
+
+	// pipe
+	ComputeGroupSizeSpec groupSizeSpec(groupDimSize, groupDimSize);
+	vpp::ShaderModule combineShader(dev, deferred_ao_comp_data);
+
+	vk::ComputePipelineCreateInfo cpi;
+	cpi.layout = pipeLayout_;
+	cpi.stage.module = combineShader;
+	cpi.stage.stage = vk::ShaderStageBits::compute;
+	cpi.stage.pName = "main";
+	cpi.stage.pSpecializationInfo = &groupSizeSpec.spec;
+	pipe_ = {dev, cpi};
+	vpp::nameHandle(ds_, "AOPass:pipe_");
+
+	// ubo
+	ubo_ = {data.initUbo, wb.alloc.bufHost, sizeof(params),
+		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+}
+
+void AOPass::init(InitData& data, const PassCreateInfo&) {
+	ubo_.init(data.initUbo);
+	uboMap_ = ubo_.memoryMap();
+
+	ds_.init(data.initDs);
+	vpp::nameHandle(ds_, "AOPass:ds_");
+}
+
+void AOPass::updateInputs(vk::ImageView light,
+		vk::ImageView albeo, vk::ImageView emission, vk::ImageView ldepth,
+		vk::ImageView normal, vk::ImageView ssao,
+		vk::ImageView irradiance, vk::ImageView filteredEnv,
+		unsigned filteredEnvLods, vk::ImageView brdflut) {
+	envFilterLods_ = filteredEnvLods;
+
+	vpp::DescriptorSetUpdate dsu(ds_);
+	dsu.storage({{{}, light, vk::ImageLayout::general}});
+	dsu.imageSampler({{{}, albeo, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.imageSampler({{{}, emission, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.imageSampler({{{}, ldepth, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.imageSampler({{{}, normal, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.imageSampler({{{}, ssao, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.imageSampler({{{}, irradiance, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.imageSampler({{{}, filteredEnv, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.imageSampler({{{}, brdflut, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.uniform({{{ubo_}}});
+}
+
+void AOPass::record(vk::CommandBuffer cb,
+		RenderTarget& light, RenderTarget& albedo, RenderTarget& emission,
+		RenderTarget& ldepth, RenderTarget& normal, RenderTarget& ssao,
+		vk::DescriptorSet sceneDs, vk::Extent2D size) {
+	vpp::DebugLabel(cb, "AOPass");
+	dlg_assert(envFilterLods_);
+
+	transitionRead(cb, light, vk::ImageLayout::general,
+		vk::PipelineStageBits::computeShader,
+		vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite);
+	// TODO: group
+	transitionRead(cb, albedo, vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
+	transitionRead(cb, emission, vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
+	transitionRead(cb, ldepth, vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
+	transitionRead(cb, normal, vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
+	if(ssao.image) {
+		transitionRead(cb, ssao, vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
+	}
+
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
+	doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
+	vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::compute,
+		0, 4, &envFilterLods_);
+	auto cx = std::ceil(size.width / float(groupDimSize));
+	auto cy = std::ceil(size.width / float(groupDimSize));
+	vk::cmdDispatch(cb, cx, cy, 1);
+}
+
+void AOPass::updateDevice() {
+	auto span = uboMap_.span();
+	doi::write(span, params);
+	uboMap_.flush();
+}

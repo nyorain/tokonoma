@@ -1,5 +1,5 @@
 #ifndef FXAA_REDUCE_MIN
-    #define FXAA_REDUCE_MIN (1.0/ 128.0)
+    #define FXAA_REDUCE_MIN (1.0 / 128.0)
 #endif
 #ifndef FXAA_REDUCE_MUL
     #define FXAA_REDUCE_MUL (1.0 / 8.0)
@@ -9,6 +9,7 @@
 #endif
 
 vec4 fxaa(sampler2D tex, vec2 uvm, vec2 uvnw, vec2 uvne, vec2 uvsw, vec2 uvse) {
+	// https://stackoverflow.com/questions/596216/formula-to-determine-brightness-of-rgb-color
 	const vec3 luma = vec3(0.299, 0.587, 0.114);
 	vec2 invSize = 1.0 / textureSize(tex, 0);
 

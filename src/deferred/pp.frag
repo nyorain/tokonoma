@@ -49,7 +49,7 @@ vec3 uncharted2tonemap(vec3 x) {
 // http://filmicworlds.com/blog/filmic-tonemapping-operators/
 vec3 hejlRichardTonemap(vec3 color) {
     color = max(vec3(0.0), color - vec3(0.004));
-    return (color*(6.2*color+.5))/(color*(6.2*color+1.7)+0.06);
+    return pow((color*(6.2*color+.5))/(color*(6.2*color+1.7)+0.06), vec3(2.2));
 }
 
 // ACES tone map
@@ -83,6 +83,55 @@ void main() {
 	}
 
 	vec2 texelSize = 1.0 / textureSize(colorTex, 0);
+
+	// important that this comes before scattering and ssr
+	// TODO: first basic depth of field idea, just playing around,
+	// this isn't a real thing.
+	// TODO: we don't want to blur the sky but for that we need
+	// to know the far plane; second condition. Slight optimization
+	// as well, could probably be applied to most other pp algorithms
+	// TODO: probably best to split off to own pass. Also implement
+	// it correctly, with plausible coc and better blurring of everything.
+	if((params.flags & flagDOF) != 0 /*&& cd >= scene.far*/) {
+		const float focus = params.dofFocus;
+		const int range = 3;
+		const float eps = 0.01;
+		float total = 1;
+		vec3 accum = color.rgb;
+		float cd = texture(depthTex, uv).r;
+
+		for(int x = -range; x <= range; ++x) {
+			for(int y = -range; y <= range; ++y) {
+				if(x == 0 && y == 0) {
+					continue;
+				}
+
+				vec2 off = texelSize * vec2(x, y);
+				float depth = texture(depthTex, uv + off).r;
+				if(cd < depth - eps) {
+					continue;
+				}
+
+				float fac;
+				if(depth < focus) {
+					fac = clamp(0.05 + (focus - depth) / focus, 0, 1);
+					fac = pow(fac, 2);
+				} else {
+					// fac = 1 for dist = 4
+					float x = 0.25 * (depth - focus);
+					fac = clamp(pow(x, 2), 0, 1);
+				}
+				fac = clamp(fac * params.dofStrength, 0, 1);
+				fac *= pow(1.f / (abs(x) + 1), 0.2);
+				fac *= pow(1.f / (abs(y) + 1), 0.2);
+				total += fac;
+				accum += fac * texture(colorTex, uv + off).rgb;
+			}
+		}
+
+		color.rgb = accum / total;
+	}
+
 
 	// ssr
 	if((params.flags & flagSSR) != 0) {
@@ -154,52 +203,6 @@ void main() {
 		color.rgb += bloomSum;
 	}
 
-	// TODO: first basic depth of field idea, just playing around,
-	// this isn't a real thing.
-	// important that this comes before scattering
-	// TODO: we don't want to blur the sky but for that we need
-	// to know the far plane; second condition. Slight optimization
-	// as well, could probably be applied to most other pp algorithms
-	if((params.flags & flagDOF) != 0 /*&& cd >= scene.far*/) {
-		const float focus = params.dofFocus;
-		const int range = 3;
-		const float eps = 0.01;
-		float total = 1;
-		vec3 accum = color.rgb;
-		float cd = texture(depthTex, uv).r;
-
-		for(int x = -range; x <= range; ++x) {
-			for(int y = -range; y <= range; ++y) {
-				if(x == 0 && y == 0) {
-					continue;
-				}
-
-				vec2 off = texelSize * vec2(x, y);
-				float depth = texture(depthTex, uv + off).r;
-				if(cd < depth - eps) {
-					continue;
-				}
-
-				float fac;
-				if(depth < focus) {
-					fac = clamp(0.05 + (focus - depth) / focus, 0, 1);
-					fac = pow(fac, 2);
-				} else {
-					// fac = 1 for dist = 4
-					float x = 0.25 * (depth - focus);
-					fac = clamp(pow(x, 2), 0, 1);
-				}
-				fac = clamp(fac * params.dofStrength, 0, 1);
-				// fac *= 1.f / (abs(x) + 1);
-				// fac *= 1.f / (abs(y) + 1);
-				total += fac;
-				accum += fac * texture(colorTex, uv + off).rgb;
-			}
-		}
-
-		color.rgb = accum / total;
-	}
-
 
 	// apply scattering
 	// TODO: blur in different pass? we don't need that strong of blur though
@@ -221,6 +224,12 @@ void main() {
 		int total = ((2 * range + 1) * (2 * range + 1));
 		scatter /= total;
 		color.rgb += scatterFac * scatter * vec3(0.9, 0.8, 0.6); // TODO: should be light color
+	}
+
+	// mark center
+	vec2 dist = textureSize(colorTex, 0) * abs(uv - vec2(0.5));	
+	if(max(dist.x, dist.y) < 2) {
+		color.rgb = 1 - color.rgb;
 	}
 
 	fragColor = vec4(tonemap(color.rgb), 1.0);

@@ -1,9 +1,10 @@
 #include "bloom.hpp"
 #include "ssr.hpp"
 #include "ssao.hpp"
-#include "downscale.hpp"
+#include "ao.hpp"
 
 #include <stage/app.hpp>
+#include <stage/f16.hpp>
 #include <stage/render.hpp>
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
@@ -49,8 +50,6 @@
 #include <shaders/deferred.pointLight.frag.h>
 #include <shaders/deferred.pointLight.vert.h>
 #include <shaders/deferred.dirLight.frag.h>
-#include <shaders/deferred.ssao.frag.h>
-#include <shaders/deferred.ssaoBlur.frag.h>
 #include <shaders/deferred.pointScatter.frag.h>
 #include <shaders/deferred.dirScatter.frag.h>
 #include <shaders/deferred.combine.comp.h>
@@ -65,6 +64,8 @@
 // - lens flare
 // - exposure adaption (not sure what the name was)
 
+// TODO: do fxaa in one *final* post processing pass? ssr reflections
+//   are currently not effected by fxaa (and they really need it!)
 // TODO: correctly use byRegion dependency flag where possible
 // TODO: environment map specular ibl: filter from mipmaps to avoid artefacts
 // TODO: re-add light scattering (per light?)
@@ -201,6 +202,7 @@
 //   during ssr but that's probably really not worth it!
 
 using namespace doi::types;
+using doi::f16;
 
 class ViewApp : public doi::App {
 public:
@@ -355,7 +357,7 @@ protected:
 	doi::Environment env_;
 
 	// needed for point light rendering.
-	// TODO: also needed for skybox
+	// also needed for skybox
 	vpp::SubBuffer boxIndices_;
 
 	// image view into the depth buffer that accesses all depth levels
@@ -369,6 +371,10 @@ protected:
 	vpp::CommandBuffer selectionCb_;
 	vpp::Semaphore selectionSemaphore_;
 	bool selectionPending_ {};
+
+	// contains temporary values from rendering such as the current
+	// depth at the center of the screen or overall brightness
+	vpp::SubBuffer renderStage_;
 
 	vpp::QueryPool queryPool_ {};
 	std::uint32_t timestampBits_ {};
@@ -531,7 +537,6 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	createValueTextfield(pp, "ssaoPow", params_.ssaoPow, flag);
 	createValueTextfield(pp, "tonemap", params_.tonemap, flag);
 	createValueTextfield(pp, "scatter strength", params_.scatterStrength, flag);
-	createValueTextfield(pp, "dof focus", params_.dofFocus, flag);
 	createValueTextfield(pp, "dof strength", params_.dofStrength, flag);
 
 	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
@@ -724,6 +729,7 @@ void ViewApp::initRenderData() {
 	sci.minLod = 0.0;
 	sci.maxLod = 100.0;
 	sci.anisotropyEnable = false;
+	// scene rendering has its own samplers
 	// sci.anisotropyEnable = anisotropy_;
 	// sci.maxAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
 	linearSampler_ = {dev, sci};
@@ -739,10 +745,6 @@ void ViewApp::initRenderData() {
 	initGPass(); // geometry to g buffers
 	initLPass(); // per light: using g buffers for shading
 	initPPass(); // post processing, combining
-	/*
-	auto ssaoData = initSSAO(batch); // ssao
-	initSSAOBlur(); // gaussian blur pass over ssao
-	*/
 	initScattering(); // light scattering/volumentric light shafts/god rays
 	initCombine(); // combining pass
 	initDebug(); // init debug pipeline/pass
@@ -799,21 +801,24 @@ void ViewApp::initRenderData() {
 	vpp::nameHandle(dummyCube_.imageView(), "dummyCube.view");
 
 	// ubo and stuff
+	auto hostMem = dev.hostMemoryTypes();
 	auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
 		+ sizeof(nytl::Mat4f) // inv proj
 		+ sizeof(nytl::Vec3f) // viewPos
 		+ 2 * sizeof(float); // near, far plane
 	vpp::Init<vpp::TrDs> initSceneDs(batch.alloc.ds, sceneDsLayout_);
 	vpp::Init<vpp::SubBuffer> initSceneUbo(batch.alloc.bufHost, sceneUboSize,
-		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes());
+		vk::BufferUsageBits::uniformBuffer, hostMem);
 
 	shadowData_ = doi::initShadowData(dev, depthFormat(),
 		lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
 		doi::Material::pcr());
 
-	// params ubo
-	paramsUbo_ = {dev.bufferAllocator(), sizeof(RenderParams),
-		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+	vpp::Init<vpp::SubBuffer> initParamsUbo(batch.alloc.bufHost,
+		sizeof(RenderParams), vk::BufferUsageBits::uniformBuffer, hostMem);
+
+	vpp::Init<vpp::SubBuffer> initRenderStage(batch.alloc.bufHost,
+		5 * sizeof(f16), vk::BufferUsageBits::transferDst, hostMem, 16u);
 
 	// selection data
 	vk::ImageCreateInfo imgi;
@@ -893,6 +898,8 @@ void ViewApp::initRenderData() {
 	sceneUbo_ = initSceneUbo.init();
 	env_.init(envData, batch);
 	brdfLut_ = initBrdfLut.init(batch);
+	paramsUbo_ = initParamsUbo.init();
+	renderStage_ = initRenderStage.init();
 
 	params_.convolutionLods = env_.convolutionMipmaps();
 
@@ -1684,6 +1691,7 @@ vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 static constexpr auto defaultAttachmentUsage =
 	vk::ImageUsageBits::colorAttachment |
 	vk::ImageUsageBits::inputAttachment |
+	vk::ImageUsageBits::transferDst |
 	vk::ImageUsageBits::transferSrc |
 	vk::ImageUsageBits::sampled;
 
@@ -1757,7 +1765,13 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	attachments.push_back(gpass_.emission.vkImageView());
 	attachments.push_back(gpass_.depth.vkImageView());
 
-	initBuf(lpass_.light, lightFormat, vk::ImageUsageBits::storage);
+	info = getCreateInfo(lightFormat, defaultAttachmentUsage |
+		vk::ImageUsageBits::storage);
+	info.img.mipLevels = vpp::mipmapLevels(size);
+	// info.view.subresourceRange.levelCount = info.img.mipLevels;
+	lpass_.light = {device().devMemAllocator(), info, devMem};
+	attachments.push_back(lpass_.light.vkImageView());
+
 	fbi = vk::FramebufferCreateInfo({}, lpass_.pass,
 		attachments.size(), attachments.data(),
 		size.width, size.height, 1);
@@ -2052,14 +2066,15 @@ void ViewApp::record(const RenderBuffer& buf) {
 	// optionally create depth mipmaps
 	bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
 	if(depthMipLevels_ > 1 && needDepth) {
-		DownscaleTarget target;
+		doi::DownscaleTarget target;
 		target.image = gpass_.depth.image();
 		target.format = ldepthFormat;
 		target.layout = vk::ImageLayout::shaderReadOnlyOptimal;
-		target.size = size;
+		target.width = width;
+		target.height = height;
 		target.srcAccess = vk::AccessBits::shaderRead;
 		target.srcStages = vk::PipelineStageBits::fragmentShader;
-		downscale(cb, target, depthMipLevels_ - 1);
+		doi::downscale(cb, target, depthMipLevels_ - 1);
 
 		// transition back to readonly
 		vk::ImageMemoryBarrier barrier;
@@ -2266,6 +2281,72 @@ void ViewApp::record(const RenderBuffer& buf) {
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
 		queryPool_, 10u);
 
+	// generate light mipmaps
+	{
+		auto llevels = vpp::mipmapLevels(size);
+		DownscaleTarget target;
+		target.image = lpass_.light.image();
+		target.format = lightFormat;
+		target.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+		target.width = width;
+		target.height = height;
+		target.srcAccess = vk::AccessBits::shaderRead |
+			vk::AccessBits::shaderWrite;
+		target.srcStages = vk::PipelineStageBits::fragmentShader |
+			vk::PipelineStageBits::computeShader;
+		doi::downscale(cb, target, llevels - 1);
+
+		// transition back to readonly
+		vk::ImageMemoryBarrier barrier0;
+		barrier0.image = target.image;
+		barrier0.subresourceRange.layerCount = 1;
+		barrier0.subresourceRange.levelCount = 1;
+		barrier0.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+		barrier0.oldLayout = vk::ImageLayout::transferSrcOptimal;
+		barrier0.srcAccessMask = vk::AccessBits::transferRead;
+		barrier0.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		barrier0.dstAccessMask = vk::AccessBits::shaderRead;
+
+		vk::ImageMemoryBarrier barrierLast;
+		barrierLast.image = target.image;
+		barrierLast.subresourceRange.layerCount = 1;
+		barrierLast.subresourceRange.levelCount = 1;
+		barrierLast.subresourceRange.baseMipLevel = llevels - 1;
+		barrierLast.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+		barrierLast.oldLayout = vk::ImageLayout::transferSrcOptimal;
+		barrierLast.srcAccessMask = vk::AccessBits::transferRead |
+			vk::AccessBits::transferWrite;
+		barrierLast.newLayout = vk::ImageLayout::transferSrcOptimal;
+		barrierLast.dstAccessMask = vk::AccessBits::transferRead;
+
+		vk::cmdPipelineBarrier(cb,
+			vk::PipelineStageBits::transfer,
+			vk::PipelineStageBits::allCommands | vk::PipelineStageBits::transfer,
+			{}, {}, {}, {{barrier0, barrierLast}});
+
+		// copy from last light mipmap to stage for general exposure
+		vk::BufferImageCopy copy;
+		copy.bufferOffset = renderStage_.offset();
+		copy.imageExtent = {1, 1, 1};
+		copy.imageOffset = {0, 0, 0};
+		copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
+		copy.imageSubresource.layerCount = 1;
+		copy.imageSubresource.mipLevel = llevels - 1;
+		vk::cmdCopyImageToBuffer(cb, lpass_.light.image(),
+			vk::ImageLayout::transferSrcOptimal,
+			renderStage_.buffer(), {{copy}});
+
+		// probably not needed, right?
+		vk::BufferMemoryBarrier bb;
+		bb.buffer = renderStage_.buffer();
+		bb.offset = renderStage_.offset();
+		bb.size = renderStage_.size();
+		bb.srcAccessMask = vk::AccessBits::transferWrite;
+		bb.dstAccessMask = vk::AccessBits::hostRead;
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
+			vk::PipelineStageBits::host, {}, {}, {{bb}}, {});
+	}
+
 	// make bloom view readable
 	if(params_.flags & flagBloom) {
 		transitionRead(cb, bloom, vk::ImageLayout::shaderReadOnlyOptimal,
@@ -2327,6 +2408,21 @@ void ViewApp::record(const RenderBuffer& buf) {
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
 		queryPool_, 11u);
+
+	// read depth at the center of the window for depth of field focus
+	transitionRead(cb, ldepth, vk::ImageLayout::transferSrcOptimal,
+		vk::PipelineStageBits::transfer, vk::AccessBits::transferRead);
+
+	vk::BufferImageCopy copy;
+	copy.bufferOffset = renderStage_.offset() + sizeof(f16) * 4;
+	copy.imageExtent = {1, 1, 1};
+	copy.imageOffset = {i32(width / 2u), i32(height / 2u), 0};
+	copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
+	copy.imageSubresource.layerCount = 1;
+	copy.imageSubresource.mipLevel = 0;
+	vk::cmdCopyImageToBuffer(cb, gpass_.depth.image(),
+		vk::ImageLayout::transferSrcOptimal,
+		renderStage_.buffer(), {{copy}});
 
 	App::afterRender(cb);
 	vk::endCommandBuffer(cb);
@@ -2491,6 +2587,28 @@ void ViewApp::updateDevice() {
 	bloom_.updateDevice();
 	ssr_.updateDevice();
 
+	float dt = 1 / 60.f; // TODO: needed from update stage
+
+	// update dof focus
+	auto map = renderStage_.memoryMap();
+	map.invalidate();
+	auto span = map.span();
+
+	auto avgLight = doi::read<std::array<f16, 4>>(span);
+	float llight = float(avgLight[3]); // alpha is luminance; combine.comp
+	float light = std::exp2(llight);
+	dlg_trace("light: {} {}", llight, light);
+	light *= params_.exposure;
+	float desiredLight = 0.25f; // TODO: config
+	float diff = desiredLight - light;
+	float sgn = diff > 0.f ? 1.f : -1.f;
+	params_.exposure += 5 * dt * sgn * std::pow(std::abs(diff), 0.5);
+	dlg_trace("exposure: {}", params_.exposure);
+
+	auto focus = float(doi::read<f16>(span));
+	dlg_trace("dof: {}", focus);
+	params_.dofFocus = nytl::mix(params_.dofFocus, focus, dt * 30);
+
 	// update scene ubo
 	if(camera_.update) {
 		camera_.update = false;
@@ -2521,7 +2639,8 @@ void ViewApp::updateDevice() {
 		updateLights_ = false;
 	}
 
-	if(updateRenderParams_) {
+	// always done due to exposure and dof
+	/*if(updateRenderParams_) */ {
 		updateRenderParams_ = false;
 		auto map = paramsUbo_.memoryMap();
 		auto span = map.span();

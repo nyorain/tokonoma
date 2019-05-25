@@ -130,6 +130,7 @@ shaders_src = {
 	  ['bloom.comp', deferred_glsl],
 	  ['ssr.comp', deferred_glsl],
 	  ['combine.comp', deferred_glsl],
+	  ['ao.comp', deferred_glsl],
 	  ['debug.frag', deferred_glsl],
 	],
 }

@@ -10,13 +10,10 @@ const uint normalMap = (1u << 0);
 const uint doubleSided = (1u << 1);
 
 // global rendering flags
-const uint flagSSAO = (1u << 0u);
 const uint flagScattering = (1u << 1u);
 const uint flagSSR = (1u << 2u);
 const uint flagBloom = (1u << 3u);
 const uint flagFXAA = (1u << 4u);
-const uint flagDiffuseIBL = (1u << 5u);
-const uint flagSpecularIBL = (1u << 6u);
 const uint flagBloomDecrease = (1u << 7u);
 const uint flagDOF = (1u << 8u);
 
