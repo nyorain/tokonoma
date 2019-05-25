@@ -20,7 +20,7 @@ public:
 	};
 
 public:
-	struct Params {
+	struct {
 		u32 flags {flagDiffuseIBL | flagSpecularIBL | flagEmission};
 		float factor {1.f};
 		float ssaoPow {3.f};

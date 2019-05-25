@@ -4,6 +4,9 @@ executable('deferred', [
 		'ssr.cpp',
 		'ssao.cpp',
 		'ao.cpp',
+		'combine.cpp',
+		'pp.cpp',
+		'luminance.cpp',
 		deferred_shaders,
 	], dependencies: [
 		stage_dep,
