@@ -1,6 +1,7 @@
 #include "bloom.hpp"
 #include "ssr.hpp"
 #include "ssao.hpp"
+#include "downscale.hpp"
 
 #include <stage/app.hpp>
 #include <stage/render.hpp>
@@ -60,7 +61,7 @@
 #include <random>
 
 // list of additional stuff:
-// - depth of field
+// - depth of field (current implementation is more of a joke)
 // - lens flare
 // - exposure adaption (not sure what the name was)
 
@@ -125,7 +126,9 @@
 //   something comparable for dir lights? where direction can be set by
 //   moving camera around?
 
-// lower prio optimizations:
+// lower prio optimizations (most of these are guesses):
+// TODO(optimization): when ssr is disabled (and/or others?) we can probably do
+//   combine and pp pass in one pass.
 // TODO(optimization): the shadow pipelines currently bind and pass through
 //   both tex coords, also have normals declared as input (which they don't
 //   need). implement alternative primitive rendering mode, where it
@@ -215,26 +218,27 @@ public:
 	static constexpr auto pointLight = false;
 
 	// pp.frag
-	static constexpr unsigned flagSSAO = (1u << 0u);
-	static constexpr unsigned flagScattering = (1u << 1u);
-	static constexpr unsigned flagSSR = (1u << 2u);
-	static constexpr unsigned flagBloom = (1u << 3u);
-	static constexpr unsigned flagFXAA = (1u << 4u);
-	static constexpr unsigned flagDiffuseIBL = (1u << 5u);
-	static constexpr unsigned flagSpecularIBL = (1u << 6u);
-	static constexpr unsigned flagBloomDecrease = (1u << 7u);
+	static constexpr u32 flagSSAO = (1u << 0u);
+	static constexpr u32 flagScattering = (1u << 1u);
+	static constexpr u32 flagSSR = (1u << 2u);
+	static constexpr u32 flagBloom = (1u << 3u);
+	static constexpr u32 flagFXAA = (1u << 4u);
+	static constexpr u32 flagDiffuseIBL = (1u << 5u);
+	static constexpr u32 flagSpecularIBL = (1u << 6u);
+	static constexpr u32 flagBloomDecrease = (1u << 7u);
+	static constexpr u32 flagDOF = (1u << 8u);
 
-	static constexpr unsigned modeNormal = 0u;
-	static constexpr unsigned modeAlbedo = 1u;
-	static constexpr unsigned modeNormals = 2u;
-	static constexpr unsigned modeRoughness = 3u;
-	static constexpr unsigned modeMetalness = 4u;
-	static constexpr unsigned modeAO = 5u;
-	static constexpr unsigned modeAlbedoAO = 6u;
-	static constexpr unsigned modeSSR = 7u;
-	static constexpr unsigned modeDepth = 8u;
-	static constexpr unsigned modeEmission = 9u;
-	static constexpr unsigned modeBloom = 10u;
+	static constexpr u32 modeNormal = 0u;
+	static constexpr u32 modeAlbedo = 1u;
+	static constexpr u32 modeNormals = 2u;
+	static constexpr u32 modeRoughness = 3u;
+	static constexpr u32 modeMetalness = 4u;
+	static constexpr u32 modeAO = 5u;
+	static constexpr u32 modeAlbedoAO = 6u;
+	static constexpr u32 modeSSR = 7u;
+	static constexpr u32 modeDepth = 8u;
+	static constexpr u32 modeEmission = 9u;
+	static constexpr u32 modeBloom = 10u;
 
 	static constexpr unsigned timestampCount = 11u;
 
@@ -249,6 +253,8 @@ public:
 		u32 convolutionLods;
 		float bloomStrength {0.25f};
 		float scatterStrength {0.25f};
+		float dofFocus {0.5f};
+		float dofStrength {0.25f};
 	};
 
 public:
@@ -356,6 +362,7 @@ protected:
 	vpp::ImageView depthMipView_;
 	unsigned depthMipLevels_ {};
 
+	// TODO: now that doi has a f16 class we could use a buffer as well.
 	// 1x1px host visible image used to copy the selected model id into
 	vpp::Image selectionStage_;
 	std::optional<nytl::Vec2ui> selectionPos_;
@@ -478,8 +485,8 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		return false;
 	}
 
-	camera_.perspective.near = 0.01f;
-	camera_.perspective.far = 20.f;
+	camera_.perspective.near = 0.05f;
+	camera_.perspective.far = 40.f;
 
 	// gui
 	auto& gui = this->gui();
@@ -524,6 +531,8 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	createValueTextfield(pp, "ssaoPow", params_.ssaoPow, flag);
 	createValueTextfield(pp, "tonemap", params_.tonemap, flag);
 	createValueTextfield(pp, "scatter strength", params_.scatterStrength, flag);
+	createValueTextfield(pp, "dof focus", params_.dofFocus, flag);
+	createValueTextfield(pp, "dof strength", params_.dofStrength, flag);
 
 	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
 	cb1.set(params_.flags & flagSSAO);
@@ -576,6 +585,13 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		params_.flags ^= flagScattering;
 		updateRenderParams_ = true;
 		App::resize_ = true; // recreate, rerecord
+	};
+
+	auto& cb9 = pp.create<Checkbox>("DOF").checkbox();
+	cb9.set(params_.flags & flagDOF);
+	cb9.onToggle = [&](auto&) {
+		params_.flags ^= flagDOF;
+		updateRenderParams_ = true;
 	};
 
 	// == bloom folder ==
@@ -911,6 +927,7 @@ void ViewApp::initRenderData() {
 			primitiveDsLayout_, shadowData_, currentID_++);
 		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {2.f, 1.7f, 0.8f};
+		l.data.color *= 2;
 		l.data.attenuation = {1.f, 0.3f, 0.1f};
 		// light radius must be smaller than far plane / 2
 		l.data.radius = 9.f;
@@ -1168,8 +1185,11 @@ void ViewApp::initLPass() {
 	dependency.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
 	dependency.dstSubpass = vk::subpassExternal;
 	dependency.dstStageMask = vk::PipelineStageBits::computeShader |
-		vk::PipelineStageBits::fragmentShader;
+		vk::PipelineStageBits::fragmentShader |
+		vk::PipelineStageBits::colorAttachmentOutput;
 	dependency.dstAccessMask = vk::AccessBits::inputAttachmentRead |
+		vk::AccessBits::colorAttachmentRead |
+		vk::AccessBits::colorAttachmentWrite |
 		vk::AccessBits::shaderRead |
 		vk::AccessBits::shaderWrite;
 
@@ -2029,76 +2049,33 @@ void ViewApp::record(const RenderBuffer& buf) {
 	normals.writeAccess = vk::AccessBits::colorAttachmentWrite;
 	normals.writeStages = vk::PipelineStageBits::colorAttachmentOutput;
 
-	// TODO: add back in if needed
-	// create depth mipmaps
-	/*
+	// optionally create depth mipmaps
 	bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
 	if(depthMipLevels_ > 1 && needDepth) {
-		auto& depthImg = gpass_.depth.image();
-		// transition mipmap level 0 transferSrc
-		vpp::changeLayout(cb, depthImg,
-			vk::ImageLayout::shaderReadOnlyOptimal,
-			vk::PipelineStageBits::allGraphics,
-			vk::AccessBits::depthStencilAttachmentWrite,
-			vk::ImageLayout::transferSrcOptimal,
+		DownscaleTarget target;
+		target.image = gpass_.depth.image();
+		target.format = ldepthFormat;
+		target.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+		target.size = size;
+		target.srcAccess = vk::AccessBits::shaderRead;
+		target.srcStages = vk::PipelineStageBits::fragmentShader;
+		downscale(cb, target, depthMipLevels_ - 1);
+
+		// transition back to readonly
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = target.image;
+		barrier.subresourceRange.layerCount = 1;
+		barrier.subresourceRange.levelCount = depthMipLevels_;
+		barrier.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+		barrier.oldLayout = vk::ImageLayout::transferSrcOptimal;
+		barrier.srcAccessMask = vk::AccessBits::transferRead;
+		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		barrier.dstAccessMask = vk::AccessBits::shaderRead;
+		vk::cmdPipelineBarrier(cb,
 			vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferRead,
-			{vk::ImageAspectBits::color, 0, 1, 0, 1});
-
-		// transition all but mipmap level 0 to transferDst
-		vpp::changeLayout(cb, depthImg,
-			vk::ImageLayout::undefined, // we don't need the content any more
-			vk::PipelineStageBits::topOfPipe, {},
-			vk::ImageLayout::transferDstOptimal,
-			vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferWrite,
-			{vk::ImageAspectBits::color, 1, depthMipLevels_ - 1, 0, 1});
-
-		for(auto i = 1u; i < depthMipLevels_; ++i) {
-			// std::max needed for end offsets when the texture is not
-			// quadratic: then we would get 0 there although the mipmap
-			// still has size 1
-			vk::ImageBlit blit;
-			blit.srcSubresource.layerCount = 1;
-			blit.srcSubresource.mipLevel = i - 1;
-			blit.srcSubresource.aspectMask = vk::ImageAspectBits::color;
-			blit.srcOffsets[1].x = std::max(width >> (i - 1), 1u);
-			blit.srcOffsets[1].y = std::max(height >> (i - 1), 1u);
-			blit.srcOffsets[1].z = 1u;
-
-			blit.dstSubresource.layerCount = 1;
-			blit.dstSubresource.mipLevel = i;
-			blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
-			blit.dstOffsets[1].x = std::max(width >> i, 1u);
-			blit.dstOffsets[1].y = std::max(height >> i, 1u);
-			blit.dstOffsets[1].z = 1u;
-
-			vk::cmdBlitImage(cb, depthImg, vk::ImageLayout::transferSrcOptimal,
-				depthImg, vk::ImageLayout::transferDstOptimal, {{blit}},
-				vk::Filter::linear);
-
-			// change layout of current mip level to transferSrc for next mip level
-			vpp::changeLayout(cb, depthImg,
-				vk::ImageLayout::transferDstOptimal,
-				vk::PipelineStageBits::transfer,
-				vk::AccessBits::transferWrite,
-				vk::ImageLayout::transferSrcOptimal,
-				vk::PipelineStageBits::transfer,
-				vk::AccessBits::transferRead,
-				{vk::ImageAspectBits::color, i, 1, 0, 1});
-		}
-
-		// transform all levels back to readonly
-		vpp::changeLayout(cb, depthImg,
-			vk::ImageLayout::transferSrcOptimal,
-			vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferRead,
-			vk::ImageLayout::shaderReadOnlyOptimal,
 			vk::PipelineStageBits::allCommands,
-			vk::AccessBits::shaderRead,
-			{vk::ImageAspectBits::color, 0, depthMipLevels_, 0, 1});
+			{}, {}, {}, {{barrier}});
 	}
-	*/
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
 		queryPool_, 3u);
@@ -2276,7 +2253,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdDispatch(cb, std::ceil(width / 8.f), std::ceil(height / 8.f), 1u);
 
 		barrier.oldLayout = vk::ImageLayout::general;
-		barrier.srcAccessMask = vk::AccessBits::shaderRead |
+		barrier.srcAccessMask = vk::AccessBits::shaderWrite |
 			 vk::AccessBits::shaderRead;
 		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 		barrier.dstAccessMask = vk::AccessBits::shaderRead;

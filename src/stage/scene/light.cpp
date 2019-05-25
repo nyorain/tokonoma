@@ -459,17 +459,17 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 		pl, 0, {{ds_.vkHandle()}}, {});
 
-	vk::ImageMemoryBarrier barrier;
-	barrier.image = shadowMap_.image();
-	barrier.oldLayout = vk::ImageLayout::undefined;
-	barrier.srcAccessMask = vk::AccessBits::shaderRead;
-	barrier.newLayout = vk::ImageLayout::transferDstOptimal;
-	barrier.dstAccessMask = vk::AccessBits::transferWrite;
-	barrier.subresourceRange = {vk::ImageAspectBits::depth, 0, 1, 0, 6u};
+	vk::ImageMemoryBarrier cubeBarrier;
+	cubeBarrier.image = shadowMap_.image();
+	cubeBarrier.oldLayout = vk::ImageLayout::undefined;
+	cubeBarrier.srcAccessMask = vk::AccessBits::shaderRead;
+	cubeBarrier.newLayout = vk::ImageLayout::transferDstOptimal;
+	cubeBarrier.dstAccessMask = vk::AccessBits::transferWrite;
+	cubeBarrier.subresourceRange = {vk::ImageAspectBits::depth, 0, 1, 0, 6u};
 	vk::cmdPipelineBarrier(cb,
 		vk::PipelineStageBits::allGraphics,
 		vk::PipelineStageBits::transfer,
-		{}, {}, {}, {{barrier}});
+		{}, {}, {}, {{cubeBarrier}});
 
 	/*
 	vpp::changeLayout(cb, shadowMap_.image(),
@@ -559,15 +559,15 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		// 	{vk::ImageAspectBits::depth, 0, 1, 0, 1});
 	}
 
-	barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
-	barrier.srcAccessMask = vk::AccessBits::transferWrite;
-	barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	barrier.dstAccessMask = vk::AccessBits::shaderRead;
+	cubeBarrier.oldLayout = vk::ImageLayout::transferDstOptimal;
+	cubeBarrier.srcAccessMask = vk::AccessBits::transferWrite;
+	cubeBarrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	cubeBarrier.dstAccessMask = vk::AccessBits::shaderRead;
 	vk::cmdPipelineBarrier(cb,
 		vk::PipelineStageBits::transfer,
 		vk::PipelineStageBits::fragmentShader |
 			vk::PipelineStageBits::computeShader,
-		{}, {}, {}, {{barrier}});
+		{}, {}, {}, {{cubeBarrier}});
 
 	// vpp::changeLayout(cb, shadowMap_.image(),
 	// 	vk::ImageLayout::transferDstOptimal,

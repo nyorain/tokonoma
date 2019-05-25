@@ -17,6 +17,8 @@ layout(set = 0, binding = 0) uniform Params {
 	uint _convolutionLods;
 	float bloomStrength;
 	float scatterStrength;
+	float dofFocus;
+	float dofStrength;
 } params;
 
 layout(set = 0, binding = 1) uniform sampler2D colorTex;
@@ -37,17 +39,37 @@ vec3 uncharted2map(vec3 x) {
 	return ((x*(A*x+C*B)+D*E)/(x*(A*x+B)+D*F))-E/F;
 }
 
-vec3 uncharted2tonemap(vec3 x, float exposure) {
+vec3 uncharted2tonemap(vec3 x) {
 	const float W = 11.2; // whitescale
-	x = uncharted2map(x * params.exposure);
+	x = uncharted2map(x);
 	return x * (1.f / uncharted2map(vec3(W)));
+}
+
+// Hejl Richard tone map
+// http://filmicworlds.com/blog/filmic-tonemapping-operators/
+vec3 hejlRichardTonemap(vec3 color) {
+    color = max(vec3(0.0), color - vec3(0.004));
+    return (color*(6.2*color+.5))/(color*(6.2*color+1.7)+0.06);
+}
+
+// ACES tone map
+// https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
+vec3 acesTonemap(vec3 color) {
+    const float A = 2.51;
+    const float B = 0.03;
+    const float C = 2.43;
+    const float D = 0.59;
+    const float E = 0.14;
+    return clamp((color * (A * color + B)) / (color * (C * color + D) + E), 0.0, 1.0);
 }
 
 vec3 tonemap(vec3 x) {
 	switch(params.tonemap) {
 		case 0: return x;
 		case 1: return vec3(1.0) - exp(-x * params.exposure); // simple
-		case 2: return uncharted2tonemap(x, params.exposure);
+		case 2: return uncharted2tonemap(x * params.exposure);
+		case 3: return hejlRichardTonemap(x * params.exposure);
+		case 4: return acesTonemap(x * params.exposure);
 		default: return vec3(0.0); // invalid
 	}
 }
@@ -59,6 +81,8 @@ void main() {
 	} else {
 		color = texture(colorTex, uv);
 	}
+
+	vec2 texelSize = 1.0 / textureSize(colorTex, 0);
 
 	// ssr
 	if((params.flags & flagSSR) != 0) {
@@ -84,7 +108,6 @@ void main() {
 			// int range = 0;
 			int lod = 0;
 			vec3 light = vec3(0.0);
-			vec2 texelSize = 1.0 / textureSize(colorTex, 0);
 			float total = 0.0;
 			for(int x = -range; x <= range; ++x) {
 				for(int y = -range; y <= range; ++y) {
@@ -131,8 +154,57 @@ void main() {
 		color.rgb += bloomSum;
 	}
 
+	// TODO: first basic depth of field idea, just playing around,
+	// this isn't a real thing.
+	// important that this comes before scattering
+	// TODO: we don't want to blur the sky but for that we need
+	// to know the far plane; second condition. Slight optimization
+	// as well, could probably be applied to most other pp algorithms
+	if((params.flags & flagDOF) != 0 /*&& cd >= scene.far*/) {
+		const float focus = params.dofFocus;
+		const int range = 3;
+		const float eps = 0.01;
+		float total = 1;
+		vec3 accum = color.rgb;
+		float cd = texture(depthTex, uv).r;
+
+		for(int x = -range; x <= range; ++x) {
+			for(int y = -range; y <= range; ++y) {
+				if(x == 0 && y == 0) {
+					continue;
+				}
+
+				vec2 off = texelSize * vec2(x, y);
+				float depth = texture(depthTex, uv + off).r;
+				if(cd < depth - eps) {
+					continue;
+				}
+
+				float fac;
+				if(depth < focus) {
+					fac = clamp(0.05 + (focus - depth) / focus, 0, 1);
+					fac = pow(fac, 2);
+				} else {
+					// fac = 1 for dist = 4
+					float x = 0.25 * (depth - focus);
+					fac = clamp(pow(x, 2), 0, 1);
+				}
+				fac = clamp(fac * params.dofStrength, 0, 1);
+				// fac *= 1.f / (abs(x) + 1);
+				// fac *= 1.f / (abs(y) + 1);
+				total += fac;
+				accum += fac * texture(colorTex, uv + off).rgb;
+			}
+		}
+
+		color.rgb = accum / total;
+	}
+
+
 	// apply scattering
 	// TODO: blur in different pass? we don't need that strong of blur though
+	// probably best to blur here but with a better blur! use linear
+	// sampling, maybe the 4+1 textures access blur?
 	if((params.flags & flagScattering) != 0) {
 		// const float scatterFac = 1 / 25.f;
 		const float scatterFac = params.scatterStrength;

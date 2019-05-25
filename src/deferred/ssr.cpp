@@ -7,6 +7,10 @@
 
 #include <shaders/deferred.ssr.comp.h>
 
+// TODO: better blurred sampling. We could generate mipmaps of the light
+// buffer (needed for exposure adaption anyways i guess) and then sample
+// (and only slightly) blur from that
+
 void SSRPass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;

@@ -67,6 +67,7 @@ message('libpath: ' + libpath)
 
 subdir('src/shaders')
 subdir('src/stage')
+subdir('docs/tests')
 
 # projects
 subdir('src/smooth_shadow')

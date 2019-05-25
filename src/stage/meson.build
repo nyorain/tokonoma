@@ -42,6 +42,7 @@ stage_src = [
 	'render.cpp',
 	'headless.cpp',
 	'defer.cpp',
+	'f16.cpp',
 
 	'scene/scene.cpp',
 	'scene/material.cpp',
