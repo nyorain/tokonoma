@@ -3,8 +3,11 @@
 // each workgroup reduces groupDimSize * 2 pixels in each dimension.
 // therefore expects the output texture to be smaller by this factor
 // e.g. if the specilization constant groupDimSize is 8 
-// (solid choice usually), dimensions of outLim are smaller by factor 16.
-// Can e.g. use 4th next mip level in that case.
+// (solid choice usually), dimensions of outLim are smaller by factor 16
+// (rounded up though)
+// Can e.g. use 4th next mip level in that case (or the 3th next in case
+// the 4th is to small - can happen with rounding up since mipmaps sizes
+// are rounded down)
 
 // TODO: can probably be optimzied. Especially if just choose a fixed workgroup
 // size, then we can unroll the loop which should help with performance.
@@ -16,35 +19,57 @@
 // simplifies the computation here tremendously
 layout(local_size_x_id = 0, local_size_y_id = 0) in;
 layout(set = 0, binding = 0) uniform sampler2D inLum;
-layout(set = 0, binding = 0, r16f) uniform writeonly image2D outLum;
+layout(set = 0, binding = 1, r16f) uniform writeonly image2D outLum;
+
+layout(push_constant) uniform PCR {
+	uvec2 inSize; // input size
+	// how much the last invocation in x or y is worth
+	vec2 last;
+} pcr;
 
 // constant for all invocations
 const uint size = gl_WorkGroupSize.x; // == gl_WorkGroupSize.y
-uvec2 inSize = textureSize(inLum, 0);
-vec2 pixelSize = 1.f / inSize;
+// uvec2 inSize = textureSize(inLum, 0);
+vec2 pixelSize = 1.f / textureSize(inLum, 0);
+// vec2 pixelSize = 1.f / pcr.inSize;
 
 // constant per group
 // local number of processed pixels
-uvec2 pend = min(inSize - 2 * size * gl_WorkGroupID.xy, 2 * size.xx);
+// uvec2 pend = min(inSize - 2 * size * gl_WorkGroupID.xy, 2 * size.xx);
+
+// TODO
+// vec2 lastGroupSize = pcr.inSize - 2 * size * gl_WorkGroupID.xy - (1 - pcr.last);
+vec2 lastGroupSize = pcr.inSize - 2 * size * gl_WorkGroupID.xy;
+vec2 pixelCount = min(lastGroupSize, 2 * size.xx);
 
 // contain the current summed-up luminance
 shared float lum[size][size];
 
 void main() {
 	uvec2 l = gl_LocalInvocationID.xy;
-	vec2 pixel = 2 * gl_GlobalInvocationID.xy;
-	if(pixel.x >= inSize.x || pixel.y >= inSize.y) {
-		lum[l.x][l.y] = 0.f;
+	vec2 pixel = 2 * gl_GlobalInvocationID.xy; // top-left of sampled pixels
+
+	// TODO!
+	lum[l.x][l.y] = 0.f;
+	memoryBarrierShared();
+	barrier();
+
+	if(pixel.x >= pcr.inSize.x || pixel.y >= pcr.inSize.y) {
 		return;
 	}
 
-	// offset between pixels if possible
-	// sample 4 pixels (normal case, corner/border only 1 or 2)
-	vec2 off = clamp((inSize - pixel - 1), 0.5, 1.0); // detect border/corner
-	float fac = 4 * off.x * off.y; // how many pixels sampled, in {1, 2, 4}
+	// TODO: mathematically verify it...
+	vec2 mlast = vec2( // TODO: can probably be done via pure math
+		(pixel.x + 2 >= pcr.inSize.x) ? pcr.last.x : 1.f,
+		(pixel.y + 2 >= pcr.inSize.y) ? pcr.last.y : 1.f);
+	vec2 off = 0.5 + 0.5 * mlast;
 	pixel += off;
+	float fac = 4 * off.x * off.y;
+	// pixel += 1;
+	// float fac = 4;
 
 	lum[l.x][l.y] = fac * texture(inLum, pixel * pixelSize).r; // initial load
+	// TODO: optimizie for end blocks (i.e. use pixelcount/2 instead of size somehow)
 	for(uint isize = size / 2; isize > 0; isize /= 2) {
 		if(l.x >= isize) {
 			return;
@@ -67,6 +92,6 @@ void main() {
 	}
 
 	// there is only one invocation active at this point: l = (0, 0)
-	float avg = lum[0][0] / (pend.x * pend.y);
+	float avg = lum[0][0] / (pixelCount.x * pixelCount.y);
 	imageStore(outLum, ivec2(gl_WorkGroupID.xy), vec4(avg));
 }

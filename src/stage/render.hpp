@@ -23,16 +23,16 @@ vk::Extent2D mipmapSize(vk::Extent2D full, unsigned i);
 
 // See downscale command.
 struct DownscaleTarget {
-	vk::Image image;
-	vk::Format format;
-	vk::ImageLayout layout;
-	unsigned width;
-	unsigned height;
+	vk::Image image {};
+	vk::Format format {};
+	vk::ImageLayout layout {};
+	unsigned width {};
+	unsigned height {};
 	unsigned layerCount {1};
 
 	// source scope of writing mipmap level 0
-	vk::AccessFlags srcAccess;
-	vk::PipelineStageFlags srcStages;
+	vk::AccessFlags srcAccess {};
+	vk::PipelineStageFlags srcStages {};
 };
 
 /// Pass that dynamically generates mipmap levels of a color image.

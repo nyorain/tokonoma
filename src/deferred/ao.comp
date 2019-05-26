@@ -9,7 +9,7 @@ const uint flagSpecularIBL = (1u << 1u);
 const uint flagEmission = (1u << 2u);
 const uint flagSSAO = (1u << 3u);
 
-layout(local_size_x_id = 0, local_size_x_id = 1) in;
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
 layout(set = 0, binding = 0, row_major) uniform SceneUbo {
 	mat4 proj;
 	mat4 invProj;
@@ -20,10 +20,10 @@ layout(set = 0, binding = 0, row_major) uniform SceneUbo {
 layout(set = 1, binding = 0, rgba16f) uniform image2D outCol;
 
 layout(set = 1, binding = 1) uniform sampler2D albedoTex;
-layout(set = 1, binding = 3) uniform sampler2D emissionTex;
-layout(set = 1, binding = 5) uniform sampler2D linDepthTex;
+layout(set = 1, binding = 2) uniform sampler2D emissionTex;
+layout(set = 1, binding = 3) uniform sampler2D linDepthTex;
 layout(set = 1, binding = 4) uniform sampler2D normalTex;
-layout(set = 1, binding = 2) uniform sampler2D ssaoTex;
+layout(set = 1, binding = 5) uniform sampler2D ssaoTex;
 
 layout(set = 1, binding = 6) uniform samplerCube irradianceMap;
 layout(set = 1, binding = 7) uniform samplerCube envMap;
@@ -47,7 +47,7 @@ void main() {
 	}
 
 	vec2 pixelSize = 1.f / size;
-	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+	vec2 uv = (pixel + 0.5) * pixelSize;
 	vec4 color = imageLoad(outCol, ivec2(pixel));
 
 	// apply emission
@@ -59,7 +59,7 @@ void main() {
 
 	float ld = textureLod(linDepthTex, uv, 0).r;
 	float depth = ztodepth(ld, scene.near, scene.far);
-	if(depth != 1.f && params.factor > 0.f) {
+	if(depth < 1.f && params.factor > 0.f) {
 		vec4 vAlbedo = texture(albedoTex, uv);
 		vec3 albedo = vAlbedo.rgb;
 		vec3 ambient = vec3(0.0);

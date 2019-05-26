@@ -2,6 +2,8 @@
 #include "ssr.hpp"
 #include "ssao.hpp"
 #include "ao.hpp"
+#include "combine.hpp"
+#include "luminance.hpp"
 
 #include <stage/app.hpp>
 #include <stage/f16.hpp>
@@ -52,7 +54,7 @@
 #include <shaders/deferred.dirLight.frag.h>
 #include <shaders/deferred.pointScatter.frag.h>
 #include <shaders/deferred.dirScatter.frag.h>
-#include <shaders/deferred.combine.comp.h>
+// #include <shaders/deferred.combine.comp.h>
 #include <shaders/deferred.pp.frag.h>
 #include <shaders/deferred.debug.frag.h>
 
@@ -244,14 +246,17 @@ public:
 
 	static constexpr unsigned timestampCount = 11u;
 
+	// TODO:
 	// see various post processing or screen space shaders
 	struct RenderParams {
 		u32 mode = 0u;
+		u32 tonemap {2};
+		float exposure {1.f};
+
+		// TODO:
 		u32 flags {flagFXAA | flagDiffuseIBL | flagSpecularIBL | flagBloomDecrease};
 		float aoFactor {0.25f};
 		float ssaoPow {3.f};
-		u32 tonemap {2};
-		float exposure {1.f};
 		u32 convolutionLods;
 		float bloomStrength {0.25f};
 		float scatterStrength {0.25f};
@@ -260,13 +265,6 @@ public:
 	};
 
 public:
-	/*
-	struct SSAOInitData {
-		vpp::SubBuffer samplesStage;
-		vpp::SubBuffer noiseStage;
-	};
-	*/
-
 	bool init(const nytl::Span<const char*> args) override;
 	void initRenderData() override;
 
@@ -274,7 +272,6 @@ public:
 	void initLPass();
 	void initPPass();
 	void initScattering();
-	void initCombine();
 	void initDebug();
 	void initFwd();
 	void updateDescriptors();
@@ -443,14 +440,17 @@ protected:
 	BloomPass bloom_;
 	SSRPass ssr_;
 	SSAOPass ssao_;
+	AOPass ao_;
+	CombinePass combine_;
+	LuminancePass luminance_;
 
 	// combining compute pass
-	struct {
-		vpp::TrDsLayout dsLayout;
-		vpp::TrDs ds;
-		vpp::PipelineLayout pipeLayout;
-		vpp::Pipeline pipe;
-	} combine_;
+	// struct {
+	// 	vpp::TrDsLayout dsLayout;
+	// 	vpp::TrDs ds;
+	// 	vpp::PipelineLayout pipeLayout;
+	// 	vpp::Pipeline pipe;
+	// } combine_;
 
 	// debug render pass
 	struct {
@@ -532,12 +532,12 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	// == general/post processing folder ==
 	auto& pp = panel.create<vui::dat::Folder>("Post Processing");
 	auto flag = &updateRenderParams_;
-	createValueTextfield(pp, "exposure", params_.exposure, flag);
-	createValueTextfield(pp, "aoFactor", params_.aoFactor, flag);
-	createValueTextfield(pp, "ssaoPow", params_.ssaoPow, flag);
+	// createValueTextfield(pp, "exposure", params_.exposure, flag);
+	createValueTextfield(pp, "aoFactor", ao_.params.factor, nullptr);
+	createValueTextfield(pp, "ssaoPow", ao_.params.ssaoPow, nullptr);
 	createValueTextfield(pp, "tonemap", params_.tonemap, flag);
-	createValueTextfield(pp, "scatter strength", params_.scatterStrength, flag);
-	createValueTextfield(pp, "dof strength", params_.dofStrength, flag);
+	createValueTextfield(pp, "scatter strength", combine_.params.scatterStrength, nullptr);
+	createValueTextfield(pp, "dof strength", combine_.params.scatterStrength, nullptr);
 
 	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
 	cb1.set(params_.flags & flagSSAO);
@@ -746,7 +746,6 @@ void ViewApp::initRenderData() {
 	initLPass(); // per light: using g buffers for shading
 	initPPass(); // post processing, combining
 	initScattering(); // light scattering/volumentric light shafts/god rays
-	initCombine(); // combining pass
 	initDebug(); // init debug pipeline/pass
 	initFwd(); // init forward pass for skybox and transparent objects
 
@@ -767,14 +766,12 @@ void ViewApp::initRenderData() {
 		fullVertShader
 	};
 
-	BloomPass::InitData bloomData;
-	bloom_.create(bloomData, passInfo);
-
-	SSRPass::InitData ssrData;
-	ssr_.create(ssrData, passInfo);
-
-	SSAOPass::InitData ssaoData;
-	ssao_.create(ssaoData, passInfo);
+	vpp::InitObject initBloom(bloom_, passInfo);
+	vpp::InitObject initSSR(ssr_, passInfo);
+	vpp::InitObject initSSAO(ssao_, passInfo);
+	vpp::InitObject initAO(ao_, passInfo);
+	vpp::InitObject initCombine(combine_, passInfo);
+	vpp::InitObject initLuminance(luminance_, passInfo);
 
 	// dummy texture for materials that don't have a texture
 	// TODO: we could just create the dummy cube and make the dummy
@@ -887,9 +884,12 @@ void ViewApp::initRenderData() {
 		mat, ri);
 
 	// allocate
-	bloom_.init(bloomData, passInfo);
-	ssr_.init(ssrData, passInfo);
-	ssao_.init(ssaoData, passInfo);
+	initBloom.init(passInfo);
+	initSSR.init(passInfo);
+	initSSAO.init(passInfo);
+	initAO.init(passInfo);
+	initCombine.init(passInfo);
+	initLuminance.init(passInfo);
 
 	scene_ = initScene.init(batch);
 	boxIndices_ = initBoxIndices.init();
@@ -1344,32 +1344,39 @@ void ViewApp::initPPass() {
 
 	// pipe
 	auto ppInputBindings = {
-		vpp::descriptorBinding( // params ubo
-			vk::DescriptorType::uniformBuffer,
-			vk::ShaderStageBits::fragment),
 		// we use the nearest sampler here since we use it for fxaa and ssr
 		// and for ssr we *need* nearest (otherwise be bleed artefacts).
 		// Not sure about fxaa but seems to work with nearest.
 		vpp::descriptorBinding( // output from combine pass
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		// we sample per pixel, nearest should be alright
-		vpp::descriptorBinding( // ssr output
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		// here it's important to use a linear sampler since we upscale
-		vpp::descriptorBinding( // bloom
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
-		// depth (for ssr), use nearest sampler as ssr does
-		vpp::descriptorBinding( // depth
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		// light scattering, no guassian blur atm, could use either sampler i
-		// guess?
-		vpp::descriptorBinding( // light scattering
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
+		vpp::descriptorBinding( // params ubo
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::fragment),
+
+		// // we use the nearest sampler here since we use it for fxaa and ssr
+		// // and for ssr we *need* nearest (otherwise be bleed artefacts).
+		// // Not sure about fxaa but seems to work with nearest.
+		// vpp::descriptorBinding( // output from combine pass
+		// 	vk::DescriptorType::combinedImageSampler,
+		// 	vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
+		// // we sample per pixel, nearest should be alright
+		// vpp::descriptorBinding( // ssr output
+		// 	vk::DescriptorType::combinedImageSampler,
+		// 	vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
+		// // here it's important to use a linear sampler since we upscale
+		// vpp::descriptorBinding( // bloom
+		// 	vk::DescriptorType::combinedImageSampler,
+		// 	vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
+		// // depth (for ssr), use nearest sampler as ssr does
+		// vpp::descriptorBinding( // depth
+		// 	vk::DescriptorType::combinedImageSampler,
+		// 	vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
+		// // light scattering, no guassian blur atm, could use either sampler i
+		// // guess?
+		// vpp::descriptorBinding( // light scattering
+		// 	vk::DescriptorType::combinedImageSampler,
+		// 	vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
 	};
 
 	pp_.dsLayout = {dev, ppInputBindings};
@@ -1485,71 +1492,11 @@ void ViewApp::initScattering() {
 	scatter_.ds = {dev.descriptorAllocator(), scatter_.dsLayout};
 }
 
-void ViewApp::initCombine() {
-	// layouts
-	auto& dev = vulkanDevice();
-	auto combineBindings = {
-		vpp::descriptorBinding( // target
-			vk::DescriptorType::storageImage,
-			vk::ShaderStageBits::compute),
-		vpp::descriptorBinding( // ubo
-			vk::DescriptorType::uniformBuffer,
-			vk::ShaderStageBits::compute),
-		vpp::descriptorBinding( // albedo
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // ssao
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // emission
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // normal
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // linear depth
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // irradiance
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
-		vpp::descriptorBinding( // envMap
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
-		vpp::descriptorBinding( // brdf
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
-	};
-
-	combine_.dsLayout = {dev, combineBindings};
-	combine_.ds = {dev.descriptorAllocator(), combine_.dsLayout};
-	combine_.pipeLayout = {dev, {{
-		sceneDsLayout_.vkHandle(),
-		combine_.dsLayout.vkHandle()
-	}}, {}};
-
-	// pipe
-	vpp::ShaderModule combineShader(dev, deferred_combine_comp_data);
-
-	vk::ComputePipelineCreateInfo cpi;
-	cpi.layout = combine_.pipeLayout;
-	cpi.stage.module = combineShader;
-	cpi.stage.stage = vk::ShaderStageBits::compute;
-	cpi.stage.pName = "main";
-
-	vk::Pipeline vkpipe;
-	vk::createComputePipelines(dev, {}, 1u, cpi, nullptr, vkpipe);
-	combine_.pipe = {dev, vkpipe};
-}
-
 void ViewApp::initDebug() {
 	auto& dev = vulkanDevice();
 
 	// layouts
 	auto debugInputBindings = {
-		vpp::descriptorBinding( // params ubo
-			vk::DescriptorType::uniformBuffer,
-			vk::ShaderStageBits::fragment),
 		vpp::descriptorBinding( // albedo
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
@@ -1571,6 +1518,9 @@ void ViewApp::initDebug() {
 		vpp::descriptorBinding( // bloom
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
+		vpp::descriptorBinding( // params ubo
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::fragment),
 	};
 
 	debug_.dsLayout = {dev, debugInputBindings};
@@ -1802,6 +1752,11 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		}
 	};
 
+	auto scatterView = (params_.flags & flagScattering) ?
+		scatter_.target.vkImageView() : dummyTex_.vkImageView();
+	// auto depthView = gpass_.depth.vkImageView();
+	// auto emissionView = gpass_.emission.vkImageView();
+
 	BloomPass::InitBufferData bloomData;
 	bloom_.createBuffers(bloomData, wb, size);
 
@@ -1811,11 +1766,38 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	SSAOPass::InitBufferData ssaoData;
 	ssao_.createBuffers(ssaoData, wb, size);
 
+	LuminancePass::InitBufferData lumData;
+	luminance_.createBuffers(lumData, wb, size);
+
 	bloom_.initBuffers(bloomData, lpass_.light.imageView());
+	auto bloomView = (params_.flags & flagBloom) ?
+		bloom_.fullView() : dummyTex_.vkImageView();
+
 	ssr_.initBuffers(ssrData, gpass_.depth.imageView(),
 		gpass_.normal.imageView());
+	auto ssrView = (params_.flags & flagSSR) ?
+		ssr_.targetView() : dummyTex_.vkImageView();
+
 	ssao_.initBuffers(ssaoData, gpass_.depth.vkImageView(),
 		gpass_.normal.imageView(), size);
+	auto ssaoView = (params_.flags & flagSSAO) ?
+		ssao_.targetView() : dummyTex_.vkImageView();
+
+	ao_.updateInputs(lpass_.light.imageView(),
+		gpass_.albedo.imageView(),
+		gpass_.emission.imageView(),
+		gpass_.depth.imageView(),
+		gpass_.normal.imageView(),
+		ssaoView,
+		env_.irradiance().imageView(),
+		env_.envMap().imageView(),
+		env_.convolutionMipmaps(),
+		brdfLut_.imageView());
+	combine_.updateInputs(gpass_.emission.imageView(),
+		lpass_.light.imageView(),
+		gpass_.depth.imageView(),
+		bloomView, ssrView, scatterView);
+	luminance_.initBuffers(lumData, gpass_.emission.imageView(), size);
 
 	// fwd
 	attachments.clear();
@@ -1855,8 +1837,8 @@ void ViewApp::updateDescriptors() {
 	bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
 	auto ssaoView = (params_.flags & flagSSAO) ?
 		ssao_.targetView() : dummyTex_.vkImageView();
-	auto scatterView = (params_.flags & flagScattering) ?
-		scatter_.target.vkImageView() : dummyTex_.vkImageView();
+	// auto scatterView = (params_.flags & flagScattering) ?
+		// scatter_.target.vkImageView() : dummyTex_.vkImageView();
 	auto depthView = needDepth ?  depthMipView_ : gpass_.depth.vkImageView();
 	auto emissionView = gpass_.emission.vkImageView();
 	auto bloomView = (params_.flags & flagBloom) ?
@@ -1865,18 +1847,22 @@ void ViewApp::updateDescriptors() {
 		ssr_.targetView() : dummyTex_.vkImageView();
 
 	auto& pdsu = updates.emplace_back(pp_.ds);
+	pdsu.imageSampler({{{}, gpass_.emission.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
 	pdsu.uniform({{{paramsUbo_}}});
-	pdsu.imageSampler({{{}, lpass_.light.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.imageSampler({{{}, ssrView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.imageSampler({{{}, bloomView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.imageSampler({{{}, depthView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	pdsu.imageSampler({{{}, scatterView,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
 
+	// pdsu.imageSampler({{{}, lpass_.light.vkImageView(),
+	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
+	// pdsu.imageSampler({{{}, ssrView,
+	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
+	// pdsu.imageSampler({{{}, bloomView,
+	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
+	// pdsu.imageSampler({{{}, depthView,
+	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
+	// pdsu.imageSampler({{{}, scatterView,
+	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
+
+	/*
 	auto& cdsu = updates.emplace_back(combine_.ds);
 	cdsu.storage({{{}, lpass_.light.vkImageView(),
 		vk::ImageLayout::general}});
@@ -1897,6 +1883,7 @@ void ViewApp::updateDescriptors() {
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	cdsu.imageSampler({{{}, brdfLut_.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
+	*/
 
 	if(params_.flags & flagScattering) {
 		auto& sdsu = updates.emplace_back(scatter_.ds);
@@ -1906,7 +1893,6 @@ void ViewApp::updateDescriptors() {
 
 	if(params_.mode != 0) {
 		auto& ddsu = updates.emplace_back(debug_.ds);
-		ddsu.uniform({{{paramsUbo_}}});
 		ddsu.imageSampler({{{}, gpass_.albedo.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		ddsu.imageSampler({{{}, gpass_.normal.imageView(),
@@ -1921,6 +1907,7 @@ void ViewApp::updateDescriptors() {
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		ddsu.imageSampler({{{}, bloomView,
 			vk::ImageLayout::shaderReadOnlyOptimal}});
+		ddsu.uniform({{{paramsUbo_}}});
 	}
 
 	vpp::apply(updates);
@@ -2063,6 +2050,13 @@ void ViewApp::record(const RenderBuffer& buf) {
 	normals.writeAccess = vk::AccessBits::colorAttachmentWrite;
 	normals.writeStages = vk::PipelineStageBits::colorAttachmentOutput;
 
+	RenderTarget albedo;
+	albedo.image = gpass_.albedo.image();
+	albedo.view = gpass_.albedo.imageView();
+	albedo.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	albedo.writeAccess = vk::AccessBits::colorAttachmentWrite;
+	albedo.writeStages = vk::PipelineStageBits::colorAttachmentOutput;
+
 	// optionally create depth mipmaps
 	bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
 	if(depthMipLevels_ > 1 && needDepth) {
@@ -2135,6 +2129,13 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		vk::cmdEndRenderPass(cb);
 	}
+
+	RenderTarget scatter;
+	scatter.image = scatter_.target.image();
+	scatter.view = scatter_.target.imageView();
+	scatter.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	scatter.writeAccess = vk::AccessBits::colorAttachmentWrite;
+	scatter.writeStages = vk::PipelineStageBits::colorAttachmentOutput;
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
 		queryPool_, 5u);
@@ -2244,108 +2245,112 @@ void ViewApp::record(const RenderBuffer& buf) {
 
 	// combine pass
 	if(params_.mode == 0) {
-		vpp::DebugLabel debugLabel(cb, "CombinePass");
-		auto& target = lpass_.light.image();
+		ao_.record(cb, light, albedo, emission, ldepth, normals, ssao, sceneDs_, size);
+		combine_.record(cb, emission, light, ldepth, bloom, ssr, scatter, size);
+		luminance_.record(cb, emission, size);
 
-		vk::ImageMemoryBarrier barrier;
-		barrier.image = target;
-		barrier.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		barrier.srcAccessMask = vk::AccessBits::shaderRead;
-		barrier.newLayout = vk::ImageLayout::general;
-		barrier.dstAccessMask = vk::AccessBits::shaderWrite |
-			 vk::AccessBits::shaderRead;
-		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-		vk::cmdPipelineBarrier(cb,
-			vk::PipelineStageBits::fragmentShader,
-			vk::PipelineStageBits::computeShader,
-			{}, {}, {}, {{barrier}});
-
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
-			combine_.pipe);
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
-			combine_.pipeLayout, 0,
-			{{sceneDs_.vkHandle(), combine_.ds.vkHandle()}}, {});
-		vk::cmdDispatch(cb, std::ceil(width / 8.f), std::ceil(height / 8.f), 1u);
-
-		barrier.oldLayout = vk::ImageLayout::general;
-		barrier.srcAccessMask = vk::AccessBits::shaderWrite |
-			 vk::AccessBits::shaderRead;
-		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		barrier.dstAccessMask = vk::AccessBits::shaderRead;
-		vk::cmdPipelineBarrier(cb,
-			vk::PipelineStageBits::computeShader,
-			vk::PipelineStageBits::fragmentShader,
-			{}, {}, {}, {{barrier}});
+		// vpp::DebugLabel debugLabel(cb, "CombinePass");
+		// auto& target = lpass_.light.image();
+//
+		// vk::ImageMemoryBarrier barrier;
+		// barrier.image = target;
+		// barrier.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		// barrier.srcAccessMask = vk::AccessBits::shaderRead;
+		// barrier.newLayout = vk::ImageLayout::general;
+		// barrier.dstAccessMask = vk::AccessBits::shaderWrite |
+		// 	 vk::AccessBits::shaderRead;
+		// barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+		// vk::cmdPipelineBarrier(cb,
+		// 	vk::PipelineStageBits::fragmentShader,
+		// 	vk::PipelineStageBits::computeShader,
+		// 	{}, {}, {}, {{barrier}});
+//
+		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
+		// 	combine_.pipe);
+		// vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
+		// 	combine_.pipeLayout, 0,
+		// 	{{sceneDs_.vkHandle(), combine_.ds.vkHandle()}}, {});
+		// vk::cmdDispatch(cb, std::ceil(width / 8.f), std::ceil(height / 8.f), 1u);
+//
+		// barrier.oldLayout = vk::ImageLayout::general;
+		// barrier.srcAccessMask = vk::AccessBits::shaderWrite |
+		// 	 vk::AccessBits::shaderRead;
+		// barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		// barrier.dstAccessMask = vk::AccessBits::shaderRead;
+		// vk::cmdPipelineBarrier(cb,
+		// 	vk::PipelineStageBits::computeShader,
+		// 	vk::PipelineStageBits::fragmentShader,
+		// 	{}, {}, {}, {{barrier}});
 	}
 
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
 		queryPool_, 10u);
 
-	// generate light mipmaps
-	{
-		auto llevels = vpp::mipmapLevels(size);
-		DownscaleTarget target;
-		target.image = lpass_.light.image();
-		target.format = lightFormat;
-		target.layout = vk::ImageLayout::shaderReadOnlyOptimal;
-		target.width = width;
-		target.height = height;
-		target.srcAccess = vk::AccessBits::shaderRead |
-			vk::AccessBits::shaderWrite;
-		target.srcStages = vk::PipelineStageBits::fragmentShader |
-			vk::PipelineStageBits::computeShader;
-		doi::downscale(cb, target, llevels - 1);
-
-		// transition back to readonly
-		vk::ImageMemoryBarrier barrier0;
-		barrier0.image = target.image;
-		barrier0.subresourceRange.layerCount = 1;
-		barrier0.subresourceRange.levelCount = 1;
-		barrier0.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-		barrier0.oldLayout = vk::ImageLayout::transferSrcOptimal;
-		barrier0.srcAccessMask = vk::AccessBits::transferRead;
-		barrier0.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		barrier0.dstAccessMask = vk::AccessBits::shaderRead;
-
-		vk::ImageMemoryBarrier barrierLast;
-		barrierLast.image = target.image;
-		barrierLast.subresourceRange.layerCount = 1;
-		barrierLast.subresourceRange.levelCount = 1;
-		barrierLast.subresourceRange.baseMipLevel = llevels - 1;
-		barrierLast.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-		barrierLast.oldLayout = vk::ImageLayout::transferSrcOptimal;
-		barrierLast.srcAccessMask = vk::AccessBits::transferRead |
-			vk::AccessBits::transferWrite;
-		barrierLast.newLayout = vk::ImageLayout::transferSrcOptimal;
-		barrierLast.dstAccessMask = vk::AccessBits::transferRead;
-
-		vk::cmdPipelineBarrier(cb,
-			vk::PipelineStageBits::transfer,
-			vk::PipelineStageBits::allCommands | vk::PipelineStageBits::transfer,
-			{}, {}, {}, {{barrier0, barrierLast}});
-
-		// copy from last light mipmap to stage for general exposure
-		vk::BufferImageCopy copy;
-		copy.bufferOffset = renderStage_.offset();
-		copy.imageExtent = {1, 1, 1};
-		copy.imageOffset = {0, 0, 0};
-		copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
-		copy.imageSubresource.layerCount = 1;
-		copy.imageSubresource.mipLevel = llevels - 1;
-		vk::cmdCopyImageToBuffer(cb, lpass_.light.image(),
-			vk::ImageLayout::transferSrcOptimal,
-			renderStage_.buffer(), {{copy}});
-
-		// probably not needed, right?
-		vk::BufferMemoryBarrier bb;
-		bb.buffer = renderStage_.buffer();
-		bb.offset = renderStage_.offset();
-		bb.size = renderStage_.size();
-		bb.srcAccessMask = vk::AccessBits::transferWrite;
-		bb.dstAccessMask = vk::AccessBits::hostRead;
-		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
-			vk::PipelineStageBits::host, {}, {}, {{bb}}, {});
-	}
+	// TODO: generate light mipmaps?
+	// {
+	// 	auto llevels = vpp::mipmapLevels(size);
+	// 	doi::DownscaleTarget target;
+	// 	target.image = lpass_.light.image();
+	// 	target.format = lightFormat;
+	// 	target.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	// 	target.width = width;
+	// 	target.height = height;
+	// 	target.srcAccess = vk::AccessBits::shaderRead |
+	// 		vk::AccessBits::shaderWrite;
+	// 	target.srcStages = vk::PipelineStageBits::fragmentShader |
+	// 		vk::PipelineStageBits::computeShader;
+	// 	doi::downscale(cb, target, llevels - 1);
+//
+	// 	// transition back to readonly
+	// 	vk::ImageMemoryBarrier barrier0;
+	// 	barrier0.image = target.image;
+	// 	barrier0.subresourceRange.layerCount = 1;
+	// 	barrier0.subresourceRange.levelCount = 1;
+	// 	barrier0.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+	// 	barrier0.oldLayout = vk::ImageLayout::transferSrcOptimal;
+	// 	barrier0.srcAccessMask = vk::AccessBits::transferRead;
+	// 	barrier0.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	// 	barrier0.dstAccessMask = vk::AccessBits::shaderRead;
+//
+	// 	vk::ImageMemoryBarrier barrierLast;
+	// 	barrierLast.image = target.image;
+	// 	barrierLast.subresourceRange.layerCount = 1;
+	// 	barrierLast.subresourceRange.levelCount = 1;
+	// 	barrierLast.subresourceRange.baseMipLevel = llevels - 1;
+	// 	barrierLast.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+	// 	barrierLast.oldLayout = vk::ImageLayout::transferSrcOptimal;
+	// 	barrierLast.srcAccessMask = vk::AccessBits::transferRead |
+	// 		vk::AccessBits::transferWrite;
+	// 	barrierLast.newLayout = vk::ImageLayout::transferSrcOptimal;
+	// 	barrierLast.dstAccessMask = vk::AccessBits::transferRead;
+//
+	// 	vk::cmdPipelineBarrier(cb,
+	// 		vk::PipelineStageBits::transfer,
+	// 		vk::PipelineStageBits::allCommands | vk::PipelineStageBits::transfer,
+	// 		{}, {}, {}, {{barrier0, barrierLast}});
+//
+	// 	// copy from last light mipmap to stage for general exposure
+	// 	vk::BufferImageCopy copy;
+	// 	copy.bufferOffset = renderStage_.offset();
+	// 	copy.imageExtent = {1, 1, 1};
+	// 	copy.imageOffset = {0, 0, 0};
+	// 	copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
+	// 	copy.imageSubresource.layerCount = 1;
+	// 	copy.imageSubresource.mipLevel = llevels - 1;
+	// 	vk::cmdCopyImageToBuffer(cb, lpass_.light.image(),
+	// 		vk::ImageLayout::transferSrcOptimal,
+	// 		renderStage_.buffer(), {{copy}});
+//
+	// 	// probably not needed, right?
+	// 	vk::BufferMemoryBarrier bb;
+	// 	bb.buffer = renderStage_.buffer();
+	// 	bb.offset = renderStage_.offset();
+	// 	bb.size = renderStage_.size();
+	// 	bb.srcAccessMask = vk::AccessBits::transferWrite;
+	// 	bb.dstAccessMask = vk::AccessBits::hostRead;
+	// 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
+	// 		vk::PipelineStageBits::host, {}, {}, {{bb}}, {});
+	// }
 
 	// make bloom view readable
 	if(params_.flags & flagBloom) {
@@ -2360,6 +2365,11 @@ void ViewApp::record(const RenderBuffer& buf) {
 			vk::PipelineStageBits::computeShader | vk::PipelineStageBits::fragmentShader,
 			vk::AccessBits::shaderRead);
 	}
+
+	// output from combine pass
+	transitionRead(cb, emission, vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::computeShader | vk::PipelineStageBits::fragmentShader,
+		vk::AccessBits::shaderRead);
 
 	// post process pass
 	{
@@ -2414,7 +2424,8 @@ void ViewApp::record(const RenderBuffer& buf) {
 		vk::PipelineStageBits::transfer, vk::AccessBits::transferRead);
 
 	vk::BufferImageCopy copy;
-	copy.bufferOffset = renderStage_.offset() + sizeof(f16) * 4;
+	// copy.bufferOffset = renderStage_.offset() + sizeof(f16) * 4;
+	copy.bufferOffset = renderStage_.offset();
 	copy.imageExtent = {1, 1, 1};
 	copy.imageOffset = {i32(width / 2u), i32(height / 2u), 0};
 	copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
@@ -2586,6 +2597,8 @@ void ViewApp::updateDevice() {
 
 	bloom_.updateDevice();
 	ssr_.updateDevice();
+	ao_.updateDevice();
+	combine_.updateDevice();
 
 	float dt = 1 / 60.f; // TODO: needed from update stage
 
@@ -2594,19 +2607,24 @@ void ViewApp::updateDevice() {
 	map.invalidate();
 	auto span = map.span();
 
+	/*
 	auto avgLight = doi::read<std::array<f16, 4>>(span);
 	float llight = float(avgLight[3]); // alpha is luminance; combine.comp
 	float light = std::exp2(llight);
-	dlg_trace("light: {} {}", llight, light);
+	*/
+	auto light = luminance_.updateDevice();
+	dlg_trace("light: {}", light);
 	light *= params_.exposure;
 	float desiredLight = 0.25f; // TODO: config
 	float diff = desiredLight - light;
-	float sgn = diff > 0.f ? 1.f : -1.f;
-	params_.exposure += 5 * dt * sgn * std::pow(std::abs(diff), 0.5);
+	// float sgn = diff > 0.f ? 1.f : -1.f;
+	// params_.exposure += 10 * dt * sgn * std::pow(std::abs(diff), 0.5);
+	params_.exposure += 10 * dt * diff;
 	dlg_trace("exposure: {}", params_.exposure);
+	// dlg_trace("exposure: {}", params_.exposure);
 
 	auto focus = float(doi::read<f16>(span));
-	dlg_trace("dof: {}", focus);
+	// dlg_trace("dof: {}", focus);
 	params_.dofFocus = nytl::mix(params_.dofFocus, focus, dt * 30);
 
 	// update scene ubo

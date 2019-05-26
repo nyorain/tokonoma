@@ -34,7 +34,8 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
 
-	// test if r8Unorm can be used as storage image
+	// test if r8Unorm can be used as storage image. Supported on pretty
+	// much all desktop systems.
 	// we use a dummy size here but that shouldn't matter
 	auto compute = vpp::supported(dev, targetInfo({1024, 1024}, true).img);
 	auto stage = vk::ShaderStageBits::compute;

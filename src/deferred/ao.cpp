@@ -11,12 +11,9 @@ void AOPass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
 
-	auto combineBindings = {
+	auto aoBindings = {
 		vpp::descriptorBinding( // target
 			vk::DescriptorType::storageImage,
-			vk::ShaderStageBits::compute),
-		vpp::descriptorBinding( // ubo
-			vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding( // albedo
 			vk::DescriptorType::combinedImageSampler,
@@ -42,30 +39,32 @@ void AOPass::create(InitData& data, const PassCreateInfo& info) {
 		vpp::descriptorBinding( // brdflut
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+		vpp::descriptorBinding( // ubo
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::compute),
 	};
 
-	dsLayout_ = {dev, combineBindings};
+	dsLayout_ = {dev, aoBindings};
 	ds_ = {data.initDs, wb.alloc.ds, dsLayout_};
 
 	vk::PushConstantRange pcr;
-	pcr.offset = 0;
 	pcr.size = 4u;
 	pcr.stageFlags = vk::ShaderStageBits::compute;
 	pipeLayout_ = {dev, {{
 		info.dsLayouts.scene.vkHandle(),
 		dsLayout_.vkHandle()
-	}}, {}};
+	}}, {{pcr}}};
 
 	vpp::nameHandle(dsLayout_, "AOPass:dsLayout_");
 	vpp::nameHandle(pipeLayout_, "AOPass:pipeLayout_");
 
 	// pipe
 	ComputeGroupSizeSpec groupSizeSpec(groupDimSize, groupDimSize);
-	vpp::ShaderModule combineShader(dev, deferred_ao_comp_data);
+	vpp::ShaderModule aoShader(dev, deferred_ao_comp_data);
 
 	vk::ComputePipelineCreateInfo cpi;
 	cpi.layout = pipeLayout_;
-	cpi.stage.module = combineShader;
+	cpi.stage.module = aoShader;
 	cpi.stage.stage = vk::ShaderStageBits::compute;
 	cpi.stage.pName = "main";
 	cpi.stage.pSpecializationInfo = &groupSizeSpec.spec;
@@ -112,10 +111,10 @@ void AOPass::record(vk::CommandBuffer cb,
 	vpp::DebugLabel(cb, "AOPass");
 	dlg_assert(envFilterLods_);
 
-	transitionRead(cb, light, vk::ImageLayout::general,
+	// TODO: group
+	transitionWrite(cb, light, vk::ImageLayout::general,
 		vk::PipelineStageBits::computeShader,
 		vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite);
-	// TODO: group
 	transitionRead(cb, albedo, vk::ImageLayout::shaderReadOnlyOptimal,
 		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
 	transitionRead(cb, emission, vk::ImageLayout::shaderReadOnlyOptimal,
@@ -124,17 +123,15 @@ void AOPass::record(vk::CommandBuffer cb,
 		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
 	transitionRead(cb, normal, vk::ImageLayout::shaderReadOnlyOptimal,
 		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	if(ssao.image) {
-		transitionRead(cb, ssao, vk::ImageLayout::shaderReadOnlyOptimal,
-			vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	}
+	transitionRead(cb, ssao, vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
 	doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
 	vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::compute,
 		0, 4, &envFilterLods_);
 	auto cx = std::ceil(size.width / float(groupDimSize));
-	auto cy = std::ceil(size.width / float(groupDimSize));
+	auto cy = std::ceil(size.height / float(groupDimSize));
 	vk::cmdDispatch(cb, cx, cy, 1);
 }
 

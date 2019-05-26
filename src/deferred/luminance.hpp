@@ -23,12 +23,20 @@ public:
 	// (higher precision near luminance 0 though)
 	// make sure to first invert that transformation function then
 	// before each combine.
-	static constexpr auto luminanceFormat = vk::Format::r16Sfloat;
-	static constexpr auto groupDimSize = 8u;
+	static constexpr auto format = vk::Format::r16Sfloat;
+	static constexpr auto extractGroupDimSize = 8u;
+	static constexpr auto mipGroupDimSize = 8u;
+	static_assert((mipGroupDimSize & (mipGroupDimSize - 1)) == 0,
+		"mipGroupDimSize must be a power of 2");
 
 	struct InitData {
 		vpp::TrDs::InitData initDs;
 		vpp::SubBuffer::InitData initDstBuffer;
+		std::vector<vpp::TrDs::InitData> initLevels;
+	};
+
+	struct InitBufferData {
+		vpp::ViewableImage::InitData initTarget;
 	};
 
 	// Luninance vector. dot(light.rgb, luminance) will be used to
@@ -41,15 +49,21 @@ public:
 	LuminancePass() = default;
 	void create(InitData&, const PassCreateInfo&);
 	void init(InitData&, const PassCreateInfo&);
+	void createBuffers(InitBufferData&, const doi::WorkBatcher&, vk::Extent2D);
+	void initBuffers(InitBufferData&, vk::ImageView light, vk::Extent2D);
 
 	/// Expects log(luminance) to already be stored in the mip level 0
 	/// of the luminance target. The target must have a full mipmap chain.
 	void record(vk::CommandBuffer cb, RenderTarget& light,
 		vk::Extent2D extent);
+	float updateDevice(); // returns the luminance of the last frame
+
+	bool usingCompute() const { return !extract_.rp; }
 
 protected:
 	vpp::ViewableImage target_;
 	vpp::SubBuffer dstBuffer_;
+	vpp::MemoryMapView dstBufferMap_;
 
 	// First part of this pass: extract the luminance from the light
 	// target. If possible, will use a compute pipeline, otherwise
@@ -68,6 +82,7 @@ protected:
 	struct MipLevel {
 		vpp::ImageView view;
 		vpp::TrDs ds;
+		unsigned target {}; // next/target level
 	};
 
 	struct {
@@ -75,5 +90,7 @@ protected:
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 		std::vector<MipLevel> levels;
+		unsigned target0;
+		vpp::Sampler sampler; // linear, black border, clamp to border
 	} mip_;
 };

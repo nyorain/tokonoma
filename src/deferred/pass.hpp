@@ -33,8 +33,8 @@ struct RenderTarget {
 
 	// the current logical layout.
 	vk::ImageLayout layout = vk::ImageLayout::undefined;
-	vk::Image image;
-	vk::ImageView view; // optional
+	vk::Image image {};
+	vk::ImageView view {}; // optional
 };
 
 // TODO: move to own file. Maybe move whole utility to stage/render.hpp?
@@ -42,6 +42,10 @@ inline void transitionRead(vk::CommandBuffer cb, RenderTarget& target,
 		vk::ImageLayout newLayout, vk::PipelineStageFlags stages,
 		vk::AccessFlags access, vk::ImageSubresourceRange subres =
 			{vk::ImageAspectBits::color, 0, 1, 0, 1}) {
+	if(!target.image) {
+		return;
+	}
+
 	// in this case there already was a sufficient barrier in place
 	if(target.layout == newLayout) {
 		// Neither of these optimizations is correct since then we still

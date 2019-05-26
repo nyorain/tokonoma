@@ -17,24 +17,17 @@ const uint modeDepth = 8u;
 const uint modeEmission = 9u;
 const uint modeBloom = 10u;
 
-layout(set = 0, binding = 0) uniform UBO {
-	uint mode;
-	uint flags;
-	float aoFactor;
-	float ssaoPow;
-	uint _tonemap;
-	float exposure;
-	uint _convolutionLods;
-	float bloomStrength;
-} params;
+layout(set = 0, binding = 0) uniform sampler2D inAlbedo;
+layout(set = 0, binding = 1) uniform sampler2D inNormal;
+layout(set = 0, binding = 2) uniform sampler2D inDepth;
+layout(set = 0, binding = 3) uniform sampler2D inSSAO;
+layout(set = 0, binding = 4) uniform sampler2D inSSR;
+layout(set = 0, binding = 5) uniform sampler2D inEmission;
+layout(set = 0, binding = 6) uniform sampler2D inBloom;
 
-layout(set = 0, binding = 1) uniform sampler2D inAlbedo;
-layout(set = 0, binding = 2) uniform sampler2D inNormal;
-layout(set = 0, binding = 3) uniform sampler2D inDepth;
-layout(set = 0, binding = 4) uniform sampler2D inSSAO;
-layout(set = 0, binding = 5) uniform sampler2D inSSR;
-layout(set = 0, binding = 6) uniform sampler2D inEmission;
-layout(set = 0, binding = 7) uniform sampler2D inBloom;
+layout(set = 0, binding = 7) uniform UBO {
+	uint mode;
+} params;
 
 void main() {
 	vec4 albedo = texture(inAlbedo, uv);
@@ -43,6 +36,12 @@ void main() {
 	vec4 ssr = texture(inSSR, uv);
 	vec4 depth = texture(inDepth, uv);
 	vec4 emission = texture(inEmission, uv);
+
+	// NOTE: from other passes, could be passed in as parameters here
+	float exposure = 1.0;
+	float aoFactor = 1.0;
+	float ssaoPow = 3.0;
+	float bloomStrength = 3.0;
 
 	switch(params.mode) {
 		case modeAlbedo:
@@ -59,8 +58,8 @@ void main() {
 			break;
 		case modeAO:
 		case modeAlbedoAO: {
-			float ao = params.aoFactor * albedo.w;
-			ao *= pow(ssao.r, params.ssaoPow);
+			float ao = aoFactor * albedo.w;
+			ao *= pow(ssao.r, ssaoPow);
 			vec3 col = (params.mode == modeAO) ? vec3(1.0) : albedo.rgb;
 			fragColor = vec4(ao * col, 1.0);
 			break;
@@ -69,7 +68,7 @@ void main() {
 			// fragColor = vec4(ssr.xy / textureSize(bloomTex, 0), ssr.w, 1.0);
 			break;
 		case modeDepth:
-			fragColor = vec4(vec3(1.0 - exp(-0.1 * params.exposure * depth.r)), 1.0);
+			fragColor = vec4(vec3(1.0 - exp(-0.1 * exposure * depth.r)), 1.0);
 			break;
 		case modeEmission:
 			fragColor = vec4(emission.rgb, 1.0);
@@ -78,14 +77,12 @@ void main() {
 			uint bloomLevels = textureQueryLevels(inBloom);
 			vec3 bloomSum = vec3(0.0);
 			for(uint i = 0u; i < bloomLevels; ++i) {
-				float fac = params.bloomStrength;
-				if((params.flags & flagBloomDecrease) != 0) {
-					fac /= (1 + i);
-				}
+				float fac = bloomStrength;
+				// fac /= (1 + i); // decrease?
 				bloomSum += fac * textureLod(inBloom, uv, i).rgb;
 			}
 			// tonemapping needed here
-			bloomSum = 1.0 - exp(-params.exposure * bloomSum);
+			bloomSum = 1.0 - exp(-exposure * bloomSum);
 			fragColor = vec4(bloomSum, 1.0);
 			break;
 		} default:

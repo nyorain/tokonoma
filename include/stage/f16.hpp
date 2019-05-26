@@ -37,44 +37,44 @@ bool isnan(f16);
 bool isinf(f16);
 // TODO: more functions: isfinite, isnormal, fpclassify
 
-f16& operator+=(f16& a, f16 b) { return a = float(a) + float(b); }
-f16& operator-=(f16& a, f16 b) { return a = float(a) - float(b); }
-f16& operator*=(f16& a, f16 b) { return a = float(a) * float(b); }
-f16& operator/=(f16& a, f16 b) { return a = float(a) / float(b); }
+inline f16& operator+=(f16& a, f16 b) { return a = float(a) + float(b); }
+inline f16& operator-=(f16& a, f16 b) { return a = float(a) - float(b); }
+inline f16& operator*=(f16& a, f16 b) { return a = float(a) * float(b); }
+inline f16& operator/=(f16& a, f16 b) { return a = float(a) / float(b); }
 
-f16& operator+=(f16& a, float b) { return a = float(a) + float(b); }
-f16& operator-=(f16& a, float b) { return a = float(a) - float(b); }
-f16& operator*=(f16& a, float b) { return a = float(a) * float(b); }
-f16& operator/=(f16& a, float b) { return a = float(a) / float(b); }
+inline f16& operator+=(f16& a, float b) { return a = float(a) + float(b); }
+inline f16& operator-=(f16& a, float b) { return a = float(a) - float(b); }
+inline f16& operator*=(f16& a, float b) { return a = float(a) * float(b); }
+inline f16& operator/=(f16& a, float b) { return a = float(a) / float(b); }
 
-f16 operator+(f16 a, f16 b) { return float(a) + float(b); }
-f16 operator-(f16 a, f16 b) { return float(a) - float(b); }
-f16 operator*(f16 a, f16 b) { return float(a) * float(b); }
-f16 operator/(f16 a, f16 b) { return float(a) / float(b); }
+inline f16 operator+(f16 a, f16 b) { return float(a) + float(b); }
+inline f16 operator-(f16 a, f16 b) { return float(a) - float(b); }
+inline f16 operator*(f16 a, f16 b) { return float(a) * float(b); }
+inline f16 operator/(f16 a, f16 b) { return float(a) / float(b); }
 
-f16 operator+(float a, f16 b) { return a + float(b); }
-f16 operator-(float a, f16 b) { return a - float(b); }
-f16 operator*(float a, f16 b) { return a * float(b); }
-f16 operator/(float a, f16 b) { return a / float(b); }
+inline f16 operator+(float a, f16 b) { return a + float(b); }
+inline f16 operator-(float a, f16 b) { return a - float(b); }
+inline f16 operator*(float a, f16 b) { return a * float(b); }
+inline f16 operator/(float a, f16 b) { return a / float(b); }
 
-f16 operator+(f16 a, float b) { return float(a) + b; }
-f16 operator-(f16 a, float b) { return float(a) - b; }
-f16 operator*(f16 a, float b) { return float(a) * b; }
-f16 operator/(f16 a, float b) { return float(a) / b; }
+inline f16 operator+(f16 a, float b) { return float(a) + b; }
+inline f16 operator-(f16 a, float b) { return float(a) - b; }
+inline f16 operator*(f16 a, float b) { return float(a) * b; }
+inline f16 operator/(f16 a, float b) { return float(a) / b; }
 
 bool operator==(f16 a, f16 b);
 bool operator<=(f16 a, f16 b);
 bool operator<(f16 a, f16 b);
 
-bool operator!=(f16 a, f16 b) { return !(a == b); }
-bool operator>(f16 a, f16 b) { return !(a <= b); }
-bool operator>=(f16 a, f16 b) { return !(a < b); }
+inline bool operator!=(f16 a, f16 b) { return !(a == b); }
+inline bool operator>(f16 a, f16 b) { return !(a <= b); }
+inline bool operator>=(f16 a, f16 b) { return !(a < b); }
 
-f16 operator-(f16 a) { a.bits() ^= (1 << 15); return a; }
+inline f16 operator-(f16 a) { a.bits() ^= (1 << 15); return a; }
 
 namespace f16_literal {
 
-f16 operator ""_f16(long double val) { return f16(float(val)); }
+inline f16 operator ""_f16(long double val) { return f16(float(val)); }
 
 } // namespace literals
 } // namespace doi

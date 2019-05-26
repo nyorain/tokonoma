@@ -5,7 +5,7 @@ executable('deferred', [
 		'ssao.cpp',
 		'ao.cpp',
 		'combine.cpp',
-		'pp.cpp',
+		# 'pp.cpp',
 		'luminance.cpp',
 		deferred_shaders,
 	], dependencies: [

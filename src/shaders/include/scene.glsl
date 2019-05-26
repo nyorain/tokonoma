@@ -9,21 +9,6 @@ const uint lightShadow = (1u << 2); // use shadow
 const uint normalMap = (1u << 0);
 const uint doubleSided = (1u << 1);
 
-// global rendering flags
-const uint flagScattering = (1u << 1u);
-const uint flagSSR = (1u << 2u);
-const uint flagBloom = (1u << 3u);
-const uint flagFXAA = (1u << 4u);
-const uint flagBloomDecrease = (1u << 7u);
-const uint flagDOF = (1u << 8u);
-
-// struct Light {
-// 	vec3 pos; // position for point light, direction of dir light
-// 	uint type; // point or dir
-// 	vec3 color;
-// 	uint pcf;
-// };
-
 struct DirLight {
 	vec3 color; // w: pcf
 	uint flags;
@@ -174,31 +159,14 @@ vec2 signNotZero(vec2 v) {
 }
 
 // n must be normalized
-vec2 encodeNormal(vec3 n) {
-	// spherical encoding (lattitude, longitude)
-	// float latt = asin(n.y);
-	// float long = asin(n.x / latt); // or acos(n.z / latt)
-	// return vec2(latt, long);
-
-	// naive
-	// return vec2(n.x, n.y);
-	
-	// oct
+// using oct compression
+vec2 encodeNormal(vec3 n) { 
 	vec2 p = n.xy * (1.0 / (abs(n.x) + abs(n.y) + abs(n.z)));
 	return (n.z <= 0.0) ? ((1.0 - abs(p.yx)) * signNotZero(p)) : p;
 }
 
 // returns normalized vector
 vec3 decodeNormal(vec2 n) {
-	// spherical encoding (lattitude, longitude)
-	// float xz = cos(n.x);
-	// float y = sin(n.x);
-	// return vec3(xz * sin(n.y), y, xz * cos(n.y));
-
-	// naive
-	// return vec3(n.x, n.y, sqrt(1 - n.x * n.x - n.y * n.y));
-	
-	// oct
 	vec3 v = vec3(n.xy, 1.0 - abs(n.x) - abs(n.y));
 	if (v.z < 0) v.xy = (1.0 - abs(v.yx)) * signNotZero(v.xy);
 	return normalize(v);

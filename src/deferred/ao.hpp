@@ -54,8 +54,6 @@ public:
 		/// component: metallic, for ibl
 		RenderTarget& normal,
 		/// [optional] When SSAO input is available, will be used to weigh ao
-		/// Will automatically set/unset flagSSAO in params.flag depending
-		/// on whether this is valid or not.
 		RenderTarget& ssao, vk::DescriptorSet sceneDs, vk::Extent2D);
 
 	void updateDevice();
@@ -69,3 +67,7 @@ protected:
 	vpp::SubBuffer ubo_;
 	vpp::MemoryMapView uboMap_;
 };
+
+// TODO: does this make sense?
+		/// Will automatically set/unset flagSSAO in params.flag depending
+		/// on whether this is valid or not.

@@ -10,15 +10,16 @@
 // a custom compute shader?
 
 /// Postprocessing pass that applies light scattering, ssr, DOF and bloom.
-/// Always a compute pipeline, has no targets on its own but operates
-/// directly on the light target.
+/// Always a compute pipeline. Outputs its contents into a given buffer,
+/// re-used from an earlier stage (with rgba16f format).
 class CombinePass {
 public:
+	static constexpr unsigned groupDimSize = 8u;
 	static constexpr u32 flagScattering = (1 << 0);
 	static constexpr u32 flagSSR = (1 << 1);
-	static constexpr u32 flagDOF = (1 << 2);
-	static constexpr u32 flagBloom = (1 << 3);
-	static constexpr u32 flagBloomDecrease = (1 << 4);
+	static constexpr u32 flagBloom = (1 << 2);
+	static constexpr u32 flagBloomDecrease = (1 << 3);
+	static constexpr u32 flagDOF = (1 << 4);
 
 	struct InitData {
 		vpp::TrDs::InitData initDs;
@@ -28,12 +29,30 @@ public:
 public:
 	struct {
 		u32 flags {flagBloomDecrease};
+		float bloomStrength {0.25f};
+		float scatterStrength {0.25f};
 		float dofFocus {1.f};
 		float dofStrength {0.5f};
-		float bloomStrength {0.25f};
 	} params;
 
 public:
+	CombinePass() = default;
+	void create(InitData&, const PassCreateInfo&);
+	void init(InitData&, const PassCreateInfo&);
+	void updateInputs(vk::ImageView output, vk::ImageView light,
+		vk::ImageView ldepth, vk::ImageView bloom,
+		vk::ImageView ssr, vk::ImageView scattering);
+	void record(vk::CommandBuffer, RenderTarget& output,
+		RenderTarget& light, RenderTarget& ldepth, RenderTarget& bloom,
+		RenderTarget& ssr, RenderTarget& scattering,
+		vk::Extent2D);
+	void updateDevice();
 
 protected:
+	vpp::TrDsLayout dsLayout_;
+	vpp::PipelineLayout pipeLayout_;
+	vpp::Pipeline pipe_;
+	vpp::TrDs ds_;
+	vpp::SubBuffer ubo_;
+	vpp::MemoryMapView uboMap_;
 };
