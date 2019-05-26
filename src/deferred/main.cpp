@@ -458,6 +458,11 @@ protected:
 		vpp::TrDs ds;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
+
+		vui::dat::Label* luminance;
+		vui::dat::Label* exposure;
+		vui::dat::Label* focusDepth;
+		vui::dat::Label* dofDepth;
 	} debug_;
 
 	// forward pass
@@ -630,6 +635,13 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	createValueTextfield(ssrf, "ldepth threshold", ssr_.params.ldepthThreshold, nullptr);
 	createValueTextfield(ssrf, "roughness fac pow", ssr_.params.roughnessFacPow, nullptr);
 	ssrf.open(false);
+
+	// == debug values ==
+	auto& vg = panel.create<vui::dat::Folder>("Debug");
+	debug_.luminance = &vg.create<Label>("luminance", "-");
+	debug_.exposure = &vg.create<Label>("exposure", "-");
+	debug_.focusDepth = &vg.create<Label>("focus depth", "-");
+	debug_.dofDepth = &vg.create<Label>("dof Depth", "-");
 
 	// == light selection folder ==
 	vuiPanel_ = &panel;
@@ -2593,8 +2605,6 @@ bool ViewApp::mouseButton(const ny::MouseButtonEvent& ev) {
 }
 
 void ViewApp::updateDevice() {
-	App::updateDevice();
-
 	bloom_.updateDevice();
 	ssr_.updateDevice();
 	ao_.updateDevice();
@@ -2613,19 +2623,26 @@ void ViewApp::updateDevice() {
 	float light = std::exp2(llight);
 	*/
 	auto light = luminance_.updateDevice();
-	dlg_trace("light: {}", light);
+	debug_.luminance->label(std::to_string(light));
+
 	light *= params_.exposure;
 	float desiredLight = 0.25f; // TODO: config
 	float diff = desiredLight - light;
 	// float sgn = diff > 0.f ? 1.f : -1.f;
 	// params_.exposure += 10 * dt * sgn * std::pow(std::abs(diff), 0.5);
 	params_.exposure += 10 * dt * diff;
-	dlg_trace("exposure: {}", params_.exposure);
+	debug_.exposure->label(std::to_string(params_.exposure));
 	// dlg_trace("exposure: {}", params_.exposure);
 
 	auto focus = float(doi::read<f16>(span));
+	debug_.focusDepth->label(std::to_string(focus));
 	// dlg_trace("dof: {}", focus);
 	params_.dofFocus = nytl::mix(params_.dofFocus, focus, dt * 30);
+	debug_.dofDepth->label(std::to_string(params_.dofFocus));
+
+	// note: not sure where to put that. after rvg label changes here
+	// because it updates rvg
+	App::updateDevice();
 
 	// update scene ubo
 	if(camera_.update) {

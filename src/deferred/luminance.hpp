@@ -25,7 +25,7 @@ public:
 	// before each combine.
 	static constexpr auto format = vk::Format::r16Sfloat;
 	static constexpr auto extractGroupDimSize = 8u;
-	static constexpr auto mipGroupDimSize = 8u;
+	static constexpr auto mipGroupDimSize = 4u;
 	static_assert((mipGroupDimSize & (mipGroupDimSize - 1)) == 0,
 		"mipGroupDimSize must be a power of 2");
 

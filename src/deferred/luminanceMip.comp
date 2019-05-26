@@ -29,66 +29,49 @@ layout(push_constant) uniform PCR {
 
 // constant for all invocations
 const uint size = gl_WorkGroupSize.x; // == gl_WorkGroupSize.y
-// uvec2 inSize = textureSize(inLum, 0);
 vec2 pixelSize = 1.f / textureSize(inLum, 0);
-// vec2 pixelSize = 1.f / pcr.inSize;
-
-// constant per group
-// local number of processed pixels
-// uvec2 pend = min(inSize - 2 * size * gl_WorkGroupID.xy, 2 * size.xx);
 
 // TODO
-// vec2 lastGroupSize = pcr.inSize - 2 * size * gl_WorkGroupID.xy - (1 - pcr.last);
-vec2 lastGroupSize = pcr.inSize - 2 * size * gl_WorkGroupID.xy;
+vec2 lastGroupSize = pcr.inSize - 2 * size * gl_WorkGroupID.xy - 1 + pcr.last;
 vec2 pixelCount = min(lastGroupSize, 2 * size.xx);
 
 // contain the current summed-up luminance
 shared float lum[size][size];
 
+float load(vec2 pixel) {
+	vec2 off = 0.5 * vec2(lessThan(pixel + 1, pcr.inSize));
+	// TODO: can probably be done via pure math instead of switches
+	off.x += 0.5 * ((pixel.x + 2 >= pcr.inSize.x) ? pcr.last.x : 1.f);
+	off.y += 0.5 * ((pixel.y + 2 >= pcr.inSize.y) ? pcr.last.y : 1.f);
+	float fac = 4 * off.x * off.y;
+	pixel += off;
+	return fac * texture(inLum, pixel * pixelSize).r; // initial load
+}
+
+// NOTE: no early returns due to all the barriers. We use a sampler
+// with a black border and clampToBorder instead.
 void main() {
 	uvec2 l = gl_LocalInvocationID.xy;
 	vec2 pixel = 2 * gl_GlobalInvocationID.xy; // top-left of sampled pixels
 
-	// TODO!
-	lum[l.x][l.y] = 0.f;
-	memoryBarrierShared();
-	barrier();
-
-	if(pixel.x >= pcr.inSize.x || pixel.y >= pcr.inSize.y) {
-		return;
-	}
-
-	// TODO: mathematically verify it...
-	vec2 mlast = vec2( // TODO: can probably be done via pure math
-		(pixel.x + 2 >= pcr.inSize.x) ? pcr.last.x : 1.f,
-		(pixel.y + 2 >= pcr.inSize.y) ? pcr.last.y : 1.f);
-	vec2 off = 0.5 + 0.5 * mlast;
-	pixel += off;
-	float fac = 4 * off.x * off.y;
-	// pixel += 1;
-	// float fac = 4;
-
-	lum[l.x][l.y] = fac * texture(inLum, pixel * pixelSize).r; // initial load
-	// TODO: optimizie for end blocks (i.e. use pixelcount/2 instead of size somehow)
+	lum[l.x][l.y] = load(pixel); // initial load
 	for(uint isize = size / 2; isize > 0; isize /= 2) {
-		if(l.x >= isize) {
-			return;
-		}
-
 		// wait for initial load/last vertical reduce to complete
 		// apparently both barriers needed:
 		// https://stackoverflow.com/questions/39393560
 		memoryBarrierShared();
 		barrier();
-		lum[l.x][l.y] += lum[isize + l.x][l.y];
-		if(l.y >= isize) {
-			return;
+
+		if(l.x < isize) {
+			lum[l.x][l.y] += lum[isize + l.x][l.y];
 		}
 
 		// wait for horizontal reduce above to complete
 		memoryBarrierShared();
 		barrier();
-		lum[l.x][l.y] += lum[l.x][isize + l.y];
+		if(l.y < isize) {
+			lum[l.x][l.y] += lum[l.x][isize + l.y];
+		}
 	}
 
 	// there is only one invocation active at this point: l = (0, 0)

@@ -34,6 +34,8 @@ vpp::ViewableImageCreateInfo targetInfo(vk::Extent2D size, bool compute) {
 // and add multiple values per invocation in the extract stage and
 // start with a lower resolution of target (e.g. 0.5 * size). Less
 // memory needed and might be a bit faster.
+// can't use linear sampler though since we need log before calculating
+// average.
 
 void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
@@ -131,6 +133,7 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		sci.addressModeU = vk::SamplerAddressMode::clampToBorder;
 		sci.addressModeV = vk::SamplerAddressMode::clampToBorder;
 		sci.minFilter = vk::Filter::linear;
+		sci.magFilter = vk::Filter::linear;
 		sci.borderColor = vk::BorderColor::floatOpaqueBlack;
 		sci.anisotropyEnable = false;
 		mip_.sampler = {dev, sci};
@@ -224,7 +227,6 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 	auto& dev = extract_.pipe.device();
 
 	auto levelCount = vpp::mipmapLevels(size); // full mip chain
-	dlg_assert(levelCount - 1 < mip_.levels.size());
 	auto ivi = targetInfo(size, usingCompute()).view;
 	ivi.image = target_.image();
 	target_.init(data.initTarget, ivi);
@@ -232,6 +234,7 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 	vpp::nameHandle(target_.imageView(), "Luminance:target_.imageView");
 
 	if(usingCompute()) {
+		dlg_assert(levelCount - 1 < mip_.levels.size());
 		vpp::DescriptorSetUpdate dsu(extract_.ds);
 		dsu.storage({{{}, light, vk::ImageLayout::general}});
 		dsu.storage({{{}, target_.imageView(), vk::ImageLayout::general}});
@@ -273,6 +276,10 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 			i = std::min(i + shift, levelCount - 1);
 		}
 	} else {
+		vk::FramebufferCreateInfo fbi = {{}, extract_.rp,
+			1, &target_.vkImageView(), size.width, size.height, 1};
+		extract_.fb = {dev, fbi};
+
 		vpp::DescriptorSetUpdate dsu(extract_.ds);
 		dsu.imageSampler({{{}, light, vk::ImageLayout::shaderReadOnlyOptimal}});
 	}
@@ -290,7 +297,6 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 			vk::ShaderStageBits::compute, 0, sizeof(luminance), &luminance);
 
 		vk::ImageMemoryBarrier barrier;
-		/*
 		// TODO
 		// clear all levels, mainly to prevent nan interpolation
 		barrier.image = target_.image();
@@ -310,7 +316,6 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 		vk::cmdClearColorImage(cb, target_.image(),
 			vk::ImageLayout::transferDstOptimal, {{0.f, 0.f, 0.f, 0.f}},
 			{{{vk::ImageAspectBits::color, 0, levelCount, 0, 1}}});
-		*/
 
 		// transition all levels to general layout, discard previous content
 		barrier.image = target_.image();
@@ -318,10 +323,10 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 		barrier.subresourceRange.levelCount = levelCount;
 		barrier.subresourceRange.baseMipLevel = 0;
 		barrier.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-		// barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
-		// barrier.srcAccessMask = vk::AccessBits::transferWrite;
-		barrier.oldLayout = vk::ImageLayout::undefined;
-		barrier.srcAccessMask = {};
+		barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
+		barrier.srcAccessMask = vk::AccessBits::transferWrite;
+		// barrier.oldLayout = vk::ImageLayout::undefined;
+		// barrier.srcAccessMask = {};
 		barrier.newLayout = vk::ImageLayout::general;
 		barrier.dstAccessMask = vk::AccessBits::shaderWrite;
 		vk::cmdPipelineBarrier(cb,
@@ -354,12 +359,14 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 
 			// TODO: not sure if correct...
 			pcr.last = last;
-			if(width % 2) {
-				pcr.last.x = 0.0;
-			}
-			if(height % 2) {
-				pcr.last.y = 0.0;
-			}
+			// if(width % 2) {
+			// 	pcr.last.x = 0.0;
+			// }
+			// if(height % 2) {
+			// 	pcr.last.y = 0.0;
+			// }
+			vk::cmdPushConstants(cb, mip_.pipeLayout,
+				vk::ShaderStageBits::compute, 0, sizeof(pcr), &pcr);
 
 			// make sure writing has finished; transition
 			vk::ImageMemoryBarrier barrier;
@@ -381,19 +388,26 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 			auto dh = std::div(long(height), long(mf));
 			width = dw.quot;
 			height = dh.quot;
+			dlg_assert(!(dw.rem < 0));
+			dlg_assert(!(dh.rem < 0));
+
 			if(dw.rem > 0) {
 				++width;
-				last.x *= dw.rem / float(mf);
+				last.x = (dw.rem - 1 + last.x) / float(mf);
+			} else {
+				last.x = (mf - 1 + last.x) / float(mf);
 			}
 			if(dh.rem > 0) {
 				++height;
-				last.y *= dh.rem / float(mf);
+				last.y = (dh.rem - 1 + last.y) / float(mf);
+			} else {
+				last.y = (mf - 1 + last.y) / float(mf);
 			}
+			dlg_assert(width > 0);
+			dlg_assert(height > 0);
 
 			u32 cx = width;
 			u32 cy = height;
-			vk::cmdPushConstants(cb, mip_.pipeLayout,
-				vk::ShaderStageBits::compute, 0, sizeof(pcr), &pcr);
 			doi::cmdBindComputeDescriptors(cb, mip_.pipeLayout, 0, {level.ds});
 			vk::cmdDispatch(cb, cx, cy, 1);
 			prevLevel = i;

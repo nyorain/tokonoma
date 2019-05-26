@@ -9,5 +9,6 @@ layout(push_constant) uniform PCR {
 
 void main() {
 	luminance = dot(texture(lightTex, uv).rgb, pcr.luminance);
-	luminance = clamp(luminance, -100.f, 100.f);
+	// see luminance.comp for reasoning
+	luminance = clamp(log2(luminance), -50.f, 50.f);
 }

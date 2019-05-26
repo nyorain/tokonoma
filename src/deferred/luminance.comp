@@ -22,7 +22,7 @@ void main() {
 	// when ao is enabled in any form but think about *purely*
 	// black surfaces or a plain black backgroun) we have -inf here.
 	// But since that value would mess with our geometric mean, we clamp it
-	// to -10 instead.
-	luminance = clamp(log2(luminance), -10.f, 10.f);
+	// instead.
+	luminance = clamp(log2(luminance), -50.f, 50.f);
 	imageStore(outLuminance, ivec2(pixel), vec4(luminance));
 }
