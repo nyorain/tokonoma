@@ -92,5 +92,6 @@ protected:
 		std::vector<MipLevel> levels;
 		unsigned target0;
 		vpp::Sampler sampler; // linear, black border, clamp to border
+		float factor {};
 	} mip_;
 };

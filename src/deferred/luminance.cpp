@@ -248,7 +248,10 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 		auto prevView = target_.vkImageView();
 		auto* prevTarget = &mip_.target0;
 		auto isize = size;
+		auto totalSum = 1;
 		while(isize.width > 1 || isize.height > 1) {
+			totalSum *= mf * mf;
+
 			auto mipi = doi::mipmapSize(size, i);
 			isize.width = std::ceil(isize.width / float(mf));
 			isize.height = std::ceil(isize.height / float(mf));
@@ -275,6 +278,9 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 			prevView = mip_.levels[i].view;
 			i = std::min(i + shift, levelCount - 1);
 		}
+
+		mip_.factor = totalSum / float(size.width * size.height);
+		dlg_info("factor: {}", mip_.factor);
 	} else {
 		vk::FramebufferCreateInfo fbi = {{}, extract_.rp,
 			1, &target_.vkImageView(), size.width, size.height, 1};
@@ -345,28 +351,10 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 		const auto mf = (mipGroupDimSize * 2); // minification factor
 		auto prevLevel = 0u;
 		auto i = mip_.target0;
-		nytl::Vec2f last {1.f, 1.f}; // how much incovation in x or y is worth
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, mip_.pipe);
 		while(width > 1 || height > 1) {
 			dlg_assert(i > 0 && i < mip_.levels.size());
 			auto& level = mip_.levels[i];
-
-			struct {
-				nytl::Vec2u32 size;
-				nytl::Vec2f last;
-			} pcr;
-			pcr.size = {width, height};
-
-			// TODO: not sure if correct...
-			pcr.last = last;
-			// if(width % 2) {
-			// 	pcr.last.x = 0.0;
-			// }
-			// if(height % 2) {
-			// 	pcr.last.y = 0.0;
-			// }
-			vk::cmdPushConstants(cb, mip_.pipeLayout,
-				vk::ShaderStageBits::compute, 0, sizeof(pcr), &pcr);
 
 			// make sure writing has finished; transition
 			vk::ImageMemoryBarrier barrier;
@@ -384,27 +372,8 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 				vk::PipelineStageBits::computeShader,
 				{}, {}, {}, {{barrier}});
 
-			auto dw = std::div(long(width), long(mf));
-			auto dh = std::div(long(height), long(mf));
-			width = dw.quot;
-			height = dh.quot;
-			dlg_assert(!(dw.rem < 0));
-			dlg_assert(!(dh.rem < 0));
-
-			if(dw.rem > 0) {
-				++width;
-				last.x = (dw.rem - 1 + last.x) / float(mf);
-			} else {
-				last.x = (mf - 1 + last.x) / float(mf);
-			}
-			if(dh.rem > 0) {
-				++height;
-				last.y = (dh.rem - 1 + last.y) / float(mf);
-			} else {
-				last.y = (mf - 1 + last.y) / float(mf);
-			}
-			dlg_assert(width > 0);
-			dlg_assert(height > 0);
+			width = std::ceil(width / float(mf));
+			height = std::ceil(height / float(mf));
 
 			u32 cx = width;
 			u32 cy = height;
@@ -505,5 +474,6 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 float LuminancePass::updateDevice() {
 	dstBufferMap_.invalidate();
 	auto span = dstBufferMap_.span();
-	return std::exp2(float(doi::read<doi::f16>(span)));
+	auto v = float(doi::read<doi::f16>(span));
+	return std::exp2(mip_.factor * v);
 }
