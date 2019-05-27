@@ -98,8 +98,9 @@ void CombinePass::record(vk::CommandBuffer cb, RenderTarget& output,
 		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
 	transitionRead(cb, ldepth, vk::ImageLayout::shaderReadOnlyOptimal,
 		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	transitionRead(cb, bloom, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
+	// TODO
+	// transitionRead(cb, bloom, vk::ImageLayout::shaderReadOnlyOptimal,
+	// 	vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
 	transitionRead(cb, ssr, vk::ImageLayout::shaderReadOnlyOptimal,
 		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
 	transitionRead(cb, scattering, vk::ImageLayout::shaderReadOnlyOptimal,

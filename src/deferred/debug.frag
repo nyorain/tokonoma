@@ -16,6 +16,7 @@ const uint modeSSR = 7u;
 const uint modeDepth = 8u;
 const uint modeEmission = 9u;
 const uint modeBloom = 10u;
+const uint modeLuminance = 11u;
 
 layout(set = 0, binding = 0) uniform sampler2D inAlbedo;
 layout(set = 0, binding = 1) uniform sampler2D inNormal;
@@ -24,8 +25,9 @@ layout(set = 0, binding = 3) uniform sampler2D inSSAO;
 layout(set = 0, binding = 4) uniform sampler2D inSSR;
 layout(set = 0, binding = 5) uniform sampler2D inEmission;
 layout(set = 0, binding = 6) uniform sampler2D inBloom;
+layout(set = 0, binding = 7) uniform sampler2D inLuminance;
 
-layout(set = 0, binding = 7) uniform UBO {
+layout(set = 0, binding = 8) uniform UBO {
 	uint mode;
 } params;
 
@@ -85,7 +87,10 @@ void main() {
 			bloomSum = 1.0 - exp(-exposure * bloomSum);
 			fragColor = vec4(bloomSum, 1.0);
 			break;
-		} default:
+		} case modeLuminance:
+			fragColor = vec4(texture(inLuminance, uv).rrr, 1.0);
+			break;
+		default:
 			fragColor = vec4(0, 0, 0, 1);
 			break;
 	}

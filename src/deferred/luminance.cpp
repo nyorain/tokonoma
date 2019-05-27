@@ -146,7 +146,7 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 			vpp::descriptorBinding(vk::DescriptorType::storageImage, stage),
 		};
 		mip_.dsLayout = {dev, mipBindings};
-		pcr.size = sizeof(nytl::Vec2u32) * sizeof(nytl::Vec2f);
+		pcr.size = sizeof(nytl::Vec2u32);
 		mip_.pipeLayout = {dev, {{mip_.dsLayout.vkHandle()}}, {{pcr}}};
 
 		vpp::nameHandle(mip_.dsLayout, "LuminancePass:mip_.dsLayout");
@@ -241,7 +241,7 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 		dsu.apply();
 
 		// mip levels
-		const auto mf = (mipGroupDimSize * 2); // minification factor
+		const auto mf = (mipGroupDimSize * 4); // minification factor
 		const u32 shift = std::log2(mf); // mf is power always of two
 		auto i = shift;
 
@@ -303,8 +303,9 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 			vk::ShaderStageBits::compute, 0, sizeof(luminance), &luminance);
 
 		vk::ImageMemoryBarrier barrier;
-		// TODO
-		// clear all levels, mainly to prevent nan interpolation
+		/*
+		// NOTE: we clamp in compute shader instead, pass the real
+		// current read size as push constant
 		barrier.image = target_.image();
 		barrier.subresourceRange.layerCount = 1;
 		barrier.subresourceRange.levelCount = levelCount;
@@ -322,6 +323,7 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 		vk::cmdClearColorImage(cb, target_.image(),
 			vk::ImageLayout::transferDstOptimal, {{0.f, 0.f, 0.f, 0.f}},
 			{{{vk::ImageAspectBits::color, 0, levelCount, 0, 1}}});
+		*/
 
 		// transition all levels to general layout, discard previous content
 		barrier.image = target_.image();
@@ -329,10 +331,10 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 		barrier.subresourceRange.levelCount = levelCount;
 		barrier.subresourceRange.baseMipLevel = 0;
 		barrier.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-		barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
-		barrier.srcAccessMask = vk::AccessBits::transferWrite;
-		// barrier.oldLayout = vk::ImageLayout::undefined;
-		// barrier.srcAccessMask = {};
+		// barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
+		// barrier.srcAccessMask = vk::AccessBits::transferWrite;
+		barrier.oldLayout = vk::ImageLayout::undefined;
+		barrier.srcAccessMask = {};
 		barrier.newLayout = vk::ImageLayout::general;
 		barrier.dstAccessMask = vk::AccessBits::shaderWrite;
 		vk::cmdPipelineBarrier(cb,
@@ -348,7 +350,7 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 		doi::cmdBindComputeDescriptors(cb, extract_.pipeLayout, 0, {extract_.ds});
 		vk::cmdDispatch(cb, cx, cy, 1);
 
-		const auto mf = (mipGroupDimSize * 2); // minification factor
+		const auto mf = (mipGroupDimSize * 4); // minification factor
 		auto prevLevel = 0u;
 		auto i = mip_.target0;
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, mip_.pipe);
@@ -372,13 +374,13 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 				vk::PipelineStageBits::computeShader,
 				{}, {}, {}, {{barrier}});
 
+			auto size = nytl::Vec2u32{width, height};
+			vk::cmdPushConstants(cb, mip_.pipeLayout, vk::ShaderStageBits::compute,
+				0, sizeof(size), &size);
 			width = std::ceil(width / float(mf));
 			height = std::ceil(height / float(mf));
-
-			u32 cx = width;
-			u32 cy = height;
 			doi::cmdBindComputeDescriptors(cb, mip_.pipeLayout, 0, {level.ds});
-			vk::cmdDispatch(cb, cx, cy, 1);
+			vk::cmdDispatch(cb, width, height, 1);
 			prevLevel = i;
 			i = level.target;
 		}

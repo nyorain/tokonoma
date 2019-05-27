@@ -146,6 +146,32 @@ struct PassCreateInfo {
 	vk::ShaderModule fullscreenVertShader;
 };
 
+struct SyncScope {
+	vk::PipelineStageFlags stages;
+	vk::AccessFlags access;
+};
+
+inline SyncScope operator|(SyncScope a, SyncScope b) {
+	a.stages |= b.stages;
+	a.access |= b.access;
+	return a;
+}
+
+// TODO
+struct ImageBarrier {
+	vk::Image image;
+	vk::ImageLayout oldLayout;
+	vk::ImageLayout newLayout;
+	SyncScope src;
+	SyncScope dst;
+};
+
+void barrier(vk::CommandBuffer, nytl::Span<ImageBarrier> barriers);
+void barrier(vk::CommandBuffer, vk::Image image,
+	vk::ImageLayout old,
+	vk::ImageLayout newLayout,
+	SyncScope src, SyncScope dst);
+
 /*
 class SSAOPass {
 public:

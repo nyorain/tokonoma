@@ -8,7 +8,6 @@ const uint flagScattering = (1 << 0);
 const uint flagSSR = (1 << 1);
 const uint flagBloom = (1 << 2);
 const uint flagBloomDecrease = (1 << 3);
-const uint flagDOF = (1 << 4);
 
 layout(local_size_x_id = 0, local_size_y_id = 1) in;
 
@@ -23,8 +22,6 @@ layout(set = 0, binding = 6) uniform Params {
 	uint flags;
 	float bloomStrength;
 	float scatterStrength;
-	float dofFocus;
-	float dofStrength;
 } params;
 
 void main() {
@@ -37,55 +34,6 @@ void main() {
 	vec2 pixelSize = 1.f / size;
 	vec2 uv = (pixel + 0.5) * pixelSize;
 	vec3 color = texture(lightTex, uv).rgb;
-
-	// important that this comes before scattering and ssr
-	// TODO: first basic depth of field idea, just playing around,
-	// this isn't a real thing.
-	// TODO: we don't want to blur the sky but for that we need
-	// to know the far plane; second condition. Slight optimization
-	// as well, could probably be applied to most other pp algorithms
-	// TODO: probably best to split off to own pass. Also implement
-	// it correctly, with plausible coc and better blurring of everything.
-	if((params.flags & flagDOF) != 0 /*&& cd >= scene.far*/) {
-		const float focus = params.dofFocus;
-		const int range = 3;
-		const float eps = 0.01;
-		float total = 1;
-		vec3 accum = color;
-		float cd = texture(depthTex, uv).r;
-
-		for(int x = -range; x <= range; ++x) {
-			for(int y = -range; y <= range; ++y) {
-				// TODO: why don't we weigh the center pixel?
-				if(x == 0 && y == 0) { // already added that
-					continue;
-				}
-
-				vec2 off = pixelSize * vec2(x, y);
-				float depth = texture(depthTex, uv + off).r;
-				if(cd < depth - eps) {
-					continue;
-				}
-
-				float fac;
-				if(depth < focus) {
-					fac = clamp(0.05 + (focus - depth) / focus, 0, 1);
-					fac = pow(fac, 2);
-				} else {
-					// fac = 1 for dist = 4
-					float x = 0.25 * (depth - focus);
-					fac = clamp(pow(x, 2), 0, 1);
-				}
-				fac = clamp(fac * params.dofStrength, 0, 1);
-				fac *= pow(1.f / (abs(x) + 1), 0.2);
-				fac *= pow(1.f / (abs(y) + 1), 0.2);
-				total += fac;
-				accum += fac * texture(lightTex, uv + off).rgb;
-			}
-		}
-
-		color = accum / total;
-	}
 
 	// ssr
 	if((params.flags & flagSSR) != 0) {
@@ -101,6 +49,10 @@ void main() {
 			// when using high range we could just use high lod.
 			// Currently don't have mipmap of lights though, could
 			// generate if before this pass...
+			// NOTE: when dof is active we could calculate the coc
+			// for the end position (sample depth at refl.xy add
+			// that to the depth of the current fragment). For a high
+			// coc we could additionally blur
 			int range = int(clamp(2 * refl.z, 0.0, 4.0));
 			int lod = 0;
 			vec3 light = vec3(0.0);

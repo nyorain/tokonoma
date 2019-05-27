@@ -353,7 +353,7 @@ bool App::init(nytl::Span<const char*> args) {
 			} else if(i == 0 && p.deviceType == type) {
 				phdev = pd;
 				break;
-			} else if(i == 2 && p.deviceName.data() == get<2>(args_.phdev)) {
+			} else if(i == 2 && !std::strcmp(p.deviceName.data(), get<2>(args_.phdev))) {
 				phdev = pd;
 				break;
 			}

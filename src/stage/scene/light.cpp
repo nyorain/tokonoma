@@ -256,7 +256,7 @@ nytl::Mat4f DirLight::lightBallMatrix(nytl::Vec3f viewPos) const {
 nytl::Mat4f DirLight::lightMatrix(nytl::Vec3f viewPos) const {
 	// TODO: sizes should be configurable; depend on scene size
 	// TODO: can be opimtized, better position
-	auto pos = viewPos - 10 * this->data.dir;
+	auto pos = viewPos - 3 * this->data.dir;
 	// auto pos = -this->data.dir;
 
 	// discretize

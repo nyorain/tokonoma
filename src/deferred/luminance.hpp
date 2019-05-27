@@ -59,6 +59,7 @@ public:
 	float updateDevice(); // returns the luminance of the last frame
 
 	bool usingCompute() const { return !extract_.rp; }
+	const auto& target() const { return target_; }
 
 protected:
 	vpp::ViewableImage target_;

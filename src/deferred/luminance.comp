@@ -7,6 +7,9 @@ layout(push_constant) uniform PCR {
 	vec3 luminance;
 } pcr;
 
+const float minLum = -100.f;
+const float maxLum = 100.f;
+
 void main() {
 	uvec2 size = imageSize(inLight);
 	uvec2 pixel = gl_GlobalInvocationID.xy;
@@ -23,6 +26,6 @@ void main() {
 	// black surfaces or a plain black backgroun) we have -inf here.
 	// But since that value would mess with our geometric mean, we clamp it
 	// instead.
-	luminance = clamp(log2(luminance), -50.f, 50.f);
+	luminance = clamp(log2(luminance), minLum, maxLum);
 	imageStore(outLuminance, ivec2(pixel), vec4(luminance));
 }

@@ -21,20 +21,37 @@ layout(local_size_x_id = 0, local_size_y_id = 0) in;
 layout(set = 0, binding = 0) uniform sampler2D inLum;
 layout(set = 0, binding = 1, r16f) uniform writeonly image2D outLum;
 
+layout(push_constant) uniform PCR {
+	uvec2 inSize;
+} pcr;
+
 // constant for all invocations
 const uint size = gl_WorkGroupSize.x; // == gl_WorkGroupSize.y
 vec2 pixelSize = 1.f / textureSize(inLum, 0);
 
 // contain the current summed-up luminance
-shared float lum[size][size];
+shared float lum[2 * size][2 * size];
+
+float load(vec2 pixel) {
+	// return 0 when outside of image.
+	// NOTE: don't make a multiplication or something else out of this
+	// since we might sample values like inf or nan from the texture
+	// outside of inSize
+	return any(greaterThan(pixel, vec2(pcr.inSize) - 0.5)) ? 0.f :
+		texture(inLum, pixel * pixelSize).r;
+}
 
 // NOTE: no early returns due to all the barriers. We use a sampler
 // with a black border and clampToBorder instead.
 void main() {
-	uvec2 l = gl_LocalInvocationID.xy;
-	vec2 pixel = 2 * gl_GlobalInvocationID.xy; // top-left of sampled pixels
-	lum[l.x][l.y] = texture(inLum, (pixel + 1) * pixelSize).r;
-	for(uint isize = size / 2; isize > 0; isize /= 2) {
+	uvec2 l = 2 * gl_LocalInvocationID.xy;
+	vec2 pixel = 4 * gl_GlobalInvocationID.xy; // top-left of sampled pixels
+	pixel += 1;
+	lum[l.x][l.y] = load(pixel);
+	lum[l.x + 1][l.y] = load(pixel + vec2(2, 0));
+	lum[l.x][l.y + 1] = load(pixel + vec2(0, 2));
+	lum[l.x + 1][l.y + 1] = load(pixel + vec2(2, 2));
+	for(uint isize = size; isize > 0; isize /= 2) {
 		// wait for initial load/last vertical reduce to complete
 		// apparently both barriers needed:
 		// https://stackoverflow.com/questions/39393560
@@ -54,6 +71,6 @@ void main() {
 	}
 
 	// there is only one invocation active at this point: l = (0, 0)
-	float avg = lum[0][0] / (size * size);
+	float avg = lum[0][0] / (4 * size * size);
 	imageStore(outLum, ivec2(gl_WorkGroupID.xy), vec4(avg));
 }

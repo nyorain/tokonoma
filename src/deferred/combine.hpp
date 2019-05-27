@@ -4,11 +4,6 @@
 #include <stage/render.hpp>
 #include <stage/types.hpp>
 
-// TODO: might make sense to give DOF its own pass (with proper impl).
-// Or at least push it into the final pp stage so that at least SSR
-// gets DOF applied. maybe we might get really good DOF results with
-// a custom compute shader?
-
 /// Postprocessing pass that applies light scattering, ssr, DOF and bloom.
 /// Always a compute pipeline. Outputs its contents into a given buffer,
 /// re-used from an earlier stage (with rgba16f format).
@@ -19,7 +14,6 @@ public:
 	static constexpr u32 flagSSR = (1 << 1);
 	static constexpr u32 flagBloom = (1 << 2);
 	static constexpr u32 flagBloomDecrease = (1 << 3);
-	static constexpr u32 flagDOF = (1 << 4);
 
 	struct InitData {
 		vpp::TrDs::InitData initDs;
@@ -31,8 +25,6 @@ public:
 		u32 flags {flagBloomDecrease};
 		float bloomStrength {0.25f};
 		float scatterStrength {0.25f};
-		float dofFocus {1.f};
-		float dofStrength {0.5f};
 	} params;
 
 public:

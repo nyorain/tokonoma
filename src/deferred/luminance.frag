@@ -7,8 +7,11 @@ layout(push_constant) uniform PCR {
 	vec3 luminance;
 } pcr;
 
+const float minLum = -100.f;
+const float maxLum = 100.f;
+
 void main() {
 	luminance = dot(texture(lightTex, uv).rgb, pcr.luminance);
 	// see luminance.comp for reasoning
-	luminance = clamp(log2(luminance), -50.f, 50.f);
+	luminance = clamp(log2(luminance), minLum, maxLum);
 }

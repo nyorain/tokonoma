@@ -7,6 +7,7 @@ include_glsl = files(
 	'include/color.glsl',
 	'include/noise.glsl',
 	'include/ray.glsl',
+	'include/tonemap.glsl',
 )
 
 scene_glsl = files(
