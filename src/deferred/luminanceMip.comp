@@ -34,43 +34,40 @@ shared float lum[2 * size][2 * size];
 
 float load(vec2 pixel) {
 	// return 0 when outside of image.
-	// NOTE: don't make a multiplication or something else out of this
+	// don't make a multiplication or something else out of this
 	// since we might sample values like inf or nan from the texture
 	// outside of inSize
 	return any(greaterThan(pixel, vec2(pcr.inSize) - 0.5)) ? 0.f :
 		texture(inLum, pixel * pixelSize).r;
 }
 
-// NOTE: no early returns due to all the barriers. We use a sampler
+// no early returns due to all the barriers. We use a sampler
 // with a black border and clampToBorder instead.
 void main() {
-	uvec2 l = 2 * gl_LocalInvocationID.xy;
+	uvec2 l = gl_LocalInvocationID.xy;
 	vec2 pixel = 4 * gl_GlobalInvocationID.xy; // top-left of sampled pixels
 	pixel += 1;
-	lum[l.x][l.y] = load(pixel);
-	lum[l.x + 1][l.y] = load(pixel + vec2(2, 0));
-	lum[l.x][l.y + 1] = load(pixel + vec2(0, 2));
-	lum[l.x + 1][l.y + 1] = load(pixel + vec2(2, 2));
+	lum[2 * l.x + 0][2 * l.y + 0] = load(pixel + vec2(0, 0));
+	lum[2 * l.x + 1][2 * l.y + 0] = load(pixel + vec2(2, 0));
+	lum[2 * l.x + 0][2 * l.y + 1] = load(pixel + vec2(0, 2));
+	lum[2 * l.x + 1][2 * l.y + 1] = load(pixel + vec2(2, 2));
 	for(uint isize = size; isize > 0; isize /= 2) {
-		// wait for initial load/last vertical reduce to complete
+		// wait for initial load/last reduce to complete
 		// apparently both barriers needed:
 		// https://stackoverflow.com/questions/39393560
 		memoryBarrierShared();
 		barrier();
 
-		if(l.x < isize) {
+		// sum up squares
+		if(l.x < isize && l.y < isize) {
 			lum[l.x][l.y] += lum[isize + l.x][l.y];
-		}
-
-		// wait for horizontal reduce above to complete
-		memoryBarrierShared();
-		barrier();
-		if(l.y < isize) {
 			lum[l.x][l.y] += lum[l.x][isize + l.y];
+			lum[l.x][l.y] += lum[isize + l.x][isize + l.y];
 		}
 	}
 
-	// there is only one invocation active at this point: l = (0, 0)
-	float avg = lum[0][0] / (4 * size * size);
-	imageStore(outLum, ivec2(gl_WorkGroupID.xy), vec4(avg));
+	if(l.x == 0 && l.y == 0) {
+		float avg = lum[0][0] / (4 * size * size);
+		imageStore(outLum, ivec2(gl_WorkGroupID.xy), vec4(avg));
+	}
 }

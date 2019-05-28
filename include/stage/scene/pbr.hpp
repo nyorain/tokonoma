@@ -68,6 +68,8 @@ protected:
 // TODO: filter from mipmaps to avoid artefacts
 /// Prefilters an environment map for specular ibl.
 /// Renders them as mipmap levels onto the cubemap.
+/// TODO: can probably be just a functions that returns staging
+/// objects?
 class EnvironmentMapFilter {
 public:
 	/// The given image must have r16g16b16a16Sfloat format.
@@ -75,11 +77,10 @@ public:
 	/// all others in general layout. Layouts won't be changed.
 	void record(const vpp::Device& dev, vk::CommandBuffer cb,
 		vk::Image envImage, vk::ImageView envView, vk::Sampler linear,
-		unsigned mipLevels, nytl::Vec2ui size);
+		unsigned mipLevels, nytl::Vec2ui size, unsigned sampleCount = 4096);
 
 protected:
 	static constexpr auto groupDimSize = 8u;
-	static constexpr auto sampleCount = 1024u;
 
 	vpp::TrDsLayout dsLayout_;
 	vpp::PipelineLayout pipeLayout_;

@@ -149,9 +149,11 @@ struct PassCreateInfo {
 struct SyncScope {
 	vk::PipelineStageFlags stages;
 	vk::AccessFlags access;
+	vk::ImageLayout layout;
 };
 
 inline SyncScope operator|(SyncScope a, SyncScope b) {
+	dlg_assert(a.layout == b.layout);
 	a.stages |= b.stages;
 	a.access |= b.access;
 	return a;

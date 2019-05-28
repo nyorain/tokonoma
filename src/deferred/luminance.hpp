@@ -25,9 +25,10 @@ public:
 	// before each combine.
 	static constexpr auto format = vk::Format::r16Sfloat;
 	static constexpr auto extractGroupDimSize = 8u;
-	static constexpr auto mipGroupDimSize = 4u;
-	static_assert((mipGroupDimSize & (mipGroupDimSize - 1)) == 0,
-		"mipGroupDimSize must be a power of 2");
+
+	// static constexpr auto mipGroupDimSize = 16u;
+	// static_assert((mipGroupDimSize & (mipGroupDimSize - 1)) == 0,
+	// 	"mipGroupDimSize must be a power of 2");
 
 	struct InitData {
 		vpp::TrDs::InitData initDs;
@@ -45,6 +46,10 @@ public:
 	// about different conventions.
 	std::array<float, 3> luminance {0.25, 0.65, 0.1};
 
+	// Need to recreate pass when changing these.
+	bool compute = true;
+	unsigned mipGroupDimSize = 8u;
+
 public:
 	LuminancePass() = default;
 	void create(InitData&, const PassCreateInfo&);
@@ -60,6 +65,12 @@ public:
 
 	bool usingCompute() const { return !extract_.rp; }
 	const auto& target() const { return target_; }
+
+	SyncScope dstScopeLight() const; // layout: shaderReadOnlyOptimal
+	// SyncScope for the first mip level of the luminance target.
+	// Depending on whether a compute shader is used or not, will
+	// be in transferSrcOptimal or shaderReadOnlyOptimal layout.
+	SyncScope srcScopeTarget() const;
 
 protected:
 	vpp::ViewableImage target_;

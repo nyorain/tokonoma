@@ -307,7 +307,6 @@ protected:
 	vpp::SubBuffer sceneUbo_;
 	vpp::TrDs sceneDs_;
 
-	vpp::SubBuffer paramsUbo_;
 	std::uint32_t bloomLevels_ {};
 
 	vpp::Sampler linearSampler_;
@@ -331,7 +330,7 @@ protected:
 	doi::Texture brdfLut_;
 	doi::Environment env_;
 
-	u32 debugMode_;
+	u32 debugMode_ {0};
 	u32 renderPasses_;
 
 	// needed for point light rendering.
@@ -369,6 +368,17 @@ protected:
 		std::unique_ptr<vui::Widget> removedFolder {};
 	} selected_;
 	vui::dat::Panel* vuiPanel_ {};
+
+	BloomPass bloom_;
+	SSRPass ssr_;
+	SSAOPass ssao_;
+	AOPass ao_;
+	CombinePass combine_;
+	LuminancePass luminance_;
+	PostProcessPass pp_;
+
+	bool recreateLuminance_ {false};
+	vpp::ShaderModule fullVertShader_;
 
 	// gbuffer and lightning passes
 	struct {
@@ -409,14 +419,6 @@ protected:
 		vpp::ViewableImage target;
 		vpp::Framebuffer fb;
 	} scatter_;
-
-	BloomPass bloom_;
-	SSRPass ssr_;
-	SSAOPass ssao_;
-	AOPass ao_;
-	CombinePass combine_;
-	LuminancePass luminance_;
-	PostProcessPass pp_;
 
 	// debug render pass
 	struct {
@@ -621,6 +623,16 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	createValueTextfield(ssrf, "roughness fac pow", ssr_.params.roughnessFacPow, nullptr);
 	ssrf.open(false);
 
+	// == luminance folder ==
+	auto& lf = panel.create<vui::dat::Folder>("Luminance");
+	auto& lcc = lf.create<Checkbox>("compute").checkbox();
+	lcc.set(luminance_.compute);
+	lcc.onToggle = [&](const vui::Checkbox& c) {
+		luminance_.compute = c.checked();
+		recreateLuminance_ = true;
+	};
+	createValueTextfield(lf, "groupDimSize", luminance_.mipGroupDimSize, &recreateLuminance_);
+
 	// == debug values ==
 	auto& vg = panel.create<vui::dat::Folder>("Debug");
 	debug_.luminance = &vg.create<Label>("luminance", "-");
@@ -747,7 +759,7 @@ void ViewApp::initRenderData() {
 	initScattering(); // light scattering/volumentric light shafts/god rays
 	initFwd(); // init forward pass for skybox and transparent objects
 
-	vpp::ShaderModule fullVertShader(dev, stage_fullscreen_vert_data);
+	fullVertShader_ = {dev, stage_fullscreen_vert_data};
 
 	// bloom
 	PassCreateInfo passInfo {
@@ -761,7 +773,7 @@ void ViewApp::initRenderData() {
 			linearSampler_,
 			nearestSampler_,
 		},
-		fullVertShader
+		fullVertShader_
 	};
 
 	vpp::InitObject initBloom(bloom_, passInfo);
@@ -1782,7 +1794,7 @@ void ViewApp::updateDescriptors() {
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		ddsu.imageSampler({{{}, luminanceView,
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		ddsu.uniform({{{paramsUbo_}}});
+		ddsu.uniform({{{debug_.ubo}}});
 	}
 
 	vpp::apply(updates);
@@ -2127,53 +2139,21 @@ void ViewApp::record(const RenderBuffer& buf) {
 	}
 
 	// combine pass
-	if(debugMode_ == 0) {
+	// if(debugMode_ == 0) {
 		ao_.record(cb, light, albedo, emission, ldepth, normals, ssao, sceneDs_, size);
-		vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-			queryPool_, 10u);
+	// }
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 10u);
 
+	// if(debugMode_ == 0) {
 		combine_.record(cb, emission, light, ldepth, bloom, ssr, scatter, size);
-		vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-			queryPool_, 11u);
+	// }
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
+		queryPool_, 11u);
 
-		if(renderPasses_ & passLuminance) {
-			luminance_.record(cb, emission, size);
-		}
-
-		// vpp::DebugLabel debugLabel(cb, "CombinePass");
-		// auto& target = lpass_.light.image();
-//
-		// vk::ImageMemoryBarrier barrier;
-		// barrier.image = target;
-		// barrier.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		// barrier.srcAccessMask = vk::AccessBits::shaderRead;
-		// barrier.newLayout = vk::ImageLayout::general;
-		// barrier.dstAccessMask = vk::AccessBits::shaderWrite |
-		// 	 vk::AccessBits::shaderRead;
-		// barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-		// vk::cmdPipelineBarrier(cb,
-		// 	vk::PipelineStageBits::fragmentShader,
-		// 	vk::PipelineStageBits::computeShader,
-		// 	{}, {}, {}, {{barrier}});
-//
-		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
-		// 	combine_.pipe);
-		// vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
-		// 	combine_.pipeLayout, 0,
-		// 	{{sceneDs_.vkHandle(), combine_.ds.vkHandle()}}, {});
-		// vk::cmdDispatch(cb, std::ceil(width / 8.f), std::ceil(height / 8.f), 1u);
-//
-		// barrier.oldLayout = vk::ImageLayout::general;
-		// barrier.srcAccessMask = vk::AccessBits::shaderWrite |
-		// 	 vk::AccessBits::shaderRead;
-		// barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		// barrier.dstAccessMask = vk::AccessBits::shaderRead;
-		// vk::cmdPipelineBarrier(cb,
-		// 	vk::PipelineStageBits::computeShader,
-		// 	vk::PipelineStageBits::fragmentShader,
-		// 	{}, {}, {}, {{barrier}});
+	if(renderPasses_ & passLuminance) {
+		luminance_.record(cb, emission, size);
 	}
-
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
 		queryPool_, 12u);
 
@@ -2202,51 +2182,32 @@ void ViewApp::record(const RenderBuffer& buf) {
 	// 	barrier0.srcAccessMask = vk::AccessBits::transferRead;
 	// 	barrier0.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 	// 	barrier0.dstAccessMask = vk::AccessBits::shaderRead;
-//
-	// 	vk::ImageMemoryBarrier barrierLast;
-	// 	barrierLast.image = target.image;
-	// 	barrierLast.subresourceRange.layerCount = 1;
-	// 	barrierLast.subresourceRange.levelCount = 1;
-	// 	barrierLast.subresourceRange.baseMipLevel = llevels - 1;
-	// 	barrierLast.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-	// 	barrierLast.oldLayout = vk::ImageLayout::transferSrcOptimal;
-	// 	barrierLast.srcAccessMask = vk::AccessBits::transferRead |
-	// 		vk::AccessBits::transferWrite;
-	// 	barrierLast.newLayout = vk::ImageLayout::transferSrcOptimal;
-	// 	barrierLast.dstAccessMask = vk::AccessBits::transferRead;
-//
 	// 	vk::cmdPipelineBarrier(cb,
 	// 		vk::PipelineStageBits::transfer,
 	// 		vk::PipelineStageBits::allCommands | vk::PipelineStageBits::transfer,
 	// 		{}, {}, {}, {{barrier0, barrierLast}});
-//
-	// 	// copy from last light mipmap to stage for general exposure
-	// 	vk::BufferImageCopy copy;
-	// 	copy.bufferOffset = renderStage_.offset();
-	// 	copy.imageExtent = {1, 1, 1};
-	// 	copy.imageOffset = {0, 0, 0};
-	// 	copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
-	// 	copy.imageSubresource.layerCount = 1;
-	// 	copy.imageSubresource.mipLevel = llevels - 1;
-	// 	vk::cmdCopyImageToBuffer(cb, lpass_.light.image(),
-	// 		vk::ImageLayout::transferSrcOptimal,
-	// 		renderStage_.buffer(), {{copy}});
-//
-	// 	// probably not needed, right?
-	// 	vk::BufferMemoryBarrier bb;
-	// 	bb.buffer = renderStage_.buffer();
-	// 	bb.offset = renderStage_.offset();
-	// 	bb.size = renderStage_.size();
-	// 	bb.srcAccessMask = vk::AccessBits::transferWrite;
-	// 	bb.dstAccessMask = vk::AccessBits::hostRead;
-	// 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
-	// 		vk::PipelineStageBits::host, {}, {}, {{bb}}, {});
 	// }
 
 	if(renderPasses_ & passSSR) {
 		transitionRead(cb, ssr, vk::ImageLayout::shaderReadOnlyOptimal,
 			vk::PipelineStageBits::computeShader | vk::PipelineStageBits::fragmentShader,
 			vk::AccessBits::shaderRead);
+	}
+
+	if(renderPasses_ & passLuminance) {
+		auto src = luminance_.srcScopeTarget();
+		vk::ImageMemoryBarrier barrier0;
+		barrier0.image = luminance_.target().image();
+		barrier0.subresourceRange.layerCount = 1;
+		barrier0.subresourceRange.levelCount = 1;
+		barrier0.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+		barrier0.oldLayout = src.layout;
+		barrier0.srcAccessMask = src.access;
+		barrier0.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		barrier0.dstAccessMask = vk::AccessBits::shaderRead;
+		vk::cmdPipelineBarrier(cb, src.stages,
+			vk::PipelineStageBits::fragmentShader,
+			{}, {}, {}, {{barrier0}});
 	}
 
 	// output from combine pass
@@ -2273,6 +2234,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, debug_.pipe);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 				debug_.pipeLayout, 0, {{debug_.ds.vkHandle()}}, {});
+			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 		}
 
 		// gui stuff
@@ -2348,7 +2310,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		return false;
 	}
 
-	auto numModes = 11u;
+	auto numModes = 12u;
 	switch(ev.keycode) {
 		case ny::Keycode::m: // move light here
 			if(!dirLights_.empty()) {
@@ -2474,13 +2436,40 @@ bool ViewApp::mouseButton(const ny::MouseButtonEvent& ev) {
 }
 
 void ViewApp::updateDevice() {
+	// TODO: testing
+	if(recreateLuminance_) {
+		recreateLuminance_ = false;
+
+		// TODO...
+		auto wb = doi::WorkBatcher::createDefault(device());
+		PassCreateInfo passInfo {
+			wb,
+			depthFormat(), {
+				sceneDsLayout_,
+				materialDsLayout_,
+				primitiveDsLayout_,
+				lightDsLayout_,
+			}, {
+				linearSampler_,
+				nearestSampler_,
+			},
+			fullVertShader_
+		};
+
+		vpp::InitObject lum(luminance_, passInfo);
+		lum.init(passInfo);
+		App::resize_ = true; // recreate buffers and stuff
+	}
+
 	bloom_.updateDevice();
 	ssr_.updateDevice();
 	ao_.updateDevice();
 	combine_.updateDevice();
 	pp_.updateDevice();
 
-	float dt = 1 / 60.f; // TODO: needed from update stage
+	// TODO: needed from update stage. Probably better to do all calculations
+	// just there though probably
+	float dt = 1 / 60.f;
 
 	// update dof focus
 	auto map = renderStage_.memoryMap();

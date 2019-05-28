@@ -260,7 +260,7 @@ vpp::ViewableImage Irradiancer::finish() {
 // EnvironmentMapFilter
 void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
 		vk::Image envImage, vk::ImageView envView, vk::Sampler linear,
-		unsigned mipLevels, nytl::Vec2ui size) {
+		unsigned mipLevels, nytl::Vec2ui size, unsigned sampleCount) {
 	auto bindings = {
 		vpp::descriptorBinding( // output image, convolution
 			vk::DescriptorType::storageImage,

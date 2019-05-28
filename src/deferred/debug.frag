@@ -87,10 +87,11 @@ void main() {
 			bloomSum = 1.0 - exp(-exposure * bloomSum);
 			fragColor = vec4(bloomSum, 1.0);
 			break;
-		} case modeLuminance:
-			fragColor = vec4(texture(inLuminance, uv).rrr, 1.0);
+		} case modeLuminance: {
+			float lum = exp2(texture(inLuminance, uv).r);
+			fragColor = vec4(vec3(lum), 1.0);
 			break;
-		default:
+		} default:
 			fragColor = vec4(0, 0, 0, 1);
 			break;
 	}

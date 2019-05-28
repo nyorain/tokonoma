@@ -12,16 +12,30 @@
 #include <shaders/deferred.luminance.frag.h>
 #include <shaders/deferred.luminanceMip.comp.h>
 
+// TODO: even when compute shaders aren't available we can make the
+// luminance calculation using mipmaps correct by simply using
+// a power-of-two luminance target, clearing it with black before
+// rendering (via renderpass, then just use a smaller viewport+scissor) and
+// applying the final factor onto the result like we do with compute
+// shaders.
+// TODO(optimization): we could already sample (convert to log(luminance))
+// and add multiple values per invocation in the extract stage and
+// start with a lower resolution of target (e.g. 0.5 * size). Less
+// memory needed and might be a bit faster.
+// can't use linear sampler though since we need log before calculating
+// average.
+
 namespace {
 vpp::ViewableImageCreateInfo targetInfo(vk::Extent2D size, bool compute) {
 	vk::ImageUsageFlags usage;
 	if(compute) {
 		usage = vk::ImageUsageBits::storage |
 			vk::ImageUsageBits::transferSrc |
-			vk::ImageUsageBits::transferDst | // TODO
+			// vk::ImageUsageBits::transferDst | // TODO, for clearing
 			vk::ImageUsageBits::sampled;
 	} else {
 		usage = vk::ImageUsageBits::colorAttachment |
+			vk::ImageUsageBits::sampled | // only for debug presentation
 			vk::ImageUsageBits::transferSrc |
 			vk::ImageUsageBits::transferDst;
 	}
@@ -30,21 +44,15 @@ vpp::ViewableImageCreateInfo targetInfo(vk::Extent2D size, bool compute) {
 }
 } // anon namespace
 
-// TODO(optimization): we could already sample (convert to log(luminance))
-// and add multiple values per invocation in the extract stage and
-// start with a lower resolution of target (e.g. 0.5 * size). Less
-// memory needed and might be a bit faster.
-// can't use linear sampler though since we need log before calculating
-// average.
-
 void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
+	extract_.rp = {}; // reset
 
 	// test if r16f can be used as storage image. Supported on pretty
 	// much all desktop systems.
 	// we use a dummy size here but that shouldn't matter
-	auto compute = vpp::supported(dev, targetInfo({1024, 1024}, true).img);
+	compute &= vpp::supported(dev, targetInfo({1024, 1024}, true).img);
 	if(!compute) {
 		dlg_info("Can't use compute pipeline for Luminance");
 		auto stage = vk::ShaderStageBits::fragment;
@@ -152,6 +160,8 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		vpp::nameHandle(mip_.dsLayout, "LuminancePass:mip_.dsLayout");
 		vpp::nameHandle(mip_.pipeLayout, "LuminancePass:mip_.pipeLayout");
 
+		dlg_assertm((mipGroupDimSize & (mipGroupDimSize - 1)) == 0,
+			"mipGroupDimSize must be a power of 2");
 		vpp::ShaderModule mipShader(dev, deferred_luminanceMip_comp_data);
 		groupSizeSpec = {mipGroupDimSize, mipGroupDimSize};
 
@@ -189,11 +199,13 @@ void LuminancePass::init(InitData& data, const PassCreateInfo&) {
 	extract_.ds.init(data.initDs);
 	vpp::nameHandle(extract_.ds, "LuminancePass:extract_.ds");
 
-	dlg_assert(data.initLevels.size() == mip_.levels.size());
-	for(auto i = 0u; i < data.initLevels.size(); ++i) {
-		mip_.levels[i].ds.init(data.initLevels[i]);
-		auto name = "Luminance:mip_.levels[" + std::to_string(i) + "].ds";
-		vpp::nameHandle(mip_.levels[i].ds, name.c_str());
+	if(usingCompute()) {
+		dlg_assert(data.initLevels.size() == mip_.levels.size());
+		for(auto i = 0u; i < data.initLevels.size(); ++i) {
+			mip_.levels[i].ds.init(data.initLevels[i]);
+			auto name = "Luminance:mip_.levels[" + std::to_string(i) + "].ds";
+			vpp::nameHandle(mip_.levels[i].ds, name.c_str());
+		}
 	}
 }
 
@@ -272,7 +284,7 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 			vpp::nameHandle(mip_.levels[i].view, name.c_str());
 
 			vpp::DescriptorSetUpdate dsu(mip_.levels[i].ds);
-			dsu.imageSampler({{{}, prevView, vk::ImageLayout::general}});
+			dsu.imageSampler({{{}, prevView, vk::ImageLayout::shaderReadOnlyOptimal}});
 			dsu.storage({{{}, mip_.levels[i].view, vk::ImageLayout::general}});
 
 			prevView = mip_.levels[i].view;
@@ -288,6 +300,7 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 
 		vpp::DescriptorSetUpdate dsu(extract_.ds);
 		dsu.imageSampler({{{}, light, vk::ImageLayout::shaderReadOnlyOptimal}});
+		mip_.factor = 1.f;
 	}
 }
 
@@ -367,7 +380,7 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 			barrier.subresourceRange.aspectMask = vk::ImageAspectBits::color;
 			barrier.oldLayout = vk::ImageLayout::general;
 			barrier.srcAccessMask = vk::AccessBits::shaderWrite;
-			barrier.newLayout = vk::ImageLayout::general;
+			barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 			barrier.dstAccessMask = vk::AccessBits::shaderRead;
 			vk::cmdPipelineBarrier(cb,
 				vk::PipelineStageBits::computeShader,
@@ -478,4 +491,28 @@ float LuminancePass::updateDevice() {
 	auto span = dstBufferMap_.span();
 	auto v = float(doi::read<doi::f16>(span));
 	return std::exp2(mip_.factor * v);
+}
+
+SyncScope LuminancePass::dstScopeLight() const {
+	SyncScope scope;
+	scope.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	scope.access = vk::AccessBits::shaderRead;
+	scope.stages = usingCompute() ?
+		vk::PipelineStageBits::computeShader :
+		vk::PipelineStageBits::fragmentShader;
+	return scope;
+}
+
+SyncScope LuminancePass::srcScopeTarget() const {
+	SyncScope scope;
+	if(usingCompute()) {
+		scope.layout = vk::ImageLayout::shaderReadOnlyOptimal;
+		scope.access = vk::AccessBits::shaderRead;
+		scope.stages = vk::PipelineStageBits::computeShader;
+	} else {
+		scope.layout = vk::ImageLayout::transferSrcOptimal;
+		scope.access = vk::AccessBits::transferRead;
+		scope.stages = vk::PipelineStageBits::transfer;
+	}
+	return scope;
 }
