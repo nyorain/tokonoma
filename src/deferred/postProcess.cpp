@@ -127,9 +127,17 @@ void PostProcessPass::updateDevice() {
 }
 
 SyncScope PostProcessPass::dstScopeLight() const {
-	return {vk::PipelineStageBits::fragmentShader, vk::AccessBits::shaderRead};
+	return {
+		vk::PipelineStageBits::fragmentShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead
+	};
 }
 
 SyncScope PostProcessPass::dstScopeDepth() const {
-	return {vk::PipelineStageBits::fragmentShader, vk::AccessBits::shaderRead};
+	return {
+		vk::PipelineStageBits::fragmentShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead
+	};
 }

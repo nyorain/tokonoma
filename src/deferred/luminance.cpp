@@ -115,7 +115,10 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 	} else {
 		auto stage = vk::ShaderStageBits::compute;
 		auto extractBindings = {
-			vpp::descriptorBinding(vk::DescriptorType::storageImage, stage),
+			// nearest sampler since we don't interpolate
+			vpp::descriptorBinding( // input light tex
+				vk::DescriptorType::combinedImageSampler,
+				stage, -1, 1, &info.samplers.nearest),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage, stage),
 		};
 
@@ -248,7 +251,7 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 	if(usingCompute()) {
 		dlg_assert(levelCount - 1 < mip_.levels.size());
 		vpp::DescriptorSetUpdate dsu(extract_.ds);
-		dsu.storage({{{}, light, vk::ImageLayout::general}});
+		dsu.imageSampler({{{}, light, vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsu.storage({{{}, target_.imageView(), vk::ImageLayout::general}});
 		dsu.apply();
 
@@ -304,8 +307,7 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 	}
 }
 
-void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
-		vk::Extent2D size) {
+void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 	vpp::DebugLabel(cb, "LuminancePass");
 	auto levelCount = vpp::mipmapLevels(size); // full mip chain
 	auto width = size.width;
@@ -316,7 +318,7 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 			vk::ShaderStageBits::compute, 0, sizeof(luminance), &luminance);
 
 		vk::ImageMemoryBarrier barrier;
-		/*
+		/* TODO: can probably be removed. Remove transferDst usage as well (top)
 		// NOTE: we clamp in compute shader instead, pass the real
 		// current read size as push constant
 		barrier.image = target_.image();
@@ -355,8 +357,6 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 			vk::PipelineStageBits::computeShader,
 			{}, {}, {}, {{barrier}});
 
-		transitionRead(cb, light, vk::ImageLayout::general,
-			vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
 		u32 cx = std::ceil(width / float(extractGroupDimSize));
 		u32 cy = std::ceil(height / float(extractGroupDimSize));
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, extract_.pipe);
@@ -421,8 +421,6 @@ void LuminancePass::record(vk::CommandBuffer cb, RenderTarget& light,
 		vk::cmdPushConstants(cb, extract_.pipeLayout,
 			vk::ShaderStageBits::fragment, 0, sizeof(luminance), &luminance);
 
-		transitionRead(cb, light, vk::ImageLayout::shaderReadOnlyOptimal,
-			vk::PipelineStageBits::fragmentShader, vk::AccessBits::shaderRead);
 		vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});

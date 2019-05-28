@@ -14,6 +14,12 @@ using namespace doi::types;
 // to be supported as storage image format.
 
 /// Constructs screen space reflection information from depth and normals.
+/// Inputs:
+/// - depth: used as shaderReadOnlyOptimal; sampled
+/// - normals: used as shaderReadOnlyOptimal; sampled
+/// Output:
+/// - ssr (returned): general layout, 1 mip level
+///
 /// For a given pixel p the output holds following information:
 /// - x,y: the pixel coordinates on the light buffer where the reflection
 ///   ray ends. Not normalized, e.g. x in range [0, width].
@@ -63,14 +69,13 @@ public:
 		vk::ImageView normals);
 	vk::ImageView targetView() const { return target_.imageView(); }
 
-	/// Inputs:
-	/// - depth: used as shaderReadOnlyOptimal; sampled
-	/// - normals: used as shaderReadOnlyOptimal; sampled
-	/// Output:
-	/// - ssr (returned): general layout, 1 mip level
-	RenderTarget record(vk::CommandBuffer, RenderTarget& depth,
-		RenderTarget& normals, vk::DescriptorSet sceneDs, vk::Extent2D);
+	void record(vk::CommandBuffer, vk::DescriptorSet sceneDs, vk::Extent2D);
 	void updateDevice();
+
+	const auto& target() const { return target_; }
+	SyncScope dstScopeNormals() const;
+	SyncScope dstScopeDepth() const;
+	SyncScope srcScopeTarget() const;
 
 protected:
 	vpp::TrDsLayout dsLayout_;

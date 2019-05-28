@@ -245,8 +245,8 @@ void BloomPass::recordBlur(vk::CommandBuffer cb, unsigned mip, vk::Extent2D size
 	vk::cmdDispatch(cb, cx, cy, 1);
 }
 
-RenderTarget BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
-		RenderTarget& light, vk::Extent2D size) {
+void BloomPass::record(vk::CommandBuffer cb, vk::Image emission,
+		vk::Extent2D size) {
 	vpp::DebugLabel debugLabel(cb, "BloomPass");
 
 	unsigned w = size.width;
@@ -261,10 +261,6 @@ RenderTarget BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 	// for all and then doing vertical for all i guess
 
 	// blit (downscale to 0.5 * size): emission to target mip 0
-	// make sure we transfer from emission target
-	transitionRead(cb, emission, vk::ImageLayout::transferSrcOptimal,
-		vk::PipelineStageBits::transfer, vk::AccessBits::transferRead);
-
 	// make tmp target writable for blur passes
 	vk::ImageMemoryBarrier barrier;
 	barrier.image = tmpTarget_;
@@ -305,7 +301,7 @@ RenderTarget BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 		vk::ImageBlit blit;
 		blit.srcSubresource.layerCount = 1;
 		if(i == 0) {
-			src = emission.image;
+			src = emission;
 			blit.srcSubresource.mipLevel = 0;
 		} else {
 			blit.srcSubresource.mipLevel = i - 1;
@@ -336,11 +332,6 @@ RenderTarget BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 		vk::AccessFlags srcAccess = vk::AccessBits::transferWrite;
 		vk::PipelineStageFlags srcStage = vk::PipelineStageBits::transfer;
 		if(i == 0) {
-			// make sure light is in the required layout and all writes
-			// have finished.
-			transitionRead(cb, light, vk::ImageLayout::shaderReadOnlyOptimal,
-				vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-
 			// change layout of mip level 0 to general to add the high filter
 			// pass from the light buffer
 			barrier.oldLayout = layout;
@@ -392,16 +383,6 @@ RenderTarget BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 			{}, {}, {}, {{barrier}});
 	}
 
-	RenderTarget ret;
-	ret.image = target_;
-	ret.view = fullView_;
-	ret.layout = vk::ImageLayout::transferSrcOptimal;
-	// may seem weird to use transferRead as writeAccess but a pipeline
-	// barrier again these access/stages will transitively be against
-	// all writes
-	ret.writeAccess = vk::AccessBits::transferRead;
-	ret.writeStages = vk::PipelineStageBits::transfer;
-
 	if(!mipBlurred) {
 		// transform all levels back to readonly for blur read pass
 		barrier.subresourceRange.baseMipLevel = 0u;
@@ -418,18 +399,47 @@ RenderTarget BloomPass::record(vk::CommandBuffer cb, RenderTarget& emission,
 		for(auto i = 0u; i < levelCount_; ++i) {
 			recordBlur(cb, i, size);
 		}
-
-		// from recordBlur
-		ret.layout = vk::ImageLayout::general;
-		ret.writeAccess = vk::AccessBits::shaderWrite;
-		ret.writeStages = vk::PipelineStageBits::computeShader;
 	}
-
-	return ret;
 }
 
 void BloomPass::updateDevice() {
 	auto span = filter_.uboMap.span();
 	doi::write(span, params);
 	filter_.uboMap.flush();
+}
+
+SyncScope BloomPass::dstScopeEmission() const {
+	return {
+		vk::PipelineStageBits::transfer,
+		vk::ImageLayout::transferSrcOptimal,
+		vk::AccessBits::transferRead,
+	};
+}
+
+SyncScope BloomPass::dstScopeLight() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead
+	};
+}
+
+SyncScope BloomPass::srcScopeTarget() const {
+	if(mipBlurred) {
+		return {
+			vk::PipelineStageBits::transfer,
+			vk::ImageLayout::transferSrcOptimal,
+			// may seem weird to use transferRead as src scope for a
+			// newly written target but a pipeline
+			// barrier again these access/stages will transitively be against
+			// all writes
+			vk::AccessBits::transferRead,
+		};
+	} else {
+		return {
+			vk::PipelineStageBits::computeShader,
+			vk::ImageLayout::general,
+			vk::AccessBits::shaderWrite,
+		};
+	}
 }

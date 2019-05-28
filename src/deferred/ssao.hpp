@@ -47,10 +47,14 @@ public:
 	/// Outputs:
 	/// - returns ssao target, r8Unorm
 	///   compute: general layout, graphics: shaderReadOnlyOptimal
-	RenderTarget record(vk::CommandBuffer,
-		RenderTarget& ldepth, RenderTarget& normals,
-		vk::Extent2D, vk::DescriptorSet sceneDs);
+	void record(vk::CommandBuffer, vk::Extent2D, vk::DescriptorSet sceneDs);
 
+	SyncScope dstScopeDepth() const; // shaderReadOnlyOptimal
+	SyncScope dstScopeNormals() const; // shaderReadOnlyOptimal
+	// usingComopute() ? general layout : shaderReadOnlyOptimal
+	SyncScope srcScopeTarget() const;
+
+	const auto& target() const { return target_; }
 	bool usingCompute() const { return !rp_; }
 
 protected:

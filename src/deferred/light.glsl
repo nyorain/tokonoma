@@ -30,8 +30,6 @@ layout(set = 1, binding = 0, input_attachment_index = 0)
 layout(set = 1, binding = 1, input_attachment_index = 1)
 	uniform subpassInput inAlbedo;
 layout(set = 1, binding = 2, input_attachment_index = 2)
-	uniform subpassInput inEmission;
-layout(set = 1, binding = 3, input_attachment_index = 3)
 	uniform subpassInput inDepth;
 
 void main() {
@@ -42,7 +40,7 @@ void main() {
 	fragColor = vec4(0.0);
 	float depth = ztodepth(subpassLoad(inDepth).r, scene.near, scene.far);
 	if(depth >= 1) { // nothing rendered in gbufs here
-		return;
+		discard;
 	}
 
 	// reconstruct position from frag coord (uv) and depth
@@ -59,17 +57,17 @@ void main() {
 	// and shadow regions. We don't have to do the complete pbr calculation
 	// there.
 	if(lcolor.r + lcolor.g + lcolor.b <= 0.0) {
-		return;
+		// return;
+		discard;
 	}
 
 	vec4 sNormal = subpassLoad(inNormal);
 	vec4 sAlbedo = subpassLoad(inAlbedo);
-	vec4 sEmission = subpassLoad(inEmission);
 
 	vec3 normal = decodeNormal(sNormal.xy);
 	vec3 albedo = sAlbedo.xyz;
 	float roughness = sNormal.w;
-	float metallic = sEmission.w;
+	float metallic = sNormal.z;
 
 	// for debugging: diffuse only
 	// vec3 light = dot(normal, -ldir) * albedo;

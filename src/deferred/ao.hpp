@@ -6,6 +6,15 @@
 
 /// Pass that applies ambient occlusion and emission to the light target.
 /// Always a compute pipeline, has no targets on its own.
+/// Instead, directly works on the light color buffer (in general layout).
+/// Inputs: (are all sampled from in shaderReadOnlyOptimal layout)
+/// - albedo buffer is needed for ao colors
+/// - emission, will be applied to scene (counts as kind of ao).
+/// - ldepth target needed for position reconstruction which
+///   in turn is needed to determine the view direction for specular ibl.
+/// - normal buffer is needed for ibl. But roughness and metallic information
+///   are needed for ibl as well (expected stored in normal buffer).
+/// - [optional] ssao input, will be used to weigh ao
 class AOPass {
 public:
 	static constexpr auto groupDimSize = 8u;
@@ -32,31 +41,17 @@ public:
 	void init(InitData&, const PassCreateInfo&);
 
 	void updateInputs(vk::ImageView light,
-		vk::ImageView albeo, vk::ImageView emission, vk::ImageView ldepth,
+		vk::ImageView albedo, vk::ImageView emission, vk::ImageView ldepth,
 		vk::ImageView normal, vk::ImageView ssao,
 		vk::ImageView irradiance, vk::ImageView filteredEnv,
 		unsigned filteredEnvLods, vk::ImageView brdflut);
 
-	void record(vk::CommandBuffer,
-		/// Pass will add ambient occlusion to this buffer.
-		/// Will be used in general layout, read and written in compute shader
-		RenderTarget& light,
-		/// All buffers below are sampled from in shaderReadOnlyOptimal layout
-		/// Albedo buffer is needed for ao colors
-		RenderTarget& albedo,
-		/// Will add apply emission to scene (counts as kind of ao).
-		/// Also needed for the w component: roughness
-		RenderTarget& emission,
-		/// Linear depth target needed for position reconstruction which
-		/// in turn is needed to determine the view direction for specular ibl.
-		RenderTarget& ldepth,
-		/// Normal buffer is needed for ibl. But also needed for the w
-		/// component: metallic, for ibl
-		RenderTarget& normal,
-		/// [optional] When SSAO input is available, will be used to weigh ao
-		RenderTarget& ssao, vk::DescriptorSet sceneDs, vk::Extent2D);
-
+	void record(vk::CommandBuffer, vk::DescriptorSet sceneDs, vk::Extent2D);
 	void updateDevice();
+
+	SyncScope scopeLight() const;
+	SyncScope dstScopeSSAO() const;
+	SyncScope dstScopeGBuf() const; // emission, albedo, ldepth, normals
 
 protected:
 	vpp::TrDsLayout dsLayout_;

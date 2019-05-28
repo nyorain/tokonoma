@@ -86,26 +86,8 @@ void CombinePass::updateInputs(vk::ImageView output, vk::ImageView light,
 	dsu.uniform({{{ubo_}}});
 }
 
-void CombinePass::record(vk::CommandBuffer cb, RenderTarget& output,
-		RenderTarget& light, RenderTarget& ldepth, RenderTarget& bloom,
-		RenderTarget& ssr, RenderTarget& scattering,
-		vk::Extent2D size) {
+void CombinePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 	vpp::DebugLabel(cb, "CombinePass");
-	// TODO: group
-	transitionWrite(cb, output, vk::ImageLayout::general,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderWrite);
-	transitionRead(cb, light, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	transitionRead(cb, ldepth, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	// TODO
-	// transitionRead(cb, bloom, vk::ImageLayout::shaderReadOnlyOptimal,
-	// 	vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	transitionRead(cb, ssr, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	transitionRead(cb, scattering, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
 	doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {ds_});
 	auto cx = std::ceil(size.width / float(groupDimSize));
@@ -117,4 +99,40 @@ void CombinePass::updateDevice() {
 	auto span = uboMap_.span();
 	doi::write(span, params);
 	uboMap_.flush();
+}
+
+SyncScope CombinePass::dstScopeBloom() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+SyncScope CombinePass::dstScopeSSR() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+SyncScope CombinePass::dstScopeLight() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+SyncScope CombinePass::dstScopeDepth() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+SyncScope CombinePass::scopeTarget() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::general,
+		vk::AccessBits::shaderWrite,
+	};
 }

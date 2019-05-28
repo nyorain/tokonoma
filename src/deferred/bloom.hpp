@@ -8,6 +8,13 @@ using namespace doi::types;
 
 /// Bright-color-pass filter for bloom. Blurs the bloom/emission buffer
 /// on multiple mip map levels.
+/// Inputs:
+/// - emission: used as transferSrc; blitted from
+/// - light: used as shaderReadOnlyOptimal; sampled
+/// Output:
+/// - bloom (returned): transferSrc/general layout,
+///   depending on the 'mipBlurred' setting.
+///   Its imageView covers all bloom mip levels (fullView()).
 class BloomPass {
 public:
 	// static constexpr vk::Format format = GeometryPass::emissionFormat;
@@ -61,19 +68,16 @@ public:
 		const vk::Extent2D&);
 	void initBuffers(InitBufferData&, vk::ImageView lightInput);
 
-	// Inputs:
-	// - emission: used as transferSrc; blitted from
-	// - light: used as shaderReadOnlyOptimal; sampled
-	// Output:
-	// - bloom (returned): transferSrc/general layout,
-	//   depending on the 'mipBlurred' setting.
-	//   Its imageView covers all bloom mip levels (fullView()).
-	RenderTarget record(vk::CommandBuffer cb, RenderTarget& emission,
-		RenderTarget& light, vk::Extent2D);
+	void record(vk::CommandBuffer cb, vk::Image emission, vk::Extent2D);
 	void updateDevice();
+
+	SyncScope dstScopeEmission() const;
+	SyncScope dstScopeLight() const;
+	SyncScope srcScopeTarget() const;
 
 	vk::ImageView fullView() const { return fullView_; }
 	unsigned levelCount() const { return levelCount_; }
+	const auto& target() const { return target_; }
 
 protected:
 	void recordBlur(vk::CommandBuffer, unsigned mip, vk::Extent2D);

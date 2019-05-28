@@ -104,27 +104,10 @@ void AOPass::updateInputs(vk::ImageView light,
 	dsu.uniform({{{ubo_}}});
 }
 
-void AOPass::record(vk::CommandBuffer cb,
-		RenderTarget& light, RenderTarget& albedo, RenderTarget& emission,
-		RenderTarget& ldepth, RenderTarget& normal, RenderTarget& ssao,
-		vk::DescriptorSet sceneDs, vk::Extent2D size) {
+void AOPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,
+		vk::Extent2D size) {
 	vpp::DebugLabel(cb, "AOPass");
 	dlg_assert(envFilterLods_);
-
-	// TODO: group
-	transitionWrite(cb, light, vk::ImageLayout::general,
-		vk::PipelineStageBits::computeShader,
-		vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite);
-	transitionRead(cb, albedo, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	transitionRead(cb, emission, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	transitionRead(cb, ldepth, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	transitionRead(cb, normal, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	transitionRead(cb, ssao, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
 	doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
@@ -139,4 +122,26 @@ void AOPass::updateDevice() {
 	auto span = uboMap_.span();
 	doi::write(span, params);
 	uboMap_.flush();
+}
+
+SyncScope AOPass::scopeLight() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::general,
+		vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite
+	};
+}
+SyncScope AOPass::dstScopeSSAO() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+SyncScope AOPass::dstScopeGBuf() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
 }

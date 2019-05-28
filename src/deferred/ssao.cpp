@@ -369,29 +369,25 @@ void SSAOPass::initBuffers(InitBufferData& data, vk::ImageView depth,
 	vpp::apply({{{dsu}, {hdsu}, {vdsu}}});
 }
 
-RenderTarget SSAOPass::record(vk::CommandBuffer cb,
-		RenderTarget& ldepth, RenderTarget& normals,
+void SSAOPass::record(vk::CommandBuffer cb,
 		vk::Extent2D size, vk::DescriptorSet sceneDs) {
 	vpp::DebugLabel debugLabel(cb, "SSAOPass");
 	auto width = size.width;
 	auto height = size.height;
 
-	auto stage = usingCompute() ?
-		vk::PipelineStageBits::computeShader :
-		vk::PipelineStageBits::fragmentShader;
-	transitionRead(cb, ldepth, vk::ImageLayout::shaderReadOnlyOptimal,
-		stage, vk::AccessBits::shaderRead);
-	transitionRead(cb, normals, vk::ImageLayout::shaderReadOnlyOptimal,
-		stage, vk::AccessBits::shaderRead);
-
-	RenderTarget ret;
-	ret.image = target_.image();
-
 	if(usingCompute()) {
 		u32 dx = std::ceil(width / float(groupDimSize));
 		u32 dy = std::ceil(height / float(groupDimSize));
-		transitionWrite(cb, ret, vk::ImageLayout::general, stage,
-			vk::AccessBits::shaderWrite);
+
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = target_.image();
+		barrier.oldLayout = vk::ImageLayout::undefined;
+		barrier.srcAccessMask = {};
+		barrier.newLayout = vk::ImageLayout::general;
+		barrier.dstAccessMask = vk::AccessBits::shaderWrite;
+		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
+			vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
 		doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
@@ -399,7 +395,6 @@ RenderTarget SSAOPass::record(vk::CommandBuffer cb,
 
 		// make sure write to target_ is visible since it will be
 		// read in next pass (blur)
-		vk::ImageMemoryBarrier barrier;
 		barrier.image = target_.image();
 		barrier.oldLayout = vk::ImageLayout::general;
 		barrier.srcAccessMask = vk::AccessBits::shaderWrite;
@@ -452,10 +447,6 @@ RenderTarget SSAOPass::record(vk::CommandBuffer cb,
 			vk::ShaderStageBits::compute, 0, 4, &horizontal);
 		doi::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsVert});
 		vk::cmdDispatch(cb, dx, dy, 1);
-
-		ret.layout = vk::ImageLayout::general;
-		ret.writeAccess = vk::AccessBits::shaderWrite;
-		ret.writeStages = vk::PipelineStageBits::computeShader;
 	} else {
 		vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);
@@ -518,12 +509,41 @@ RenderTarget SSAOPass::record(vk::CommandBuffer cb,
 		doi::cmdBindGraphicsDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsVert});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		vk::cmdEndRenderPass(cb);
-
-		// from render pass, final layout
-		ret.layout = vk::ImageLayout::shaderReadOnlyOptimal;
-		ret.writeAccess = vk::AccessBits::colorAttachmentWrite;
-		ret.writeStages = vk::PipelineStageBits::colorAttachmentOutput;
 	}
+}
 
-	return ret;
+SyncScope SSAOPass::dstScopeDepth() const {
+	return {
+		usingCompute() ?
+			vk::PipelineStageBits::computeShader :
+			vk::PipelineStageBits::fragmentShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+
+SyncScope SSAOPass::dstScopeNormals() const {
+	return {
+		usingCompute() ?
+			vk::PipelineStageBits::computeShader :
+			vk::PipelineStageBits::fragmentShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+
+SyncScope SSAOPass::srcScopeTarget() const {
+	if(usingCompute()) {
+		return {
+			vk::PipelineStageBits::computeShader,
+			vk::ImageLayout::general,
+			vk::AccessBits::shaderWrite,
+		};
+	} else {
+		return {
+			vk::PipelineStageBits::colorAttachmentOutput,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::AccessBits::colorAttachmentWrite,
+		};
+	}
 }

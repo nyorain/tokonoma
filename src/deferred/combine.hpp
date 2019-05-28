@@ -34,11 +34,14 @@ public:
 	void updateInputs(vk::ImageView output, vk::ImageView light,
 		vk::ImageView ldepth, vk::ImageView bloom,
 		vk::ImageView ssr, vk::ImageView scattering);
-	void record(vk::CommandBuffer, RenderTarget& output,
-		RenderTarget& light, RenderTarget& ldepth, RenderTarget& bloom,
-		RenderTarget& ssr, RenderTarget& scattering,
-		vk::Extent2D);
+	void record(vk::CommandBuffer, vk::Extent2D);
 	void updateDevice();
+
+	SyncScope dstScopeBloom() const;
+	SyncScope dstScopeSSR() const;
+	SyncScope dstScopeLight() const;
+	SyncScope dstScopeDepth() const;
+	SyncScope scopeTarget() const;
 
 protected:
 	vpp::TrDsLayout dsLayout_;

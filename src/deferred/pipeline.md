@@ -1,3 +1,23 @@
+- geomLight
+- [optional] ssao: depends on geomLight (normals, depth)
+- ao: depends on geomLight(mergable), ssao
+- [optional] bloom: depends on geomLight (emission, light)
+- [optional] ssr: depends on geomLight (normals, depth)
+- (fwd: depends on nothing geomLight i guess, mergable with it)
+	- it shouldn't even overwrite the depth buffer the passes use.
+	  i guess we can always (if we don't want special 2nd ssr/ssao or sth
+	  for transparency) merge it with geomLight, right?
+- combine: depends on ao, ssr, bloom, (geomLight)
+	- !ssr: mergable dependency on ao
+- pp: depends on combine [no dependees]
+	- !dof: mergable dependency on combine (and !luminance)
+- [optional] luminance: depends on combine [no dependees]
+
+
+---
+
+notes below are outdated, they were the first concept for a full pipeline
+
 doesn't handle transparency yet.
 
 # concept

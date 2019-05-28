@@ -7,6 +7,7 @@ executable('deferred', [
 		'combine.cpp',
 		'postProcess.cpp',
 		'luminance.cpp',
+		'geomLight.cpp',
 		deferred_shaders,
 	], dependencies: [
 		stage_dep,

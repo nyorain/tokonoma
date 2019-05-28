@@ -59,8 +59,7 @@ public:
 
 	/// Expects log(luminance) to already be stored in the mip level 0
 	/// of the luminance target. The target must have a full mipmap chain.
-	void record(vk::CommandBuffer cb, RenderTarget& light,
-		vk::Extent2D extent);
+	void record(vk::CommandBuffer cb, vk::Extent2D extent);
 	float updateDevice(); // returns the luminance of the last frame
 
 	bool usingCompute() const { return !extract_.rp; }

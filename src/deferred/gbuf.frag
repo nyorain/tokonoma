@@ -67,12 +67,11 @@ void main() {
 	}
 
 	outNormal.xy = encodeNormal(normal);
-	outNormal.z = 2.f * (model.id / 65536.0) - 1.f; // snorm format
-
 	outAlbedo.rgb = albedo.rgb;
 
 	vec2 euv = (material.emissionCoords == 0u) ? inTexCoord0 : inTexCoord1;
 	outEmission.xyz = material.emission * texture(emissionTex, euv).rgb;
+	outEmission.w = model.id;
 
 	vec2 ouv = (material.occlusionCoords == 0u) ? inTexCoord0 : inTexCoord1;
 	outAlbedo.w = texture(occlusionTex, ouv).r;
@@ -80,10 +79,10 @@ void main() {
 	vec2 mruv = (material.metalRoughCoords == 0u) ? inTexCoord0 : inTexCoord1;
 	vec4 mr = texture(metalRoughTex, mruv);
 
-	// components as specified by gltf spec
-	// NOTE: use only half the range (normal and emissions gbufs are 16f)
+	// b,g components as specified by gltf spec
+	// NOTE: using only half the range here (normal buf is 16f)
+	outNormal.z = material.metallic * mr.b;
 	outNormal.w = material.roughness * mr.g;
-	outEmission.w = material.metallic * mr.b;
 
 	outDepth = depthtoz(gl_FragCoord.z, scene.near, scene.far);
 	// outDepth = inLinDepth;

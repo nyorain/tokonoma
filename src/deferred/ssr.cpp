@@ -104,20 +104,19 @@ void SSRPass::initBuffers(InitBufferData& data, vk::ImageView ldepth,
 	dsu.uniform({{{ubo_}}});
 }
 
-RenderTarget SSRPass::record(vk::CommandBuffer cb, RenderTarget& depth,
-		RenderTarget& normals, vk::DescriptorSet sceneDs, vk::Extent2D size) {
+void SSRPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,
+		vk::Extent2D size) {
 	vpp::DebugLabel debugLabel(cb, "SSRPass");
-	transitionRead(cb, depth, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
-	transitionRead(cb, normals, vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderRead);
 
-	RenderTarget ret;
-	ret.image = target_.image();
-	ret.view = target_.imageView();
-	ret.layout = vk::ImageLayout::undefined;
-	transitionWrite(cb, ret, vk::ImageLayout::general,
-		vk::PipelineStageBits::computeShader, vk::AccessBits::shaderWrite);
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = target_.image();
+	barrier.oldLayout = vk::ImageLayout::undefined;
+	barrier.srcAccessMask = {};
+	barrier.newLayout = vk::ImageLayout::general;
+	barrier.dstAccessMask = vk::AccessBits::shaderWrite;
+	barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
+		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
 	doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
@@ -125,11 +124,34 @@ RenderTarget SSRPass::record(vk::CommandBuffer cb, RenderTarget& depth,
 	auto cx = u32(std::ceil(size.width / float(groupDimSize)));
 	auto cy = u32(std::ceil(size.height / float(groupDimSize)));
 	vk::cmdDispatch(cb, cx, cy, 1);
-	return ret;
 }
 
 void SSRPass::updateDevice() {
 	auto span = uboMap_.span();
 	doi::write(span, params);
 	uboMap_.flush();
+}
+
+SyncScope SSRPass::dstScopeNormals() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+
+SyncScope SSRPass::dstScopeDepth() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+
+SyncScope SSRPass::srcScopeTarget() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::general,
+		vk::AccessBits::shaderWrite,
+	};
 }

@@ -68,7 +68,7 @@ void main() {
 			vec4 vNormal = texture(normalTex, uv);
 			vec3 normal = decodeNormal(vNormal.xy);
 			float roughness = vNormal.w;
-			float metallic = vEmission.w;
+			float metallic = vNormal.z;
 
 			// reconstruct position
 			vec2 suv = 2 * uv - 1;
