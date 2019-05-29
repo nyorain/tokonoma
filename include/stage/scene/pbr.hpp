@@ -66,10 +66,10 @@ protected:
 };
 
 // TODO: filter from mipmaps to avoid artefacts
+// TODO: can probably be just a functions that returns staging
+// objects?
 /// Prefilters an environment map for specular ibl.
 /// Renders them as mipmap levels onto the cubemap.
-/// TODO: can probably be just a functions that returns staging
-/// objects?
 class EnvironmentMapFilter {
 public:
 	/// The given image must have r16g16b16a16Sfloat format.

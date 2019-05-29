@@ -27,9 +27,9 @@ layout(set = 0, binding = 5) uniform sampler2D inEmission;
 layout(set = 0, binding = 6) uniform sampler2D inBloom;
 layout(set = 0, binding = 7) uniform sampler2D inLuminance;
 
-layout(set = 0, binding = 8) uniform UBO {
+layout(push_constant) uniform PCR {
 	uint mode;
-} params;
+} pcr;
 
 void main() {
 	vec4 albedo = texture(inAlbedo, uv);
@@ -45,7 +45,7 @@ void main() {
 	float ssaoPow = 3.0;
 	float bloomStrength = 3.0;
 
-	switch(params.mode) {
+	switch(pcr.mode) {
 		case modeAlbedo:
 			fragColor = vec4(albedo.rgb, 1.0);
 			break;
@@ -62,7 +62,7 @@ void main() {
 		case modeAlbedoAO: {
 			float ao = aoFactor * albedo.w;
 			ao *= pow(ssao.r, ssaoPow);
-			vec3 col = (params.mode == modeAO) ? vec3(1.0) : albedo.rgb;
+			vec3 col = (pcr.mode == modeAO) ? vec3(1.0) : albedo.rgb;
 			fragColor = vec4(ao * col, 1.0);
 			break;
 		} case modeSSR:

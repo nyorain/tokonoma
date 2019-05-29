@@ -1,5 +1,6 @@
 #include "geomLight.hpp"
 
+#include <stage/scene/environment.hpp>
 #include <stage/scene/material.hpp>
 #include <stage/scene/primitive.hpp>
 #include <vpp/debug.hpp>
@@ -15,6 +16,7 @@
 #include <shaders/deferred.pointLight.frag.h>
 #include <shaders/deferred.pointLight.vert.h>
 #include <shaders/deferred.dirLight.frag.h>
+#include <shaders/deferred.ao.frag.h>
 
 void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		SyncScope dstNormals,
@@ -22,7 +24,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		SyncScope dstEmission,
 		SyncScope dstDepth,
 		SyncScope dstLDepth,
-		SyncScope dstLight) {
+		SyncScope dstLight, bool ao) {
 	auto& dev = info.wb.dev;
 
 	// render pass
@@ -71,13 +73,15 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	gbufRefs[3].attachment = ids.ldepth;
 	gbufRefs[3].layout = vk::ImageLayout::colorAttachmentOptimal;
 
-	vk::AttachmentReference ginputRefs[3];
+	vk::AttachmentReference ginputRefs[4];
 	ginputRefs[0].attachment = ids.normals;
 	ginputRefs[0].layout = vk::ImageLayout::shaderReadOnlyOptimal;
 	ginputRefs[1].attachment = ids.albedo;
 	ginputRefs[1].layout = vk::ImageLayout::shaderReadOnlyOptimal;
 	ginputRefs[2].attachment = ids.ldepth;
 	ginputRefs[2].layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	ginputRefs[3].attachment = ids.emission;
+	ginputRefs[3].layout = vk::ImageLayout::shaderReadOnlyOptimal;
 
 	vk::AttachmentReference depthRef;
 	depthRef.attachment = ids.depth;
@@ -99,7 +103,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	lpass.pColorAttachments = &lightRef;
 	// use depth stencil attachment for light boxes
 	lpass.pDepthStencilAttachment = &depthRef;
-	lpass.inputAttachmentCount = 3;
+	lpass.inputAttachmentCount = 3 + ao;
 	lpass.pInputAttachments = ginputRefs;
 
 	// == dependencies ==
@@ -128,7 +132,8 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	deps[1].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
 	deps[1].srcAccessMask = vk::AccessBits::colorAttachmentWrite;
 	deps[1].dstSubpass = vk::subpassExternal;
-	deps[1].dstStageMask = dstNormals.stages |
+	deps[1].dstStageMask = vk::PipelineStageBits::bottomOfPipe |
+		dstNormals.stages |
 		dstAlbedo.stages |
 		dstEmission.stages |
 		dstLDepth.stages;
@@ -138,11 +143,12 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		dstLDepth.access;
 
 	// deps[2]: make sure light buffer can be accessed afterwrads
-	deps[2].srcSubpass = 0u;
+	deps[2].srcSubpass = 1u;
 	deps[2].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
 	deps[2].srcAccessMask = vk::AccessBits::colorAttachmentWrite;
 	deps[2].dstSubpass = vk::subpassExternal;
-	deps[2].dstStageMask = dstLight.stages;
+	deps[2].dstStageMask = vk::PipelineStageBits::bottomOfPipe |
+		dstLight.stages;
 	deps[2].dstAccessMask = dstLight.access;
 
 	vk::RenderPassCreateInfo rpi;
@@ -154,7 +160,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	rpi.pSubpasses = subpasses.data();
 
 	rp_ = {dev, rpi};
-	vpp::nameHandle(rp_, "GeomLightPass:rp_");
+	vpp::nameHandle(rp_, "GeomLightPass:rp");
 
 	// pipeline
 	geomPipeLayout_ = {dev, {{
@@ -162,7 +168,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		info.dsLayouts.material.vkHandle(),
 		info.dsLayouts.primitive.vkHandle(),
 	}}, {{doi::Material::pcr()}}};
-	vpp::nameHandle(geomPipeLayout_, "GeomLightPass:geomPipeLayout_");
+	vpp::nameHandle(geomPipeLayout_, "GeomLightPass:geomPipeLayout");
 
 	vpp::ShaderModule vertShader(dev, deferred_gbuf_vert_data);
 	vpp::ShaderModule fragShader(dev, deferred_gbuf_frag_data);
@@ -197,11 +203,11 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	gpi.rasterization.cullMode = vk::CullModeBits::none;
 	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 	geomPipe_ = {dev, gpi.info()};
-	vpp::nameHandle(geomPipe_, "GeomLightPass:geomPipe_");
+	vpp::nameHandle(geomPipe_, "GeomLightPass:geomPipe");
 
 
 	// light
-	auto inputBindings = {
+	auto lightBindings = {
 		vpp::descriptorBinding( // normal
 			vk::DescriptorType::inputAttachment,
 			vk::ShaderStageBits::fragment),
@@ -213,16 +219,14 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 			vk::ShaderStageBits::fragment),
 	};
 
-	lightDsLayout_ = {dev, inputBindings};
-
-	// light ds
+	lightDsLayout_ = {dev, lightBindings};
 	lightPipeLayout_ = {dev, {{
 		info.dsLayouts.scene.vkHandle(),
 		lightDsLayout_.vkHandle(),
 		info.dsLayouts.light.vkHandle(),
 	}}, {}};
-	vpp::nameHandle(lightDsLayout_, "GeomLightPass:lightDsLayout_");
-	vpp::nameHandle(lightPipeLayout_, "GeomLightPass:lightPipeLayout_");
+	vpp::nameHandle(lightDsLayout_, "GeomLightPass:lightDsLayout");
+	vpp::nameHandle(lightPipeLayout_, "GeomLightPass:lightPipeLayout");
 
 	vpp::ShaderModule pointVertShader(dev, deferred_pointLight_vert_data);
 	vpp::ShaderModule pointFragShader(dev, deferred_pointLight_frag_data);
@@ -287,11 +291,81 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	vpp::nameHandle(dirLightPipe_, "GeomLightPass:dirLightPipe_");
 
 	lightDs_ = {data.initLightDs, info.wb.alloc.ds, lightDsLayout_};
+
+	if(!ao) {
+		aoPipe_ = {};
+		return;
+	}
+
+	auto aoBindings = {
+		vpp::descriptorBinding( // normal
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // albedo
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // depth
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // emission
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // irradiance
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+		vpp::descriptorBinding( // envMap
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+		vpp::descriptorBinding( // brdflut
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+		vpp::descriptorBinding( // ubo
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::fragment),
+	};
+
+	aoDsLayout_ = {dev, aoBindings};
+	vk::PushConstantRange pcr;
+	pcr.size = 4u;
+	pcr.stageFlags = vk::ShaderStageBits::fragment;
+	aoPipeLayout_ = {dev, {{
+		info.dsLayouts.scene.vkHandle(),
+		aoDsLayout_.vkHandle(),
+	}}, {{pcr}}};
+	vpp::nameHandle(lightDsLayout_, "GeomLightPass:lightDsLayout_");
+	vpp::nameHandle(lightPipeLayout_, "GeomLightPass:lightPipeLayout_");
+
+	vpp::ShaderModule aoFragShader(dev, deferred_ao_frag_data);
+	vpp::GraphicsPipelineInfo aogpi{rp_, aoPipeLayout_, {{{
+		{info.fullscreenVertShader, vk::ShaderStageBits::vertex},
+		{aoFragShader, vk::ShaderStageBits::fragment},
+	}}}, 1};
+
+	aogpi.depthStencil.depthTestEnable = false;
+	aogpi.depthStencil.depthWriteEnable = false;
+
+	// additive blending just like the light pipes
+	aogpi.blend.attachmentCount = 1u;
+	aogpi.blend.pAttachments = lightBlends;
+	aoPipe_ = {dev, aogpi.info()};
+	vpp::nameHandle(aoPipe_, "GeomLightPass:aoPipe");
+
+	aoUbo_ = {data.initAoUbo, info.wb.alloc.bufHost, sizeof(aoParams),
+		vk::BufferUsageBits::uniformBuffer, info.wb.dev.hostMemoryTypes()};
+	aoDs_ = {data.initAoDs, info.wb.alloc.ds, aoDsLayout_};
 }
 
 void GeomLightPass::init(InitData& data) {
 	lightDs_.init(data.initLightDs);
 	vpp::nameHandle(lightDs_, "GeomLightPass:lightDs");
+
+	if(renderAO()) {
+		aoUbo_.init(data.initAoUbo);
+		aoUboMap_ = aoUbo_.memoryMap();
+
+		aoDs_.init(data.initAoDs);
+		vpp::nameHandle(aoDs_, "GeomLightPass:aoDs");
+	}
 }
 
 void GeomLightPass::createBuffers(InitBufferData& data,
@@ -304,6 +378,7 @@ void GeomLightPass::createBuffers(InitBufferData& data,
 		return info;
 	};
 
+	auto devMem = wb.dev.deviceMemoryTypes();
 	constexpr auto baseUsage = vk::ImageUsageBits::colorAttachment |
 		vk::ImageUsageBits::inputAttachment |
 		vk::ImageUsageBits::sampled;
@@ -314,28 +389,34 @@ void GeomLightPass::createBuffers(InitBufferData& data,
 	constexpr auto lightUsage = baseUsage | vk::ImageUsageBits::storage;
 
 	auto info = createInfo(normalsFormat, baseUsage);
-	normals_ = {data.initNormals.initTarget, wb.alloc.memDevice, info.img};
+	normals_ = {data.initNormals.initTarget, wb.alloc.memDevice, info.img,
+		devMem};
 	data.initNormals.viewInfo = info.view;
 
 	info = createInfo(albedoFormat, baseUsage);
-	albedo_ = {data.initAlbedo.initTarget, wb.alloc.memDevice, info.img};
+	albedo_ = {data.initAlbedo.initTarget, wb.alloc.memDevice, info.img,
+		devMem};
 	data.initAlbedo.viewInfo = info.view;
 
 	info = createInfo(ldepthFormat, ldepthUsage);
-	ldepth_ = {data.initDepth.initTarget, wb.alloc.memDevice, info.img};
+	ldepth_ = {data.initDepth.initTarget, wb.alloc.memDevice, info.img,
+		devMem};
 	data.initDepth.viewInfo = info.view;
 
 	info = createInfo(emissionFormat, emissionUsage);
-	emission_ = {data.initEmission.initTarget, wb.alloc.memDevice, info.img};
+	emission_ = {data.initEmission.initTarget, wb.alloc.memDevice, info.img,
+		devMem};
 	data.initEmission.viewInfo = info.view;
 
 	info = createInfo(lightFormat, lightUsage);
-	light_ = {data.initLight.initTarget, wb.alloc.memDevice, info.img};
+	light_ = {data.initLight.initTarget, wb.alloc.memDevice, info.img,
+		devMem};
 	data.initLight.viewInfo = info.view;
 }
 
 void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
-		vk::ImageView depth) {
+		vk::ImageView depth, vk::ImageView irradiance, vk::ImageView envMap,
+		unsigned envLods, vk::ImageView brdflut) {
 	normals_.init(data.initNormals.initTarget, data.initNormals.viewInfo);
 	albedo_.init(data.initAlbedo.initTarget, data.initAlbedo.viewInfo);
 	ldepth_.init(data.initDepth.initTarget, data.initDepth.viewInfo);
@@ -366,6 +447,7 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 	fbi.attachmentCount = attachments.size();
 	fbi.pAttachments = attachments.begin();
 	fb_ = {rp_.device(), fbi};
+	vpp::nameHandle(fb_, "GeomLightPass:fb");
 
 	// ds
 	vpp::DescriptorSetUpdate dsu(lightDs_);
@@ -375,12 +457,33 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.inputAttachment({{{}, ldepth_.imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.apply();
+
+	if(renderAO()) {
+		vpp::DescriptorSetUpdate dsu(aoDs_);
+		dsu.inputAttachment({{{}, normals_.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.inputAttachment({{{}, albedo_.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.inputAttachment({{{}, ldepth_.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.inputAttachment({{{}, emission_.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.imageSampler({{{}, irradiance, vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.imageSampler({{{}, envMap, vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.imageSampler({{{}, brdflut, vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.uniform({{{aoUbo_}}});
+
+		aoEnvLods_ = envLods;
+	}
 }
 
 void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		vk::DescriptorSet sceneDs, const doi::Scene& scene,
 		nytl::Span<doi::PointLight> pointLights,
-		nytl::Span<doi::DirLight> dirLights, vpp::BufferSpan boxIndices) {
+		nytl::Span<doi::DirLight> dirLights, vpp::BufferSpan boxIndices,
+		const doi::Environment* env, TimeWidget& time) {
+	vpp::DebugLabel(cb, "GeomLightPass");
 	auto width = size.width;
 	auto height = size.height;
 
@@ -396,9 +499,13 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		std::uint32_t(cv.size()), cv.data()
 	}, {});
 
-	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, geomPipe_);
-	doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {sceneDs});
-	scene.render(cb, geomPipeLayout_);
+	{
+		vpp::DebugLabel(cb, "geometry pass");
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, geomPipe_);
+		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {sceneDs});
+		scene.render(cb, geomPipeLayout_);
+		time.add("geometry");
+	}
 
 	// render light balls with emission material
 	// NOTE: rendering them messes with light scattering since
@@ -417,22 +524,51 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 
 	vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
 
-	doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 0, {sceneDs, lightDs_});
-	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pointLightPipe_);
-	vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
-		boxIndices.offset(), vk::IndexType::uint16);
-	for(auto& light : pointLights) {
-		doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light.ds()});
-		vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0); // box
-	}
+	{
+		vpp::DebugLabel(cb, "light pass");
+		doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 0, {sceneDs, lightDs_});
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pointLightPipe_);
+		vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
+			boxIndices.offset(), vk::IndexType::uint16);
+		for(auto& light : pointLights) {
+			doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light.ds()});
+			vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0); // box
+		}
 
-	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, dirLightPipe_);
-	for(auto& light : dirLights) {
-		doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light.ds()});
-		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, dirLightPipe_);
+		for(auto& light : dirLights) {
+			doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light.ds()});
+			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
+		}
+
+		time.add("light");
+		if(renderAO()) {
+			vpp::DebugLabel(cb, "ao pass");
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, aoPipe_);
+			doi::cmdBindGraphicsDescriptors(cb, aoPipeLayout_, 0, {sceneDs, aoDs_});
+			vk::cmdPushConstants(cb, aoPipeLayout_, vk::ShaderStageBits::fragment,
+				0, 4, &aoEnvLods_);
+			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
+			time.add("ao");
+		}
+
+		if(env) {
+			vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
+				boxIndices.offset(), vk::IndexType::uint16);
+			env->render(cb);
+			time.add("env");
+		}
 	}
 
 	vk::cmdEndRenderPass(cb);
+}
+
+void GeomLightPass::updateDevice() {
+	if(renderAO()) {
+		auto span = aoUboMap_.span();
+		doi::write(span, aoParams);
+		aoUboMap_.flush();
+	}
 }
 
 // SyncScope GeomLightPass::srcScopeLight() const {

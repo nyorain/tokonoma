@@ -202,3 +202,4 @@ float phase_mie(float c, float g) {
 	b *= 2.0 + gg;	
 	return (3.0 / 8.0 / 3.141) * a / b;
 }
+

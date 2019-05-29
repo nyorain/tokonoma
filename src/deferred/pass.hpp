@@ -65,7 +65,13 @@ struct SyncScope {
 };
 
 inline SyncScope& operator|=(SyncScope& a, SyncScope b) {
-	dlg_assert(a.layout == b.layout);
+	if(a.layout == vk::ImageLayout::undefined) {
+		a.layout = b.layout;
+	} else {
+		dlg_assert(b.layout == vk::ImageLayout::undefined ||
+			a.layout == b.layout);
+	}
+
 	a.stages |= b.stages;
 	a.access |= b.access;
 	return a;
@@ -127,3 +133,14 @@ inline void barrier(vk::CommandBuffer cb, vk::Image image, SyncScope src,
 	barrier.subresourceRange = subres;
 	vk::cmdPipelineBarrier(cb, src.stages, dst.stages, {}, {}, {}, {{barrier}});
 }
+
+struct QueryPoolTimestamp {
+	vk::QueryPool pool;
+	unsigned query;
+
+	void write(vk::CommandBuffer cb, vk::PipelineStageBits stage =
+			vk::PipelineStageBits::topOfPipe) {
+		vk::cmdWriteTimestamp(cb, stage, pool, query);
+	}
+};
+

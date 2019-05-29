@@ -24,8 +24,7 @@ namespace doi {
 // Environment
 void Environment::create(InitData& data, const WorkBatcher& wb,
 		nytl::StringParam envMapPath, nytl::StringParam irradiancePath,
-		vk::RenderPass rp, unsigned subpass,
-		vk::Sampler linear, vk::SampleCountBits samples) {
+		vk::Sampler linear) {
 	auto& dev = wb.dev;
 
 	// textures
@@ -52,6 +51,28 @@ void Environment::create(InitData& data, const WorkBatcher& wb,
 	dsLayout_ = {dev, bindings};
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 
+	// ubo
+	auto uboSize = sizeof(nytl::Mat4f);
+	ubo_ = {data.initUbo, dev.bufferAllocator(), uboSize,
+		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+
+	ds_ = {data.initDs, dev.descriptorAllocator(), dsLayout_};
+}
+
+void Environment::init(InitData& data, const WorkBatcher& wb) {
+	envMap_.init(data.initEnvMap, wb);
+	irradiance_.init(data.initIrradiance, wb);
+	ubo_.init(data.initUbo);
+	ds_.init(data.initDs);
+
+	vpp::DescriptorSetUpdate dsu(ds_);
+	dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+	dsu.imageSampler({{{}, envMap_.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+}
+
+void Environment::createPipe(const vpp::Device& dev, vk::RenderPass rp,
+		unsigned subpass, vk::SampleCountBits samples) {
 	vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);
 	vpp::ShaderModule fragShader(dev, stage_skybox_frag_data);
 	vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{{
@@ -81,28 +102,9 @@ void Environment::create(InitData& data, const WorkBatcher& wb,
 	gpi.blend.pAttachments = &blendAttachment;
 
 	pipe_ = {dev, gpi.info()};
-
-	// ubo
-	auto uboSize = sizeof(nytl::Mat4f);
-	ubo_ = {data.initUbo, dev.bufferAllocator(), uboSize,
-		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
-
-	ds_ = {data.initDs, dev.descriptorAllocator(), dsLayout_};
 }
 
-void Environment::init(InitData& data, const WorkBatcher& wb) {
-	envMap_.init(data.initEnvMap, wb);
-	irradiance_.init(data.initIrradiance, wb);
-	ubo_.init(data.initUbo);
-	ds_.init(data.initDs);
-
-	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
-	dsu.imageSampler({{{}, envMap_.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-}
-
-void Environment::render(vk::CommandBuffer cb) {
+void Environment::render(vk::CommandBuffer cb) const {
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 		pipeLayout_, 0, {{ds_.vkHandle()}}, {});
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);

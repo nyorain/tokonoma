@@ -54,6 +54,7 @@ public:
 	SyncScope dstScopeGBuf() const; // emission, albedo, ldepth, normals
 
 protected:
+	vk::RenderPass rp_;
 	vpp::TrDsLayout dsLayout_;
 	vpp::TrDs ds_;
 	vpp::PipelineLayout pipeLayout_;

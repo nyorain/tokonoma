@@ -132,6 +132,7 @@ shaders_src = {
 	  ['ssr.comp', deferred_glsl],
 	  ['combine.comp', deferred_glsl],
 	  ['ao.comp', deferred_glsl],
+	  ['ao.frag', deferred_glsl],
 	  ['luminance.comp', deferred_glsl],
 	  ['luminance.frag', deferred_glsl],
 	  ['luminanceMip.comp', deferred_glsl],

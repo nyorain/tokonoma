@@ -1,5 +1,3 @@
-// WIP
-
 #pragma once
 
 #include "pass.hpp"
@@ -17,6 +15,19 @@ public:
 	static constexpr u32 flagFXAA = (1 << 0u);
 	static constexpr u32 flagDOF = (1 << 1u);
 
+	static constexpr u32 modeDefault = 0u; // render normally
+	static constexpr u32 modeAlbedo = 1u;
+	static constexpr u32 modeNormals = 2u;
+	static constexpr u32 modeRoughness = 3u;
+	static constexpr u32 modeMetalness = 4u;
+	static constexpr u32 modeAO = 5u;
+	static constexpr u32 modeAlbedoAO = 6u;
+	static constexpr u32 modeSSR = 7u;
+	static constexpr u32 modeDepth = 8u;
+	static constexpr u32 modeEmission = 9u;
+	static constexpr u32 modeBloom = 10u;
+	static constexpr u32 modeLuminance = 11u;
+
 public:
 	struct {
 		u32 flags {flagFXAA};
@@ -28,6 +39,7 @@ public:
 
 	struct InitData {
 		vpp::TrDs::InitData initDs;
+		vpp::TrDs::InitData initDebugDs;
 		vpp::SubBuffer::InitData initUbo;
 	};
 
@@ -35,16 +47,25 @@ public:
 	PostProcessPass() = default;
 	void create(InitData&, const PassCreateInfo&, vk::Format output);
 	void init(InitData&, const PassCreateInfo&);
-	vpp::Framebuffer initFramebuffer(vk::ImageView output,
-		vk::ImageView light, vk::ImageView ldepth, vk::Extent2D);
+
+	void updateInputs(vk::ImageView light, vk::ImageView depth,
+		// image views below are only needed in the varioius debug
+		// buffer visualization modes
+		vk::ImageView normals,
+		vk::ImageView albedo,
+		vk::ImageView ssao,
+		vk::ImageView ssr,
+		vk::ImageView emission,
+		vk::ImageView bloom,
+		vk::ImageView luminance);
+	vpp::Framebuffer initFramebuffer(vk::ImageView output, vk::Extent2D);
 
 	// expects the render pass to be already active.
 	// allows caller to draw screen-space stuff after pp is done.
-	void record(vk::CommandBuffer);
+	void record(vk::CommandBuffer, u32 debugMode);
 	void updateDevice();
 
-	SyncScope dstScopeLight() const;
-	SyncScope dstScopeDepth() const;
+	SyncScope dstScopeInput() const;
 	vk::RenderPass renderPass() const { return rp_; }
 
 protected:
@@ -56,4 +77,11 @@ protected:
 
 	vpp::SubBuffer ubo_;
 	vpp::MemoryMapView uboMap_;
+
+	struct {
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+	} debug_;
 };

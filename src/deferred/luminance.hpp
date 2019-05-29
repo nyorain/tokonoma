@@ -26,10 +26,6 @@ public:
 	static constexpr auto format = vk::Format::r16Sfloat;
 	static constexpr auto extractGroupDimSize = 8u;
 
-	// static constexpr auto mipGroupDimSize = 16u;
-	// static_assert((mipGroupDimSize & (mipGroupDimSize - 1)) == 0,
-	// 	"mipGroupDimSize must be a power of 2");
-
 	struct InitData {
 		vpp::TrDs::InitData initDs;
 		vpp::SubBuffer::InitData initDstBuffer;

@@ -1,16 +1,24 @@
 #pragma once
 
 #include "pass.hpp"
+#include "timeWidget.hpp"
 #include <stage/render.hpp>
 #include <stage/types.hpp>
 
 #include <stage/scene/scene.hpp> // only fwd
 #include <stage/scene/light.hpp> // only fwd
 
-class AOPass;
-class PostProcessPass;
+// fwd
+namespace doi {
 
-// TODO: re-implement ldepth mip levels
+class PointLight;
+class DirLightj;
+class Scene;
+class Environment;
+
+} // namespace doi
+
+// TODO: optionally re-implement ldepth mip levels, helpful for ssao
 
 /// Render geometry and lights, deferred.
 class GeomLightPass {
@@ -24,6 +32,8 @@ public:
 
 	struct InitData {
 		vpp::TrDs::InitData initLightDs;
+		vpp::TrDs::InitData initAoDs;
+		vpp::SubBuffer::InitData initAoUbo;
 	};
 
 	struct InitTarget {
@@ -39,6 +49,15 @@ public:
 		InitTarget initLight;
 	};
 
+	static constexpr u32 flagDiffuseIBL = (1 << 0);
+	static constexpr u32 flagSpecularIBL = (1 << 1);
+	static constexpr u32 flagEmission = (1 << 2);
+	struct {
+		u32 flags {flagDiffuseIBL | flagSpecularIBL | flagEmission};
+		float factor {0.25f};
+		float ssaoPow {3.f};
+	} aoParams;
+
 public:
 	GeomLightPass() = default;
 	void create(InitData&, const PassCreateInfo&,
@@ -48,20 +67,23 @@ public:
 		SyncScope dstDepth,
 		SyncScope dstLDepth,
 		SyncScope dstLight,
-		AOPass* ao = nullptr, PostProcessPass* pp = nullptr);
+		bool ao);
 	void init(InitData&);
 
 	void createBuffers(InitBufferData&, const doi::WorkBatcher&, vk::Extent2D);
-	void initBuffers(InitBufferData&, vk::Extent2D, vk::ImageView depth);
+	void initBuffers(InitBufferData&, vk::Extent2D, vk::ImageView depth,
+		// following parameters only required when pass includes ao
+		vk::ImageView irradiance, vk::ImageView filteredEnv,
+		unsigned filteredEnvLods, vk::ImageView brdflut);
 
-	/// When initialized with ao and pp subpasses,
-	// vpp::Framebuffer initFramebuffer(vk::Extent2D, vk::ImageView output);
-
+	// If an environment is given, will render the skybox
 	void record(vk::CommandBuffer cb, const vk::Extent2D&,
 		vk::DescriptorSet sceneDs, const doi::Scene& scene,
 		nytl::Span<doi::PointLight>, nytl::Span<doi::DirLight>,
-		vpp::BufferSpan boxIndices);
-	SyncScope srcScopeLight() const;
+		vpp::BufferSpan boxIndices, const doi::Environment* env,
+		TimeWidget& time);
+	void updateDevice();
+	// SyncScope srcScopeLight() const;
 
 	const auto& normalsTarget() const { return normals_; }
 	const auto& ldepthTarget() const { return ldepth_; }
@@ -76,6 +98,7 @@ public:
 	vk::Pipeline geomPipe() const { return geomPipe_; }
 	vk::Pipeline dirLightPipe() const { return dirLightPipe_; }
 	vk::Pipeline pointLightPipe() const { return pointLightPipe_; }
+	bool renderAO() const { return aoPipe_; }
 
 protected:
 	vpp::RenderPass rp_;
@@ -96,8 +119,12 @@ protected:
 	vpp::Pipeline dirLightPipe_;
 	vpp::Pipeline pointLightPipe_;
 
-	struct {
-		AOPass* ao {};
-		PostProcessPass* pp {};
-	} sub_;
+	// ao
+	vpp::TrDsLayout aoDsLayout_;
+	vpp::TrDs aoDs_;
+	vpp::PipelineLayout aoPipeLayout_;
+	vpp::Pipeline aoPipe_;
+	vpp::SubBuffer aoUbo_;
+	vpp::MemoryMapView aoUboMap_;
+	unsigned aoEnvLods_ {};
 };

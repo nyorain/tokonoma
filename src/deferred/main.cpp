@@ -51,8 +51,6 @@
 #include <shaders/stage.fullscreen.vert.h>
 #include <shaders/deferred.pointScatter.frag.h>
 #include <shaders/deferred.dirScatter.frag.h>
-// #include <shaders/deferred.combine.comp.h>
-#include <shaders/deferred.pp.frag.h>
 #include <shaders/deferred.debug.frag.h>
 
 #include <cstdlib>
@@ -62,39 +60,17 @@
 // - lens flare
 // - better dof implementations, current impl is naive
 
+// TODO: fix up query pool usage
+// TODO: support transparency. Can be ordered for now, i.e. split
+//   primitives into two groups in Scene: BLEND and non-blend material-based.
+//   the blend ones are sorted in each updateDevice (either on gpu
+//   or (probably better for the start) on a host visible buffer)
+//   via draw indirect commands. Render it in geomLight pass if possible (no
+//   bloom/ssr) otherwise we probably have to use extra pass.
+//   When using extra pass, render skybox after that pass (depth optimization)
 // TODO: group initial layout transitions from undefined layout to general
-//   per frame?
-// TODO: without ssao, the ao pass can be part of the geomLight render
-//   pass, potentially removing the need to store albedo, normals, emission
-//   really important optimization.
-// TODO: merge ao, combine and pp passes into one if possible (they
-//   only need to be seperated for special other passes, e.g. dof, ssr)
-//   - combine only needed for ssr. bloom/scattering can be applied
-//     in ao pass (pp would only be possible when there is no luminance pass,
-//     since lum needs scattering and bloom). ao can't be merged
-//     with geomLight pass in those cases though.
-//   Different setups:
-//   - with no effect at all enabled, we could even merge ao and pp and
-//     not store any rp attachment except the swapchain one.
-//   - with dof enabled, store the ldepth attachment to read from it afterwards
-//   - with ssao enabled: geomLight -> ssao -> ao/combine/pp
-//     so if ssao (but neither ssr,luminance) is enabled, merge ao&combine
-//     into pp.
-//   - with luminance enabled: geomLight/ao -> lum,pp
-//     i.e. ao can be merged into geomLight and no combine pass needed
-//   - ... too many setups, need different approach
-// TODO: logically merge debug_ into pp_. Only natural thing to do, they
-//   already share render pass and framebuffer and such. But keep
-//   debug and pp pipelines seperate, i guess that makes sense.
-//   pp_.record just gets the render mode somehow (stored in pp_ or passed)
-// TODO: make gpass and lpass their own passes.
-//   we can probably merge them into one renderpass with
-//   two subpasses, could really improve performance (especially
-//   when some of the buffers are not needed, they don't have
-//   to be stored! maybe recreate renderpass every time passes
-//   are enabled/disabled and evaluate?).
-//   Probably no record function in those passes though, that is
-//   handled by the outside i guess.
+//   per frame? could do it externally, undefined -> targetScope()
+//   for luminance (compute), ssr, ssao (compute)
 // TODO: correctly use byRegion dependency flag where possible
 // TODO: re-enable light scattering.
 //   allow light scattering per light?
@@ -110,6 +86,12 @@
 // TODO: support dynamic shader reloading (from file) on pass (re-)creation?
 // TODO: improve ssr performance. Try out linear sampling, at-least-one-stepsize,
 //   maybe we can work out a variable step size algorithm?
+// TODO: blur ssr in extra pass (with compute shader shared memory,
+//   see ssrBlur.comp wip)? Might improve performance
+//   and allow for greater blur. Also distribute factors (compute guass +
+//   depth difference) via shared variables.
+//   maybe just generate mipmaps for light buffer, i guess that is how
+//   it's usually done.
 // TODO: we should be able to always use the same attenuation (or at least
 //   make it independent from radius) by normalizing distance from light
 //   (dividing by radius) before caluclating attunation.
@@ -119,14 +101,6 @@
 //      its own parameters? normalize distance by radius before passing
 //      it to attenuation? parameters that work fine for a normalized
 //      distance are (1, 8, 128), but then lights are rather weak
-// TODO: transparent objects in forward pass.
-//   the objects from that pass will have no effect on ssao or ssr,
-//   no other way to do it. That means that you will never see a transparent
-//   object in a reflection...
-//   An alternative idea is to use 2 forward passes: one for almost opaque
-//   objects that can be aproximated as opaque for ssr/ssao sakes and then
-//   (after reading the buffers for ss algorithms) another forward pass
-//   for almost-transparent objects. Probably not worth it though
 // TODO: we could allow to display luminance mipmaps in debug shader
 // TODO: parameterize all (currently somewhat random) values and factors
 //   (especially in artefact-prone screen space shaders)
@@ -144,18 +118,10 @@
 //   Allow to set the shadow map size for all lights. Or automatically
 //   dynamically allocate shadow maps per frame (but also see the
 //   only one shadow map at all thing).
-// TODO: fix theoretical synchronization issues (markes as todo in code)
 // TODO: do we really need depth mip levels anywhere? test if it really
 //   brings ssao performance improvement. Otherwise we are wasting this
 //   whole "depth mip map levels" thing
-// TODO: blur ssr in extra pass (with compute shader shared memory,
-//   see ssrBlur.comp wip)? Might improve performance
-//   and allow for greater blur. Also distribute factors (compute guass +
-//   depth difference) via shared variables.
-//   maybe just generate mipmaps for light buffer, i guess that is how
-//   it's usually done.
-// TODO: environment map specular ibl: filter from mipmaps to avoid artefacts
-//   not too important, it works well enough with high sample count
+// TODO: reflectange probe rendering
 
 // low prio:
 // TODO: look at adding smaa. That needs multiple post processing
@@ -192,11 +158,6 @@
 //   subpasses, right?
 // TODO(optimization): try out other mechanisms for better ssao cache coherency
 //   we should somehow use a higher mipmap level i guess
-// TODO(optimization, cleanup): we only need emission as input to lightning pass since its
-//   w component has a pbr property. We could instead move that to
-//   normals and the material id of normals somewhere else, e.g.
-//   the emission buffer. But that is sfloat instead of snorm,
-//   not sure how to encode in that case.
 // TODO(optimization?): we could theoretically just use one shadow map at all.
 //   requires splitting the light passes though (rendering with light pipe)
 //   so might have disadvantage. so not high prio
@@ -210,15 +171,15 @@
 //   should be possible with vulkan mutable format images
 // TODO(optimization): more efficient point light shadow cube map
 //   rendering: only render those sides that we can actually see...
-//   -> nothing culling-related implement at all at the moment
+//   -> nothing culling-related implemented at all at the moment
+// TODO: look into vk_khr_multiview (promoted to vulkan 1.1?) for
+//   cubemap rendering (point lights, but also skybox transformation)
 // TODO(optimization): we currently don't use the a component of the
 //   bloom targets. We could basically get a free (strong) blur there...
 //   maybe good for ssao or something?
 // TODO: just treat light scattering as emission? get the strong blur for free.
 //   might be way too strong though... not as alpha (see todo above) but simply
 //   add it to the emission color
-// TODO: look into vk_khr_multiview (promoted to vulkan 1.1?) for
-//   cubemap rendering (point lights, but also skybox transformation)
 
 // NOTE: investigate/compare deferred lightning elements?
 //   http://gameangst.com/?p=141
@@ -264,19 +225,8 @@ public:
 	static constexpr u32 passSSAO = (1u << 4u);
 	static constexpr u32 passLuminance = (1u << 5u);
 
-	// debug, see renderMode_
-	static constexpr u32 modeDefault = 0u; // render normally
-	static constexpr u32 modeAlbedo = 1u;
-	static constexpr u32 modeNormals = 2u;
-	static constexpr u32 modeRoughness = 3u;
-	static constexpr u32 modeMetalness = 4u;
-	static constexpr u32 modeAO = 5u;
-	static constexpr u32 modeAlbedoAO = 6u;
-	static constexpr u32 modeSSR = 7u;
-	static constexpr u32 modeDepth = 8u;
-	static constexpr u32 modeEmission = 9u;
-	static constexpr u32 modeBloom = 10u;
-	static constexpr u32 modeLuminance = 11u;
+	static constexpr u32 passAO = (1u << 6u);
+	static constexpr u32 passCombine = (1u << 6u);
 
 	static constexpr unsigned timestampCount = 13u;
 
@@ -284,11 +234,7 @@ public:
 	bool init(const nytl::Span<const char*> args) override;
 	void initRenderData() override;
 	void initPasses(const doi::WorkBatcher&);
-
-	void initScattering();
-	void initDebug();
-	void initFwd();
-	void updateDescriptors();
+	// void initFwd();
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
@@ -388,8 +334,8 @@ protected:
 	vpp::SubBuffer renderStage_;
 	float desiredLuminance_ {0.2};
 
-	vpp::QueryPool queryPool_ {};
-	std::uint32_t timestampBits_ {};
+	// vpp::QueryPool queryPool_ {};
+	// std::uint32_t timestampBits_ {};
 
 	// point light selection. 0 if invalid
 	unsigned currentID_ {}; // for id giving
@@ -415,63 +361,29 @@ protected:
 	bool recreatePasses_ {false};
 	vpp::ShaderModule fullVertShader_;
 
-	// light scattering
+	TimeWidget timeWidget_;
+
+	// // times
+	// struct TimePass {
+	// 	rvg::Text passName;
+	// 	rvg::Text time;
+	// };
+//
+	// struct {
+	// 	std::array<TimePass, timestampCount> texts;
+	// 	rvg::RectShape bg;
+	// 	rvg::Paint bgPaint;
+	// 	rvg::Paint fgPaint;
+	// 	unsigned frameCount {0};
+	// 	bool hidden {};
+	// } timings_;
+
 	struct {
-		vpp::RenderPass pass;
-		vpp::TrDsLayout dsLayout;
-		vpp::TrDs ds;
-		vpp::PipelineLayout pipeLayout;
-		vpp::Pipeline pointPipe;
-		vpp::Pipeline dirPipe;
-
-		// we might want to allow per-light scattering
-		// render all scattering into this texture? but then
-		// it would have to be a color texture
-		vpp::ViewableImage target;
-		vpp::Framebuffer fb;
-	} scatter_;
-
-	// debug render pass
-	struct {
-		vpp::TrDsLayout dsLayout;
-		vpp::TrDs ds;
-		vpp::PipelineLayout pipeLayout;
-		vpp::Pipeline pipe;
-
-		bool updateUbo {true};
-		vpp::SubBuffer ubo;
-
 		vui::dat::Label* luminance;
 		vui::dat::Label* exposure;
 		vui::dat::Label* focusDepth;
 		vui::dat::Label* dofDepth;
-	} debug_;
-
-	// forward pass
-	struct {
-		vpp::RenderPass pass;
-		vpp::Framebuffer fb;
-		// TODO: pipeline for transparent objects, implement gltf BLEND alphaMode
-		// vpp::TrDsLayout dsLayout;
-		// vpp::TrDs ds;
-		// vpp::PipelineLayout pipeLayout;
-		// vpp::Pipeline pipe;
-	} fwd_;
-
-	// times
-	struct TimePass {
-		rvg::Text passName;
-		rvg::Text time;
-	};
-
-	struct {
-		std::array<TimePass, timestampCount> texts;
-		rvg::RectShape bg;
-		rvg::Paint bgPaint;
-		rvg::Paint fgPaint;
-		unsigned frameCount {0};
-		bool hidden {};
-	} timings_;
+	} gui_;
 };
 
 bool ViewApp::init(const nytl::Span<const char*> args) {
@@ -649,10 +561,10 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 
 	// == debug values ==
 	auto& vg = panel.create<vui::dat::Folder>("Debug");
-	debug_.luminance = &vg.create<Label>("luminance", "-");
-	debug_.exposure = &vg.create<Label>("exposure", "-");
-	debug_.focusDepth = &vg.create<Label>("focus depth", "-");
-	debug_.dofDepth = &vg.create<Label>("dof Depth", "-");
+	gui_.luminance = &vg.create<Label>("luminance", "-");
+	gui_.exposure = &vg.create<Label>("exposure", "-");
+	gui_.focusDepth = &vg.create<Label>("focus depth", "-");
+	gui_.dofDepth = &vg.create<Label>("dof Depth", "-");
 
 	// == light selection folder ==
 	vuiPanel_ = &panel;
@@ -679,6 +591,9 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 
 	selected_.removedFolder = panel.remove(*selected_.folder);
 
+	timeWidget_ = {rvgContext(), defaultFont()};
+
+	/*
 	// times widget
 	{
 		auto names = {
@@ -713,6 +628,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 			timings_.texts[i].time = {rvgContext(), {}, "", defaultFont(), 14.f};
 		}
 	}
+	*/
 
 	return true;
 }
@@ -733,24 +649,46 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		fullVertShader_
 	};
 
-	vpp::InitObject initAO(ao_, passInfo);
-	vpp::InitObject initCombine(combine_, passInfo);
+	// NOTE: conservative simplification at the moment; can be optimzied
+	renderPasses_ = doi::bit(renderPasses_, passAO,
+		bool(renderPasses_ & passSSAO));
+	renderPasses_ = doi::bit(renderPasses_, passCombine,
+		bool(renderPasses_ & (passSSR | passBloom | passScattering)));
+
 	vpp::InitObject initPP(pp_, passInfo, swapchainInfo().imageFormat);
 
 	// geomLight dst scopes
-	SyncScope dstLight = { // fwd pass
-		vk::PipelineStageBits::colorAttachmentOutput,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::AccessBits::colorAttachmentRead |
-			vk::AccessBits::colorAttachmentWrite
-	};
-	SyncScope dstDepth = dstLight; // fwd pass as well
-	SyncScope dstLDepth =
-		ao_.dstScopeGBuf() |
-		combine_.dstScopeDepth();
-	SyncScope dstEmission = ao_.dstScopeGBuf();
-	SyncScope dstAlbedo = ao_.dstScopeGBuf();
-	SyncScope dstNormals = ao_.dstScopeGBuf();
+	SyncScope dstLight = pp_.dstScopeInput();
+	SyncScope dstDepth = {};
+	SyncScope dstLDepth = {};
+	SyncScope dstEmission = {};
+	SyncScope dstAlbedo = {};
+	SyncScope dstNormals = {};
+
+	if(debugMode_ != 0) {
+		dstDepth |= pp_.dstScopeInput();
+		dstLDepth |= pp_.dstScopeInput();
+		dstEmission |= pp_.dstScopeInput();
+		dstAlbedo |= pp_.dstScopeInput();
+		dstNormals |= pp_.dstScopeInput();
+	} else if(pp_.params.flags & pp_.flagDOF) {
+		dstDepth = pp_.dstScopeInput();
+	}
+
+	AOPass::InitData initAO;
+	if(renderPasses_ & passAO) {
+		ao_.create(initAO, passInfo);
+		dstLDepth |= ao_.dstScopeGBuf();
+		dstAlbedo |= ao_.dstScopeGBuf();
+		dstNormals |= ao_.dstScopeGBuf();
+		dstEmission |= ao_.dstScopeGBuf();
+	}
+
+	CombinePass::InitData initCombine;
+	if(renderPasses_ & passCombine) {
+		combine_.create(initCombine, passInfo);
+		dstLDepth |= combine_.dstScopeDepth();
+	}
 
 	BloomPass::InitData initBloom;
 	if(renderPasses_ & passBloom) {
@@ -780,16 +718,13 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 	}
 
 	vpp::InitObject initGeomLight(geomLight_, passInfo,
-		dstNormals, dstAlbedo, dstEmission, dstDepth, dstLDepth, dstLight);
+		dstNormals, dstAlbedo, dstEmission, dstDepth, dstLDepth, dstLight,
+		!(renderPasses_ & passAO));
 
-	initScattering(); // light scattering/volumentric light shafts/god rays
-	initFwd(); // init forward pass for skybox and transparent objects
-	initDebug(); // init debug pipeline/pass
+	// initFwd(); // init forward pass for skybox and transparent objects
 
-	// finished initialization
+	// finish initialization
 	initGeomLight.init();
-	initAO.init(passInfo);
-	initCombine.init(passInfo);
 	initPP.init(passInfo);
 
 	if(renderPasses_ & passBloom) {
@@ -804,6 +739,16 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 	if(renderPasses_ & passLuminance) {
 		luminance_.init(initLuminance, passInfo);
 	}
+	if(renderPasses_ & passAO) {
+		ao_.init(initAO, passInfo);
+	}
+	if(renderPasses_ & passCombine) {
+		combine_.init(initCombine, passInfo);
+	}
+
+	// others
+	env_.createPipe(device(), geomLight_.renderPass(), 1,
+		vk::SampleCountBits::e1);
 }
 
 void ViewApp::initRenderData() {
@@ -948,22 +893,14 @@ void ViewApp::initRenderData() {
 	selectionSemaphore_ = {dev};
 
 	// TODO: we can't assume that timestamps are supported...
-	timestampBits_ = dev.queueSubmitter().queue().properties().timestampValidBits;
-	dlg_assert(timestampBits_);
-	timestampBits_ = 0xFFFFFFFFu; // guaranteed
-
-	// query pool
-	vk::QueryPoolCreateInfo qpi;
-	qpi.queryCount = timestampCount + 1;
-	qpi.queryType = vk::QueryType::timestamp;
-	queryPool_ = {dev, qpi};
-
-	initPasses(batch);
+	// timestampBits_ = dev.queueSubmitter().queue().properties().timestampValidBits;
+	// dlg_assert(timestampBits_);
+	// timestampBits_ = 0xFFFFFFFFu; // guaranteed
 
 	// environment
 	doi::Environment::InitData envData;
 	env_.create(envData, batch, "convolution.ktx",
-		"irradiance.ktx", fwd_.pass, 0u, linearSampler_, samples());
+		"irradiance.ktx", linearSampler_);
 	vpp::Init<doi::Texture> initBrdfLut(batch, doi::read("brdflut.ktx"));
 	vpp::Init<vpp::SubBuffer> initBoxIndices(alloc.bufDevice,
 		36u * sizeof(std::uint16_t),
@@ -978,6 +915,8 @@ void ViewApp::initRenderData() {
 		samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
 		samplerAnisotropy = std::max(samplerAnisotropy, maxAnisotropy_);
 	}
+
+	initPasses(batch);
 
 	auto ri = doi::SceneRenderInfo{
 		materialDsLayout_,
@@ -1075,156 +1014,7 @@ void ViewApp::initRenderData() {
 
 }
 
-void ViewApp::initScattering() {
-	// render pass
-	auto& dev = device();
-	std::array<vk::AttachmentDescription, 1u> attachments;
-
-	// light scattering output format
-	attachments[0].format = scatterFormat;
-	attachments[0].samples = vk::SampleCountBits::e1;
-	attachments[0].loadOp = vk::AttachmentLoadOp::dontCare;
-	attachments[0].storeOp = vk::AttachmentStoreOp::store;
-	attachments[0].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-	attachments[0].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-	attachments[0].initialLayout = vk::ImageLayout::undefined;
-	attachments[0].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-
-	// subpass
-	vk::AttachmentReference colorRef;
-	colorRef.attachment = 0u;
-	colorRef.layout = vk::ImageLayout::colorAttachmentOptimal;
-
-	vk::SubpassDescription subpass;
-	subpass.colorAttachmentCount = 1u;
-	subpass.pColorAttachments = &colorRef;
-
-	// TODO: just as with ssao, need an additional barrier between
-	// this and the consuming pass (in this case light or post processing)
-	vk::RenderPassCreateInfo rpi;
-	rpi.attachmentCount = attachments.size();
-	rpi.pAttachments = attachments.data();
-	rpi.subpassCount = 1u;
-	rpi.pSubpasses = &subpass;
-
-	scatter_.pass = {dev, rpi};
-
-	// pipeline
-	auto scatterBindings = {
-		vpp::descriptorBinding( // depthTex
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
-	};
-
-	scatter_.dsLayout = {dev, scatterBindings};
-	scatter_.pipeLayout = {dev, {{
-		sceneDsLayout_.vkHandle(),
-		scatter_.dsLayout.vkHandle(),
-		lightDsLayout_.vkHandle()
-	}}, {}};
-
-	// TODO: at least for point light, we don't have to use a fullscreen
-	// pass here! that really should bring quite the improvement (esp
-	// if we later on allow multiple point light scattering effects)
-	// TODO: fullscreen shader used by multiple passes, don't reload
-	// it every time...
-	vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
-	vpp::ShaderModule pfragShader(dev, deferred_pointScatter_frag_data);
-	vpp::GraphicsPipelineInfo pgpi{scatter_.pass, scatter_.pipeLayout, {{{
-		{vertShader, vk::ShaderStageBits::vertex},
-		{pfragShader, vk::ShaderStageBits::fragment},
-	}}}};
-
-	pgpi.flags(vk::PipelineCreateBits::allowDerivatives);
-	pgpi.depthStencil.depthTestEnable = false;
-	pgpi.depthStencil.depthWriteEnable = false;
-	pgpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
-	pgpi.blend.attachmentCount = 1u;
-	pgpi.blend.pAttachments = &doi::noBlendAttachment();
-
-	// directionoal
-	vpp::ShaderModule dfragShader(dev, deferred_dirScatter_frag_data);
-	vpp::GraphicsPipelineInfo dgpi{scatter_.pass, scatter_.pipeLayout, {{{
-		{vertShader, vk::ShaderStageBits::vertex},
-		{dfragShader, vk::ShaderStageBits::fragment},
-	}}}};
-
-	dgpi.depthStencil = pgpi.depthStencil;
-	dgpi.assembly = pgpi.assembly;
-	dgpi.blend = pgpi.blend;
-	dgpi.base(0);
-
-	vk::Pipeline vkpipes[2];
-	auto infos = {pgpi.info(), dgpi.info()};
-	vk::createGraphicsPipelines(dev, {}, infos.size(), *infos.begin(),
-		nullptr, *vkpipes);
-
-	scatter_.pointPipe = {dev, vkpipes[0]};
-	scatter_.dirPipe = {dev, vkpipes[1]};
-	scatter_.ds = {dev.descriptorAllocator(), scatter_.dsLayout};
-}
-
-void ViewApp::initDebug() {
-	auto& dev = vulkanDevice();
-
-	// layouts
-	auto debugInputBindings = {
-		vpp::descriptorBinding( // albedo
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // normal
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // depth
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // ssao
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // ssr
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // emission
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // bloom
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &linearSampler_.vkHandle()),
-		vpp::descriptorBinding( // luminance
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
-		vpp::descriptorBinding( // params ubo
-			vk::DescriptorType::uniformBuffer,
-			vk::ShaderStageBits::fragment),
-	};
-
-	debug_.dsLayout = {dev, debugInputBindings};
-	debug_.ds = {device().descriptorAllocator(), debug_.dsLayout};
-
-	debug_.pipeLayout = {dev, {{debug_.dsLayout.vkHandle()}}, {}};
-
-	vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
-	vpp::ShaderModule fragShader(dev, deferred_debug_frag_data);
-	vpp::GraphicsPipelineInfo gpi {pp_.renderPass(), debug_.pipeLayout, {{{
-		{vertShader, vk::ShaderStageBits::vertex},
-		{fragShader, vk::ShaderStageBits::fragment},
-	}}}};
-
-	gpi.depthStencil.depthTestEnable = false;
-	gpi.depthStencil.depthWriteEnable = false;
-	gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
-	gpi.blend.attachmentCount = 1u;
-	gpi.blend.pAttachments = &doi::noBlendAttachment();
-
-	vk::Pipeline vkpipe;
-	vk::createGraphicsPipelines(dev, {}, 1, gpi.info(), nullptr, vkpipe);
-
-	debug_.ubo = {dev.bufferAllocator(), sizeof(u32),
-		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
-
-	debug_.pipe = {dev, vkpipe};
-}
-
+/*
 void ViewApp::initFwd() {
 	// render pass
 	auto& dev = device();
@@ -1274,6 +1064,7 @@ void ViewApp::initFwd() {
 	// TODO: init pipeline and stuff for transparent objects
 	// currently only used for skybox
 }
+*/
 
 vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 	auto width = size.width;
@@ -1325,101 +1116,14 @@ static constexpr auto defaultAttachmentUsage =
 void ViewApp::initBuffers(const vk::Extent2D& size,
 		nytl::Span<RenderBuffer> bufs) {
 	auto& dev = vulkanDevice();
-	auto devMem = dev.deviceMemoryTypes();
 	depthTarget() = createDepthTarget(size);
 
 	std::vector<vk::ImageView> attachments;
-	auto getCreateInfo = [&](vk::Format format,
-			vk::ImageUsageFlags usage = defaultAttachmentUsage,
-			vk::ImageAspectBits aspect = vk::ImageAspectBits::color) {
-		auto info = vpp::ViewableImageCreateInfo(format,
-			aspect, {size.width, size.height}, usage);
-		dlg_assert(vpp::supported(dev, info.img));
-		return info;
-	};
-
-	auto initBuf = [&](vpp::ViewableImage& img, vk::Format format,
-			vk::ImageUsageFlags extraUsage = {}) {
-		auto info = getCreateInfo(format,
-			defaultAttachmentUsage | extraUsage);
-		img = {device().devMemAllocator(), info, devMem};
-		attachments.push_back(img.vkImageView());
-	};
-
-	// // create offscreen buffers, gbufs
-	// initBuf(gpass_.normal, normalsFormat);
-	// initBuf(gpass_.albedo, albedoFormat);
-//
-	// // emission buf - we need mipmap levels here for bloom later
-	// auto usage = vk::ImageUsageBits::colorAttachment |
-	// 	vk::ImageUsageBits::inputAttachment |
-	// 	vk::ImageUsageBits::transferSrc |
-	// 	vk::ImageUsageBits::transferDst |
-	// 	vk::ImageUsageBits::storage |
-	// 	vk::ImageUsageBits::sampled;
-	// auto info = getCreateInfo(emissionFormat, usage);
-	// gpass_.emission = {device().devMemAllocator(), info, devMem};
-//
-	// attachments.push_back(gpass_.emission.vkImageView());
-	// attachments.push_back(depthTarget().vkImageView()); // depth
-//
-	// // TODO!
-	// // depthMipLevels_ = vpp::mipmapLevels(size);
-	// depthMipLevels_ = 1u;
-	// usage = vk::ImageUsageBits::colorAttachment |
-	// 	vk::ImageUsageBits::inputAttachment |
-	// 	vk::ImageUsageBits::transferSrc |
-	// 	vk::ImageUsageBits::transferDst |
-	// 	vk::ImageUsageBits::sampled;
-	// info = getCreateInfo(ldepthFormat, usage);
-	// info.img.mipLevels = depthMipLevels_;
-	// gpass_.depth = {device().devMemAllocator(), info, devMem};
-	// attachments.push_back(gpass_.depth.vkImageView());
-//
-	// info.view.subresourceRange.levelCount = depthMipLevels_;
-	// info.view.image = gpass_.depth.image();
-	// depthMipView_ = {device(), info.view};
-//
-	// vk::FramebufferCreateInfo fbi({}, gpass_.pass,
-	// 	attachments.size(), attachments.data(),
-	// 	size.width, size.height, 1);
-	// gpass_.fb = {dev, fbi};
-//
-	// // light buf
-	// attachments.clear();
-	// attachments.push_back(gpass_.normal.vkImageView());
-	// attachments.push_back(gpass_.albedo.vkImageView());
-	// attachments.push_back(gpass_.emission.vkImageView());
-	// attachments.push_back(gpass_.depth.vkImageView());
-//
-	// info = getCreateInfo(lightFormat, defaultAttachmentUsage |
-	// 	vk::ImageUsageBits::storage);
-	// info.img.mipLevels = vpp::mipmapLevels(size);
-	// // info.view.subresourceRange.levelCount = info.img.mipLevels;
-	// lpass_.light = {device().devMemAllocator(), info, devMem};
-	// attachments.push_back(lpass_.light.vkImageView());
-//
-	// fbi = vk::FramebufferCreateInfo({}, lpass_.pass,
-	// 	attachments.size(), attachments.data(),
-	// 	size.width, size.height, 1);
-	// lpass_.fb = {dev, fbi};
-
-	// scatter buf
-	if(renderPasses_ & passScattering) {
-		attachments.clear();
-		initBuf(scatter_.target, scatterFormat);
-		auto fbi = vk::FramebufferCreateInfo({}, scatter_.pass,
-			attachments.size(), attachments.data(),
-			size.width, size.height, 1);
-		scatter_.fb = {dev, fbi};
-	} else {
-		scatter_.target = {};
-		scatter_.fb = {};
-	}
 
 	vpp::DeviceMemoryAllocator memStage(dev);
 	vpp::BufferAllocator bufStage(memStage);
 	auto& alloc = *this->alloc;
+
 	// NOTE: no cb needed here
 	// TODO: memStage,bufStage neither, theoretically...
 	doi::WorkBatcher wb{dev, {}, {
@@ -1429,10 +1133,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		}
 	};
 
-	auto scatterView = (renderPasses_ & passScattering) ?
-		scatter_.target.vkImageView() : dummyTex_.vkImageView();
-	// auto depthView = gpass_.depth.vkImageView();
-	// auto emissionView = gpass_.emission.vkImageView();
+	auto scatterView = dummyTex_.vkImageView();
 
 	GeomLightPass::InitBufferData geomLightData;
 	geomLight_.createBuffers(geomLightData, wb, size);
@@ -1458,7 +1159,12 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	}
 
 	// init
-	geomLight_.initBuffers(geomLightData, size, depthTarget().vkImageView());
+	geomLight_.initBuffers(geomLightData, size, depthTarget().vkImageView(),
+		env_.irradiance().imageView(),
+		env_.envMap().imageView(),
+		env_.convolutionMipmaps(),
+		brdfLut_.imageView());
+	auto ppInput = geomLight_.lightTarget().vkImageView();
 
 	auto bloomView = dummyTex_.vkImageView();
 	if(renderPasses_ & passBloom) {
@@ -1477,103 +1183,49 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 			geomLight_.normalsTarget().imageView(), size);
 		ssaoView = ssao_.targetView();
 	}
-	if(renderPasses_ & passLuminance) {
-		luminance_.initBuffers(lumData, geomLight_.emissionTarget().imageView(),
-			size);
+
+	if(renderPasses_ & passAO) {
+		ao_.updateInputs(
+			geomLight_.lightTarget().imageView(),
+			geomLight_.albedoTarget().imageView(),
+			geomLight_.emissionTarget().imageView(),
+			geomLight_.ldepthTarget().imageView(),
+			geomLight_.normalsTarget().imageView(),
+			ssaoView,
+			env_.irradiance().imageView(),
+			env_.envMap().imageView(),
+			env_.convolutionMipmaps(),
+			brdfLut_.imageView());
+	}
+	if(renderPasses_ & passCombine) {
+		ppInput = geomLight_.emissionTarget().vkImageView();
+		combine_.updateInputs(
+			geomLight_.emissionTarget().imageView(),
+			geomLight_.lightTarget().imageView(),
+			geomLight_.ldepthTarget().imageView(),
+			bloomView, ssrView, scatterView);
 	}
 
-	ao_.updateInputs(
-		geomLight_.lightTarget().imageView(),
-		geomLight_.albedoTarget().imageView(),
-		geomLight_.emissionTarget().imageView(),
+	auto lumView = dummyTex_.vkImageView();
+	if(renderPasses_ & passLuminance) {
+		luminance_.initBuffers(lumData, ppInput, size);
+		lumView = luminance_.target().imageView();
+	}
+
+	pp_.updateInputs(ppInput,
 		geomLight_.ldepthTarget().imageView(),
 		geomLight_.normalsTarget().imageView(),
+		geomLight_.albedoTarget().imageView(),
 		ssaoView,
-		env_.irradiance().imageView(),
-		env_.envMap().imageView(),
-		env_.convolutionMipmaps(),
-		brdfLut_.imageView());
-	combine_.updateInputs(
+		ssrView,
 		geomLight_.emissionTarget().imageView(),
-		geomLight_.lightTarget().imageView(),
-		geomLight_.ldepthTarget().imageView(),
-		bloomView, ssrView, scatterView);
-
-	// fwd
-	attachments.clear();
-	attachments.push_back(geomLight_.lightTarget().imageView());
-	attachments.push_back(depthTarget().vkImageView());
-	auto fbi = vk::FramebufferCreateInfo({}, fwd_.pass,
-		attachments.size(), attachments.data(),
-		size.width, size.height, 1);
-	fwd_.fb = {dev, fbi};
+		bloomView,
+		lumView);
 
 	// create swapchain framebuffers
 	for(auto& buf : bufs) {
-		// emission since that's combine output
-		buf.framebuffer = pp_.initFramebuffer(buf.imageView,
-			geomLight_.emissionTarget().imageView(),
-			geomLight_.ldepthTarget().imageView(), size);
+		buf.framebuffer = pp_.initFramebuffer(buf.imageView, size);
 	}
-
-	updateDescriptors();
-}
-
-void ViewApp::updateDescriptors() {
-	std::vector<vpp::DescriptorSetUpdate> updates;
-
-	// auto& ldsu = updates.emplace_back(lpass_.ds);
-	// ldsu.inputAttachment({{{}, gpass_.normal.vkImageView(),
-	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
-	// ldsu.inputAttachment({{{}, gpass_.albedo.vkImageView(),
-	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
-	// ldsu.inputAttachment({{{}, gpass_.emission.vkImageView(),
-	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
-	// ldsu.inputAttachment({{{}, gpass_.depth.imageView(),
-	// 	vk::ImageLayout::shaderReadOnlyOptimal}});
-
-	// bool needDepth = (params_.flags & flagSSR) || (params_.flags & flagSSAO);
-	auto ssaoView = (renderPasses_ & passSSAO) ?
-		ssao_.targetView() : dummyTex_.vkImageView();
-	// auto scatterView = (params_.flags & flagScattering) ?
-		// scatter_.target.vkImageView() : dummyTex_.vkImageView();
-	// auto depthView = needDepth ?  depthMipView_ : gpass_.depth.vkImageView();
-	auto bloomView = (renderPasses_ & passBloom) ?
-		bloom_.fullView() : dummyTex_.vkImageView();
-	auto ssrView = (renderPasses_ & passSSR) ?
-		ssr_.targetView() : dummyTex_.vkImageView();
-
-	if(renderPasses_ & passScattering) {
-		auto& sdsu = updates.emplace_back(scatter_.ds);
-		sdsu.imageSampler({{{}, geomLight_.ldepthTarget().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-	}
-
-	if(debugMode_ != 0) {
-		auto luminanceView = (renderPasses_ & passLuminance) ?
-			luminance_.target().vkImageView() : dummyTex_.vkImageView();
-
-		auto& ddsu = updates.emplace_back(debug_.ds);
-		ddsu.imageSampler({{{}, geomLight_.albedoTarget().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		ddsu.imageSampler({{{}, geomLight_.normalsTarget().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		ddsu.imageSampler({{{}, geomLight_.ldepthTarget().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		ddsu.imageSampler({{{}, ssaoView,
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		ddsu.imageSampler({{{}, ssrView,
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		ddsu.imageSampler({{{}, geomLight_.emissionTarget().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		ddsu.imageSampler({{{}, bloomView,
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		ddsu.imageSampler({{{}, luminanceView,
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		ddsu.uniform({{{debug_.ubo}}});
-	}
-
-	vpp::apply(updates);
 }
 
 // enable anisotropy if possible
@@ -1632,18 +1284,14 @@ bool ViewApp::handleArgs(const argagg::parser_results& result) {
 }
 
 void ViewApp::record(const RenderBuffer& buf) {
-	SyncScope postProcessScope = {
-		vk::PipelineStageBits::fragmentShader,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::AccessBits::shaderRead,
-	};
-
 	auto cb = buf.commandBuffer;
 	vk::beginCommandBuffer(cb, {});
 	App::beforeRender(cb);
 
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::topOfPipe,
-		queryPool_, 0u);
+	auto pos = nytl::Vec2f(window().size());
+	pos.x -= 240;
+	pos.y = 10;
+	timeWidget_.start(cb, pos);
 
 	// render shadow maps
 	for(auto& light : pointLights_) {
@@ -1655,8 +1303,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 		light.render(cb, shadowData_, scene_);
 	}
 
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 1u);
+	timeWidget_.add("shadows");
 
 	auto size = swapchainInfo().imageExtent;
 	const auto width = size.width;
@@ -1666,12 +1313,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
 	geomLight_.record(cb, size, sceneDs_, scene_, pointLights_,
-		dirLights_, boxIndices_);
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 2u);
-	// TODO: should be in geomLight_, between subpasses...
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 3u);
+		dirLights_, boxIndices_, &env_, timeWidget_);
 
 	auto ldepthImage = geomLight_.ldepthTarget().vkImage();
 	auto lightImage = geomLight_.lightTarget().vkImage();
@@ -1680,168 +1322,110 @@ void ViewApp::record(const RenderBuffer& buf) {
 	// == ssao pass ==
 	if(renderPasses_ & passSSAO) {
 		ssao_.record(cb, size, sceneDs_);
+		timeWidget_.add("ssao");
 	}
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 4u);
-
-	// scatter
-	/*
-	if(renderPasses_ & passScattering) {
-		vk::cmdBeginRenderPass(cb, {
-			scatter_.pass,
-			scatter_.fb,
-			{0u, 0u, width, height},
-			0, nullptr
-		}, {});
-
-		vk::Viewport vp{0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
-		vk::cmdSetViewport(cb, 0, 1, vp);
-		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
-
-		// TODO: scatter support for multiple lights
-		vk::DescriptorSet lds;
-		if(!dirLights_.empty()) {
-			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
-				scatter_.dirPipe);
-			lds = dirLights_[0].ds();
-		} else {
-			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
-				scatter_.pointPipe);
-			lds = pointLights_[0].ds();
-		}
-
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			scatter_.pipeLayout, 0, {{sceneDs_.vkHandle(),
-			scatter_.ds.vkHandle(), lds}}, {});
-		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
-		vk::cmdEndRenderPass(cb);
-	}
-	*/
-
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 5u);
-	// TODO
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 6u);
-
-	// == fwd pass ==
-	{
-		vk::cmdBeginRenderPass(cb, {fwd_.pass, fwd_.fb,
-			{0u, 0u, width, height},
-			0, nullptr,
-		}, {});
-
-		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
-			boxIndices_.offset(), vk::IndexType::uint16);
-		env_.render(cb);
-		vk::cmdEndRenderPass(cb);
-	}
-
-	SyncScope fwdSrcScopeLight { // see initFwd
-		vk::PipelineStageBits::colorAttachmentOutput,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::AccessBits::colorAttachmentRead |
-			vk::AccessBits::colorAttachmentWrite,
-	};
-
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 7u);
 
 	// == bloom pass ==
 	ImageBarrier lightBarrier;
 	lightBarrier.image = lightImage;
-	lightBarrier.src = fwdSrcScopeLight;
 	if(renderPasses_ & passBloom) {
 		// make fwd pass visible
-		lightBarrier.dst = bloom_.dstScopeLight();
-		barrier(cb, {{lightBarrier}});
+		// lightBarrier.dst = bloom_.dstScopeLight();
+		// barrier(cb, {{lightBarrier}});
 
 		bloom_.record(cb, emissionImage, {width, height});
-		lightBarrier.src = bloom_.dstScopeLight(); // read access
+		lightBarrier.src = lightBarrier.dst;
+		timeWidget_.add("bloom");
 	}
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 8u);
 
 	// == ssr pass ==
 	if(renderPasses_ & passSSR) {
 		ssr_.record(cb, sceneDs_, {width, height});
+		timeWidget_.add("ssr");
 	}
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 9u);
 
 	// == ao pass ==
 	// make sure output from previous stages is readable in ao pass
 	// lightBarrier.src is still correctly set; bloom or fwd pass
-	lightBarrier.dst = ao_.scopeLight();
-
 	ImageBarrier emissionBarrier;
-	if(renderPasses_ & passBloom) {
-		emissionBarrier.image = emissionImage;
-		emissionBarrier.src = bloom_.dstScopeEmission(); // read access
-		emissionBarrier.dst = ao_.dstScopeGBuf();
+	if(renderPasses_ & passAO) {
+		lightBarrier.dst = ao_.scopeLight();
+
+		if(renderPasses_ & passBloom) {
+			emissionBarrier.image = emissionImage;
+			emissionBarrier.src = bloom_.dstScopeEmission(); // read access
+			emissionBarrier.dst = ao_.dstScopeGBuf();
+		}
+
+		ImageBarrier ssaoBarrier;
+		if(renderPasses_ & passSSAO) {
+			ssaoBarrier.src = ssao_.srcScopeTarget();
+			ssaoBarrier.dst = ao_.dstScopeSSAO();
+			ssaoBarrier.image = ssao_.target().image();
+		}
+
+		barrier(cb, {{lightBarrier, ssaoBarrier, emissionBarrier}});
+		lightBarrier.src = lightBarrier.dst;
+
+		ao_.record(cb, sceneDs_, size);
+		timeWidget_.add("ao");
 	}
-
-	ImageBarrier ssaoBarrier;
-	if(renderPasses_ & passSSAO) {
-		ssaoBarrier.src = ssao_.srcScopeTarget();
-		ssaoBarrier.dst = ao_.dstScopeSSAO();
-		ssaoBarrier.image = ssao_.target().image();
-	}
-
-	barrier(cb, {{lightBarrier, ssaoBarrier, emissionBarrier}});
-
-	ao_.record(cb, sceneDs_, size);
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 10u);
 
 	// == combine pass ==
 	// make sure inputs for combine pass are readable
-	lightBarrier.src = ao_.scopeLight();
-	lightBarrier.dst = combine_.dstScopeLight();
+	ImageBarrier ppInputBarrier = lightBarrier;
+	if(renderPasses_ & passCombine) {
+		lightBarrier.dst = combine_.dstScopeLight();
 
-	ImageBarrier ssrBarrier;
-	if(renderPasses_ & passSSR) {
+		ImageBarrier ssrBarrier;
 		ssrBarrier.src = ssr_.srcScopeTarget();
 		ssrBarrier.dst = combine_.dstScopeSSR();
 		ssrBarrier.image = ssr_.target().image();
-	}
 
-	emissionBarrier.image = emissionImage;
-	emissionBarrier.src = ao_.dstScopeGBuf(); // read access
-	emissionBarrier.dst = combine_.scopeTarget();
+		// add transitive dependency against potential
+		// previous use
+		emissionBarrier.src = emissionBarrier.dst; // read access
+		emissionBarrier.dst = combine_.scopeTarget();
 
-	ImageBarrier bloomBarrier;
-	if(renderPasses_ & passBloom) {
+		ImageBarrier bloomBarrier;
 		bloomBarrier.src = bloom_.srcScopeTarget();
 		bloomBarrier.dst = combine_.dstScopeBloom();
 		bloomBarrier.image = bloom_.target();
 		bloomBarrier.subres.levelCount = bloom_.levelCount();
-	}
 
-	barrier(cb, {{lightBarrier, ssrBarrier, bloomBarrier, emissionBarrier}});
-	combine_.record(cb, size);
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 11u);
+		barrier(cb, {{lightBarrier, ssrBarrier, bloomBarrier, emissionBarrier}});
+		combine_.record(cb, size);
+		timeWidget_.add("combine");
+
+		lightBarrier.src = lightBarrier.dst;
+		emissionBarrier.src = emissionBarrier.dst;
+
+		ppInputBarrier = emissionBarrier;
+		ppInputBarrier.image = geomLight_.emissionTarget().image();
+	}
 
 	// == luminance pass ==
-	barrier(cb, emissionImage, combine_.scopeTarget(),
-		luminance_.dstScopeLight() | postProcessScope);
+	if(renderPasses_ & (passCombine | passAO)) {
+		ppInputBarrier.dst = luminance_.dstScopeLight() | pp_.dstScopeInput();
+		barrier(cb, {{ppInputBarrier}});
+	}
+
 	if(renderPasses_ & passLuminance) {
 		luminance_.record(cb, size);
+		timeWidget_.add("luminance");
+
+		if(debugMode_ != 0) {
+			// make sure luminance is finished
+			ImageBarrier lumBarrier;
+			lumBarrier.image = luminance_.target().image();
+			lumBarrier.src = luminance_.srcScopeTarget();
+			lumBarrier.dst = pp_.dstScopeInput();
+			barrier(cb, {{lumBarrier}});
+		}
 	}
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 12u);
 
 	// == post process/debug output ===
 	// make sure everything is readable in post-process/debug pass
-
-	if(renderPasses_ & passLuminance) {
-		ImageBarrier lumBarrier;
-		lumBarrier.image = luminance_.target().image();
-		lumBarrier.src = luminance_.srcScopeTarget();
-		lumBarrier.dst = postProcessScope;
-		barrier(cb, {{lumBarrier}});
-	}
 
 	{
 		vk::cmdBeginRenderPass(cb, {
@@ -1851,14 +1435,8 @@ void ViewApp::record(const RenderBuffer& buf) {
 			0, nullptr
 		}, {});
 
-		if(debugMode_ == 0) {
-			pp_.record(cb);
-		} else {
-			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, debug_.pipe);
-			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-				debug_.pipeLayout, 0, {{debug_.ds.vkHandle()}}, {});
-			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
-		}
+		pp_.record(cb, debugMode_);
+		timeWidget_.add("pp");
 
 		// gui stuff
 		vpp::DebugLabel debugLabel(cb, "GUI");
@@ -1866,8 +1444,12 @@ void ViewApp::record(const RenderBuffer& buf) {
 		gui().draw(cb);
 
 		// times
+		timeWidget_.finish();
 		rvgContext().bindDefaults(cb);
 		windowTransform().bind(cb);
+		timeWidget_.draw(cb);
+
+		/*
 		timings_.bgPaint.bind(cb);
 		timings_.bg.fill(cb);
 
@@ -1876,29 +1458,29 @@ void ViewApp::record(const RenderBuffer& buf) {
 			time.passName.draw(cb);
 			time.time.draw(cb);
 		}
+		*/
 
 		vk::cmdEndRenderPass(cb);
 	}
 
-	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe,
-		queryPool_, 13u);
+	if(pp_.params.flags & pp_.flagDOF) {
+		barrier(cb, ldepthImage, pp_.dstScopeInput(), {
+			vk::PipelineStageBits::transfer,
+			vk::ImageLayout::transferSrcOptimal,
+			vk::AccessBits::transferRead,
+		});
 
-	barrier(cb, ldepthImage, postProcessScope, {
-		vk::PipelineStageBits::transfer,
-		vk::ImageLayout::transferSrcOptimal,
-		vk::AccessBits::transferRead,
-	});
-
-	vk::BufferImageCopy copy;
-	copy.bufferOffset = renderStage_.offset();
-	copy.imageExtent = {1, 1, 1};
-	copy.imageOffset = {i32(width / 2u), i32(height / 2u), 0};
-	copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
-	copy.imageSubresource.layerCount = 1;
-	copy.imageSubresource.mipLevel = 0;
-	vk::cmdCopyImageToBuffer(cb, ldepthImage,
-		vk::ImageLayout::transferSrcOptimal,
-		renderStage_.buffer(), {{copy}});
+		vk::BufferImageCopy copy;
+		copy.bufferOffset = renderStage_.offset();
+		copy.imageExtent = {1, 1, 1};
+		copy.imageOffset = {i32(width / 2u), i32(height / 2u), 0};
+		copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
+		copy.imageSubresource.layerCount = 1;
+		copy.imageSubresource.mipLevel = 0;
+		vk::cmdCopyImageToBuffer(cb, ldepthImage,
+			vk::ImageLayout::transferSrcOptimal,
+			renderStage_.buffer(), {{copy}});
+	}
 
 	App::afterRender(cb);
 	vk::endCommandBuffer(cb);
@@ -1914,13 +1496,15 @@ void ViewApp::update(double dt) {
 		doi::checkMovement(camera_, *kc, dt);
 	}
 
+	// TODO: something about potential changes in pass parameters
 	auto update = camera_.update || updateLights_ || selectionPos_;
-	update |= selectionPending_ || debug_.updateUbo;
+	update |= selectionPending_;
 	if(update) {
 		App::scheduleRedraw();
 	}
 
-	// TODO: only here for fps testing
+	// TODO: only here for fps testing, could be removed to not
+	// render when not needed
 	App::scheduleRedraw();
 }
 
@@ -1954,17 +1538,11 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			return true;
 		case ny::Keycode::n:
 			debugMode_ = (debugMode_ + 1) % numModes;
-			debug_.updateUbo = true;
-			if(debugMode_ == 0 || debugMode_ == 1) {
-				resize_ = true; // recreate, rerecord
-			}
+			recreatePasses_ = true; // recreate, rerecord
 			return true;
 		case ny::Keycode::l:
 			debugMode_ = (debugMode_ + numModes - 1) % numModes;
-			debug_.updateUbo = true;
-			if(debugMode_ == 0 || debugMode_ == numModes - 1) {
-				resize_ = true; // recreate, rerecord
-			}
+			recreatePasses_ = true; // recreate, rerecord
 			return true;
 		case ny::Keycode::equals:
 			desiredLuminance_ *= 1.1f;
@@ -1999,12 +1577,12 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			App::scheduleRerecord();
 			break;
 		} */case ny::Keycode::f: {
-			timings_.hidden ^= true;
-			timings_.bg.disable(timings_.hidden);
-			for(auto& t : timings_.texts) {
-				t.passName.disable(timings_.hidden);
-				t.time.disable(timings_.hidden);
-			}
+			// timings_.hide ^= true;
+			// timings_.bg.disable(timings_.hidden);
+			// for(auto& t : timings_.texts) {
+			// 	t.passName.disable(timings_.hidden);
+			// 	t.time.disable(timings_.hidden);
+			// }
 		} default:
 			break;
 	}
@@ -2013,17 +1591,12 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 	auto k1 = static_cast<unsigned>(ny::Keycode::k1);
 	auto k0 = static_cast<unsigned>(ny::Keycode::k0);
 	if(uk >= k1 && uk < k0) {
-		auto was0 = debugMode_ == 0;
 		auto diff = (1 + uk - k1) % numModes;
 		debugMode_ = diff;
-		debug_.updateUbo = true;
-		if(was0 || debugMode_ == 0) {
-			resize_ = true; // recreate, rerecord
-		}
+		recreatePasses_ = true; // recreate, rerecord
 	} else if(ev.keycode == ny::Keycode::k0) {
-		debugMode_ = modeDefault;
-		debug_.updateUbo = true;
-		resize_ = true; // recreate, rerecord
+		debugMode_ = 0;
+		recreatePasses_ = true; // recreate, rerecord
 	}
 
 	return false;
@@ -2080,16 +1653,19 @@ void ViewApp::updateDevice() {
 		App::resize_ = true; // recreate buffers and stuff
 	}
 
+	geomLight_.updateDevice();
 	if(renderPasses_ & passBloom) {
 		bloom_.updateDevice();
 	}
-
 	if(renderPasses_ & passSSR) {
 		ssr_.updateDevice();
 	}
-
-	ao_.updateDevice();
-	combine_.updateDevice();
+	if(renderPasses_ & passAO) {
+		ao_.updateDevice();
+	}
+	if(renderPasses_ & passCombine) {
+		combine_.updateDevice();
+	}
 	pp_.updateDevice();
 
 	// TODO: needed from update stage. Probably better to do all calculations
@@ -2097,35 +1673,34 @@ void ViewApp::updateDevice() {
 	float dt = 1 / 60.f;
 
 	// update dof focus
-	auto map = renderStage_.memoryMap();
-	map.invalidate();
-	auto span = map.span();
-
 	if(pp_.params.flags & pp_.flagDOF) {
+		auto map = renderStage_.memoryMap();
+		map.invalidate();
+		auto span = map.span();
+
 		auto focus = float(doi::read<f16>(span));
-		debug_.focusDepth->label(std::to_string(focus));
+		gui_.focusDepth->label(std::to_string(focus));
 		pp_.params.depthFocus = nytl::mix(pp_.params.depthFocus, focus, dt * 30);
-		debug_.dofDepth->label(std::to_string(pp_.params.depthFocus));
+		gui_.dofDepth->label(std::to_string(pp_.params.depthFocus));
 	} else {
-		debug_.dofDepth->label("-");
+		gui_.dofDepth->label("-");
 	}
 
 	// exposure
 	if(renderPasses_ & passLuminance) {
 		auto lum = luminance_.updateDevice();
-		debug_.luminance->label(std::to_string(lum));
+		gui_.luminance->label(std::to_string(lum));
 
 		// NOTE: really naive approach atm
 		lum *= pp_.params.exposure;
 		float diff = desiredLuminance_ - lum;
 		pp_.params.exposure += 50 * dt * diff;
-		debug_.exposure->label(std::to_string(pp_.params.exposure));
+		gui_.exposure->label(std::to_string(pp_.params.exposure));
 	} else {
 		pp_.params.exposure = desiredLuminance_ / 0.2; // rather random
-		debug_.luminance->label("-");
-		debug_.exposure->label(std::to_string(pp_.params.exposure));
+		gui_.luminance->label("-");
+		gui_.exposure->label(std::to_string(pp_.params.exposure));
 	}
-
 
 	// update scene ubo
 	if(camera_.update) {
@@ -2155,13 +1730,6 @@ void ViewApp::updateDevice() {
 			l.updateDevice(camera_.pos);
 		}
 		updateLights_ = false;
-	}
-
-	if(debug_.updateUbo) {
-		debug_.updateUbo = false;
-		auto map = debug_.ubo.memoryMap();
-		auto span = map.span();
-		doi::write(span, u32(debugMode_));
 	}
 
 	if(selectionPending_) {
@@ -2263,6 +1831,7 @@ void ViewApp::updateDevice() {
 		*/
 	}
 
+	/*
 	// query pool
 	if(++timings_.frameCount == 30) {
 		auto& dev = vulkanDevice();
@@ -2284,6 +1853,9 @@ void ViewApp::updateDevice() {
 			last = current;
 		}
 	}
+	*/
+
+	timeWidget_.updateDevice();
 
 	// NOTE: not sure where to put that. after rvg label changes here
 	// because it updates rvg
@@ -2296,6 +1868,7 @@ void ViewApp::resize(const ny::SizeEvent& ev) {
 	camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 	camera_.update = true;
 
+	/*
 	auto pos = nytl::Vec2f(window().size());
 	pos.x -= 180;
 	pos.y = 30;
@@ -2316,6 +1889,7 @@ void ViewApp::resize(const ny::SizeEvent& ev) {
 	bgc->position.y = 10;
 	bgc->size.x = 180;
 	bgc->size.y = pos.y + 10;
+	*/
 }
 
 int main(int argc, const char** argv) {

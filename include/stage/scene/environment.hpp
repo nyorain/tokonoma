@@ -38,15 +38,16 @@ public:
 public:
 	Environment() = default;
 	void create(InitData&, const WorkBatcher& wb, nytl::StringParam envMapPath,
-		nytl::StringParam irradiancePath, vk::RenderPass rp, unsigned subpass,
-		vk::Sampler linear, vk::SampleCountBits samples);
+		nytl::StringParam irradiancePath, vk::Sampler linear);
 	void init(InitData&, const WorkBatcher&);
+	void createPipe(const vpp::Device&, vk::RenderPass rp, unsigned subpass,
+		vk::SampleCountBits samples);
 
 	Environment(Environment&&) = delete;
 	Environment& operator=(Environment&&) = delete;
 
 	// Requires caller to bind cube index buffer with boxInsideIndices
-	void render(vk::CommandBuffer cb);
+	void render(vk::CommandBuffer cb) const;
 	void updateDevice(const nytl::Mat4f& viewProj);
 
 	auto& envMap() const { return envMap_; }

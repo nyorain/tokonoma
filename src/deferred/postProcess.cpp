@@ -8,6 +8,7 @@
 #include <dlg/dlg.hpp>
 
 #include <shaders/deferred.pp.frag.h>
+#include <shaders/deferred.debug.frag.h>
 
 void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 		vk::Format outputFormat) {
@@ -84,6 +85,58 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 	ubo_ = {data.initUbo, wb.alloc.bufHost, sizeof(params),
 		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 	ds_ = {data.initDs, wb.alloc.ds, dsLayout_};
+
+	// debug
+	auto debugInputBindings = {
+		vpp::descriptorBinding( // albedo
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // normal
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // depth
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // ssao
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // ssr
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // emission
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // bloom, linear sampling for upsampling
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+		vpp::descriptorBinding( // luminance
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+	};
+
+	debug_.dsLayout = {dev, debugInputBindings};
+	vk::PushConstantRange pcr;
+	pcr.stageFlags = vk::ShaderStageBits::fragment;
+	pcr.size = sizeof(u32);
+	debug_.pipeLayout = {dev, {{debug_.dsLayout.vkHandle()}}, {{pcr}}};
+	vpp::nameHandle(debug_.dsLayout, "PostProcessPass:debug.dsLayout");
+	vpp::nameHandle(debug_.pipeLayout, "PostProcessPass:debug.pipeLayout");
+
+	vpp::ShaderModule debugShader(dev, deferred_debug_frag_data);
+	vpp::GraphicsPipelineInfo dgpi{rp_, debug_.pipeLayout, {{{
+		{info.fullscreenVertShader, vk::ShaderStageBits::vertex},
+		{debugShader, vk::ShaderStageBits::fragment},
+	}}}};
+
+	dgpi.depthStencil.depthTestEnable = false;
+	dgpi.depthStencil.depthWriteEnable = false;
+	dgpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
+	dgpi.blend.attachmentCount = 1u;
+	dgpi.blend.pAttachments = &doi::noBlendAttachment();
+	debug_.pipe = {dev, dgpi.info()};
+	vpp::nameHandle(debug_.pipe, "PostProcessPass:debug.pipe");
+
+	debug_.ds = {data.initDebugDs, wb.alloc.ds, debug_.dsLayout};
 }
 
 void PostProcessPass::init(InitData& data, const PassCreateInfo&) {
@@ -91,17 +144,41 @@ void PostProcessPass::init(InitData& data, const PassCreateInfo&) {
 	uboMap_ = ubo_.memoryMap();
 
 	ds_.init(data.initDs);
-	vpp::nameHandle(ds_, "PostProcessPass:ds_");
+	vpp::nameHandle(ds_, "PostProcessPass:ds");
+
+	debug_.ds.init(data.initDebugDs);
+	vpp::nameHandle(ds_, "PostProcessPass:debug.ds");
 }
 
-vpp::Framebuffer PostProcessPass::initFramebuffer(vk::ImageView output,
-		vk::ImageView light, vk::ImageView ldepth, vk::Extent2D size) {
+void PostProcessPass::updateInputs(
+		vk::ImageView light, vk::ImageView ldepth,
+		vk::ImageView normals,
+		vk::ImageView albedo,
+		vk::ImageView ssao,
+		vk::ImageView ssr,
+		vk::ImageView emission,
+		vk::ImageView bloom,
+		vk::ImageView luminance) {
 	vpp::DescriptorSetUpdate dsu(ds_);
 	dsu.imageSampler({{{{}, light, vk::ImageLayout::shaderReadOnlyOptimal}}});
 	dsu.imageSampler({{{{}, ldepth, vk::ImageLayout::shaderReadOnlyOptimal}}});
 	dsu.uniform({{{ubo_}}});
 	dsu.apply();
 
+	vpp::DescriptorSetUpdate ddsu(debug_.ds);
+	ddsu.imageSampler({{{}, albedo, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, normals, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, ldepth, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, ssao, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, ssr, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, emission, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, bloom, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, luminance, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.apply();
+}
+
+vpp::Framebuffer PostProcessPass::initFramebuffer(vk::ImageView output,
+		vk::Extent2D size) {
 	auto attachments = {output};
 	vk::FramebufferCreateInfo fbi;
 	fbi.renderPass = rp_;
@@ -113,11 +190,19 @@ vpp::Framebuffer PostProcessPass::initFramebuffer(vk::ImageView output,
 	return {rp_.device(), fbi};
 }
 
-void PostProcessPass::record(vk::CommandBuffer cb) {
+void PostProcessPass::record(vk::CommandBuffer cb, u32 mode) {
 	vpp::DebugLabel debugLabel(cb, "PostProcessPass");
-	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-	doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
-	vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
+	if(mode == modeDefault) {
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
+		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
+		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
+	} else {
+		vk::cmdPushConstants(cb, debug_.pipeLayout,
+			vk::ShaderStageBits::fragment, 0, sizeof(mode), &mode);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, debug_.pipe);
+		doi::cmdBindGraphicsDescriptors(cb, debug_.pipeLayout, 0, {debug_.ds});
+		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
+	}
 }
 
 void PostProcessPass::updateDevice() {
@@ -126,15 +211,7 @@ void PostProcessPass::updateDevice() {
 	uboMap_.flush();
 }
 
-SyncScope PostProcessPass::dstScopeLight() const {
-	return {
-		vk::PipelineStageBits::fragmentShader,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::AccessBits::shaderRead
-	};
-}
-
-SyncScope PostProcessPass::dstScopeDepth() const {
+SyncScope PostProcessPass::dstScopeInput() const {
 	return {
 		vk::PipelineStageBits::fragmentShader,
 		vk::ImageLayout::shaderReadOnlyOptimal,

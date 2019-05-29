@@ -3,10 +3,18 @@
 - ao: depends on geomLight(mergable), ssao
 - [optional] bloom: depends on geomLight (emission, light)
 - [optional] ssr: depends on geomLight (normals, depth)
-- (fwd: depends on nothing geomLight i guess, mergable with it)
-	- it shouldn't even overwrite the depth buffer the passes use.
+- (fwd: depends on nothing... geomLight i guess, mergable with it)
+	- it shouldn't even overwrite the depth buffer the other passes use.
 	  i guess we can always (if we don't want special 2nd ssr/ssao or sth
 	  for transparency) merge it with geomLight, right?
+	- problem is though that we probably *first* want to apply bloom,
+	  ssr, ssao etc for correct blending... So this pass should probably
+	  depends on combine, right?
+	  otoh we could use the alpha channel to store accumulated transparency
+	  alpha information and then blend with that in combine? i.e.
+	  multiply the additional buffers (ssr, bloom mainly i guess)
+	  with (1 - transparencyAlpha). In fwd pass multiply-blend alpha
+	  (nvm, mulitply-blend doesn't exist in core vulkan)
 - combine: depends on ao, ssr, bloom, (geomLight)
 	- !ssr: mergable dependency on ao
 - pp: depends on combine [no dependees]

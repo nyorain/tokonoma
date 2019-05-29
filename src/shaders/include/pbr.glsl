@@ -104,3 +104,49 @@ vec3 importanceSampleGGX(vec2 xi, vec3 normal, float roughness) {
     vec3 sampleVec = tangent * H.x + bitangent * H.y + normal * H.z;
     return normalize(sampleVec);
 }  
+
+const uint flagDiffuseIBL = (1u << 0u);
+const uint flagSpecularIBL = (1u << 1u);
+vec3 ao(uint flags, vec3 viewDir, vec3 normal, vec3 albedo, float metallic, 
+		float roughness, samplerCube irradianceMap, samplerCube envMap,
+		sampler2D brdfLut, uint envLods) {
+
+	if((flags & (flagDiffuseIBL | flagSpecularIBL)) == 0) {
+		return 0.25 * albedo;
+	}
+
+	// apply ao
+	vec3 f0 = vec3(0.04); // NOTE: good enough, could be made material property
+	f0 = mix(f0, albedo, metallic);
+
+	float cosTheta = max(dot(normal, -viewDir), 0.0);
+	vec3 kS = fresnelSchlickRoughness(cosTheta, f0, roughness);
+	vec3 kD = 1.0 - kS;
+	kD *= 1.0 - metallic;
+
+	// ambient irradiance
+	vec3 ambient = vec3(0.0);
+	if((flags & flagDiffuseIBL) != 0) {
+		vec3 irradiance = texture(irradianceMap, normal).rgb;
+		vec3 diffuse = kD * irradiance * albedo;
+		ambient += diffuse;
+	} else {
+		ambient += 0.125 * albedo;
+	}
+
+	// specular
+	if((flags & flagSpecularIBL) != 0) {
+		vec3 R = reflect(viewDir, normal);
+		float lod = roughness * envLods;
+		vec3 filtered = textureLod(envMap, R, lod).rgb;   
+		vec2 brdfParams = vec2(cosTheta, roughness);
+		vec2 brdf = texture(brdfLut, brdfParams).rg;
+		vec3 specular = filtered * (kS * brdf.x + brdf.y);
+		ambient += specular;
+	} else {
+		ambient += 0.125 * albedo;
+	}
+
+	return ambient;
+}
+
