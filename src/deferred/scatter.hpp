@@ -5,57 +5,74 @@
 
 // TODO: implement alternative that just uses an additional
 // output in light pass
+// TODO: could optionally make this a compute pass (fullscreen)
 
 /// Simple pass that calculates light scattering for one light onto an
 /// r8Unorm fullscreen target.
 /// Needs depth (and based on scattering algorithm also the lights
 /// shadow map) as input
 class LightScatterPass {
-	// TODO
+public:
+	static constexpr vk::Format format = vk::Format::r8Unorm;
+	static constexpr u32 flagShadow = 1 << 0u;
+	static constexpr u32 flagAttenuation = 1 << 1u; // only point lights
+
+	struct InitData {
+		vpp::TrDs::InitData initDs;
+		vpp::SubBuffer::InitData initUbo;
+	};
+
+	struct InitBufferData {
+		vpp::ViewableImage::InitData initTarget;
+	};
+
+public:
+	// See scatter.glsl, point/dirScatter.frag
+	struct {
+		u32 flags {flagShadow | flagAttenuation};
+		float fac {1.f};
+		float mie {0.1f};
+	} params;
+
+	// Needs recreation after being changed, specialization constant
+	// to allow driver unrolling at pipeline compliation time
+	u32 sampleCount = 10u;
+
+public:
+	LightScatterPass() = default;
+	void create(InitData&, const PassCreateInfo&,
+		bool directional, SyncScope dstTarget);
+	void init(InitData&, const PassCreateInfo&);
+
+	void createBuffers(InitBufferData&, vk::Extent2D);
+	void initBuffers(InitBufferData&, vk::Extent2D,
+		vk::ImageView depth);
+
+	void record(vk::CommandBuffer, vk::Extent2D,
+		vk::DescriptorSet scene, vk::DescriptorSet light);
+	void updateDevice();
+
+	SyncScope dstScopeDepth() const;
+
+protected:
 	vpp::RenderPass rp_;
 	vpp::Framebuffer fb_;
 	vpp::TrDsLayout dsLayout_;
 	vpp::TrDs ds_;
 	vpp::PipelineLayout pipeLayout_;
-	vpp::Pipeline pointPipe_;
-	vpp::Pipeline dirPipe_;
+	vpp::Pipeline pipe_;
+	// vpp::Pipeline pointPipe_;
+	// vpp::Pipeline dirPipe_;
 	vpp::ViewableImage target_;
+
+	vpp::SubBuffer ubo_;
+	vpp::MemoryMapView uboMap_;
 };
 
 
+/*
 // dumped
 // scatter
-if(renderPasses_ & passScattering) {
-	vk::cmdBeginRenderPass(cb, {
-		scatter_.pass,
-		scatter_.fb,
-		{0u, 0u, width, height},
-		0, nullptr
-	}, {});
-
-	vk::Viewport vp{0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
-	vk::cmdSetViewport(cb, 0, 1, vp);
-	vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
-
-	// TODO: scatter support for multiple lights
-	vk::DescriptorSet lds;
-	if(!dirLights_.empty()) {
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
-			scatter_.dirPipe);
-		lds = dirLights_[0].ds();
-	} else {
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
-			scatter_.pointPipe);
-		lds = pointLights_[0].ds();
-	}
-
-	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		scatter_.pipeLayout, 0, {{sceneDs_.vkHandle(),
-		scatter_.ds.vkHandle(), lds}}, {});
-	vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
-	vk::cmdEndRenderPass(cb);
-}
-
 	// render pass
 	auto& dev = device();
 	std::array<vk::AttachmentDescription, 1u> attachments;
@@ -142,3 +159,4 @@ if(renderPasses_ & passScattering) {
 	scatter_.pointPipe = {dev, vkpipes[0]};
 	scatter_.dirPipe = {dev, vkpipes[1]};
 	scatter_.ds = {dev.descriptorAllocator(), scatter_.dsLayout};
+*/

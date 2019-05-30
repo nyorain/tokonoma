@@ -65,7 +65,7 @@ void write(std::byte*& data, T&& obj) {
 	data += sizeof(obj);
 }
 
-// NOTE: doesn't really fit in here...
+// TODO: doesn't really fit in here...
 template<typename T>
 T bit(T value, T bit, bool set) {
 	return set ? (value | bit) : (value & ~bit);

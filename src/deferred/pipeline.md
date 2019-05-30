@@ -21,6 +21,54 @@
 	- !dof: mergable dependency on combine (and !luminance)
 - [optional] luminance: depends on combine [no dependees]
 
+---
+
+concept: render/frame/pass graph
+
+```
+RenderGraph graph;
+auto& geomLight = graph.addPass();
+auto& emissionTarget = geomLight.addOut(RenderScope::flex);
+auto& lightTarget = geomLight.addOut(RenderScope::flex);
+auto& ldepthTarget = geomLight.addOut(RenderScope::flex);
+auto& albeoTarget = geomLight.addOut(RenderScope::flex);
+auto& normalsTarget = geomLight.addOut(RenderScope::flex);
+
+if(ssrPass) {
+	auto& ssr = graph.addPass();
+	ssr.addIn(normalsTarget, ssr.dstScopeNormals());
+	ssr.addIn(ldepthTarget, ssr.dstScopeDepth());
+	auto ssrTarget = ssr.addOut(ssr.srcScopeTarget());
+}
+
+auto* postInputTarget = &lightTarget;
+if(combinePass) {
+	auto& combine = graph.addPass();
+	if(bloomPass) {
+		combine.addIn(bloomTarget, combine.dstScopeBloom());
+	}
+	if(ssrPass) {
+		combine.addIn(ssrTarget, combine.dstScopeSSR());
+	}
+
+	auto& combined = combine.addInOut(emissionTarget, combine.scopeTarget());
+	postInputTarget = &combined;
+}
+
+auto& pp = graph.addPass();
+pp.addIn(*postInputTarget, pp.dstScopeInput());
+if(debugMode) {
+	pp.addIn(lightTarget, pp.dstScopeInput());
+	// ...
+}
+
+// get barriers for flexible outputs (usually render passes)
+// already create render passes using those barriers
+geomLight_.init(albedoTarget.nextScope(), normalsTarget.nextScope(), ...);
+
+// later, when recording
+graph.record();
+```
 
 ---
 

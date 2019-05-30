@@ -62,7 +62,41 @@ struct SyncScope {
 	vk::PipelineStageFlags stages {};
 	vk::ImageLayout layout {vk::ImageLayout::undefined};
 	vk::AccessFlags access {};
+
+	static inline SyncScope fragmentSampled() {
+		return {
+			vk::PipelineStageBits::fragmentShader,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::AccessBits::shaderRead,
+		};
+	}
+	static inline SyncScope computeSampled() {
+		return {
+			vk::PipelineStageBits::computeShader,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::AccessBits::shaderRead,
+		};
+	}
+	static inline SyncScope computeReadWrite() {
+		return {
+			vk::PipelineStageBits::computeShader,
+			vk::ImageLayout::general,
+			vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+		};
+	}
 };
+
+inline bool operator==(SyncScope a, SyncScope b) {
+	return a.stages == b.stages &&
+		a.layout == b.layout &&
+		a.access == b.access;
+}
+
+inline bool operator!=(SyncScope a, SyncScope b) {
+	return a.stages != b.stages ||
+		a.layout != b.layout ||
+		a.access != b.access;
+}
 
 inline SyncScope& operator|=(SyncScope& a, SyncScope b) {
 	if(a.layout == vk::ImageLayout::undefined) {

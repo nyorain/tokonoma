@@ -78,16 +78,16 @@ void main() {
 
 				float fac;
 				if(depth < focus) {
-					fac = clamp(0.05 + (focus - depth) / focus, 0, 1);
-					fac = pow(fac, 2);
+					fac = clamp((focus - depth) / (2 * depth), 0, 1);
+					// fac = pow(fac, 0.25);
 				} else {
-					// fac = 1 for dist = 4
-					float x = 0.25 * (depth - focus);
+					// fac = 1 for dist = 10
+					float x = 0.1 * (depth - focus);
 					fac = clamp(pow(x, 2), 0, 1);
 				}
 				fac = clamp(fac * params.dofStrength, 0, 1);
-				fac *= pow(1.f / (abs(x) + 1), 0.2);
-				fac *= pow(1.f / (abs(y) + 1), 0.2);
+				fac *= pow(1.f / (abs(x) + 1), 0.1);
+				fac *= pow(1.f / (abs(y) + 1), 0.1);
 				total += fac;
 				accum += fac * texture(colorTex, uv + off).rgb;
 			}

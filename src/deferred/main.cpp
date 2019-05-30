@@ -6,6 +6,7 @@
 #include "combine.hpp"
 #include "luminance.hpp"
 #include "postProcess.hpp"
+#include "graph.hpp"
 
 #include <stage/app.hpp>
 #include <stage/f16.hpp>
@@ -60,7 +61,16 @@
 // - lens flare
 // - better dof implementations, current impl is naive
 
-// TODO: fix up query pool usage
+// TODO: luminance implementation still not correct, debug with
+//   resizing window.
+// TODO: updateDevice flag that updates all pass parameters.
+//   doesn't need to happen every frame
+// TODO: timeWidget currently somewhat hacked together, working
+//   around rvg quirks triggering re-record while recording...
+//   probably better to add passes to timeWidget (getting an id)
+//   in initPasses and then use that id when recording to record
+//   a timestamp. Shouldn't be too hard given that initPasses currently
+//   also records the passes, just capture by value
 // TODO: support transparency. Can be ordered for now, i.e. split
 //   primitives into two groups in Scene: BLEND and non-blend material-based.
 //   the blend ones are sorted in each updateDevice (either on gpu
@@ -217,8 +227,6 @@ public:
 	static constexpr auto ldepthFormat = vk::Format::r16Sfloat;
 	static constexpr auto pointLight = false;
 
-	static constexpr u32 flagFXAA = (1u << 0u); // pp.frag
-
 	static constexpr u32 passScattering = (1u << 1u);
 	static constexpr u32 passSSR = (1u << 2u);
 	static constexpr u32 passBloom = (1u << 3u);
@@ -226,7 +234,7 @@ public:
 	static constexpr u32 passLuminance = (1u << 5u);
 
 	static constexpr u32 passAO = (1u << 6u);
-	static constexpr u32 passCombine = (1u << 6u);
+	static constexpr u32 passCombine = (1u << 7u);
 
 	static constexpr unsigned timestampCount = 13u;
 
@@ -234,7 +242,6 @@ public:
 	bool init(const nytl::Span<const char*> args) override;
 	void initRenderData() override;
 	void initPasses(const doi::WorkBatcher&);
-	// void initFwd();
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
@@ -287,8 +294,6 @@ protected:
 	vpp::SubBuffer sceneUbo_;
 	vpp::TrDs sceneDs_;
 
-	std::uint32_t bloomLevels_ {};
-
 	vpp::Sampler linearSampler_;
 	vpp::Sampler nearestSampler_;
 
@@ -334,9 +339,6 @@ protected:
 	vpp::SubBuffer renderStage_;
 	float desiredLuminance_ {0.2};
 
-	// vpp::QueryPool queryPool_ {};
-	// std::uint32_t timestampBits_ {};
-
 	// point light selection. 0 if invalid
 	unsigned currentID_ {}; // for id giving
 	struct {
@@ -348,6 +350,9 @@ protected:
 		std::unique_ptr<vui::Widget> removedFolder {};
 	} selected_;
 	vui::dat::Panel* vuiPanel_ {};
+
+	FrameGraph frameGraph_;
+	FrameTarget* frameTargetBloom_ {};
 
 	GeomLightPass geomLight_;
 	BloomPass bloom_;
@@ -362,21 +367,6 @@ protected:
 	vpp::ShaderModule fullVertShader_;
 
 	TimeWidget timeWidget_;
-
-	// // times
-	// struct TimePass {
-	// 	rvg::Text passName;
-	// 	rvg::Text time;
-	// };
-//
-	// struct {
-	// 	std::array<TimePass, timestampCount> texts;
-	// 	rvg::RectShape bg;
-	// 	rvg::Paint bgPaint;
-	// 	rvg::Paint fgPaint;
-	// 	unsigned frameCount {0};
-	// 	bool hidden {};
-	// } timings_;
 
 	struct {
 		vui::dat::Label* luminance;
@@ -451,7 +441,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	createValueTextfield(pp, "ssaoPow", ao_.params.ssaoPow);
 	createValueTextfield(pp, "tonemap", pp_.params.tonemap);
 	createValueTextfield(pp, "scatter strength", combine_.params.scatterStrength);
-	createValueTextfield(pp, "dof strength", combine_.params.scatterStrength);
+	createValueTextfield(pp, "dof strength", pp_.params.dofStrength);
 
 	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
 	cb1.set(renderPasses_ & passSSAO);
@@ -502,9 +492,9 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	};
 
 	auto& cb5 = pp.create<Checkbox>("FXAA").checkbox();
-	cb5.set(pp_.params.flags & flagFXAA);
+	cb5.set(pp_.params.flags & pp_.flagFXAA);
 	cb5.onToggle = [&](auto&) {
-		pp_.params.flags ^= flagFXAA;
+		pp_.params.flags ^= pp_.flagFXAA;
 	};
 
 	auto& cb6 = pp.create<Checkbox>("Diffuse IBL").checkbox();
@@ -590,51 +580,24 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	});
 
 	selected_.removedFolder = panel.remove(*selected_.folder);
-
 	timeWidget_ = {rvgContext(), defaultFont()};
-
-	/*
-	// times widget
-	{
-		auto names = {
-			"shadows:",
-			"gpass:",
-			"depth mips:",
-			"ssao:",
-			"scatter:",
-			"lpass:",
-			"fwd:",
-			"bloom:",
-			"ssr:",
-			"ao:",
-			"combine:",
-			"luminance:",
-			"post process:"
-		};
-
-		timings_.bgPaint = {rvgContext(), rvg::colorPaint({20, 20, 20, 200})};
-		timings_.fgPaint = {rvgContext(), rvg::colorPaint({230, 230, 230, 255})};
-		auto dm = rvg::DrawMode {};
-		dm.deviceLocal = true;
-		dm.fill = true;
-		dm.stroke = 0.f;
-		dm.aaFill = false;
-		timings_.bg = {rvgContext(), {}, {}, dm};
-
-		// positions set by resize
-		for(auto i = 0u; i < timings_.texts.size(); ++i) {
-			auto name = *(names.begin() + i);
-			timings_.texts[i].passName = {rvgContext(), {}, name, defaultFont(), 14.f};
-			timings_.texts[i].time = {rvgContext(), {}, "", defaultFont(), 14.f};
-		}
-	}
-	*/
 
 	return true;
 }
 
 void ViewApp::initPasses(const doi::WorkBatcher& wb) {
-	// bloom
+	// first reset all passes, frees memory and destroys useless objects
+	geomLight_ = {};
+	pp_ = {};
+	bloom_ = {};
+	ssr_ = {};
+	combine_ = {};
+	ssao_ = {};
+	luminance_ = {};
+	ao_ = {};
+
+	frameGraph_ = {};
+
 	PassCreateInfo passInfo {
 		wb,
 		depthFormat(), {
@@ -655,73 +618,224 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 	renderPasses_ = doi::bit(renderPasses_, passCombine,
 		bool(renderPasses_ & (passSSR | passBloom | passScattering)));
 
+	dlg_info("ao pass: {}", bool(renderPasses_ & passAO));
+	dlg_info("combine pass: {}", bool(renderPasses_ & passCombine));
+
+
+	auto& passGeomLight = frameGraph_.addPass();
+	auto& targetNormals = passGeomLight.addOut(syncScopeFlex,
+		geomLight_.normalsTarget().vkImage());
+	auto& targetAlbedo = passGeomLight.addOut(syncScopeFlex,
+		geomLight_.albedoTarget().vkImage());
+	auto& targetEmission = passGeomLight.addOut(syncScopeFlex,
+		geomLight_.emissionTarget().vkImage());
+	auto& targetLDepth = passGeomLight.addOut(syncScopeFlex,
+		geomLight_.ldepthTarget().vkImage());
+	auto& targetLight = passGeomLight.addOut(syncScopeFlex,
+		geomLight_.lightTarget().vkImage());
+	passGeomLight.record = [&](const auto& buf) {
+		geomLight_.record(buf.cb, buf.size, sceneDs_, scene_, pointLights_,
+			dirLights_, boxIndices_, &env_, timeWidget_);
+	};
+
 	vpp::InitObject initPP(pp_, passInfo, swapchainInfo().imageFormat);
+	auto& passPP = frameGraph_.addPass();
+	passPP.record = [&](const auto& buf) {
+		auto cb = buf.cb;
+		vk::cmdBeginRenderPass(cb, {
+			pp_.renderPass(),
+			buf.fb,
+			{0u, 0u, buf.size.width, buf.size.height},
+			0, nullptr
+		}, {});
 
-	// geomLight dst scopes
-	SyncScope dstLight = pp_.dstScopeInput();
-	SyncScope dstDepth = {};
-	SyncScope dstLDepth = {};
-	SyncScope dstEmission = {};
-	SyncScope dstAlbedo = {};
-	SyncScope dstNormals = {};
+		pp_.record(cb, debugMode_);
+		timeWidget_.add("pp");
 
-	if(debugMode_ != 0) {
-		dstDepth |= pp_.dstScopeInput();
-		dstLDepth |= pp_.dstScopeInput();
-		dstEmission |= pp_.dstScopeInput();
-		dstAlbedo |= pp_.dstScopeInput();
-		dstNormals |= pp_.dstScopeInput();
-	} else if(pp_.params.flags & pp_.flagDOF) {
-		dstDepth = pp_.dstScopeInput();
-	}
+		// gui stuff
+		vpp::DebugLabel debugLabel(cb, "GUI");
+		rvgContext().bindDefaults(cb);
+		gui().draw(cb);
 
-	AOPass::InitData initAO;
-	if(renderPasses_ & passAO) {
-		ao_.create(initAO, passInfo);
-		dstLDepth |= ao_.dstScopeGBuf();
-		dstAlbedo |= ao_.dstScopeGBuf();
-		dstNormals |= ao_.dstScopeGBuf();
-		dstEmission |= ao_.dstScopeGBuf();
-	}
+		// times
+		timeWidget_.finish();
+		rvgContext().bindDefaults(cb);
+		windowTransform().bind(cb);
+		timeWidget_.draw(cb);
 
-	CombinePass::InitData initCombine;
-	if(renderPasses_ & passCombine) {
-		combine_.create(initCombine, passInfo);
-		dstLDepth |= combine_.dstScopeDepth();
-	}
+		vk::cmdEndRenderPass(cb);
+	};
 
-	BloomPass::InitData initBloom;
-	if(renderPasses_ & passBloom) {
-		bloom_.create(initBloom, passInfo);
-		// replace previous dependencies since bloom blits from
-		// emission. Manually sync to following passes via barrier in record
-		dstEmission = bloom_.dstScopeEmission();
-	}
-
-	SSRPass::InitData initSSR;
-	if(renderPasses_ & passSSR) {
-		ssr_.create(initSSR, passInfo);
-		dstLDepth |= ssr_.dstScopeDepth();
-		dstNormals |= ssr_.dstScopeNormals();
-	}
-
+	FrameTarget* targetSSAO {};
 	SSAOPass::InitData initSSAO;
 	if(renderPasses_ & passSSAO) {
 		ssao_.create(initSSAO, passInfo);
-		dstLDepth |= ssao_.dstScopeDepth();
-		dstNormals |= ssao_.dstScopeNormals();
+
+		auto& passSSAO = frameGraph_.addPass();
+		passSSAO.addIn(targetLDepth, ssao_.dstScopeDepth());
+		passSSAO.addIn(targetNormals, ssao_.dstScopeNormals());
+		targetSSAO = &passSSAO.addOut(ssao_.srcScopeTarget(),
+			ssao_.target().vkImage());
+
+		passSSAO.record = [&](const auto& buf) {
+			ssao_.record(buf.cb, buf.size, sceneDs_);
+			timeWidget_.add("ssao");
+		};
 	}
 
+	FrameTarget* targetAO = &targetLight;
+	AOPass::InitData initAO;
+	if(renderPasses_ & passAO) {
+		ao_.create(initAO, passInfo);
+
+		auto& passAO = frameGraph_.addPass();
+		targetAO = &passAO.addInOut(targetLight, ao_.scopeLight());
+		passAO.addIn(targetLDepth, ao_.dstScopeGBuf());
+		passAO.addIn(targetAlbedo, ao_.dstScopeGBuf());
+		passAO.addIn(targetNormals, ao_.dstScopeGBuf());
+		passAO.addIn(targetEmission, ao_.dstScopeGBuf());
+		if(targetSSAO){
+			passAO.addIn(*targetSSAO, ao_.dstScopeSSAO());
+		}
+
+		passAO.record = [&](const auto& buf) {
+			ao_.record(buf.cb, sceneDs_, buf.size);
+			timeWidget_.add("ao");
+		};
+	}
+
+	FrameTarget* targetBloom {};
+	BloomPass::InitData initBloom;
+	if(renderPasses_ & passBloom) {
+		bloom_.create(initBloom, passInfo);
+
+		auto& passBloom = frameGraph_.addPass();
+		passBloom.addIn(targetEmission, bloom_.dstScopeEmission());
+		passBloom.addIn(*targetAO, bloom_.dstScopeLight());
+		targetBloom = &passBloom.addOut(bloom_.srcScopeTarget(),
+			bloom_.target());
+		frameTargetBloom_ = targetBloom;
+
+		passBloom.record = [&](const auto& buf) {
+			bloom_.record(buf.cb, geomLight_.emissionTarget().image(), buf.size);
+			timeWidget_.add("bloom");
+		};
+	}
+
+	FrameTarget* targetSSR {};
+	SSRPass::InitData initSSR;
+	if(renderPasses_ & passSSR) {
+		ssr_.create(initSSR, passInfo);
+
+		auto& passSSR = frameGraph_.addPass();
+		passSSR.addIn(targetLDepth, ssr_.dstScopeDepth());
+		passSSR.addIn(targetNormals, ssr_.dstScopeNormals());
+		targetSSR = &passSSR.addOut(ssr_.srcScopeTarget(),
+			ssr_.target().vkImage());
+
+		passSSR.record = [&](const auto& buf) {
+			ssr_.record(buf.cb, sceneDs_, buf.size);
+			timeWidget_.add("ssr");
+		};
+	}
+
+	FrameTarget* targetPPInput = targetAO;
+	CombinePass::InitData initCombine;
+	if(renderPasses_ & passCombine) {
+		combine_.create(initCombine, passInfo);
+
+		auto& passCombine = frameGraph_.addPass();
+		passCombine.addIn(targetLDepth, combine_.dstScopeDepth());
+		passCombine.addIn(*targetAO, combine_.dstScopeLight());
+		if(targetBloom) {
+			passCombine.addIn(*targetBloom, combine_.dstScopeBloom());
+		}
+		if(targetSSR) {
+			passCombine.addIn(*targetSSR, combine_.dstScopeSSR());
+		}
+		auto& targetCombined = passCombine.addInOut(targetEmission,
+			combine_.scopeTarget());
+		passCombine.record = [&](const auto& buf) {
+			combine_.record(buf.cb, buf.size);
+			timeWidget_.add("combine");
+		};
+
+		targetPPInput = &targetCombined;
+	}
+
+	FrameTarget* targetLuminance {};
 	LuminancePass::InitData initLuminance;
 	if(renderPasses_ & passLuminance) {
 		luminance_.create(initLuminance, passInfo);
+
+		auto& passLum = frameGraph_.addPass();
+		passLum.addIn(*targetPPInput, luminance_.dstScopeLight());
+		targetLuminance = &passLum.addOut(luminance_.srcScopeTarget(),
+			luminance_.target().vkImage());
+		passLum.record = [&](const auto& buf) {
+			luminance_.record(buf.cb, buf.size);
+			// TODO: luminance might be executed after pp.
+			// still working around weird time widget quirks
+			// timeWidget_.add("luminance");
+		};
 	}
 
+	passPP.addIn(*targetPPInput, pp_.dstScopeInput());
+	if(debugMode_ != 0) {
+		if(targetSSR) {
+			passPP.addIn(*targetSSR, pp_.dstScopeInput());
+		}
+		if(targetSSAO) {
+			passPP.addIn(*targetSSAO, pp_.dstScopeInput());
+		}
+		if(targetBloom) {
+			passPP.addIn(*targetBloom, pp_.dstScopeInput());
+		}
+		if(targetLuminance) {
+			passPP.addIn(*targetLuminance, pp_.dstScopeInput());
+		}
+
+		passPP.addIn(targetLDepth, pp_.dstScopeInput());
+		passPP.addIn(targetEmission, pp_.dstScopeInput());
+		passPP.addIn(targetAlbedo, pp_.dstScopeInput());
+		passPP.addIn(targetNormals, pp_.dstScopeInput());
+	} else if(pp_.params.flags & pp_.flagDOF) {
+		passPP.addIn(targetLDepth, pp_.dstScopeInput());
+
+		// pseudo-pass that copies the center pixel of the depth target
+		// so we know what depth is currently focused and can adopt dof
+		auto& passCopyDepth = frameGraph_.addPass();
+		passCopyDepth.addIn(targetLDepth, {
+			vk::PipelineStageBits::transfer,
+			vk::ImageLayout::transferSrcOptimal,
+			vk::AccessBits::transferRead,
+		});
+		passCopyDepth.record = [&](const auto& buf) {
+			vk::BufferImageCopy copy;
+			copy.bufferOffset = renderStage_.offset();
+			copy.imageExtent = {1, 1, 1};
+			copy.imageOffset = {i32(buf.size.width / 2u), i32(buf.size.height / 2u), 0};
+			copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
+			copy.imageSubresource.layerCount = 1;
+			copy.imageSubresource.mipLevel = 0;
+			vk::cmdCopyImageToBuffer(buf.cb, geomLight_.ldepthTarget().image(),
+				vk::ImageLayout::transferSrcOptimal,
+				renderStage_.buffer(), {{copy}});
+		};
+	}
+
+	dlg_assert(frameGraph_.check());
+	frameGraph_.compute();
+
+	auto dstAlbedo = targetAlbedo.producer.scope;
+	auto dstNormals = targetNormals.producer.scope;
+	auto dstEmission = targetEmission.producer.scope;
+	auto dstLDepth = targetLDepth.producer.scope;
+	auto dstLight = targetLight.producer.scope;
+	auto dstDepth = SyncScope {};
 	vpp::InitObject initGeomLight(geomLight_, passInfo,
 		dstNormals, dstAlbedo, dstEmission, dstDepth, dstLDepth, dstLight,
 		!(renderPasses_ & passAO));
-
-	// initFwd(); // init forward pass for skybox and transparent objects
 
 	// finish initialization
 	initGeomLight.init();
@@ -892,11 +1006,6 @@ void ViewApp::initRenderData() {
 		vk::CommandPoolCreateBits::resetCommandBuffer);
 	selectionSemaphore_ = {dev};
 
-	// TODO: we can't assume that timestamps are supported...
-	// timestampBits_ = dev.queueSubmitter().queue().properties().timestampValidBits;
-	// dlg_assert(timestampBits_);
-	// timestampBits_ = 0xFFFFFFFFu; // guaranteed
-
 	// environment
 	doi::Environment::InitData envData;
 	env_.create(envData, batch, "convolution.ktx",
@@ -1014,58 +1123,6 @@ void ViewApp::initRenderData() {
 
 }
 
-/*
-void ViewApp::initFwd() {
-	// render pass
-	auto& dev = device();
-	std::array<vk::AttachmentDescription, 2u> attachments;
-
-	attachments[0].format = lightFormat;
-	attachments[0].samples = vk::SampleCountBits::e1;
-	attachments[0].loadOp = vk::AttachmentLoadOp::load;
-	attachments[0].storeOp = vk::AttachmentStoreOp::store;
-	attachments[0].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-	attachments[0].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-	attachments[0].initialLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	attachments[0].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-
-	attachments[1].format = depthFormat();
-	attachments[1].samples = vk::SampleCountBits::e1;
-	attachments[1].loadOp = vk::AttachmentLoadOp::load;
-	attachments[1].storeOp = vk::AttachmentStoreOp::store;
-	attachments[1].stencilLoadOp = vk::AttachmentLoadOp::dontCare;
-	attachments[1].stencilStoreOp = vk::AttachmentStoreOp::dontCare;
-	attachments[1].initialLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	attachments[1].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-
-	// subpass
-	vk::AttachmentReference colorRef;
-	colorRef.attachment = 0u;
-	colorRef.layout = vk::ImageLayout::colorAttachmentOptimal;
-
-	vk::AttachmentReference depthRef;
-	depthRef.attachment = 1u;
-	depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
-
-	vk::SubpassDescription subpass;
-	subpass.colorAttachmentCount = 1u;
-	subpass.pColorAttachments = &colorRef;
-	subpass.pDepthStencilAttachment = &depthRef;
-
-	// TODO: probably needs a barrier
-	vk::RenderPassCreateInfo rpi;
-	rpi.attachmentCount = attachments.size();
-	rpi.pAttachments = attachments.data();
-	rpi.subpassCount = 1u;
-	rpi.pSubpasses = &subpass;
-
-	fwd_.pass = {dev, rpi};
-
-	// TODO: init pipeline and stuff for transparent objects
-	// currently only used for skybox
-}
-*/
-
 vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
 	auto width = size.width;
 	auto height = size.height;
@@ -1124,8 +1181,8 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	vpp::BufferAllocator bufStage(memStage);
 	auto& alloc = *this->alloc;
 
-	// NOTE: no cb needed here
-	// TODO: memStage,bufStage neither, theoretically...
+	// TODO: no cb needed here for now, future passes might use
+	// it though so it should be supported
 	doi::WorkBatcher wb{dev, {}, {
 			alloc.memDevice, alloc.memHost, memStage,
 			alloc.bufDevice, alloc.bufHost, bufStage,
@@ -1170,6 +1227,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	if(renderPasses_ & passBloom) {
 		bloom_.initBuffers(bloomData, geomLight_.lightTarget().imageView());
 		bloomView = bloom_.fullView();
+		frameTargetBloom_->subres.levelCount = bloom_.levelCount();
 	}
 	auto ssrView = dummyTex_.vkImageView();
 	if(renderPasses_ & passSSR) {
@@ -1312,175 +1370,11 @@ void ViewApp::record(const RenderBuffer& buf) {
 	vk::cmdSetViewport(cb, 0, 1, vp);
 	vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
-	geomLight_.record(cb, size, sceneDs_, scene_, pointLights_,
-		dirLights_, boxIndices_, &env_, timeWidget_);
-
-	auto ldepthImage = geomLight_.ldepthTarget().vkImage();
-	auto lightImage = geomLight_.lightTarget().vkImage();
-	auto emissionImage = geomLight_.emissionTarget().vkImage();
-
-	// == ssao pass ==
-	if(renderPasses_ & passSSAO) {
-		ssao_.record(cb, size, sceneDs_);
-		timeWidget_.add("ssao");
-	}
-
-	// == bloom pass ==
-	ImageBarrier lightBarrier;
-	lightBarrier.image = lightImage;
-	if(renderPasses_ & passBloom) {
-		// make fwd pass visible
-		// lightBarrier.dst = bloom_.dstScopeLight();
-		// barrier(cb, {{lightBarrier}});
-
-		bloom_.record(cb, emissionImage, {width, height});
-		lightBarrier.src = lightBarrier.dst;
-		timeWidget_.add("bloom");
-	}
-
-	// == ssr pass ==
-	if(renderPasses_ & passSSR) {
-		ssr_.record(cb, sceneDs_, {width, height});
-		timeWidget_.add("ssr");
-	}
-
-	// == ao pass ==
-	// make sure output from previous stages is readable in ao pass
-	// lightBarrier.src is still correctly set; bloom or fwd pass
-	ImageBarrier emissionBarrier;
-	if(renderPasses_ & passAO) {
-		lightBarrier.dst = ao_.scopeLight();
-
-		if(renderPasses_ & passBloom) {
-			emissionBarrier.image = emissionImage;
-			emissionBarrier.src = bloom_.dstScopeEmission(); // read access
-			emissionBarrier.dst = ao_.dstScopeGBuf();
-		}
-
-		ImageBarrier ssaoBarrier;
-		if(renderPasses_ & passSSAO) {
-			ssaoBarrier.src = ssao_.srcScopeTarget();
-			ssaoBarrier.dst = ao_.dstScopeSSAO();
-			ssaoBarrier.image = ssao_.target().image();
-		}
-
-		barrier(cb, {{lightBarrier, ssaoBarrier, emissionBarrier}});
-		lightBarrier.src = lightBarrier.dst;
-
-		ao_.record(cb, sceneDs_, size);
-		timeWidget_.add("ao");
-	}
-
-	// == combine pass ==
-	// make sure inputs for combine pass are readable
-	ImageBarrier ppInputBarrier = lightBarrier;
-	if(renderPasses_ & passCombine) {
-		lightBarrier.dst = combine_.dstScopeLight();
-
-		ImageBarrier ssrBarrier;
-		ssrBarrier.src = ssr_.srcScopeTarget();
-		ssrBarrier.dst = combine_.dstScopeSSR();
-		ssrBarrier.image = ssr_.target().image();
-
-		// add transitive dependency against potential
-		// previous use
-		emissionBarrier.src = emissionBarrier.dst; // read access
-		emissionBarrier.dst = combine_.scopeTarget();
-
-		ImageBarrier bloomBarrier;
-		bloomBarrier.src = bloom_.srcScopeTarget();
-		bloomBarrier.dst = combine_.dstScopeBloom();
-		bloomBarrier.image = bloom_.target();
-		bloomBarrier.subres.levelCount = bloom_.levelCount();
-
-		barrier(cb, {{lightBarrier, ssrBarrier, bloomBarrier, emissionBarrier}});
-		combine_.record(cb, size);
-		timeWidget_.add("combine");
-
-		lightBarrier.src = lightBarrier.dst;
-		emissionBarrier.src = emissionBarrier.dst;
-
-		ppInputBarrier = emissionBarrier;
-		ppInputBarrier.image = geomLight_.emissionTarget().image();
-	}
-
-	// == luminance pass ==
-	if(renderPasses_ & (passCombine | passAO)) {
-		ppInputBarrier.dst = luminance_.dstScopeLight() | pp_.dstScopeInput();
-		barrier(cb, {{ppInputBarrier}});
-	}
-
-	if(renderPasses_ & passLuminance) {
-		luminance_.record(cb, size);
-		timeWidget_.add("luminance");
-
-		if(debugMode_ != 0) {
-			// make sure luminance is finished
-			ImageBarrier lumBarrier;
-			lumBarrier.image = luminance_.target().image();
-			lumBarrier.src = luminance_.srcScopeTarget();
-			lumBarrier.dst = pp_.dstScopeInput();
-			barrier(cb, {{lumBarrier}});
-		}
-	}
-
-	// == post process/debug output ===
-	// make sure everything is readable in post-process/debug pass
-
-	{
-		vk::cmdBeginRenderPass(cb, {
-			pp_.renderPass(),
-			buf.framebuffer,
-			{0u, 0u, width, height},
-			0, nullptr
-		}, {});
-
-		pp_.record(cb, debugMode_);
-		timeWidget_.add("pp");
-
-		// gui stuff
-		vpp::DebugLabel debugLabel(cb, "GUI");
-		rvgContext().bindDefaults(cb);
-		gui().draw(cb);
-
-		// times
-		timeWidget_.finish();
-		rvgContext().bindDefaults(cb);
-		windowTransform().bind(cb);
-		timeWidget_.draw(cb);
-
-		/*
-		timings_.bgPaint.bind(cb);
-		timings_.bg.fill(cb);
-
-		timings_.fgPaint.bind(cb);
-		for(auto& time : timings_.texts) {
-			time.passName.draw(cb);
-			time.time.draw(cb);
-		}
-		*/
-
-		vk::cmdEndRenderPass(cb);
-	}
-
-	if(pp_.params.flags & pp_.flagDOF) {
-		barrier(cb, ldepthImage, pp_.dstScopeInput(), {
-			vk::PipelineStageBits::transfer,
-			vk::ImageLayout::transferSrcOptimal,
-			vk::AccessBits::transferRead,
-		});
-
-		vk::BufferImageCopy copy;
-		copy.bufferOffset = renderStage_.offset();
-		copy.imageExtent = {1, 1, 1};
-		copy.imageOffset = {i32(width / 2u), i32(height / 2u), 0};
-		copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
-		copy.imageSubresource.layerCount = 1;
-		copy.imageSubresource.mipLevel = 0;
-		vk::cmdCopyImageToBuffer(cb, ldepthImage,
-			vk::ImageLayout::transferSrcOptimal,
-			renderStage_.buffer(), {{copy}});
-	}
+	RenderData data;
+	data.cb = cb;
+	data.fb = buf.framebuffer;
+	data.size = size;
+	frameGraph_.record(data);
 
 	App::afterRender(cb);
 	vk::endCommandBuffer(cb);
@@ -1694,7 +1588,7 @@ void ViewApp::updateDevice() {
 		// NOTE: really naive approach atm
 		lum *= pp_.params.exposure;
 		float diff = desiredLuminance_ - lum;
-		pp_.params.exposure += 50 * dt * diff;
+		pp_.params.exposure += 10 * dt * diff;
 		gui_.exposure->label(std::to_string(pp_.params.exposure));
 	} else {
 		pp_.params.exposure = desiredLuminance_ / 0.2; // rather random
@@ -1831,30 +1725,6 @@ void ViewApp::updateDevice() {
 		*/
 	}
 
-	/*
-	// query pool
-	if(++timings_.frameCount == 30) {
-		auto& dev = vulkanDevice();
-		std::uint32_t queries[timestampCount + 1];
-
-		// TODO: can cause deadlock...
-		vk::getQueryPoolResults(dev, queryPool_, 0, timestampCount + 1,
-			sizeof(queries), queries, 4, vk::QueryResultBits::withAvailability);
-		timings_.frameCount = 0u;
-
-		auto last = queries[0] & timestampBits_;
-		for(auto i = 0u; i < timestampCount; ++i) {
-			auto current = queries[i + 1] & timestampBits_;
-			double diff = current - last;
-			diff *= dev.properties().limits.timestampPeriod; // ns
-			diff /= 1000 * 1000; // ms
-			auto sdiff = std::to_string(diff);
-			timings_.texts[i].time.change()->text = sdiff;
-			last = current;
-		}
-	}
-	*/
-
 	timeWidget_.updateDevice();
 
 	// NOTE: not sure where to put that. after rvg label changes here
@@ -1867,29 +1737,6 @@ void ViewApp::resize(const ny::SizeEvent& ev) {
 	selectionPos_ = {};
 	camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 	camera_.update = true;
-
-	/*
-	auto pos = nytl::Vec2f(window().size());
-	pos.x -= 180;
-	pos.y = 30;
-
-	for(auto i = 0u; i < timings_.texts.size(); ++i) {
-		timings_.texts[i].passName.change()->position = pos;
-
-		auto opos = pos;
-		opos.x += 100;
-		timings_.texts[i].time.change()->position = opos;
-
-		pos.y += 20;
-	}
-
-	auto bgc = timings_.bg.change();
-	bgc->position = nytl::Vec2f(window().size());
-	bgc->position.x -= 200;
-	bgc->position.y = 10;
-	bgc->size.x = 180;
-	bgc->size.y = pos.y + 10;
-	*/
 }
 
 int main(int argc, const char** argv) {

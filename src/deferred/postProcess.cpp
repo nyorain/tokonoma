@@ -47,11 +47,12 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 	// pipe
 	auto ppInputBindings = {
 		// we use the nearest sampler here since we use it for fxaa and ssr
-		// and for ssr we *need* nearest (otherwise be bleed artefacts).
+		// and for ssr we *need* nearest (otherwise we bleed artefacts).
 		// Not sure about fxaa but seems to work with nearest.
+		// TODO: not sure about fxaa tbh
 		vpp::descriptorBinding( // output from combine pass
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
 		// we only need depth for dof. Use nearest sampler for that, we don't
 		// interpolate.
 		vpp::descriptorBinding( // depth

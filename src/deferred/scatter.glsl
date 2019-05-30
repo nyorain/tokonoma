@@ -122,7 +122,7 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, float ldv, vec2 pixel) {
 
 	const uint steps = 10u;
 	vec3 step = ray / steps;
-	rayStart += 0.01 * random(rayEnd) * step;
+	// rayStart += 0.01 * random(rayEnd) * step;
 
 	float accum = 0.0;
 	vec3 ipos = rayStart;
