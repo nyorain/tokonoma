@@ -6,6 +6,7 @@
 #include "combine.hpp"
 #include "luminance.hpp"
 #include "postProcess.hpp"
+#include "scatter.hpp"
 #include "graph.hpp"
 
 #include <stage/app.hpp>
@@ -57,40 +58,57 @@
 #include <cstdlib>
 #include <random>
 
-// list of missing features:
+// list of features to implement:
 // - lens flare
 // - better dof implementations, current impl is naive
-
-// TODO: luminance implementation still not correct, debug with
-//   resizing window.
-// TODO: updateDevice flag that updates all pass parameters.
-//   doesn't need to happen every frame
-// TODO: timeWidget currently somewhat hacked together, working
-//   around rvg quirks triggering re-record while recording...
-//   probably better to add passes to timeWidget (getting an id)
-//   in initPasses and then use that id when recording to record
-//   a timestamp. Shouldn't be too hard given that initPasses currently
-//   also records the passes, just capture by value
-// TODO: support transparency. Can be ordered for now, i.e. split
+//   probably best to use own pass, see gpugems article
+// - reflectange probe rendering/dynamic creation
+// - support switching between environment maps
+// - cascaded shadow maps for dir light (!important)
+//   Allow to set the shadow map size for all lights. Or automatically
+//   dynamically allocate shadow maps per frame (but also see the
+//   only one shadow map at all thing).
+// - transparency. Can be ordered for now, i.e. split
 //   primitives into two groups in Scene: BLEND and non-blend material-based.
 //   the blend ones are sorted in each updateDevice (either on gpu
 //   or (probably better for the start) on a host visible buffer)
 //   via draw indirect commands. Render it in geomLight pass if possible (no
 //   bloom/ssr) otherwise we probably have to use extra pass.
 //   When using extra pass, render skybox after that pass (depth optimization)
+
+// TODO: implement automatic bounds detection and scale accordingly
+//   (e.g. bounding box to [-5, 5])
+// TODO: luminance implementation still not correct, debug with
+//   resizing window.
+//   - we could allow to display luminance mipmaps in debug shader
+// TODO: timeWidget currently somewhat hacked together, working
+//   around rvg quirks triggering re-record while recording...
+//   probably better to add passes to timeWidget (getting an id)
+//   in initPasses and then use that id when recording to record
+//   a timestamp. Shouldn't be too hard given that initPasses currently
+//   also records the passes, just capture by value
 // TODO: group initial layout transitions from undefined layout to general
 //   per frame? could do it externally, undefined -> targetScope()
 //   for luminance (compute), ssr, ssao (compute)
-// TODO: correctly use byRegion dependency flag where possible
-// TODO: re-enable light scattering.
-//   allow light scattering per light?
-//   we could still apply if after lightning pass
-//   probably best to just use one buffer for all lights then
-//   probably not a bad idea to use that buffer with additional blending
-//   as additional attachment in the light pass, since we render
-//   point light box there already.
-//   We probably can get away with even less samples if we use the better
-//   4+1 blur (that will even be faster!) in combine
+// TODO: fix ldv value for point light scattering
+//   i.e. view-dir dependent scattering only based on attenuation?
+//   probably makes no sense, then properly document it in settings
+// TODO: fix light attenuation for point lights.
+//   old notes (some of that implemented now, some of that was a bad idea)
+//   make it independent from radius by normalizing distance from light
+//   (dividing by radius) before caluclating attunation.
+//   currently done, has some problems as well though, fix those.
+//     -> how to handle light attenuation for point lights?
+//      see scene.glsl:attenuation, does it make sense to give each light
+//      its own parameters? normalize distance by radius before passing
+//      it to attenuation? parameters that work fine for a normalized
+//      distance are (1, 8, 128), but then lights are rather weak
+// TODO: deferred light initialization, re-implement adding lights
+// TODO: rgba16snorm (normalsFormat) isn't guaranteed to be supported
+//   as color attachment... i guess we could fall back to rgba16sint
+//   which is guaranteed to be supported? and then encode it
+
+// not that important but should be considered:
 // TODO: support destroying pass render buffers like previously
 //   done on deferred. Only create them is needed/pass is active.
 // TODO: support dynamic shader reloading (from file) on pass (re-)creation?
@@ -102,36 +120,18 @@
 //   depth difference) via shared variables.
 //   maybe just generate mipmaps for light buffer, i guess that is how
 //   it's usually done.
-// TODO: we should be able to always use the same attenuation (or at least
-//   make it independent from radius) by normalizing distance from light
-//   (dividing by radius) before caluclating attunation.
-//   currently done, has some problems as well though, fix those.
-//     -> how to handle light attenuation for point lights?
-//      see scene.glsl:attenuation, does it make sense to give each light
-//      its own parameters? normalize distance by radius before passing
-//      it to attenuation? parameters that work fine for a normalized
-//      distance are (1, 8, 128), but then lights are rather weak
-// TODO: we could allow to display luminance mipmaps in debug shader
-// TODO: parameterize all (currently somewhat random) values and factors
-//   (especially in artefact-prone screen space shaders)
-// TODO: rgba16snorm (normalsFormat) isn't guaranteed to be supported
-//   as color attachment... i guess we could fall back to rgba16sint
-//   which is guaranteed to be supported? and then encode it
-// TODO: point light scattering currently doesn't support the ldv value,
-//   i.e. view-dir dependent scattering only based on attenuation
-// TODO: support light scattering for every light (add a light flag for it)?
-//   For point lights, we only have to scatter in the light volume.
-//   Probably can't combine it with the volume rasterization step in the
-//   light pass though, so have to render the box twice.
-//   not sure if really worth it for point lights though
-// TODO: cascaded shadow maps for directional lights
-//   Allow to set the shadow map size for all lights. Or automatically
-//   dynamically allocate shadow maps per frame (but also see the
-//   only one shadow map at all thing).
+//   probably not worth it though. have to improve ssr performance in another way
 // TODO: do we really need depth mip levels anywhere? test if it really
 //   brings ssao performance improvement. Otherwise we are wasting this
 //   whole "depth mip map levels" thing
-// TODO: reflectange probe rendering
+// TODO: allow light scattering per light?
+//   we could still apply if after lightning pass
+//   probably best to just use one buffer for all lights then
+//   probably not a bad idea to use that buffer with additional blending
+//   as additional attachment in the light pass, since we render
+//   point light box there already.
+//   We probably can get away with even less samples if we use the better
+//   4+1 blur (that will even be faster!) in combine
 
 // low prio:
 // TODO: look at adding smaa. That needs multiple post processing
@@ -144,6 +144,12 @@
 //   moving camera around?
 
 // lower prio optimizations (most of these are guesses):
+// TODO(optimization): correctly use byRegion dependency flag where possible?
+//   already using it in geomLight pass where it should have largest
+//   effect, e.g. for tiled renderers. Not sure if it has any effect
+//   across multiple render/compute passes.
+// TODO(optimization): updateDevice flag that updates all pass parameters.
+//   doesn't need to happen every frame
 // TODO(optimization): when ssr is disabled (and/or others?) we can probably do
 //   combine and pp pass in one pass.
 // TODO(optimization): the shadow pipelines currently bind and pass through
@@ -218,13 +224,6 @@ using doi::f16;
 class ViewApp : public doi::App {
 public:
 	using Vertex = doi::Primitive::Vertex;
-
-	static constexpr auto lightFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto normalsFormat = vk::Format::r16g16b16a16Snorm;
-	static constexpr auto albedoFormat = vk::Format::r8g8b8a8Srgb;
-	static constexpr auto emissionFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto scatterFormat = vk::Format::r8Unorm;
-	static constexpr auto ldepthFormat = vk::Format::r16Sfloat;
 	static constexpr auto pointLight = false;
 
 	static constexpr u32 passScattering = (1u << 1u);
@@ -362,6 +361,7 @@ protected:
 	CombinePass combine_;
 	LuminancePass luminance_;
 	PostProcessPass pp_;
+	LightScatterPass scatter_;
 
 	bool recreatePasses_ {false};
 	vpp::ShaderModule fullVertShader_;
@@ -419,21 +419,6 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		});
 	};
 
-	// auto createFlagCheckbox = [&](auto& at, auto name, auto& flags, auto flag,
-	// 		bool recreate, auto* flags2 = {}, auto flag2 = 0u) {
-	// 	auto& cb = at.template create<Checkbox>(name).checkbox();
-	// 	cb.set(flags & flag);
-	// 	cb.onToggle = [=, &flags](auto&) {
-	// 		flags ^= flag;
-	// 		ao_.params.flags ^= AOPass::flagSSAO;
-	// 		if(recreate) {
-	// 			this->App::resize_ = true; // recreate, rerecord
-	// 		}
-	// 		...
-	// 	};
-	// 	return cb;
-	// };
-
 	// == general/post processing folder ==
 	auto& pp = panel.create<vui::dat::Folder>("Post Processing");
 	// createValueTextfield(pp, "exposure", params_.exposure, flag);
@@ -467,15 +452,13 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		recreatePasses_ = true;
 	};
 
-	/*
 	auto& cb8 = pp.create<Checkbox>("Scattering").checkbox();
 	cb8.set(renderPasses_ & passScattering);
 	cb8.onToggle = [&](auto&) {
 		renderPasses_ ^= passScattering;
 		combine_.params.flags ^= CombinePass::flagScattering;
-		App::resize_ = true; // recreate, rerecord
+		recreatePasses_ = true;
 	};
-	*/
 
 	auto& cb9 = pp.create<Checkbox>("DOF").checkbox();
 	cb9.set(pp_.params.flags & PostProcessPass::flagDOF);
@@ -548,6 +531,18 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		recreatePasses_ = true;
 	};
 	createValueTextfield(lf, "groupDimSize", luminance_.mipGroupDimSize, &recreatePasses_);
+	lf.open(false);
+
+	// == scatter folder ==
+	auto& lsf = panel.create<vui::dat::Folder>("Light Scattering");
+	auto& ssc = lsf.create<Checkbox>("shadow").checkbox();
+	ssc.set(scatter_.params.flags & scatter_.flagShadow);
+	ssc.onToggle = [&](const vui::Checkbox&) {
+		scatter_.params.flags ^= scatter_.flagShadow;
+	};
+	createValueTextfield(lsf, "factor", scatter_.params.fac, nullptr);
+	createValueTextfield(lsf, "mie", scatter_.params.mie, nullptr);
+	lsf.open(false);
 
 	// == debug values ==
 	auto& vg = panel.create<vui::dat::Folder>("Debug");
@@ -587,14 +582,15 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 
 void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 	// first reset all passes, frees memory and destroys useless objects
-	geomLight_ = {};
-	pp_ = {};
-	bloom_ = {};
-	ssr_ = {};
-	combine_ = {};
-	ssao_ = {};
-	luminance_ = {};
-	ao_ = {};
+	// geomLight_ = {};
+	// pp_ = {};
+	// bloom_ = {};
+	// ssr_ = {};
+	// combine_ = {};
+	// ssao_ = {};
+	// luminance_ = {};
+	// ao_ = {};
+	// scatter_ = {};
 
 	frameGraph_ = {};
 
@@ -739,6 +735,25 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		};
 	}
 
+	FrameTarget* targetScatter {};
+	LightScatterPass::InitData initScatter;
+	if(renderPasses_ & passScattering) {
+		scatter_.create(initScatter, passInfo, !pointLight);
+
+		auto& passScatter = frameGraph_.addPass();
+		passScatter.addIn(targetLDepth, scatter_.dstScopeDepth());
+		targetScatter = &passScatter.addOut(scatter_.srcScopeTarget(),
+			scatter_.target().vkImage());
+
+		passScatter.record = [&](const auto& buf) {
+			vk::DescriptorSet lightDs = pointLight ?
+				pointLights_[0].ds() :
+				dirLights_[0].ds();
+			scatter_.record(buf.cb, buf.size, sceneDs_, lightDs);
+			timeWidget_.add("scatter");
+		};
+	}
+
 	FrameTarget* targetPPInput = targetAO;
 	CombinePass::InitData initCombine;
 	if(renderPasses_ & passCombine) {
@@ -752,6 +767,9 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		}
 		if(targetSSR) {
 			passCombine.addIn(*targetSSR, combine_.dstScopeSSR());
+		}
+		if(targetScatter) {
+			passCombine.addIn(*targetScatter, combine_.dstScopeScatter());
 		}
 		auto& targetCombined = passCombine.addInOut(targetEmission,
 			combine_.scopeTarget());
@@ -858,6 +876,9 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 	}
 	if(renderPasses_ & passCombine) {
 		combine_.init(initCombine, passInfo);
+	}
+	if(renderPasses_ & passScattering) {
+		scatter_.init(initScatter, passInfo);
 	}
 
 	// others
@@ -1081,7 +1102,7 @@ void ViewApp::initRenderData() {
 		{}, {}, {}, {{barrier}});
 
 	// add lights
-	// TODO: creation not deferred
+	// TODO: defer creation
 	if(pointLight) {
 		auto& l = pointLights_.emplace_back(batch, lightDsLayout_,
 			primitiveDsLayout_, shadowData_, currentID_++);
@@ -1190,8 +1211,6 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		}
 	};
 
-	auto scatterView = dummyTex_.vkImageView();
-
 	GeomLightPass::InitBufferData geomLightData;
 	geomLight_.createBuffers(geomLightData, wb, size);
 
@@ -1213,6 +1232,11 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	LuminancePass::InitBufferData lumData;
 	if(renderPasses_ & passLuminance) {
 		luminance_.createBuffers(lumData, wb, size);
+	}
+
+	LightScatterPass::InitBufferData scatterData;
+	if(renderPasses_ & passScattering) {
+		scatter_.createBuffers(scatterData, wb, size);
 	}
 
 	// init
@@ -1240,6 +1264,13 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		ssao_.initBuffers(ssaoData, geomLight_.ldepthTarget().imageView(),
 			geomLight_.normalsTarget().imageView(), size);
 		ssaoView = ssao_.targetView();
+	}
+
+	auto scatterView = dummyTex_.vkImageView();
+	if(renderPasses_ & passScattering) {
+		scatter_.initBuffers(scatterData, size,
+			geomLight_.ldepthTarget().imageView());
+		scatterView = scatter_.target().imageView();
 	}
 
 	if(renderPasses_ & passAO) {
@@ -1396,6 +1427,11 @@ void ViewApp::update(double dt) {
 	if(update) {
 		App::scheduleRedraw();
 	}
+
+	// TODO: hack that synchronizes parameters between multiple
+	// implementations of same pass...
+	static_assert(sizeof(ao_.params) == sizeof(geomLight_.aoParams));
+	std::memcpy(&geomLight_.aoParams, &ao_.params, sizeof(ao_.params));
 
 	// TODO: only here for fps testing, could be removed to not
 	// render when not needed
@@ -1559,6 +1595,9 @@ void ViewApp::updateDevice() {
 	}
 	if(renderPasses_ & passCombine) {
 		combine_.updateDevice();
+	}
+	if(renderPasses_ & passScattering) {
+		scatter_.updateDevice();
 	}
 	pp_.updateDevice();
 

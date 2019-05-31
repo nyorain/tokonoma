@@ -9,6 +9,7 @@ executable('deferred', [
 		'luminance.cpp',
 		'geomLight.cpp',
 		'timeWidget.cpp',
+		'scatter.cpp',
 		deferred_shaders,
 	], dependencies: [
 		stage_dep,

@@ -1,8 +1,14 @@
+**likely outdated in future, passes change often**
+
+list of passes
+managed by new FrameGraph concept (drop-in, keep it as simple as possible)
+
 - geomLight
 - [optional] ssao: depends on geomLight (normals, depth)
 - ao: depends on geomLight(mergable), ssao
 - [optional] bloom: depends on geomLight (emission, light)
 - [optional] ssr: depends on geomLight (normals, depth)
+- [optional] scatter: depends on geomLight (depth)
 - (fwd: depends on nothing... geomLight i guess, mergable with it)
 	- it shouldn't even overwrite the depth buffer the other passes use.
 	  i guess we can always (if we don't want special 2nd ssr/ssao or sth
@@ -21,58 +27,10 @@
 	- !dof: mergable dependency on combine (and !luminance)
 - [optional] luminance: depends on combine [no dependees]
 
----
-
-concept: render/frame/pass graph
-
-```
-RenderGraph graph;
-auto& geomLight = graph.addPass();
-auto& emissionTarget = geomLight.addOut(RenderScope::flex);
-auto& lightTarget = geomLight.addOut(RenderScope::flex);
-auto& ldepthTarget = geomLight.addOut(RenderScope::flex);
-auto& albeoTarget = geomLight.addOut(RenderScope::flex);
-auto& normalsTarget = geomLight.addOut(RenderScope::flex);
-
-if(ssrPass) {
-	auto& ssr = graph.addPass();
-	ssr.addIn(normalsTarget, ssr.dstScopeNormals());
-	ssr.addIn(ldepthTarget, ssr.dstScopeDepth());
-	auto ssrTarget = ssr.addOut(ssr.srcScopeTarget());
-}
-
-auto* postInputTarget = &lightTarget;
-if(combinePass) {
-	auto& combine = graph.addPass();
-	if(bloomPass) {
-		combine.addIn(bloomTarget, combine.dstScopeBloom());
-	}
-	if(ssrPass) {
-		combine.addIn(ssrTarget, combine.dstScopeSSR());
-	}
-
-	auto& combined = combine.addInOut(emissionTarget, combine.scopeTarget());
-	postInputTarget = &combined;
-}
-
-auto& pp = graph.addPass();
-pp.addIn(*postInputTarget, pp.dstScopeInput());
-if(debugMode) {
-	pp.addIn(lightTarget, pp.dstScopeInput());
-	// ...
-}
-
-// get barriers for flexible outputs (usually render passes)
-// already create render passes using those barriers
-geomLight_.init(albedoTarget.nextScope(), normalsTarget.nextScope(), ...);
-
-// later, when recording
-graph.record();
-```
-
----
 
 notes below are outdated, they were the first concept for a full pipeline
+
+---
 
 doesn't handle transparency yet.
 

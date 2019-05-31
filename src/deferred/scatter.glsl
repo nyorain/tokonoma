@@ -1,4 +1,5 @@
-// TODO: make mie param configurable
+const uint flagShadow = 1 << 0u;
+const uint flagAttenuation = 1 << 1u; // only point lights
 
 // TODO: maybe more efficient to pass pattern as texture?
 const float ditherPattern[4][4] = {
@@ -8,10 +9,9 @@ const float ditherPattern[4][4] = {
 	{ 0.9375f, 0.4375f, 0.8125f, 0.3125}};
 
 // fragPos and lightPos are in screen space
-// ldv: dot(lightDir, viewDir)
 // TODO: remove or use z component of ipos; fragDepth
 float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
-		float ldv, sampler2D depthTex, float fragDepth) {
+		sampler2D depthTex, float fragDepth) {
 	vec3 ray = vec3(lightPos, lightDepth) - vec3(fragPos, fragDepth);
 	// NOTE: making the number of steps dependent on the ray length
 	// is probably a bad idea. When light an pixel (geometry) are close, the
@@ -73,26 +73,12 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 
 	// accum *= fac / steps;
 	accum /= total;
-	// accum = clamp(accum, 0.0, 1.0);
-	// accum = smoothstep(0.1, 1.0, accum);
-
-	// NOTE: random factors currently. We store it at 8 bit unorm
-	// so we use factors here and when sampling to make sure we really
-	// use the full precision (even if all scattering values were
-	// rather around 0.05 or sth)
-	// currently tuned for directional light
-	// float fac = 10 * mieScattering(ldv, -0.7);
-	float fac = 25 * phase_mie(ldv, -0.4);
-	fac *= ldv;
-
-	// nice small "sun" in addition to the all around scattering
-	// fac += mieScattering(ldv, 0.95);
 
 	// Make sure light gradually fades when light gets outside of screen
 	// instead of suddenly jumping to 0 because of 'if' at beginning.
 	// fac *= pow(lightPos.x * (1 - lightPos.x), 0.9);
 	// fac *= pow(lightPos.y * (1 - lightPos.y), 0.9);
-	fac *= 4 * lightPos.x * (1 - lightPos.x);
+	float fac = 4 * lightPos.x * (1 - lightPos.x);
 	fac *= 4 * lightPos.y * (1 - lightPos.y);
 
 	return fac * accum;
@@ -102,15 +88,14 @@ float shadowMap(vec3 worldPos);
 
 // - viewPos: camera position in world space
 // - pos: sampled position for the given pixel (mapped uv + depth buffer)
-// - ldv: light dot view vector
 // - pixel: current pixel (integer, not normalized)
 // To work, the shadowMap(worldPos) function has to be defined in the
 // calling shader.
-float lightScatterShadow(vec3 viewPos, vec3 pos, float ldv, vec2 pixel) {
+float lightScatterShadow(vec3 viewPos, vec3 pos, vec2 pixel) {
 	// first attempt at shadow-map based light scattering
 	// http://www.alexandre-pestana.com/volumetric-lights/
 	// TODO: here we probably really profit from different mipmaps
-	// or some other optimizations... takes really long atm.
+	// or some other optimizations...
 	vec3 rayStart = viewPos;
 	vec3 rayEnd = pos;
 	vec3 ray = rayEnd - rayStart;
@@ -138,7 +123,6 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, float ldv, vec2 pixel) {
 		ipos += step;
 	}
 
-	accum *= phase_mie(ldv, 0.25);
 	accum /= steps;
 	accum = clamp(accum, 0.0, 1.0);
 	return accum;

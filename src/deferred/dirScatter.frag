@@ -6,8 +6,6 @@
 #include "scatter.glsl"
 #include "pbr.glsl"
 
-const bool depthScatter = false;
-
 layout(location = 0) in vec2 uv;
 layout(location = 0) out float scatter;
 
@@ -20,6 +18,12 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 } scene;
 
 layout(set = 1, binding = 0) uniform sampler2D depthTex;
+layout(set = 1, binding = 1) uniform UBO {
+	uint flags;
+	float fac;
+	float mie;
+} params;
+
 layout(set = 2, binding = 0, row_major) uniform LightBuf {
 	DirLight light;
 };
@@ -43,7 +47,10 @@ void main() {
 	vec3 viewToLight = -light.dir; // normalized on cpu
 	float ldv = dot(viewToLight, v);
 
-	if(depthScatter) {
+	if((params.flags & flagShadow) != 0) {
+		vec2 pixel = gl_FragCoord.xy;
+		scatter = lightScatterShadow(scene.viewPos, pos, pixel);
+	} else {
 		if(ldv < 0) {
 			scatter = 0.f;
 			return;
@@ -63,9 +70,8 @@ void main() {
 
 		// lightDepth on far plane, everything in front of it
 		scatter = lightScatterDepth(uv, mappedLightPos.xy,
-			999.f, ldv, depthTex, ldepth);
-	} else {
-		vec2 pixel = gl_FragCoord.xy;
-		scatter = lightScatterShadow(scene.viewPos, pos, ldv, pixel);
+			999.f, depthTex, ldepth);
 	}
+
+	scatter *= params.fac * phaseMie(ldv, params.mie);
 }

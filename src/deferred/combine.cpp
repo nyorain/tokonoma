@@ -102,34 +102,22 @@ void CombinePass::updateDevice() {
 }
 
 SyncScope CombinePass::dstScopeBloom() const {
-	return {
-		vk::PipelineStageBits::computeShader,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::AccessBits::shaderRead,
-	};
+	return SyncScope::computeSampled();
 }
 SyncScope CombinePass::dstScopeSSR() const {
-	return {
-		vk::PipelineStageBits::computeShader,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::AccessBits::shaderRead,
-	};
+	return SyncScope::computeSampled();
 }
 SyncScope CombinePass::dstScopeLight() const {
-	return {
-		vk::PipelineStageBits::computeShader,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::AccessBits::shaderRead,
-	};
+	return SyncScope::computeSampled();
 }
 SyncScope CombinePass::dstScopeDepth() const {
-	return {
-		vk::PipelineStageBits::computeShader,
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::AccessBits::shaderRead,
-	};
+	return SyncScope::computeSampled();
+}
+SyncScope CombinePass::dstScopeScatter() const {
+	return SyncScope::computeSampled();
 }
 SyncScope CombinePass::scopeTarget() const {
+	// TODO: discarding scope, no way to signal that at the moment
 	return {
 		vk::PipelineStageBits::computeShader,
 		vk::ImageLayout::general,

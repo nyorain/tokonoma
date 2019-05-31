@@ -23,8 +23,8 @@ public:
 public:
 	struct {
 		u32 flags {flagBloomDecrease};
-		float bloomStrength {0.25f};
-		float scatterStrength {0.25f};
+		float bloomStrength {0.15f};
+		float scatterStrength {0.2f};
 	} params;
 
 public:
@@ -41,6 +41,7 @@ public:
 	SyncScope dstScopeSSR() const;
 	SyncScope dstScopeLight() const;
 	SyncScope dstScopeDepth() const;
+	SyncScope dstScopeScatter() const;
 	SyncScope scopeTarget() const;
 
 protected:

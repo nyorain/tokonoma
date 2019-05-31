@@ -193,7 +193,7 @@ float mieScattering(float lightDotView, float gs) {
 }
 
 // https://www.shadertoy.com/view/lslXDr
-float phase_mie(float c, float g) {
+float phaseMie(float c, float g) {
 	float cc = c * c;
 	float gg = g * g;
 	float a = ( 1.0 - gg ) * ( 1.0 + cc );

@@ -19,6 +19,7 @@ class Environment;
 } // namespace doi
 
 // TODO: optionally re-implement ldepth mip levels, helpful for ssao
+// only add support for creating it with n levels here
 
 /// Render geometry and lights, deferred.
 class GeomLightPass {
