@@ -501,9 +501,10 @@ SyncScope LuminancePass::dstScopeLight() const {
 	return scope;
 }
 
-SyncScope LuminancePass::srcScopeTarget() const {
+SyncScope LuminancePass::srcScopeTarget(unsigned logicalLevel) const {
+	auto mip = mipLevel(logicalLevel);
 	SyncScope scope;
-	if(usingCompute()) {
+	if(usingCompute() && mip < mip_.levels.size() - 1) {
 		scope.layout = vk::ImageLayout::shaderReadOnlyOptimal;
 		scope.access = vk::AccessBits::shaderRead;
 		scope.stages = vk::PipelineStageBits::computeShader;
@@ -513,4 +514,28 @@ SyncScope LuminancePass::srcScopeTarget() const {
 		scope.stages = vk::PipelineStageBits::transfer;
 	}
 	return scope;
+}
+
+unsigned LuminancePass::mipLevel(unsigned logicalLevel) const {
+	if(!usingCompute() || logicalLevel == 0) {
+		return 0u;
+	}
+
+	auto i = mip_.target0;
+	while(--logicalLevel > 0) {
+		if(mip_.levels[i].target == 0) { // last level reached
+			break;
+		}
+		i = mip_.levels[i].target;
+	}
+
+	return i;
+}
+
+vk::ImageView LuminancePass::targetView(unsigned level) const {
+	auto mip = mipLevel(level);
+	if(mip == 0) {
+		return target().vkImageView();
+	}
+	return mip_.levels[mip].view;
 }

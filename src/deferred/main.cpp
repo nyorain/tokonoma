@@ -316,6 +316,7 @@ protected:
 
 	u32 debugMode_ {0};
 	u32 renderPasses_;
+	u32 debugLuminanceLevel_ {0};
 
 	// needed for point light rendering.
 	// also needed for skybox
@@ -788,8 +789,10 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 
 		auto& passLum = frameGraph_.addPass();
 		passLum.addIn(*targetPPInput, luminance_.dstScopeLight());
-		targetLuminance = &passLum.addOut(luminance_.srcScopeTarget(),
+		targetLuminance = &passLum.addOut(
+			luminance_.srcScopeTarget(debugLuminanceLevel_),
 			luminance_.target().vkImage());
+
 		passLum.record = [&](const auto& buf) {
 			luminance_.record(buf.cb, buf.size);
 			// TODO: luminance might be executed after pp.
@@ -1298,7 +1301,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	auto lumView = dummyTex_.vkImageView();
 	if(renderPasses_ & passLuminance) {
 		luminance_.initBuffers(lumData, ppInput, size);
-		lumView = luminance_.target().imageView();
+		lumView = luminance_.targetView(debugLuminanceLevel_);
 	}
 
 	pp_.updateInputs(ppInput,
@@ -1480,6 +1483,25 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		case ny::Keycode::minus:
 			desiredLuminance_ /= 1.1f;
 			return true;
+		/*
+		case ny::Keycode::up:
+			if(debugMode_ == pp_.modeLuminance) {
+				++debugLuminanceLevel_;
+				recreatePasses_ = true; // potentially changed barriers
+				return true;
+			}
+			break;
+		case ny::Keycode::down:
+			if(debugMode_ == pp_.modeLuminance) {
+				if(debugLuminanceLevel_ > 0) {
+					recreatePasses_ = true; // potentially changed barriers
+					--debugLuminanceLevel_;
+				}
+				return true;
+			}
+			break;
+		*/
+
 		// TODO: re-add with work batcher
 		/*
 		case ny::Keycode::comma: {

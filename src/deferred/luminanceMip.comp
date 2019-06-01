@@ -33,12 +33,40 @@ vec2 pixelSize = 1.f / textureSize(inLum, 0);
 shared float lum[2 * size][2 * size];
 
 float load(vec2 pixel) {
+	vec2 dist = clamp(pcr.inSize - pixel, 0, 1);
+	float fac = dist.x * dist.y;
+	return fac * texture(inLum, min(pixel, pcr.inSize - 0.5) * pixelSize).r;
+
+	// NOTE: below is the reference implementation that should do exactly
+	// the same as the optimized version above. We have to make sure
+	// to correctly handle all border conditions, sampling outside of
+	// the input image might give us values like nan or inf, forgetting
+	// pixels might result in huge errors (think of 2x1 -> 1x1 in the
+	// last step, "forgetting" a pixel (or both) there is a problem).
+#if 0
 	// return 0 when outside of image.
 	// don't make a multiplication or something else out of this
 	// since we might sample values like inf or nan from the texture
 	// outside of inSize
-	return any(greaterThan(pixel, vec2(pcr.inSize) - 0.5)) ? 0.f :
-		texture(inLum, pixel * pixelSize).r;
+	if(any(greaterThan(pixel, vec2(pcr.inSize)))) {
+		return 0.f;
+	}
+
+	// on the image edge we might have to sample two (or 1 in case of corner)
+	// instead of the normals 4 pixels. Weigh them accordingly and make
+	// sure we never sample over input image (inSize) edge.
+	float fac = 1.f;
+	if(pixel.x > pcr.inSize.x - 0.5) {
+		fac *= 0.5f;
+		pixel.x = pcr.inSize.x - 0.5;
+	}
+	if(pixel.y > pcr.inSize.y - 0.5) {
+		fac *= 0.5f;
+		pixel.y = pcr.inSize.y - 0.5;
+	}
+
+	return fac * texture(inLum, pixel * pixelSize).r;
+#endif
 }
 
 // no early returns due to all the barriers. We use a sampler

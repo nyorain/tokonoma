@@ -61,11 +61,17 @@ public:
 	bool usingCompute() const { return !extract_.rp; }
 	const auto& target() const { return target_; }
 
+	// When using compute, will return the image view for logical level i
+	// (clamped).
+	// Otherwise returns the base view.
+	vk::ImageView targetView(unsigned level) const;
+	unsigned mipLevel(unsigned logicalLevel) const;
+
 	SyncScope dstScopeLight() const; // layout: shaderReadOnlyOptimal
 	// SyncScope for the first mip level of the luminance target.
 	// Depending on whether a compute shader is used or not, will
 	// be in transferSrcOptimal or shaderReadOnlyOptimal layout.
-	SyncScope srcScopeTarget() const;
+	SyncScope srcScopeTarget(unsigned mip = 0) const;
 
 protected:
 	vpp::ViewableImage target_;
