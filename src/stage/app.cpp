@@ -1145,6 +1145,10 @@ rvg::Font& App::defaultFont() const {
 	return *impl_->defaultFont;
 }
 
+vpp::DebugMessenger& App::debugMessenger() const {
+	return *impl_->debugMessenger;
+}
+
 // free util
 std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 		std::string_view glslPath) {

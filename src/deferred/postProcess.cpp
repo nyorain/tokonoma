@@ -104,13 +104,13 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 		vpp::descriptorBinding( // ssr
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
-		vpp::descriptorBinding( // emission
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
 		vpp::descriptorBinding( // bloom, linear sampling for upsampling
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
 		vpp::descriptorBinding( // luminance
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // scatter
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
 	};
@@ -157,9 +157,9 @@ void PostProcessPass::updateInputs(
 		vk::ImageView albedo,
 		vk::ImageView ssao,
 		vk::ImageView ssr,
-		vk::ImageView emission,
 		vk::ImageView bloom,
-		vk::ImageView luminance) {
+		vk::ImageView luminance,
+		vk::ImageView scatter) {
 	vpp::DescriptorSetUpdate dsu(ds_);
 	dsu.imageSampler({{{{}, light, vk::ImageLayout::shaderReadOnlyOptimal}}});
 	dsu.imageSampler({{{{}, ldepth, vk::ImageLayout::shaderReadOnlyOptimal}}});
@@ -172,9 +172,9 @@ void PostProcessPass::updateInputs(
 	ddsu.imageSampler({{{}, ldepth, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, ssao, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, ssr, vk::ImageLayout::shaderReadOnlyOptimal}});
-	ddsu.imageSampler({{{}, emission, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, bloom, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, luminance, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, scatter, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.apply();
 }
 

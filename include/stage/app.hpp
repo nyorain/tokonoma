@@ -44,6 +44,7 @@ public:
 	vpp::Device& vulkanDevice() const;
 	vpp::Device& device() const { return vulkanDevice(); }
 	vpp::RenderPass& renderPass() const;
+	vpp::DebugMessenger& debugMessenger() const;
 
 	rvg::Context& rvgContext() const;
 	rvg::Transform& windowTransform() const;

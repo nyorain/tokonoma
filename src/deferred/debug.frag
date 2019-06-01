@@ -14,7 +14,7 @@ const uint modeAO = 5u;
 const uint modeAlbedoAO = 6u;
 const uint modeSSR = 7u;
 const uint modeDepth = 8u;
-const uint modeEmission = 9u;
+const uint modeScatter = 9u;
 const uint modeBloom = 10u;
 const uint modeLuminance = 11u;
 
@@ -23,9 +23,9 @@ layout(set = 0, binding = 1) uniform sampler2D inNormal;
 layout(set = 0, binding = 2) uniform sampler2D inDepth;
 layout(set = 0, binding = 3) uniform sampler2D inSSAO;
 layout(set = 0, binding = 4) uniform sampler2D inSSR;
-layout(set = 0, binding = 5) uniform sampler2D inEmission;
-layout(set = 0, binding = 6) uniform sampler2D inBloom;
-layout(set = 0, binding = 7) uniform sampler2D inLuminance;
+layout(set = 0, binding = 5) uniform sampler2D inBloom;
+layout(set = 0, binding = 6) uniform sampler2D inLuminance;
+layout(set = 0, binding = 7) uniform sampler2D inScatter;
 
 layout(push_constant) uniform PCR {
 	uint mode;
@@ -37,7 +37,6 @@ void main() {
 	vec4 ssao = texture(inSSAO, uv);
 	vec4 ssr = texture(inSSR, uv);
 	vec4 depth = texture(inDepth, uv);
-	vec4 emission = texture(inEmission, uv);
 
 	// NOTE: from other passes, could be passed in as parameters here
 	float exposure = 1.0;
@@ -56,7 +55,7 @@ void main() {
 			fragColor = vec4(vec3(normal.w), 1.0);
 			break;
 		case modeMetalness:
-			fragColor = vec4(vec3(emission.w), 1.0);
+			fragColor = vec4(vec3(normal.w), 1.0);
 			break;
 		case modeAO:
 		case modeAlbedoAO: {
@@ -71,9 +70,6 @@ void main() {
 			break;
 		case modeDepth:
 			fragColor = vec4(vec3(1.0 - exp(-0.1 * exposure * depth.r)), 1.0);
-			break;
-		case modeEmission:
-			fragColor = vec4(emission.rgb, 1.0);
 			break;
 		case modeBloom: {
 			uint bloomLevels = textureQueryLevels(inBloom);
@@ -90,6 +86,9 @@ void main() {
 		} case modeLuminance: {
 			float lum = exp2(texture(inLuminance, uv).r);
 			fragColor = vec4(vec3(lum), 1.0);
+			break;
+		} case modeScatter: {
+			fragColor = vec4(texture(inScatter, uv).rrr, 1.0);
 			break;
 		} default:
 			fragColor = vec4(0, 0, 0, 1);

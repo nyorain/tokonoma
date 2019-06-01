@@ -55,9 +55,9 @@ public:
 		vk::ImageView albedo,
 		vk::ImageView ssao,
 		vk::ImageView ssr,
-		vk::ImageView emission,
 		vk::ImageView bloom,
-		vk::ImageView luminance);
+		vk::ImageView luminance,
+		vk::ImageView scatter);
 	vpp::Framebuffer initFramebuffer(vk::ImageView output, vk::Extent2D);
 
 	// expects the render pass to be already active.

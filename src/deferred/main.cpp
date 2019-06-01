@@ -75,12 +75,11 @@
 //   via draw indirect commands. Render it in geomLight pass if possible (no
 //   bloom/ssr) otherwise we probably have to use extra pass.
 //   When using extra pass, render skybox after that pass (depth optimization)
+// - temporal anti aliasing (TAA), tolksvig maps
+//   e.g. https://media.contentapi.ea.com/content/dam/eacom/frostbite/files/course-notes-moving-frostbite-to-pbr-v2.pdf
 
 // TODO: implement automatic bounds detection and scale accordingly
 //   (e.g. bounding box to [-5, 5])
-// TODO: luminance implementation still not correct, debug with
-//   resizing window.
-//   - we could allow to display luminance mipmaps in debug shader
 // TODO: timeWidget currently somewhat hacked together, working
 //   around rvg quirks triggering re-record while recording...
 //   probably better to add passes to timeWidget (getting an id)
@@ -144,6 +143,8 @@
 //   moving camera around?
 
 // lower prio optimizations (most of these are guesses):
+// TODO(optimization): don't recreate renderpasses, layouts and pipelines on
+//   every initPasses, only re-create what is really needed.
 // TODO(optimization): correctly use byRegion dependency flag where possible?
 //   already using it in geomLight pass where it should have largest
 //   effect, e.g. for tiled renderers. Not sure if it has any effect
@@ -316,7 +317,6 @@ protected:
 
 	u32 debugMode_ {0};
 	u32 renderPasses_;
-	u32 debugLuminanceLevel_ {0};
 
 	// needed for point light rendering.
 	// also needed for skybox
@@ -790,7 +790,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		auto& passLum = frameGraph_.addPass();
 		passLum.addIn(*targetPPInput, luminance_.dstScopeLight());
 		targetLuminance = &passLum.addOut(
-			luminance_.srcScopeTarget(debugLuminanceLevel_),
+			luminance_.srcScopeTarget(),
 			luminance_.target().vkImage());
 
 		passLum.record = [&](const auto& buf) {
@@ -815,9 +815,11 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		if(targetLuminance) {
 			passPP.addIn(*targetLuminance, pp_.dstScopeInput());
 		}
+		if(targetScatter) {
+			passPP.addIn(*targetScatter, pp_.dstScopeInput());
+		}
 
 		passPP.addIn(targetLDepth, pp_.dstScopeInput());
-		passPP.addIn(targetEmission, pp_.dstScopeInput());
 		passPP.addIn(targetAlbedo, pp_.dstScopeInput());
 		passPP.addIn(targetNormals, pp_.dstScopeInput());
 	} else if(pp_.params.flags & pp_.flagDOF) {
@@ -891,6 +893,10 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 
 void ViewApp::initRenderData() {
 	auto& dev = vulkanDevice();
+
+	// ignore incorrect debug messages
+	debugMessenger().ignore.push_back(
+		"UNASSIGNED-CoreValidation-Shader-FeatureNotEnabled");
 
 	// initialization setup
 	// allocator
@@ -1301,18 +1307,14 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	auto lumView = dummyTex_.vkImageView();
 	if(renderPasses_ & passLuminance) {
 		luminance_.initBuffers(lumData, ppInput, size);
-		lumView = luminance_.targetView(debugLuminanceLevel_);
+		lumView = luminance_.target().imageView();
 	}
 
 	pp_.updateInputs(ppInput,
 		geomLight_.ldepthTarget().imageView(),
 		geomLight_.normalsTarget().imageView(),
 		geomLight_.albedoTarget().imageView(),
-		ssaoView,
-		ssrView,
-		geomLight_.emissionTarget().imageView(),
-		bloomView,
-		lumView);
+		ssaoView, ssrView, bloomView, lumView, scatterView);
 
 	// create swapchain framebuffers
 	for(auto& buf : bufs) {
@@ -1483,24 +1485,6 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		case ny::Keycode::minus:
 			desiredLuminance_ /= 1.1f;
 			return true;
-		/*
-		case ny::Keycode::up:
-			if(debugMode_ == pp_.modeLuminance) {
-				++debugLuminanceLevel_;
-				recreatePasses_ = true; // potentially changed barriers
-				return true;
-			}
-			break;
-		case ny::Keycode::down:
-			if(debugMode_ == pp_.modeLuminance) {
-				if(debugLuminanceLevel_ > 0) {
-					recreatePasses_ = true; // potentially changed barriers
-					--debugLuminanceLevel_;
-				}
-				return true;
-			}
-			break;
-		*/
 
 		// TODO: re-add with work batcher
 		/*
