@@ -6,6 +6,7 @@
 #include <ny/fwd.hpp>
 #include <vpp/fwd.hpp>
 #include <vpp/renderer.hpp>
+#include <vkpp/structs.hpp> // for features
 #include <rvg/fwd.hpp>
 #include <vui/fwd.hpp>
 
@@ -24,6 +25,12 @@ namespace doi {
 // fwd
 class MainWindow;
 class Renderer;
+
+struct Features {
+	vk::PhysicalDeviceFeatures2 base;
+	vk::PhysicalDeviceMultiviewFeatures multiview;
+	Features();
+};
 
 /// Implements basic setup and main loop.
 class App : public nytl::NonMovable {
@@ -84,8 +91,7 @@ protected:
 	// Called before device creation with the supported features
 	// of the selected physical device (supported). Can be used to
 	// enable the supported ones.
-	virtual bool features(vk::PhysicalDeviceFeatures& enable,
-		const vk::PhysicalDeviceFeatures& supported);
+	virtual bool features(Features& enable, const Features& supported);
 
 
 	// == Render stuff ==

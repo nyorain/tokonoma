@@ -113,6 +113,9 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 		vpp::descriptorBinding( // scatter
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // shadow
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
 	};
 
 	debug_.dsLayout = {dev, debugInputBindings};
@@ -159,7 +162,8 @@ void PostProcessPass::updateInputs(
 		vk::ImageView ssr,
 		vk::ImageView bloom,
 		vk::ImageView luminance,
-		vk::ImageView scatter) {
+		vk::ImageView scatter,
+		vk::ImageView shadow) {
 	vpp::DescriptorSetUpdate dsu(ds_);
 	dsu.imageSampler({{{{}, light, vk::ImageLayout::shaderReadOnlyOptimal}}});
 	dsu.imageSampler({{{{}, ldepth, vk::ImageLayout::shaderReadOnlyOptimal}}});
@@ -175,6 +179,7 @@ void PostProcessPass::updateInputs(
 	ddsu.imageSampler({{{}, bloom, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, luminance, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, scatter, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, shadow, vk::ImageLayout::depthStencilReadOnlyOptimal}});
 	ddsu.apply();
 }
 

@@ -8,7 +8,7 @@
 // multiply color with attenuation and (1 - shadow) if light source
 // supports that. Returns lightDir must be normalized.
 void getLightParams(vec3 viewPos, vec3 fragPos,
-	out vec3 lightDir, out vec3 color);
+	out vec3 lightDir, out vec3 color, float linearz);
 
 #include "scene.glsl"
 #include "pbr.glsl"
@@ -38,7 +38,8 @@ void main() {
 	// return;
 
 	fragColor = vec4(0.0);
-	float depth = ztodepth(subpassLoad(inDepth).r, scene.near, scene.far);
+	float z = subpassLoad(inDepth).r;
+	float depth = ztodepth(z, scene.near, scene.far);
 	if(depth >= 1) { // nothing rendered in gbufs here
 		discard;
 	}
@@ -51,7 +52,7 @@ void main() {
 
 	vec3 lcolor;
 	vec3 ldir;
-	getLightParams(scene.viewPos, fragPos, ldir, lcolor);
+	getLightParams(scene.viewPos, fragPos, ldir, lcolor, z);
 
 	// fast return; useful for point lights (where pixel is outside radius)
 	// and shadow regions. We don't have to do the complete pbr calculation

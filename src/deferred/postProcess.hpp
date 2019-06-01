@@ -27,6 +27,7 @@ public:
 	static constexpr u32 modeEmission = 9u;
 	static constexpr u32 modeBloom = 10u;
 	static constexpr u32 modeLuminance = 11u;
+	static constexpr u32 modeShadow = 12u;
 
 public:
 	struct {
@@ -34,7 +35,7 @@ public:
 		u32 tonemap {tonemapReinhard};
 		float exposure {1.f};
 		float depthFocus {1.f};
-		float dofStrength {0.5f};
+		float dofStrength {0.05f};
 	} params;
 
 	struct InitData {
@@ -57,7 +58,8 @@ public:
 		vk::ImageView ssr,
 		vk::ImageView bloom,
 		vk::ImageView luminance,
-		vk::ImageView scatter);
+		vk::ImageView scatter,
+		vk::ImageView shadow);
 	vpp::Framebuffer initFramebuffer(vk::ImageView output, vk::Extent2D);
 
 	// expects the render pass to be already active.

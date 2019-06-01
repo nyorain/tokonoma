@@ -160,6 +160,10 @@ protected:
 
 } // anon namespace
 
+Features::Features() {
+	base.pNext = &multiview;
+}
+
 // RenderImpl
 struct App::RenderImpl : public vpp::Renderer {
 	App& app_;
@@ -379,15 +383,15 @@ bool App::init(nytl::Span<const char*> args) {
 	devInfo.queueCreateInfoCount = 1u;
 	devInfo.ppEnabledExtensionNames = exts.begin();
 	devInfo.enabledExtensionCount = 1u;
+	devInfo.pEnabledFeatures = nullptr; // passed as pNext
 
-	auto f = vk::PhysicalDeviceFeatures {};
-	vk::getPhysicalDeviceFeatures(phdev, f);
-	vk::PhysicalDeviceFeatures enable;
+	Features enable {}, f {};
+	vk::getPhysicalDeviceFeatures2(phdev, f.base);
 	if(!features(enable, f)) {
 		return false;
 	}
 
-	devInfo.pEnabledFeatures = &enable;
+	devInfo.pNext = &f.base;
 
 	impl_->device.emplace(ini, phdev, devInfo);
 	auto presentQueue = vulkanDevice().queue(queueFam);
@@ -528,10 +532,9 @@ bool App::handleArgs(const argagg::parser_results& result) {
 	return true;
 }
 
-bool App::features(vk::PhysicalDeviceFeatures& enable,
-		const vk::PhysicalDeviceFeatures& supported) {
-	if(supported.shaderClipDistance) {
-		enable.shaderClipDistance = true;
+bool App::features(Features& enable, const Features& supported) {
+	if(supported.base.features.shaderClipDistance) {
+		enable.base.features.shaderClipDistance = true;
 		impl_->clipDistance = true;
 	}
 

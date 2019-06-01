@@ -34,7 +34,6 @@ layout(set = 1, binding = 6) uniform sampler2D brdfLut;
 layout(set = 1, binding = 7) uniform Params {
 	uint flags;
 	float factor;
-	float ssaoPow;
 } params;
 
 layout(push_constant) uniform PCR {

@@ -27,12 +27,17 @@ layout(set = 1, binding = 1) uniform UBO {
 layout(set = 2, binding = 0, row_major) uniform LightBuf {
 	DirLight light;
 };
-layout(set = 2, binding = 1) uniform sampler2DShadow shadowTex;
+layout(set = 2, binding = 1) uniform sampler2DArrayShadow shadowTex;
 
 float shadowMap(vec3 worldPos) {
 	const int pcf = 0; // no pcf
-	vec3 lsPos = sceneMap(light.proj, worldPos);
-	return dirShadow(shadowTex, lsPos, pcf);
+	// vec3 lsPos = sceneMap(light.proj, worldPos);
+	// return dirShadow(shadowTex, lsPos, pcf);
+
+	// TODO: not efficient... pass and use viewMatrix
+	vec3 proj = sceneMap(scene.proj, worldPos);
+	float z = depthtoz(proj.z, scene.near, scene.far);
+	return dirShadow(light, shadowTex, worldPos, z, pcf);
 }
 
 void main() {

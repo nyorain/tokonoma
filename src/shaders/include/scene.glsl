@@ -9,12 +9,16 @@ const uint lightShadow = (1u << 2); // use shadow
 const uint normalMap = (1u << 0);
 const uint doubleSided = (1u << 1);
 
+// TODO: don't hardcode. Instead pass per spec constant
+const uint dirLightCascades = 4;
+
 struct DirLight {
-	vec3 color; // w: pcf
+	vec3 color;
 	uint flags;
 	vec3 dir;
 	float _; // unused padding
-	mat4 proj; // global -> light space
+	mat4 cascadeProjs[dirLightCascades]; // global -> light space
+	vec4 cascadeSplits[(dirLightCascades + 3) / 4];
 };
 
 struct PointLight {
@@ -51,10 +55,12 @@ struct MaterialPcr {
 // matrix for depthtoz. But we always use the premultiplied
 // projectionView matrix and we can't get the information out of that.
 float depthtoz(float depth, float near, float far) {
-	return near * far / (far + near - depth * (far - near));
+	// return near * far / (far + near - depth * (far - near));
+	return far * near / (far - depth * (far - near));
 }
 float ztodepth(float z, float near, float far) {
-	return (near + far - near * far / z) / (far - near);
+	// return (near + far - near * far / z) / (far - near);
+	return (far - near * far / z) / (far - near);
 }
 
 // Reconstructs the fragment position in world space from the it's uv coord,
@@ -68,10 +74,22 @@ vec3 reconstructWorldPos(vec2 uv, mat4 invViewProj, float depth) {
 	return pos4.xyz / pos4.w;
 }
 
+vec3 sceneMap(mat4 proj, vec4 pos) {
+	pos = proj * pos;
+	vec3 mapped = pos.xyz / pos.w;
+	mapped.y *= -1; // invert y
+	mapped.xy = 0.5 + 0.5 * mapped.xy; // normalize for texture access
+	return mapped;
+}
+
+vec3 sceneMap(mat4 proj, vec3 pos) {
+	return sceneMap(proj, vec4(pos, 1.0));
+}
+
 // computes shadow for directional light
 // returns (1 - shadow), i.e. the light factor
 float dirShadow(sampler2DShadow shadowMap, vec3 pos, int range) {
-	if(pos.z > 1.0) {
+	if(pos.z < 0.0 || pos.z > 1.0) {
 		return 1.0;
 	}
 
@@ -79,14 +97,69 @@ float dirShadow(sampler2DShadow shadowMap, vec3 pos, int range) {
 	float sum = 0.f;
 	for(int x = -range; x <= range; ++x) {
 		for(int y = -range; y <= range; ++y) {
+			vec3 off = 1.5 * vec3(texelSize * vec2(x, y),  0);
 			// sampler has builtin comparison
-			vec3 off = vec3(texelSize * vec2(x, y),  0);
 			sum += texture(shadowMap, pos + off).r;
 		}
 	}
 
 	float total = ((2 * range + 1) * (2 * range + 1));
 	return sum / total;
+}
+
+uint getCascadeIndex(DirLight light, float linearz) {
+	uint i = 0u;
+	for(; i < dirLightCascades; ++i) {
+		if(linearz < light.cascadeSplits[i / 4][i % 4]) {
+			break;
+		}
+	}
+	return i;
+}
+
+uint getCascadeIndex(DirLight light, float linearz, out float between) {
+	uint i = 0u;
+	float last = 0.0;
+	for(; i < dirLightCascades; ++i) {
+		float split = light.cascadeSplits[i / 4][i % 4];
+		if(linearz < split) {
+			between = (linearz - last) / (split - last);
+			return i;
+		}
+		last = split;
+	}
+
+	between = 0.f;
+	return i;
+}
+
+float dirShadowIndex(DirLight light, sampler2DArrayShadow shadowMap,
+		vec3 worldPos, uint index, int range) {
+	// TODO: support pcf (range)
+	// sampler has builtin comparison
+	// array index comes *before* the comparison value (i.e. i before pos.z)
+	vec3 pos = sceneMap(light.cascadeProjs[index], worldPos);
+	if(pos.z <= 0.0 || pos.z >= 1.0) {
+		return 0.0;
+	}
+
+	vec2 texelSize = 1.f / textureSize(shadowMap, 0).xy;
+	float sum = 0.f;
+	for(int x = -range; x <= range; ++x) {
+		for(int y = -range; y <= range; ++y) {
+			vec2 off = 1.5 * texelSize * vec2(x, y);
+			sum += texture(shadowMap, vec4(pos.xy + off, index, pos.z)).r;
+		}
+	}
+
+	float total = ((2 * range + 1) * (2 * range + 1));
+	return sum / total;
+}
+
+float dirShadow(DirLight light, sampler2DArrayShadow shadowMap, vec3 worldPos,
+		float linearz, int range) {
+	uint i = getCascadeIndex(light, linearz);
+	return dirShadowIndex(light, shadowMap, worldPos, i, range);
 }
 
 // Calculates the light attentuation based on the distance d and the
@@ -173,18 +246,6 @@ vec3 decodeNormal(vec2 n) {
 }
 
 // == screen space light scatter algorithms ==
-vec3 sceneMap(mat4 proj, vec4 pos) {
-	pos = proj * pos;
-	vec3 mapped = pos.xyz / pos.w;
-	mapped.y *= -1; // invert y
-	mapped.xy = 0.5 + 0.5 * mapped.xy; // normalize for texture access
-	return mapped;
-}
-
-vec3 sceneMap(mat4 proj, vec3 pos) {
-	return sceneMap(proj, vec4(pos, 1.0));
-}
-
 // ripped from http://www.alexandre-pestana.com/volumetric-lights/
 float mieScattering(float lightDotView, float gs) {
 	float result = 1.0f - gs * gs;

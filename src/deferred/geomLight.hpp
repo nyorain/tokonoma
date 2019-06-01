@@ -50,13 +50,13 @@ public:
 		InitTarget initLight;
 	};
 
+	// TODO: duplication ao.hpp
 	static constexpr u32 flagDiffuseIBL = (1 << 0);
 	static constexpr u32 flagSpecularIBL = (1 << 1);
 	static constexpr u32 flagEmission = (1 << 2);
 	struct {
 		u32 flags {flagDiffuseIBL | flagSpecularIBL | flagEmission};
-		float factor {0.25f};
-		float ssaoPow {3.f};
+		float factor {0.08f};
 	} aoParams;
 
 public:

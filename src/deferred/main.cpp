@@ -64,10 +64,6 @@
 //   probably best to use own pass, see gpugems article
 // - reflectange probe rendering/dynamic creation
 // - support switching between environment maps
-// - cascaded shadow maps for dir light (!important)
-//   Allow to set the shadow map size for all lights. Or automatically
-//   dynamically allocate shadow maps per frame (but also see the
-//   only one shadow map at all thing).
 // - transparency. Can be ordered for now, i.e. split
 //   primitives into two groups in Scene: BLEND and non-blend material-based.
 //   the blend ones are sorted in each updateDevice (either on gpu
@@ -143,6 +139,10 @@
 //   moving camera around?
 
 // lower prio optimizations (most of these are guesses):
+// TODO(optimization): better shadow map allocation/re-use shadow maps.
+//   one is theoretically enough with a deferred renderer, try out
+//   if rendering like that (pass switching) has an significant impact on
+//   performance when there are a couple of lights
 // TODO(optimization): don't recreate renderpasses, layouts and pipelines on
 //   every initPasses, only re-create what is really needed.
 // TODO(optimization): correctly use byRegion dependency flag where possible?
@@ -245,8 +245,7 @@ public:
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
-	bool features(vk::PhysicalDeviceFeatures& enable,
-		const vk::PhysicalDeviceFeatures& supported) override;
+	bool features(doi::Features& enable, const doi::Features& supported) override;
 	argagg::parser argParser() const override;
 	bool handleArgs(const argagg::parser_results& result) override;
 	void record(const RenderBuffer& buffer) override;
@@ -307,6 +306,9 @@ protected:
 	float maxAnisotropy_ {16.f};
 
 	bool anisotropy_ {}; // whether device supports anisotropy
+	bool multiview_ {}; // whether device supports multiview
+	bool depthClamp_ {}; // whether the device supports depth clamping
+
 	float time_ {};
 	bool rotateView_ {}; // mouseLeft down
 	doi::Camera camera_ {};
@@ -316,7 +318,7 @@ protected:
 	doi::Environment env_;
 
 	u32 debugMode_ {0};
-	u32 renderPasses_;
+	u32 renderPasses_ {};
 
 	// needed for point light rendering.
 	// also needed for skybox
@@ -383,7 +385,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	}
 
 	camera_.perspective.near = 0.01f;
-	camera_.perspective.far = 40.f;
+	camera_.perspective.far = 10.f;
 
 	// gui
 	auto& gui = this->gui();
@@ -1014,7 +1016,7 @@ void ViewApp::initRenderData() {
 
 	shadowData_ = doi::initShadowData(dev, depthFormat(),
 		lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
-		doi::Material::pcr());
+		doi::Material::pcr(), multiview_, depthClamp_);
 
 	vpp::Init<vpp::SubBuffer> initRenderStage(batch.alloc.bufHost,
 		5 * sizeof(f16), vk::BufferUsageBits::transferDst, hostMem, 16u);
@@ -1125,11 +1127,11 @@ void ViewApp::initRenderData() {
 		// pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
 		auto& l = dirLights_.emplace_back(batch, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, camera_.pos, currentID_++);
+			primitiveDsLayout_, shadowData_, currentID_++);
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
-		l.updateDevice(camera_.pos);
+		l.updateDevice(camera_);
 		// pp_.params.scatterLightColor = 0.05f * l.data.color;
 	}
 
@@ -1310,11 +1312,12 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		lumView = luminance_.target().imageView();
 	}
 
+	auto shadowView = dirLights_[0].shadowMap();
 	pp_.updateInputs(ppInput,
 		geomLight_.ldepthTarget().imageView(),
 		geomLight_.normalsTarget().imageView(),
 		geomLight_.albedoTarget().imageView(),
-		ssaoView, ssrView, bloomView, lumView, scatterView);
+		ssaoView, ssrView, bloomView, lumView, scatterView, shadowView);
 
 	// create swapchain framebuffers
 	for(auto& buf : bufs) {
@@ -1323,11 +1326,26 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 }
 
 // enable anisotropy if possible
-bool ViewApp::features(vk::PhysicalDeviceFeatures& enable,
-		const vk::PhysicalDeviceFeatures& supported) {
-	if(supported.samplerAnisotropy) {
+bool ViewApp::features(doi::Features& enable, const doi::Features& supported) {
+	if(supported.base.features.samplerAnisotropy) {
 		anisotropy_ = true;
-		enable.samplerAnisotropy = true;
+		enable.base.features.samplerAnisotropy = true;
+	} else {
+		dlg_warn("sampler anisotropy not supported");
+	}
+
+	if(supported.multiview.multiview) {
+		multiview_ = true;
+		enable.multiview.multiview = true;
+	} else {
+		dlg_warn("Multiview not supported");
+	}
+
+	if(supported.base.features.depthClamp) {
+		depthClamp_ = true;
+		enable.base.features.depthClamp = true;
+	} else {
+		dlg_warn("DepthClamp not supported");
 	}
 
 	return true;
@@ -1435,8 +1453,8 @@ void ViewApp::update(double dt) {
 
 	// TODO: hack that synchronizes parameters between multiple
 	// implementations of same pass...
-	static_assert(sizeof(ao_.params) == sizeof(geomLight_.aoParams));
-	std::memcpy(&geomLight_.aoParams, &ao_.params, sizeof(ao_.params));
+	geomLight_.aoParams.flags = ao_.params.flags;
+	geomLight_.aoParams.factor = ao_.params.factor;
 
 	// TODO: only here for fps testing, could be removed to not
 	// render when not needed
@@ -1453,7 +1471,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		return false;
 	}
 
-	auto numModes = 12u;
+	auto numModes = 13u;
 	switch(ev.keycode) {
 		case ny::Keycode::m: // move light here
 			if(!dirLights_.empty()) {
@@ -1656,8 +1674,10 @@ void ViewApp::updateDevice() {
 		env_.updateDevice(fixedMatrix(camera_));
 
 		// depend on camera position
-		for(auto& l : dirLights_) {
-			l.updateDevice(camera_.pos);
+		if(!updateLights_) {
+			for(auto& l : dirLights_) {
+				l.updateDevice(camera_);
+			}
 		}
 	}
 
@@ -1666,7 +1686,7 @@ void ViewApp::updateDevice() {
 			l.updateDevice();
 		}
 		for(auto& l : dirLights_) {
-			l.updateDevice(camera_.pos);
+			l.updateDevice(camera_);
 		}
 		updateLights_ = false;
 	}

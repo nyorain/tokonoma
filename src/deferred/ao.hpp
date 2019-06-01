@@ -31,8 +31,8 @@ public:
 public:
 	struct {
 		u32 flags {flagDiffuseIBL | flagSpecularIBL | flagEmission};
-		float factor {0.25f};
-		float ssaoPow {3.f};
+		float factor {0.08f};
+		float ssaoPow {4.f};
 	} params;
 
 public:

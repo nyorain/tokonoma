@@ -17,6 +17,7 @@ const uint modeDepth = 8u;
 const uint modeScatter = 9u;
 const uint modeBloom = 10u;
 const uint modeLuminance = 11u;
+const uint modeShadow = 12u;
 
 layout(set = 0, binding = 0) uniform sampler2D inAlbedo;
 layout(set = 0, binding = 1) uniform sampler2D inNormal;
@@ -26,6 +27,7 @@ layout(set = 0, binding = 4) uniform sampler2D inSSR;
 layout(set = 0, binding = 5) uniform sampler2D inBloom;
 layout(set = 0, binding = 6) uniform sampler2D inLuminance;
 layout(set = 0, binding = 7) uniform sampler2D inScatter;
+layout(set = 0, binding = 8) uniform sampler2DArray inShadow;
 
 layout(push_constant) uniform PCR {
 	uint mode;
@@ -89,6 +91,10 @@ void main() {
 			break;
 		} case modeScatter: {
 			fragColor = vec4(texture(inScatter, uv).rrr, 1.0);
+			break;
+		} case modeShadow: {
+			float s = pow(texture(inShadow, vec3(uv, 0)).r, 2);
+			fragColor = vec4(vec3(s), 1.0);
 			break;
 		} default:
 			fragColor = vec4(0, 0, 0, 1);

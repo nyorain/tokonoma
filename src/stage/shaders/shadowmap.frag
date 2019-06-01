@@ -19,10 +19,9 @@ void main() {
 		discard;
 	}
 
-	// NOTE: logic here has to be that weird (two independent if statements)
-	// since otherwise i seem to trigger a bug (probably in driver or llvm?)
-	// on mesas vulkan-radeon 19.0.2
-	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
-		discard;
-	}
+	// also render backsides, e.g. when light is *inside* geometry
+	// can happen easily for first cascade
+	// if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
+	// 	discard;
+	// }
 }

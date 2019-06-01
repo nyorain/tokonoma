@@ -10,7 +10,7 @@ layout(set = 2, binding = 0, row_major) uniform LightBuf {
 layout(set = 2, binding = 1) uniform samplerCubeShadow shadowCube;
 
 void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
-		out vec3 lcolor) {
+		out vec3 lcolor, float linearz) {
 	ldir = fragPos - light.pos;
 	float lightDistance = length(fragPos - light.pos);
 	if(lightDistance > light.radius) { // pixel not lighted by this light

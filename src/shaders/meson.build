@@ -32,6 +32,7 @@ deferred_glsl = include_glsl + scene_glsl + files(
 shaders_src = {
 	'stage': [
 		['shaders/shadowmap.vert', scene_glsl],
+		['shaders/shadowmap.vert', scene_glsl, 'shadowmap.multiview.vert', ['-DMULTIVIEW']],
 		['shaders/shadowmap.frag', scene_glsl],
 		['shaders/shadowmapCube.vert', scene_glsl],
 		['shaders/shadowmapCube.frag', scene_glsl],
@@ -151,6 +152,9 @@ foreach group, sources : shaders_src
 		# name: name of output shader, defaults to input name
 		file = '../' + group + '/' + shader[0]
 		name = shader.get(2, shader[0])
+		if name == ''
+			name = shader[0]
+		endif
 
 		# replace shaders/ dir if it exists in shader path
 		# allows projects to group shaders in a 'shader/' dir, like
