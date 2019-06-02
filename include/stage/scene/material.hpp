@@ -20,6 +20,7 @@ public:
 	static constexpr u32 flagDoubleSided = 1u << 1;
 	static constexpr u32 flagNeedsTexCoords0 = 1u << 2;
 	static constexpr u32 flagNeedsTexCoords1 = 1u << 3;
+	static constexpr u32 flagBlend = 1u << 4;
 
 	struct InitData {
 		// image ids
@@ -63,6 +64,7 @@ public:
 
 	bool needsTexCoords0() const { return pcr_.flags & flagNeedsTexCoords0; }
 	bool needsTexCoords1() const { return pcr_.flags & flagNeedsTexCoords1; }
+	bool blend() const { return (pcr_.flags & flagBlend); }
 	void bind(vk::CommandBuffer cb, vk::PipelineLayout) const;
 
 protected:

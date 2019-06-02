@@ -1,3 +1,4 @@
+#include "samples.glsl"
 #include "noise.glsl"
 
 // Light.flags
@@ -95,6 +96,7 @@ float dirShadow(sampler2DShadow shadowMap, vec3 pos, int range) {
 
 	vec2 texelSize = 1.f / textureSize(shadowMap, 0);
 	float sum = 0.f;
+
 	for(int x = -range; x <= range; ++x) {
 		for(int y = -range; y <= range; ++y) {
 			vec3 off = 1.5 * vec3(texelSize * vec2(x, y),  0);
@@ -135,7 +137,6 @@ uint getCascadeIndex(DirLight light, float linearz, out float between) {
 
 float dirShadowIndex(DirLight light, sampler2DArrayShadow shadowMap,
 		vec3 worldPos, uint index, int range) {
-	// TODO: support pcf (range)
 	// sampler has builtin comparison
 	// array index comes *before* the comparison value (i.e. i before pos.z)
 	vec3 pos = sceneMap(light.cascadeProjs[index], worldPos);
@@ -143,11 +144,44 @@ float dirShadowIndex(DirLight light, sampler2DArrayShadow shadowMap,
 		return 0.0;
 	}
 
-	vec2 texelSize = 1.f / textureSize(shadowMap, 0).xy;
 	float sum = 0.f;
+
+	// NOTE: not a good idea to use this here, apparently linear
+	// filtering for shadow samplers doesn't really mean linear
+	// filtering and instead just that they take multiple
+	// pixels into account... can't realy on linear sampling
+	// optimizations therefore
+	/*
+	// TODO: simpler with two seperate sampler objects probably
+	const vec2 texSize = textureSize(shadowMap, 0).xy;
+	const vec2 nf = 1.f / texSize; // normalization factor
+	ivec2 ipos = ivec2(floor(pos.xy * texSize)); // unnormalized position
+	vec4 access = vec4((ipos + 0.5) * nf, index, pos.z);
+	// vec4 access = vec4(pos.xy, index, pos.z);
+	sum += texture(shadowMap, access).r;
+
+	access.xy = ipos * nf;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[0]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[1]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[2]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[3]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[4]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[5]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[6]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[7]).r;
+	// for(uint i = 0u; i < 4; ++i) {
+	// 	vec2 off = nf * samplesLinear8[i];
+	// 	sum += texture(shadowMap, vec4(pos.xy + off, index, pos.z));
+	// 	sum += texture(shadowMap, vec4(pos.xy - off, index, pos.z));
+	// }
+
+	return sum / 9;
+	*/
+
+	const vec2 texelSize = 1.f / textureSize(shadowMap, 0).xy;
 	for(int x = -range; x <= range; ++x) {
 		for(int y = -range; y <= range; ++y) {
-			vec2 off = 1.5 * texelSize * vec2(x, y);
+			vec2 off = texelSize * vec2(x, y);
 			sum += texture(shadowMap, vec4(pos.xy + off, index, pos.z)).r;
 		}
 	}

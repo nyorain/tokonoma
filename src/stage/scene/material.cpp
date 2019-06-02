@@ -162,6 +162,7 @@ Material::Material(InitData& data, const gltf::Model& model,
 			// as well. Probably not a good idea, just implement sorting
 			dlg_warn("BLEND alphaMode not yet fully supported");
 			pcr_.alphaCutoff = 0.0001f;
+			pcr_.flags |= flagBlend;
 		} else if(alphaMode == "MASK") {
 			pcr_.alphaCutoff = 0.5; // default per gltf
 			if(auto m = add.find("alphaCutoff"); m != add.end()) {

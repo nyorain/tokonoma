@@ -118,6 +118,10 @@ Scene::Scene(InitData& data, const WorkBatcher& wb, nytl::StringParam path,
 		images_[i].image = loadImage(d, wb, model.images[i], path, img.srgb);
 	}
 
+	auto inf = std::numeric_limits<float>::infinity();
+	min_ = {inf, inf, inf};
+	max_ = {-inf, -inf, -inf};
+
 	// load nodes tree recursively
 	for(auto& nodeid : scene.nodes) {
 		dlg_assert(unsigned(nodeid) < model.nodes.size());
@@ -191,6 +195,8 @@ void Scene::loadNode(InitData& data, const WorkBatcher& wb,
 			auto& d = data.primitives.emplace_back();
 			auto p = Primitive(d, wb, model, primitive,
 				ri.primitiveDsLayout, mat, matrix, id);
+			min_ = nytl::vec::cw::min(min_, multPos(matrix, p.min()));
+			max_ = nytl::vec::cw::max(max_, multPos(matrix, p.max()));
 
 			primitives_.emplace_back(std::move(p));
 		}
@@ -238,6 +244,10 @@ void Scene::createImage(unsigned id, bool srgb) {
 void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 	for(auto& p : primitives_) {
 		auto& material = materials_[p.material()];
+		// don't render transparent primitives (materials) yet
+		// if(material.blend()) {
+		// 	continue;
+		// }
 		material.bind(cb, pl);
 		p.render(cb, pl);
 	}

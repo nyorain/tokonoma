@@ -8,6 +8,7 @@ include_glsl = files(
 	'include/noise.glsl',
 	'include/ray.glsl',
 	'include/tonemap.glsl',
+	'include/samples.glsl',
 )
 
 scene_glsl = files(
@@ -47,6 +48,7 @@ shaders_src = {
 		['shaders/brdflut.comp'],
 		['shaders/texture.frag'],
 		['shaders/simple.vert'],
+		['shaders/test.frag'], # only for testing included shaders on their own
 	],
 	'smooth_shadow': [
 		['light.vert'],

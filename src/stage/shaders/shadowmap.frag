@@ -19,9 +19,10 @@ void main() {
 		discard;
 	}
 
-	// also render backsides, e.g. when light is *inside* geometry
-	// can happen easily for first cascade
-	// if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
-	// 	discard;
-	// }
+	// don't render backfaces. We render with depth clamping (manual
+	// workaround if needed) so no problem if the front face is behind
+	// the camera
+	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
+		discard;
+	}
 }

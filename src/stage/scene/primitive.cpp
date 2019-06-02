@@ -59,6 +59,10 @@ Primitive::Primitive(const WorkBatcher& wb, const Shape& shape,
 	indexCount_ = shape.indices.size();
 	vertexCount_ = shape.positions.size();
 
+	auto inf = std::numeric_limits<float>::infinity();
+	min_ = {inf, inf, inf};
+	max_ = {-inf, -inf, -inf};
+
 	// fill it
 	{
 		auto stage = vpp::SubBuffer{wb.alloc.bufStage, size,
@@ -77,6 +81,9 @@ Primitive::Primitive(const WorkBatcher& wb, const Shape& shape,
 		for(auto pit = pr.begin(), nit = nr.begin();
 				pit != pr.end() && nit != nr.end();
 				++nit, ++pit) {
+			min_ = nytl::vec::cw::min(min_, *pit);
+			max_ = nytl::vec::cw::max(max_, *pit);
+
 			doi::write(span, *pit);
 			doi::write(span, *nit);
 		}
@@ -160,11 +167,17 @@ Primitive::Primitive(InitData& data, const WorkBatcher& wb,
 	}
 
 	// write vertices and normals
+	auto inf = std::numeric_limits<float>::infinity();
+	min_ = {inf, inf, inf};
+	max_ = {-inf, -inf, -inf};
+
 	auto pr = doi::range<3, float>(model, pa);
 	auto nr = doi::range<3, float>(model, na);
 	for(auto pit = pr.begin(), nit = nr.begin();
 			pit != pr.end() && nit != nr.end();
 			++nit, ++pit) {
+		min_ = nytl::vec::cw::min(min_, *pit);
+		max_ = nytl::vec::cw::max(max_, *pit);
 		doi::write(span, *pit);
 		doi::write(span, *nit);
 	}

@@ -121,21 +121,15 @@ void main() {
 		// int total = ((2 * range + 1) * (2 * range + 1));
 		// scatter /= total;
 
-		const vec2 samples[] = {
-			{-1.5f, +0.5f},
-			{-0.5f, -1.5f},
-			{+0.5f, +1.5f},
-			{+1.5f, -0.5f},
-		};
-
 		float scatter = 0.f;
-		for(uint i = 0u; i < 4; ++i) {
-			scatter += texture(scatterTex, uv + pixelSize * samples[i]).r;
-		}
-
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear4[0]).r;
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear4[1]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear4[1]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear4[0]).r;
 		scatter /= 4.f;
 
-		color.rgb += scatterFac * scatter * vec3(0.9, 0.8, 0.6); // TODO: should be light color
+		// TODO: should be light color
+		color.rgb += scatterFac * scatter * vec3(0.9, 0.8, 0.6);
 	}
 
 	imageStore(outCol, ivec2(pixel), vec4(color, 1.0));

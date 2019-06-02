@@ -79,6 +79,9 @@ public:
 	auto& samplers() const { return samplers_; }
 	auto& defaultSampler() const { return defaultSampler_; }
 
+	nytl::Vec3f min() const { return min_; }
+	nytl::Vec3f max() const { return max_; }
+
 protected:
 	void loadNode(InitData&, const WorkBatcher&, const gltf::Model&,
 		const gltf::Node&, const SceneRenderInfo&, nytl::Mat4f matrix);
@@ -89,6 +92,9 @@ protected:
 	std::vector<Material> materials_;
 	std::vector<Primitive> primitives_;
 	unsigned defaultMaterialID_ {};
+
+	nytl::Vec3f min_;
+	nytl::Vec3f max_;
 };
 
 // Tries to parse the given string as path or filename of a gltf/gltb file

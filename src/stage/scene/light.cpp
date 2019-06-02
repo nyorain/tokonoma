@@ -173,12 +173,9 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	gpi.depthStencil.depthWriteEnable = true;
 	gpi.depthStencil.depthCompareOp = vk::CompareOp::less;
 
-	// NOTE: we could use front face culling instead of a depth bias
-	// but that only works for solid objects, won't work for planes
 	// Pipeline-stage culling at all probably brings problems for
-	// doubleSided primitives/materials
-	// gpi.rasterization.cullMode = vk::CullModeBits::front;
-	// gpi.rasterization.cullMode = vk::CullModeBits::back;
+	// doubleSided primitives/materials so we cull dynamically
+	// in fragment shader
 	gpi.rasterization.cullMode = vk::CullModeBits::none;
 	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 	gpi.rasterization.depthBiasEnable = true;
@@ -383,7 +380,7 @@ void DirLight::updateDevice(const Camera& camera) {
 
 	// calculate split depths
 	// https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
-	constexpr auto splitLambda = 0.5f; // higher: nearer at log split scheme
+	constexpr auto splitLambda = 0.75f; // higher: nearer at log split scheme
 	const auto near = camera.perspective.near;
 	const auto far = camera.perspective.far;
 

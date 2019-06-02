@@ -65,6 +65,9 @@ public:
 	bool hasTexCoords1() const { return texCoords1_.size() != 0; }
 	auto id() const { return id_; }
 
+	nytl::Vec3f min() const { return min_; }
+	nytl::Vec3f max() const { return max_; }
+
 protected:
 	unsigned indexCount_ {};
 	unsigned vertexCount_ {};
@@ -75,6 +78,8 @@ protected:
 	vpp::TrDs ds_;
 	unsigned id_;
 	unsigned material_; // id of the material
+	nytl::Vec3f min_ {};
+	nytl::Vec3f max_ {};
 };
 
 } // namespace doi

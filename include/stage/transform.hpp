@@ -12,6 +12,7 @@
 // TODO: consistent naming and lhs/rhs; zo/no conventions
 // maybe use own namespaces that can just be used?
 // made for vulkan. Update them!
+// TODO: rotate version that only uses dot/cross
 
 namespace doi {
 

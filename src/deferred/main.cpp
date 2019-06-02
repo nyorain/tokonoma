@@ -62,9 +62,10 @@
 // - lens flare
 // - better dof implementations, current impl is naive
 //   probably best to use own pass, see gpugems article
+//   bokeh blurring
 // - reflectange probe rendering/dynamic creation
 // - support switching between environment maps
-// - transparency. Can be ordered for now, i.e. split
+// - transparency. Can be ordered, i.e. split
 //   primitives into two groups in Scene: BLEND and non-blend material-based.
 //   the blend ones are sorted in each updateDevice (either on gpu
 //   or (probably better for the start) on a host visible buffer)
@@ -74,8 +75,8 @@
 // - temporal anti aliasing (TAA), tolksvig maps
 //   e.g. https://media.contentapi.ea.com/content/dam/eacom/frostbite/files/course-notes-moving-frostbite-to-pbr-v2.pdf
 
-// TODO: implement automatic bounds detection and scale accordingly
-//   (e.g. bounding box to [-5, 5])
+// TODO: blur bloom/apply dof depending on light? the brighter,
+//   the more blur (e.g. dof)
 // TODO: timeWidget currently somewhat hacked together, working
 //   around rvg quirks triggering re-record while recording...
 //   probably better to add passes to timeWidget (getting an id)
@@ -85,6 +86,8 @@
 // TODO: group initial layout transitions from undefined layout to general
 //   per frame? could do it externally, undefined -> targetScope()
 //   for luminance (compute), ssr, ssao (compute)
+//   Could check in FrameGraph if initialLayout (add something like that)
+//   equals finalLayout and if not so, add initial barrier
 // TODO: fix ldv value for point light scattering
 //   i.e. view-dir dependent scattering only based on attenuation?
 //   probably makes no sense, then properly document it in settings
@@ -139,6 +142,7 @@
 //   moving camera around?
 
 // lower prio optimizations (most of these are guesses):
+// TODO: look into using textureProj in shaders for w division?
 // TODO(optimization): better shadow map allocation/re-use shadow maps.
 //   one is theoretically enough with a deferred renderer, try out
 //   if rendering like that (pass switching) has an significant impact on
@@ -1049,8 +1053,7 @@ void ViewApp::initRenderData() {
 		dev.deviceMemoryTypes(), 4u);
 
 	// Load Model
-	auto s = sceneScale_;
-	auto mat = doi::scaleMat<4, float>({s, s, s});
+	auto mat = nytl::identity<4, float>();
 	auto samplerAnisotropy = 1.f;
 	if(anisotropy_) {
 		samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
@@ -1077,6 +1080,29 @@ void ViewApp::initRenderData() {
 	auto& sc = model.scenes[scene];
 	vpp::Init<doi::Scene> initScene(batch, path, *omodel, sc,
 		mat, ri);
+
+	// scale scene
+	// we want it to be within bounds [-2, 2] for scale 1 and the
+	// center to be in 0. But scale the scene the same along all axis.
+	auto min = initScene.object().min();
+	auto max = initScene.object().max();
+	dlg_info("scene min: {}", min);
+	dlg_info("scene max: {}", max);
+	auto size = max - min;
+
+	auto s = std::max(size.x, std::max(size.y, size.z));
+	s = 4.f * sceneScale_ / s;
+	auto t = -s * (min + 0.5f * size);
+	mat = nytl::Mat4f {
+		s, 0, 0, t.x,
+		0, s, 0, t.y,
+		0, 0, s, t.z,
+		0, 0, 0, 1
+	};
+
+	for(auto& primitive : initScene.object().primitives()) {
+		primitive.matrix = mat * primitive.matrix;
+	}
 
 	// allocate
 	scene_ = initScene.init(batch);
