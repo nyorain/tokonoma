@@ -30,10 +30,13 @@ public:
 	static constexpr auto emissionFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto linearDepthFormat = vk::Format::r16Sfloat;
 	static constexpr auto lightFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto reflFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto revealageFormat = vk::Format::r8Unorm;
 
 	struct InitData {
 		vpp::TrDs::InitData initLightDs;
 		vpp::TrDs::InitData initAoDs;
+		vpp::TrDs::InitData initBlendDs;
 		vpp::SubBuffer::InitData initAoUbo;
 	};
 
@@ -48,6 +51,8 @@ public:
 		InitTarget initDepth;
 		InitTarget initEmission;
 		InitTarget initLight;
+		InitTarget initRefl;
+		InitTarget initRevealage;
 	};
 
 	// TODO: duplication ao.hpp
@@ -111,15 +116,25 @@ protected:
 	vpp::ViewableImage ldepth_; // color, for linear sampling/mipmaps
 	vpp::ViewableImage light_;
 
+	// for blend-transparency pass
+	vpp::ViewableImage reflTarget_;
+	vpp::ViewableImage revealageTarget_;
+
 	vpp::PipelineLayout geomPipeLayout_;
 	vpp::Pipeline geomPipe_;
+
+	vpp::Pipeline transparentPipe_;
 	vpp::Pipeline blendPipe_;
 
-	vpp::TrDsLayout lightDsLayout_; // input attachment bindings
-	vpp::TrDs lightDs_; // input attachment bindings
+	vpp::TrDsLayout lightDsLayout_; // input attachments
+	vpp::TrDs lightDs_;
 	vpp::PipelineLayout lightPipeLayout_;
 	vpp::Pipeline dirLightPipe_;
 	vpp::Pipeline pointLightPipe_;
+
+	vpp::TrDsLayout blendDsLayout_; // input attachments
+	vpp::PipelineLayout blendPipeLayout_;
+	vpp::TrDs blendDs_;
 
 	// ao
 	vpp::TrDsLayout aoDsLayout_;

@@ -141,6 +141,7 @@ shaders_src = {
 	  ['luminanceMip.comp', deferred_glsl],
 	  ['debug.frag', deferred_glsl],
 	  ['blend.frag', deferred_glsl],
+	  ['transparent.frag', deferred_glsl],
 	],
 }
 

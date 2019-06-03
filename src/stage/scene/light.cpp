@@ -321,7 +321,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pl, 0, {{ds_.vkHandle()}}, {});
 
-		scene.render(cb, pl);
+		scene.renderOpaque(cb, pl);
 		vk::cmdEndRenderPass(cb);
 	} else {
 		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
@@ -344,7 +344,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 
 			vk::cmdPushConstants(cb, data.pl, vk::ShaderStageBits::fragment,
 				0, 4, &i);
-			scene.render(cb, pl);
+			scene.renderOpaque(cb, pl);
 			vk::cmdEndRenderPass(cb);
 		}
 	}

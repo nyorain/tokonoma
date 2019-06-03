@@ -1374,6 +1374,16 @@ bool ViewApp::features(doi::Features& enable, const doi::Features& supported) {
 		dlg_warn("DepthClamp not supported");
 	}
 
+	if(supported.base.features.independentBlend) {
+		enable.base.features.independentBlend = true;
+	} else {
+		// TODO: currently required for transparent pass.
+		// we could implement a version that doesn't rely on it though
+		// (or at least fall back to that when needed)
+		dlg_fatal("independentBlend not supported, exiting");
+		return false;
+	}
+
 	return true;
 }
 

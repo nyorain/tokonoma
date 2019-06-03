@@ -18,6 +18,12 @@
 #include <shaders/deferred.dirLight.frag.h>
 #include <shaders/deferred.ao.frag.h>
 #include <shaders/deferred.blend.frag.h>
+#include <shaders/deferred.transparent.frag.h>
+
+// NOTE: current order independent transparency mainly from
+// - http://casual-effects.blogspot.com/2014/03/weighted-blended-order-independent.html
+// - (http://casual-effects.blogspot.com/2015/03/implemented-weighted-blended-order.html)
+// - (http://casual-effects.blogspot.com/2015/03/colored-blended-order-independent.html)
 
 void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		SyncScope dstNormals,
@@ -30,7 +36,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 
 	// render pass
 	// == attachments ==
-	std::array<vk::AttachmentDescription, 6> attachments;
+	std::array<vk::AttachmentDescription, 8> attachments;
 	struct {
 		unsigned normals = 0;
 		unsigned albedo = 1;
@@ -38,6 +44,8 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		unsigned depth = 3;
 		unsigned ldepth = 4;
 		unsigned light = 5;
+		unsigned refl = 6;
+		unsigned revealage = 7;
 	} ids;
 
 	auto addGBuf = [&](u32 id, vk::Format format, SyncScope scope) {
@@ -62,8 +70,18 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	addGBuf(ids.depth, info.depthFormat, dstDepth);
 	addGBuf(ids.ldepth, ldepthFormat, dstLDepth);
 	addGBuf(ids.light, lightFormat, dstLight);
+	// we don't need those two anymore after the render pass
+	addGBuf(ids.refl, reflFormat, {});
+	addGBuf(ids.revealage, revealageFormat, {});
 
 	// == subpasses ==
+	std::array<vk::SubpassDescription, 4u> subpasses;
+	auto& gpass = subpasses[0]; // geometry into gbuffers
+	auto& lpass = subpasses[1]; // light, reading gbuffers, shading,
+	auto& tpass = subpasses[2]; // transparent geometry, refl&revealage
+	auto& bpass = subpasses[3]; // blending transparent and deferred
+
+	// gpass
 	vk::AttachmentReference gbufRefs[4];
 	gbufRefs[0].attachment = ids.normals;
 	gbufRefs[0].layout = vk::ImageLayout::colorAttachmentOptimal;
@@ -74,6 +92,15 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	gbufRefs[3].attachment = ids.ldepth;
 	gbufRefs[3].layout = vk::ImageLayout::colorAttachmentOptimal;
 
+	vk::AttachmentReference depthRef;
+	depthRef.attachment = ids.depth;
+	depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
+
+	gpass.colorAttachmentCount = 4;
+	gpass.pColorAttachments = gbufRefs;
+	gpass.pDepthStencilAttachment = &depthRef;
+
+	// lpass
 	vk::AttachmentReference ginputRefs[4];
 	ginputRefs[0].attachment = ids.normals;
 	ginputRefs[0].layout = vk::ImageLayout::shaderReadOnlyOptimal;
@@ -84,21 +111,9 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	ginputRefs[3].attachment = ids.emission;
 	ginputRefs[3].layout = vk::ImageLayout::shaderReadOnlyOptimal;
 
-	vk::AttachmentReference depthRef;
-	depthRef.attachment = ids.depth;
-	depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
-
 	vk::AttachmentReference lightRef;
 	lightRef.attachment = ids.light;
 	lightRef.layout = vk::ImageLayout::colorAttachmentOptimal;
-
-	std::array<vk::SubpassDescription, 2u> subpasses;
-	auto& gpass = subpasses[0];
-	auto& lpass = subpasses[1];
-
-	gpass.colorAttachmentCount = 4;
-	gpass.pColorAttachments = gbufRefs;
-	gpass.pDepthStencilAttachment = &depthRef;
 
 	lpass.colorAttachmentCount = 1;
 	lpass.pColorAttachments = &lightRef;
@@ -107,8 +122,33 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	lpass.inputAttachmentCount = 3 + ao;
 	lpass.pInputAttachments = ginputRefs;
 
+	// tpass
+	vk::AttachmentReference tRenderRefs[2];
+	tRenderRefs[0].attachment = ids.refl;
+	tRenderRefs[0].layout = vk::ImageLayout::colorAttachmentOptimal;
+	tRenderRefs[1].attachment = ids.revealage;
+	tRenderRefs[1].layout = vk::ImageLayout::colorAttachmentOptimal;
+
+	tpass.colorAttachmentCount = 2;
+	tpass.pColorAttachments = tRenderRefs;
+	tpass.pDepthStencilAttachment = &depthRef; // readonly
+
+	// bpass
+	vk::AttachmentReference bInputRefs[2];
+	bInputRefs[0].attachment = ids.refl;
+	bInputRefs[0].layout = vk::ImageLayout::shaderReadOnlyOptimal;
+	bInputRefs[1].attachment = ids.revealage;
+	bInputRefs[1].layout = vk::ImageLayout::shaderReadOnlyOptimal;
+
+	bpass.colorAttachmentCount = 1;
+	bpass.pColorAttachments = &lightRef;
+	bpass.inputAttachmentCount = 2u;
+	bpass.pInputAttachments = bInputRefs;
+
+	// TODO: we probably needd a dependency from 0 to 2 that makes
+	// sure depth can be read in that pass, right?
 	// == dependencies ==
-	std::array<vk::SubpassDependency, 3> deps;
+	std::array<vk::SubpassDependency, 5> deps;
 
 	// deps[0]: make sure gbuffers can be read by light pass
 	// setting this flag is extremely important to allow tiled
@@ -143,14 +183,34 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		dstEmission.access |
 		dstLDepth.access;
 
-	// deps[2]: make sure light buffer can be accessed afterwrads
+	// deps[2]: make sure light buffer from light pass (subpass 1) can
+	// be accessed in combine pass (subpass 3)
+	deps[2].dependencyFlags = vk::DependencyBits::byRegion;
 	deps[2].srcSubpass = 1u;
 	deps[2].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
 	deps[2].srcAccessMask = vk::AccessBits::colorAttachmentWrite;
-	deps[2].dstSubpass = vk::subpassExternal;
-	deps[2].dstStageMask = vk::PipelineStageBits::bottomOfPipe |
+	deps[2].dstSubpass = 3u;
+	deps[2].dstStageMask = vk::PipelineStageBits::fragmentShader;
+	deps[2].dstAccessMask = vk::AccessBits::shaderRead;
+
+	// deps[3]: make sure order independent transparency buffers can
+	// be accessed in combine pass
+	deps[3].dependencyFlags = vk::DependencyBits::byRegion;
+	deps[3].srcSubpass = 2u;
+	deps[3].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+	deps[3].srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+	deps[3].dstSubpass = 3u;
+	deps[3].dstStageMask = vk::PipelineStageBits::fragmentShader;
+	deps[3].dstAccessMask = vk::AccessBits::shaderRead;
+
+	// deps[4]: make sure light buffer can be accessed afterwrads
+	deps[4].srcSubpass = 3u;
+	deps[4].srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+	deps[4].srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+	deps[4].dstSubpass = vk::subpassExternal;
+	deps[4].dstStageMask = vk::PipelineStageBits::bottomOfPipe |
 		dstLight.stages;
-	deps[2].dstAccessMask = dstLight.access;
+	deps[4].dstAccessMask = dstLight.access;
 
 	vk::RenderPassCreateInfo rpi;
 	rpi.attachmentCount = attachments.size();
@@ -205,23 +265,6 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 	geomPipe_ = {dev, gpi.info()};
 	vpp::nameHandle(geomPipe_, "GeomLightPass:geomPipe");
-
-
-	// blending pipeline for transparent pass
-	vpp::ShaderModule blendFragShader(dev, deferred_blend_frag_data);
-	vpp::GraphicsPipelineInfo bgpi {rp_, geomPipeLayout_, {{{
-		{vertShader, vk::ShaderStageBits::vertex},
-		{blendFragShader, vk::ShaderStageBits::fragment},
-	}}}, 1};
-
-	bgpi.vertex = doi::Primitive::vertexInfo();
-	bgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
-	bgpi.depthStencil.depthTestEnable = true;
-	bgpi.depthStencil.depthWriteEnable = false;
-	bgpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
-
-	blendPipe_ = {dev, bgpi.info()};
-	vpp::nameHandle(blendPipe_, "GeomLightPass:blendPipe");
 
 
 	// light
@@ -310,6 +353,89 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 
 	lightDs_ = {data.initLightDs, info.wb.alloc.ds, lightDsLayout_};
 
+
+	// transparent geom rendering pipeline
+	vpp::ShaderModule transparentFragShader(dev, deferred_transparent_frag_data);
+	vpp::GraphicsPipelineInfo tgpi {rp_, geomPipeLayout_, {{{
+		{vertShader, vk::ShaderStageBits::vertex},
+		{transparentFragShader, vk::ShaderStageBits::fragment},
+	}}}, 2};
+
+	tgpi.vertex = doi::Primitive::vertexInfo();
+	tgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+	tgpi.depthStencil.depthTestEnable = true;
+	tgpi.depthStencil.depthWriteEnable = false;
+	tgpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+
+	// NOTE: we require the independent blend device feature here
+	vk::PipelineColorBlendAttachmentState bas[2];
+	bas[0].blendEnable = true;
+	bas[0].colorBlendOp = vk::BlendOp::add;
+	bas[0].srcColorBlendFactor = vk::BlendFactor::one;
+	bas[0].dstColorBlendFactor = vk::BlendFactor::one;
+	bas[0].srcAlphaBlendFactor = vk::BlendFactor::one;
+	bas[0].dstAlphaBlendFactor = vk::BlendFactor::one;
+	bas[0].colorWriteMask =
+		vk::ColorComponentBits::r |
+		vk::ColorComponentBits::g |
+		vk::ColorComponentBits::b |
+		vk::ColorComponentBits::a;
+
+	bas[1] = bas[0];
+	bas[1].srcColorBlendFactor = vk::BlendFactor::zero;
+	bas[1].dstColorBlendFactor = vk::BlendFactor::oneMinusSrcColor;
+
+	tgpi.blend.attachmentCount = 2;
+	tgpi.blend.pAttachments = bas;
+
+	transparentPipe_ = {dev, tgpi.info()};
+	vpp::nameHandle(transparentPipe_, "GeomLightPass:transparentPipe");
+
+
+	// blend/combine pipe
+	auto blendBindings = {
+		vpp::descriptorBinding( // refl
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // reveal
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
+	};
+
+	blendDsLayout_ = {dev, blendBindings};
+	blendPipeLayout_ = {dev, {{ blendDsLayout_.vkHandle(), }}, {}};
+	vpp::nameHandle(blendDsLayout_, "GeomLightPass:blendDsLayout");
+	vpp::nameHandle(blendPipeLayout_, "GeomLightPass:blendPipeLayout");
+
+	vpp::ShaderModule blendFragShader(dev, deferred_blend_frag_data);
+	vpp::GraphicsPipelineInfo bgpi {rp_, blendPipeLayout_, {{{
+		{info.fullscreenVertShader, vk::ShaderStageBits::vertex},
+		{blendFragShader, vk::ShaderStageBits::fragment},
+	}}}, 3};
+
+	vk::PipelineColorBlendAttachmentState blendAttachment;
+	blendAttachment.blendEnable = true;
+	blendAttachment.colorBlendOp = vk::BlendOp::add;
+	blendAttachment.srcColorBlendFactor = vk::BlendFactor::oneMinusSrcAlpha;
+	blendAttachment.dstColorBlendFactor = vk::BlendFactor::srcAlpha;
+	blendAttachment.srcAlphaBlendFactor = vk::BlendFactor::zero;
+	blendAttachment.dstAlphaBlendFactor = vk::BlendFactor::one;
+	blendAttachment.colorWriteMask =
+		vk::ColorComponentBits::r |
+		vk::ColorComponentBits::g |
+		vk::ColorComponentBits::b |
+		vk::ColorComponentBits::a;
+
+	bgpi.blend.attachmentCount = 1;
+	bgpi.blend.pAttachments = &blendAttachment;
+
+	blendPipe_ = {dev, bgpi.info()};
+	vpp::nameHandle(blendPipe_, "GeomLightPass:blendPipe");
+
+	blendDs_ = {data.initBlendDs, info.wb.alloc.ds, blendDsLayout_};
+
+
+	// init ao, if done here
 	if(!ao) {
 		aoPipe_ = {};
 		return;
@@ -377,6 +503,9 @@ void GeomLightPass::init(InitData& data) {
 	lightDs_.init(data.initLightDs);
 	vpp::nameHandle(lightDs_, "GeomLightPass:lightDs");
 
+	blendDs_.init(data.initBlendDs);
+	vpp::nameHandle(blendDs_, "GeomLightPass:blendDs");
+
 	if(renderAO()) {
 		aoUbo_.init(data.initAoUbo);
 		aoUboMap_ = aoUbo_.memoryMap();
@@ -405,6 +534,8 @@ void GeomLightPass::createBuffers(InitBufferData& data,
 		vk::ImageUsageBits::transferSrc |
 		vk::ImageUsageBits::storage;
 	constexpr auto lightUsage = baseUsage | vk::ImageUsageBits::storage;
+	constexpr auto transparencyUsage = vk::ImageUsageBits::colorAttachment |
+		vk::ImageUsageBits::inputAttachment;
 
 	auto info = createInfo(normalsFormat, baseUsage);
 	normals_ = {data.initNormals.initTarget, wb.alloc.memDevice, info.img,
@@ -430,6 +561,16 @@ void GeomLightPass::createBuffers(InitBufferData& data,
 	light_ = {data.initLight.initTarget, wb.alloc.memDevice, info.img,
 		devMem};
 	data.initLight.viewInfo = info.view;
+
+	info = createInfo(reflFormat, transparencyUsage);
+	reflTarget_ = {data.initRefl.initTarget, wb.alloc.memDevice, info.img,
+		devMem};
+	data.initRefl.viewInfo = info.view;
+
+	info = createInfo(revealageFormat, transparencyUsage);
+	revealageTarget_ = {data.initRevealage.initTarget, wb.alloc.memDevice,
+		info.img, devMem};
+	data.initRevealage.viewInfo = info.view;
 }
 
 void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
@@ -441,11 +582,17 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 	emission_.init(data.initEmission.initTarget, data.initEmission.viewInfo);
 	light_.init(data.initLight.initTarget, data.initLight.viewInfo);
 
-	vpp::nameHandle(normals_, "GeomLightPass:normals_");
-	vpp::nameHandle(albedo_, "GeomLightPass:albedo_");
-	vpp::nameHandle(ldepth_, "GeomLightPass:ldepth_");
-	vpp::nameHandle(emission_, "GeomLightPass:emission_");
-	vpp::nameHandle(light_, "GeomLightPass:light_");
+	reflTarget_.init(data.initRefl.initTarget, data.initRefl.viewInfo);
+	revealageTarget_.init(data.initRevealage.initTarget,
+		data.initRevealage.viewInfo);
+
+	vpp::nameHandle(normals_, "GeomLightPass:normals");
+	vpp::nameHandle(albedo_, "GeomLightPass:albedo");
+	vpp::nameHandle(ldepth_, "GeomLightPass:ldepth");
+	vpp::nameHandle(emission_, "GeomLightPass:emission");
+	vpp::nameHandle(light_, "GeomLightPass:light");
+	vpp::nameHandle(reflTarget_, "GeomLightPass:reflTarget");
+	vpp::nameHandle(revealageTarget_, "GeomLightPass:revealageTarget");
 
 	// framebuffer
 	auto attachments = {
@@ -455,6 +602,8 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 		depth,
 		ldepth_.vkImageView(),
 		light_.vkImageView(),
+		reflTarget_.vkImageView(),
+		revealageTarget_.vkImageView(),
 	};
 
 	vk::FramebufferCreateInfo fbi;
@@ -468,14 +617,21 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 	vpp::nameHandle(fb_, "GeomLightPass:fb");
 
 	// ds
-	vpp::DescriptorSetUpdate dsu(lightDs_);
-	dsu.inputAttachment({{{}, normals_.vkImageView(),
+	vpp::DescriptorSetUpdate ldsu(lightDs_);
+	ldsu.inputAttachment({{{}, normals_.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.inputAttachment({{{}, albedo_.vkImageView(),
+	ldsu.inputAttachment({{{}, albedo_.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.inputAttachment({{{}, ldepth_.imageView(),
+	ldsu.inputAttachment({{{}, ldepth_.imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.apply();
+	ldsu.apply();
+
+	vpp::DescriptorSetUpdate bdsu(blendDs_);
+	bdsu.inputAttachment({{{}, reflTarget_.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	bdsu.inputAttachment({{{}, revealageTarget_.vkImageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
+	bdsu.apply();
 
 	if(renderAO()) {
 		vpp::DescriptorSetUpdate dsu(aoDs_);
@@ -505,13 +661,15 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 	auto width = size.width;
 	auto height = size.height;
 
-	std::array<vk::ClearValue, 6u> cv {};
+	std::array<vk::ClearValue, 8u> cv {};
 	cv[0] = {-1.f, -1.f, -1.f, -1.f}; // normals, rgba16f snorm
 	cv[1] = {0, 0, 0, 0}; // albedo, rgba8
 	cv[2] = {{0.f, 0.f, 0.f, 0.f}}; // emission, rgba16f
 	cv[3].depthStencil = {1.f, 0u}; // depth
 	cv[4] = {{1000.f, 0.f, 0.f, 0.f}}; // linear r16f depth
 	cv[5] = {{0.f, 0.f, 0.f, 0.f}}; // light, rgba16f
+	cv[6] = {{0.f, 0.f, 0.f, 0.f}}; // reflectance, rgba16f
+	cv[7] = {{1.f, 0.f, 0.f, 0.f}}; // revealage, r8unorm
 	vk::cmdBeginRenderPass(cb, {rp_, fb_,
 		{0u, 0u, width, height},
 		std::uint32_t(cv.size()), cv.data()
@@ -578,11 +736,24 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 			env->render(cb);
 			time.add("env");
 		}
+	}
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
+	vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
+
+	{
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, transparentPipe_);
 		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {sceneDs});
 		scene.renderBlend(cb, geomPipeLayout_);
 		time.add("transparent");
+	}
+
+	vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
+
+	{
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
+		doi::cmdBindGraphicsDescriptors(cb, blendPipeLayout_, 0, {blendDs_});
+		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen tri fan
+		time.add("blend");
 	}
 
 	vk::cmdEndRenderPass(cb);

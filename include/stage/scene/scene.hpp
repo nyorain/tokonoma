@@ -69,8 +69,6 @@ public:
 	void init(InitData&, const WorkBatcher&);
 	void createImage(unsigned id, bool srgb);
 
-	void updateDevice(nytl::Vec3f viewPos);
-
 	void render(vk::CommandBuffer, vk::PipelineLayout) const;
 	void renderOpaque(vk::CommandBuffer, vk::PipelineLayout) const;
 	void renderBlend(vk::CommandBuffer, vk::PipelineLayout) const;
@@ -102,8 +100,6 @@ protected:
 
 	nytl::Vec3f min_;
 	nytl::Vec3f max_;
-
-	vpp::SubBuffer blendCmds_;
 };
 
 // Tries to parse the given string as path or filename of a gltf/gltb file
