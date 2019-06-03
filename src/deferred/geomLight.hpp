@@ -113,6 +113,7 @@ protected:
 
 	vpp::PipelineLayout geomPipeLayout_;
 	vpp::Pipeline geomPipe_;
+	vpp::Pipeline blendPipe_;
 
 	vpp::TrDsLayout lightDsLayout_; // input attachment bindings
 	vpp::TrDs lightDs_; // input attachment bindings

@@ -6,7 +6,7 @@
 
 namespace doi {
 
-// TODO: support for double
+// TODO: conversion from/to double
 // 16-bit IEEE floating point value, compatible with gpu representations.
 // Often called "half".
 class f16 final {

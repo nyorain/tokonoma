@@ -11,6 +11,8 @@
 #include <tinygltf.hpp>
 #include <vector>
 
+// TODO: support basic AABB culling, always use indirect commands
+
 namespace doi {
 namespace gltf = tinygltf;
 
@@ -55,6 +57,7 @@ public:
 		std::vector<Texture::InitData> images;
 		std::vector<Material::InitData> materials;
 		std::vector<Primitive::InitData> primitives;
+		vpp::SubBuffer::InitData initBlendCmds;
 	};
 
 public:
@@ -66,7 +69,11 @@ public:
 	void init(InitData&, const WorkBatcher&);
 	void createImage(unsigned id, bool srgb);
 
+	void updateDevice(nytl::Vec3f viewPos);
+
 	void render(vk::CommandBuffer, vk::PipelineLayout) const;
+	void renderOpaque(vk::CommandBuffer, vk::PipelineLayout) const;
+	void renderBlend(vk::CommandBuffer, vk::PipelineLayout) const;
 
 	auto& primitives() { return primitives_; }
 	auto& materials() { return materials_; }
@@ -95,6 +102,8 @@ protected:
 
 	nytl::Vec3f min_;
 	nytl::Vec3f max_;
+
+	vpp::SubBuffer blendCmds_;
 };
 
 // Tries to parse the given string as path or filename of a gltf/gltb file

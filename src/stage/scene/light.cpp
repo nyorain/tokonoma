@@ -299,6 +299,8 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 
 	// TODO: fine tune depth bias
 	// should be scene dependent, configurable!
+	// also dependent on shadow map size (the larger the shadow map, the
+	// smaller are the values we need)
 
 	// render into shadow map
 	if(data.multiview) {
@@ -312,7 +314,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
 
-		vk::cmdSetDepthBias(cb, 1.0, 0.f, 4.0);
+		vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
 
 		auto pl = data.pl.vkHandle();
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
@@ -326,7 +328,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
 
-		vk::cmdSetDepthBias(cb, 1.0, 0.f, 4.0);
+		vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
 
 		auto pl = data.pl.vkHandle();
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);

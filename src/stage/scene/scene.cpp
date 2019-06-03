@@ -128,6 +128,16 @@ Scene::Scene(InitData& data, const WorkBatcher& wb, nytl::StringParam path,
 		auto& node = model.nodes[nodeid];
 		loadNode(data, wb, model, node, ri, matrix);
 	}
+
+	// blend cmds buffer
+	auto count = 0u;
+	for(auto& p : primitives_) {
+		count += (materials_[p.material()].blend());
+	}
+
+	auto size = count * sizeof(vk::DrawIndexedIndirectCommand);
+	blendCmds_ = {data.initBlendCmds, wb.alloc.bufHost, size,
+		vk::BufferUsageBits::indirectBuffer, dev.hostMemoryTypes()};
 }
 
 void Scene::loadNode(InitData& data, const WorkBatcher& wb,
@@ -229,6 +239,8 @@ void Scene::init(InitData& data, const WorkBatcher& wb) {
 				"doesn't provide them");
 		}
 	}
+
+	blendCmds_.init(data.initBlendCmds);
 }
 
 void Scene::createImage(unsigned id, bool srgb) {
@@ -241,13 +253,51 @@ void Scene::createImage(unsigned id, bool srgb) {
 	images_[id].needed = true;
 }
 
+void Scene::updateDevice(nytl::Vec3f viewPos) {
+	// TODO: whole method rather inefficient atm
+	std::vector<const Primitive*> blendPrims;
+	for(auto& p : primitives_) {
+		if(materials_[p.material()].blend()) {
+			blendPrims.push_back(&p);
+		}
+	}
+
+	auto cmp = [&](const Primitive* p1, const Primitive* p2) {
+		auto c1 = 0.5f * (p1->min() + p1->max());
+		auto c2 = 0.5f * (p2->min() + p2->max());
+		return length(c1 - viewPos) < length(c2 - viewPos);
+	};
+}
+
 void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 	for(auto& p : primitives_) {
 		auto& material = materials_[p.material()];
-		// don't render transparent primitives (materials) yet
-		// if(material.blend()) {
-		// 	continue;
-		// }
+		material.bind(cb, pl);
+		p.render(cb, pl);
+	}
+}
+
+void Scene::renderOpaque(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
+	for(auto& p : primitives_) {
+		auto& material = materials_[p.material()];
+		// don't render blend-transparent primitives (materials)
+		if(material.blend()) {
+			continue;
+		}
+
+		material.bind(cb, pl);
+		p.render(cb, pl);
+	}
+}
+
+void Scene::renderBlend(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
+	for(auto& p : primitives_) {
+		auto& material = materials_[p.material()];
+		// only render blend-transparent primitives (materials)
+		if(!material.blend()) {
+			continue;
+		}
+
 		material.bind(cb, pl);
 		p.render(cb, pl);
 	}

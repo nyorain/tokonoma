@@ -17,6 +17,7 @@
 #include <shaders/deferred.pointLight.vert.h>
 #include <shaders/deferred.dirLight.frag.h>
 #include <shaders/deferred.ao.frag.h>
+#include <shaders/deferred.blend.frag.h>
 
 void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		SyncScope dstNormals,
@@ -206,6 +207,23 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	vpp::nameHandle(geomPipe_, "GeomLightPass:geomPipe");
 
 
+	// blending pipeline for transparent pass
+	vpp::ShaderModule blendFragShader(dev, deferred_blend_frag_data);
+	vpp::GraphicsPipelineInfo bgpi {rp_, geomPipeLayout_, {{{
+		{vertShader, vk::ShaderStageBits::vertex},
+		{blendFragShader, vk::ShaderStageBits::fragment},
+	}}}, 1};
+
+	bgpi.vertex = doi::Primitive::vertexInfo();
+	bgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+	bgpi.depthStencil.depthTestEnable = true;
+	bgpi.depthStencil.depthWriteEnable = false;
+	bgpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+
+	blendPipe_ = {dev, bgpi.info()};
+	vpp::nameHandle(blendPipe_, "GeomLightPass:blendPipe");
+
+
 	// light
 	auto lightBindings = {
 		vpp::descriptorBinding( // normal
@@ -287,8 +305,8 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	vk::createGraphicsPipelines(dev, {}, 2, *infos, nullptr, *vkpipes);
 	pointLightPipe_ = {dev, vkpipes[0]};
 	dirLightPipe_ = {dev, vkpipes[1]};
-	vpp::nameHandle(pointLightPipe_, "GeomLightPass:pointLightPipe_");
-	vpp::nameHandle(dirLightPipe_, "GeomLightPass:dirLightPipe_");
+	vpp::nameHandle(pointLightPipe_, "GeomLightPass:pointLightPipe");
+	vpp::nameHandle(dirLightPipe_, "GeomLightPass:dirLightPipe");
 
 	lightDs_ = {data.initLightDs, info.wb.alloc.ds, lightDsLayout_};
 
@@ -332,8 +350,8 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		info.dsLayouts.scene.vkHandle(),
 		aoDsLayout_.vkHandle(),
 	}}, {{pcr}}};
-	vpp::nameHandle(lightDsLayout_, "GeomLightPass:lightDsLayout_");
-	vpp::nameHandle(lightPipeLayout_, "GeomLightPass:lightPipeLayout_");
+	vpp::nameHandle(aoDsLayout_, "GeomLightPass:aoDsLayout");
+	vpp::nameHandle(aoPipeLayout_, "GeomLightPass:aoPipeLayout");
 
 	vpp::ShaderModule aoFragShader(dev, deferred_ao_frag_data);
 	vpp::GraphicsPipelineInfo aogpi{rp_, aoPipeLayout_, {{{
@@ -503,7 +521,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		vpp::DebugLabel(cb, "geometry pass");
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, geomPipe_);
 		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {sceneDs});
-		scene.render(cb, geomPipeLayout_);
+		scene.renderOpaque(cb, geomPipeLayout_);
 		time.add("geometry");
 	}
 
@@ -552,12 +570,19 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 			time.add("ao");
 		}
 
+		// important that this comes before the transparent pass since
+		// that doesn't write the depth buffer
 		if(env) {
 			vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
 				boxIndices.offset(), vk::IndexType::uint16);
 			env->render(cb);
 			time.add("env");
 		}
+
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
+		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {sceneDs});
+		scene.renderBlend(cb, geomPipeLayout_);
+		time.add("transparent");
 	}
 
 	vk::cmdEndRenderPass(cb);
