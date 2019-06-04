@@ -11,8 +11,39 @@
 namespace doi {
 namespace gltf = tinygltf;
 
-class Scene;
+// class Scene;
 
+struct Material {
+public:
+	enum class Bit : u32 {
+		normalMap = (1u << 0),
+		dobuleSided = (1u << 1),
+		needsTexCoord0 = (1u << 2),
+		needsTexCoord1 = (1u << 3),
+		blend = (1u < 4)
+	};
+
+	struct Tex {
+		u32 coords;
+		u32 texID;
+		u32 samplerID;
+	};
+
+public:
+	nytl::Vec4f albedoFac {1.f, 1.f, 1.f, 1.f};
+	nytl::Vec3f emissionFac {0.f, 0.f, 0.f};
+	nytl::Flags<Bit> flags {};
+	float roughnessFac {1.f};
+	float metalnessFac {1.f};
+	float alphaCutoff {0.f};
+	Tex albedo;
+	Tex normals;
+	Tex emission;
+	Tex metalRough;
+	Tex occlusion;
+};
+
+/*
 class Material {
 public:
 	// See flags in model.frag
@@ -32,20 +63,25 @@ public:
 		vpp::TrDs::InitData initDs;
 	};
 
-	// see scene.glsl
-	struct PCR { // tighly packed for std140
-		nytl::Vec4f albedo {1.f, 1.f, 1.f, 1.f};
-		nytl::Vec3f emission {0.f, 0.f, 0.f};
+	// see scene.glsl, directly mirrored & tightly packed
+	struct BufferTex {
+		u32 coords;
+		u32 texID;
+		u32 samplerID;
+	};
+
+	struct Buffer {
+		nytl::Vec4f albedoFac {1.f, 1.f, 1.f, 1.f};
+		nytl::Vec3f emissionFac {0.f, 0.f, 0.f};
 		u32 flags {};
-		// additional factors
-		float roughness {1.f};
-		float metalness {1.f};
+		float roughnessFac {1.f};
+		float metalnessFac {1.f};
 		float alphaCutoff {0.f};
-		u32 albedoCoords {};
-		u32 emissionCoords {};
-		u32 normalsCoords {};
-		u32 metalRoughCoords {};
-		u32 occlusionCoords {};
+		BufferTex albedo;
+		BufferTex normals;
+		BufferTex emission;
+		BufferTex metalRough;
+		BufferTex occlusion;
 	};
 
 	static vk::PushConstantRange pcr();
@@ -59,34 +95,16 @@ public:
 		nytl::Vec3f emission = {0.f, 0.f, 0.f});
 	Material(InitData&, const gltf::Model&, const gltf::Material&,
 		const vpp::TrDsLayout&, vk::ImageView dummy, Scene& scene);
-
 	void init(InitData&, const Scene&);
 
-	bool needsTexCoords0() const { return pcr_.flags & flagNeedsTexCoords0; }
-	bool needsTexCoords1() const { return pcr_.flags & flagNeedsTexCoords1; }
-	bool blend() const { return (pcr_.flags & flagBlend); }
-	void bind(vk::CommandBuffer cb, vk::PipelineLayout) const;
+	bool needsTexCoords0() const { return buf_.flags & flagNeedsTexCoords0; }
+	bool needsTexCoords1() const { return buf_.flags & flagNeedsTexCoords1; }
+	bool blend() const { return (buf_.flags & flagBlend); }
+	const auto& buf() const { return buf_; }
 
 protected:
-	void updateDs();
-
-protected:
-	PCR pcr_;
-
-	// TODO: strictly speaking, we don't need to store the samplers after
-	// the initial updates
-	struct Tex {
-		vk::ImageView view {};
-		vk::Sampler sampler {};
-	};
-
-	Tex albedoTex_;
-	Tex metalnessRoughnessTex_;
-	Tex normalTex_;
-	Tex occlusionTex_;
-	Tex emissionTex_;
-
-	vpp::TrDs ds_;
+	Buffer buf_;
 };
+*/
 
 } // namespace doi

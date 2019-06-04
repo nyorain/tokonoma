@@ -3,10 +3,12 @@
 #include <stage/scene/material.hpp>
 #include <stage/quaternion.hpp>
 #include <stage/image.hpp>
+#include <stage/bits.hpp>
 #include <stage/transform.hpp>
 #include <stage/texture.hpp>
 #include <stage/util.hpp>
 #include <vpp/vk.hpp>
+#include <vpp/debug.hpp>
 #include <vpp/image.hpp>
 #include <dlg/dlg.hpp>
 
@@ -61,6 +63,36 @@ Scene::Scene(InitData& data, const WorkBatcher& wb, nytl::StringParam path,
 		const tinygltf::Model& model, const tinygltf::Scene& scene,
 		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
 	auto& dev = wb.dev;
+
+	if(model.images.size() > imageCount) {
+		throw std::runtime_error("Can't support that many images");
+	}
+	if(model.samplers.size() > samplerCount) {
+		throw std::runtime_error("Can't support that many samplers");
+	}
+
+	// layout
+	auto bindings = {
+		// model ids
+		vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+			vk::ShaderStageBits::vertex),
+		// models
+		vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+			vk::ShaderStageBits::vertex),
+		// materials
+		vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+			vk::ShaderStageBits::fragment),
+		// textures[32]
+		vpp::descriptorBinding(vk::DescriptorType::sampledImage,
+			vk::ShaderStageBits::fragment, -1, 32),
+		// samplers[8]
+		vpp::descriptorBinding(vk::DescriptorType::sampler,
+			vk::ShaderStageBits::fragment, -1, 8),
+	};
+
+	dsLayout_ = {dev, bindings};
+	vpp::nameHandle(dsLayout_, "Scene:dsLayout");
+	ds_ = {data.initDs, wb.alloc.ds, dsLayout_};
 
 	// load samplers
 	// TODO: optimization, low prio
@@ -128,16 +160,48 @@ Scene::Scene(InitData& data, const WorkBatcher& wb, nytl::StringParam path,
 		auto& node = model.nodes[nodeid];
 		loadNode(data, wb, model, node, ri, matrix);
 	}
-
-	// blend cmds buffer
-	auto count = 0u;
+	auto blendCount = 0u;
+	auto opaqueCount = 0u;
 	for(auto& p : primitives_) {
-		count += (materials_[p.material()].blend());
+		if(materials_[p.material()].blend()) {
+			++blendCount;
+		} else {
+			++opaqueCount;
+		}
 	}
 
-	auto size = count * sizeof(vk::DrawIndexedIndirectCommand);
+	// TODO: some of the below better on dev memory i guess?
+	auto hostMem = dev.hostMemoryTypes();
+	auto devMem = dev.deviceMemoryTypes();
+
+	// models buffer
+	auto pcount = blendCount + opaqueCount;
+	auto size = pcount * sizeof(nytl::Mat4f) * 2;
+	modelsBuf_ = {data.initModels, wb.alloc.bufHost, size,
+		vk::BufferUsageBits::storageBuffer, hostMem};
+
+	// materials buffer
+	size = materials_.size() * sizeof(Material::Buffer);
+	materialsBuf_ = {data.initModels, wb.alloc.bufDevice, size,
+		vk::BufferUsageBits::storageBuffer |
+		vk::BufferUsageBits::transferDst, devMem};
+	data.materialsStage = {data.initMaterialsStage, wb.alloc.bufStage,
+		size, vk::BufferUsageBits::transferSrc, hostMem};
+
+	// cmds buffer
+	size = opaqueCount * sizeof(vk::DrawIndexedIndirectCommand);
+	cmds_ = {data.initCmds, wb.alloc.bufHost, size,
+		vk::BufferUsageBits::indirectBuffer, hostMem};
+	size = opaqueCount * sizeof(u32);
+	modelIDs_ = {data.initModelIDs, wb.alloc.bufHost, size,
+		vk::BufferUsageBits::storageTexelBuffer, hostMem};
+
+	size = blendCount * sizeof(vk::DrawIndexedIndirectCommand);
 	blendCmds_ = {data.initBlendCmds, wb.alloc.bufHost, size,
-		vk::BufferUsageBits::indirectBuffer, dev.hostMemoryTypes()};
+		vk::BufferUsageBits::indirectBuffer, hostMem};
+	size = blendCount * sizeof(u32);
+	blendModelIDs_ = {data.initBlendModelIDs, wb.alloc.bufHost, size,
+		vk::BufferUsageBits::storageTexelBuffer, hostMem};
 }
 
 void Scene::loadNode(InitData& data, const WorkBatcher& wb,
@@ -213,18 +277,46 @@ void Scene::loadNode(InitData& data, const WorkBatcher& wb,
 	}
 }
 
-void Scene::init(InitData& data, const WorkBatcher& wb) {
+void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView) {
 	dlg_assert(images_.size() == data.images.size());
 	dlg_assert(materials_.size() == data.materials.size() + 1); // + default mat
 	dlg_assert(primitives_.size() == data.primitives.size());
 
+	data.materialsStage.init(data.initMaterialsStage);
+	materialsBuf_.init(data.initMaterials);
+	modelsBuf_.init(data.initModels);
+	cmds_.init(data.initCmds);
+	modelIDs_.init(data.initModelIDs);
+	blendCmds_.init(data.initBlendCmds);
+	blendModelIDs_.init(data.initBlendModelIDs);
+
+	ds_.init(data.initDs);
+
+	std::array<vk::ImageView, imageCount> dsImages;
 	for(auto i = 0u; i < data.images.size(); ++i) {
-		images_[i].image.init(data.images[i], wb);
+		if(i < data.images.size()) {
+			images_[i].image.init(data.images[i], wb);
+			dsImages[i] = images_[i].image.vkImageView();
+		} else {
+			dsImages[i] = dummyView;
+		}
 	}
 
+	auto matMap = data.materialsStage.memoryMap();
+	auto matSpan = matMap.span();
 	for(auto i = 0u; i < data.materials.size(); ++i) {
 		materials_[i].init(data.materials[i], *this);
+		doi::write(matSpan, materials_[i].buf());
 	}
+	matMap.flush();
+	matMap = {};
+
+	vk::BufferCopy copy;
+	copy.srcOffset = data.materialsStage.offset();
+	copy.dstOffset = materialsBuf_.offset();
+	copy.size = materialsBuf_.size();
+	vk::cmdCopyBuffer(wb.cb, data.materialsStage.buffer(),
+		materialsBuf_.buffer(), {{copy}});
 
 	for(auto i = 0u; i < data.primitives.size(); ++i) {
 		auto& p = primitives_[i];
@@ -240,7 +332,23 @@ void Scene::init(InitData& data, const WorkBatcher& wb) {
 		}
 	}
 
-	blendCmds_.init(data.initBlendCmds);
+	// TODO: should be done in updateDevice/at runtime; support culling
+	auto idmap = modelIDs_.memoryMap();
+	auto idspan = idmap.span();
+	auto cmdmap = cmds_.memoryMap();
+	auto cmdspan = cmdmap.span();
+	for(auto i = 0u; i < primitives_.size(); ++i) {
+		auto& p = primitives_[i];
+		if(!materials_[p.material()].blend()) {
+			doi::write(idspan, u32(opaqueCount_));
+			++opaqueCount_;
+
+			vk::DrawIndexedIndirectCommand cmd;
+			cmd.indexCount = p.indexCount();
+			cmd.instanceCount = 1;
+		}
+	}
+	idmap.flush();
 }
 
 void Scene::createImage(unsigned id, bool srgb) {

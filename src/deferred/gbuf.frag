@@ -10,6 +10,9 @@ layout(location = 2) in vec2 inTexCoord0;
 layout(location = 3) in vec2 inTexCoord1;
 layout(location = 4) in float inLinDepth;
 
+layout(location = 5) in flat uint inMatID;
+layout(location = 6) in flat uint inModelID;
+
 layout(location = 0) out vec4 outNormal; // xy: encoded normal, z: matID, w: roughness
 layout(location = 1) out vec4 outAlbedo; // rgb: albedo, w: occlusion
 layout(location = 2) out vec4 outEmission; // rgb: emission, w: metallic
@@ -22,46 +25,39 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 	float near, far;
 } scene;
 
-// material
-layout(set = 1, binding = 0) uniform sampler2D albedoTex;
-layout(set = 1, binding = 1) uniform sampler2D metalRoughTex;
-layout(set = 1, binding = 2) uniform sampler2D normalTex;
-layout(set = 1, binding = 3) uniform sampler2D occlusionTex;
-layout(set = 1, binding = 4) uniform sampler2D emissionTex;
-
-layout(set = 2, binding = 0, row_major) uniform Model {
-	mat4 _matrix;
-	mat4 _normal;
-	uint id;
-} model;
-
-layout(push_constant) uniform MaterialPcrBuf {
-	MaterialPcr material;
+layout(set = 1, binding = 2) buffer Materials {
+	Material materials[];
 };
 
-vec3 getNormal() {
-	vec3 n = normalize(inNormal);
-	if((material.flags & normalMap) == 0u) {
-		return n;
-	}
+layout(set = 1, binding = 3) uniform texture2D textures[32];
+layout(set = 1, binding = 4) uniform sampler samplers[8];
 
-	vec2 uv = (material.normalCoords == 0u) ? inTexCoord0 : inTexCoord1;
-	return tbnNormal(n, inPos, uv, normalTex);
+vec4 readTex(MaterialTex tex) {
+	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
+	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
 }
 
 void main() {
-	// discarded fragments only output no emission
+	Material material = materials[inMatID];
+
 	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
 		discard;
 	}
 
-	vec2 auv = (material.albedoCoords == 0u) ? inTexCoord0 : inTexCoord1;
-	vec4 albedo = material.albedo * texture(albedoTex, auv);
+	vec4 albedo = readTex(material.albedo);
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}
 
-	vec3 normal = getNormal();
+	vec3 normal = normalize(inNormal);
+	if((material.flags & normalMap) != 0u) {
+		MaterialTex nt = material.normals;
+		vec2 tuv = (nt.coords == 0u) ? inTexCoord0 : inTexCoord1;
+		vec4 n = texture(sampler2D(textures[nt.id], samplers[nt.samplerID]), tuv);
+		normal = tbnNormal(normal, inPos, tuv, n.xyz);
+			
+	}
+
 	if(!gl_FrontFacing) { // flip normal, see gltf spec
 		normal *= -1;
 	}
@@ -69,20 +65,16 @@ void main() {
 	outNormal.xy = encodeNormal(normal);
 	outAlbedo.rgb = albedo.rgb;
 
-	vec2 euv = (material.emissionCoords == 0u) ? inTexCoord0 : inTexCoord1;
-	outEmission.xyz = material.emission * texture(emissionTex, euv).rgb;
-	outEmission.w = model.id;
+	outEmission.xyz = readTex(material.emission).rgb;
+	outEmission.w = inModelID;
+	outAlbedo.w = readTex(material.occlusion).r;
 
-	vec2 ouv = (material.occlusionCoords == 0u) ? inTexCoord0 : inTexCoord1;
-	outAlbedo.w = texture(occlusionTex, ouv).r;
-
-	vec2 mruv = (material.metalRoughCoords == 0u) ? inTexCoord0 : inTexCoord1;
-	vec4 mr = texture(metalRoughTex, mruv);
+	vec4 mr = readTex(material.metalRough);
 
 	// b,g components as specified by gltf spec
 	// NOTE: using only half the range here (normal buf is 16f)
-	outNormal.z = material.metallic * mr.b;
-	outNormal.w = material.roughness * mr.g;
+	outNormal.z = material.metallicFac * mr.b;
+	outNormal.w = material.roughnessFac * mr.g;
 
 	outDepth = depthtoz(gl_FragCoord.z, scene.near, scene.far);
 	// outDepth = inLinDepth;

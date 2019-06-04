@@ -20,13 +20,13 @@
 
 // TODO: some duplication between dir and point light
 // TODO: use allocators from work batcher
-// TODO: update pointLight to support multiview if possible
-// TODO: directional light: when depth clamp isn't supported, can we
-//   somehow manually emulate it in vertex shader?
+// TODO: directional light: when depth clamp isn't supported, emulate.
+//   see shadowmap.vert
 
 namespace doi {
 
 // needs to be the same as in shadowmapCube.vert
+TODO: remove
 constexpr auto pcrOffsetFaceID = 64u;
 
 Frustum ndcFrustum() {
@@ -106,17 +106,19 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	rpi.pDependencies = &dependency;
 	rpi.dependencyCount = 1u;
 
-	data.rp = {dev, rpi};
-
 	if(multiview) {
 		u32 viewMask = nlastbits(DirLight::cascadeCount);
-
 		vk::RenderPassMultiviewCreateInfo rpm;
 		rpm.subpassCount = 1u;
 		rpm.pViewMasks = &viewMask;
 		rpi.pNext = &rpm;
 		data.rpDir = {dev, rpi};
+
+		viewMask = nlastbits(6);
+		rpm.pViewMasks = &viewMask;
 	}
+
+	data.rpPoint = {dev, rpi};
 
 	// sampler
 	vk::SamplerCreateInfo sci {};
@@ -157,7 +159,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		vertShader = {dev, stage_shadowmap_vert_data};
 	}
 
-	auto rp = multiview ? data.rpDir.vkHandle() : data.rp;
+	auto rp = multiview ? data.rpDir.vkHandle() : data.rpPoint.vkHandle();
 	vpp::ShaderModule fragShader(dev, stage_shadowmap_frag_data);
 	vpp::GraphicsPipelineInfo gpi {rp, data.pl, {{{
 		{vertShader, vk::ShaderStageBits::vertex},
@@ -204,7 +206,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	// requirement there) which adds complexity as well
 	vpp::ShaderModule cubeVertShader(dev, stage_shadowmapCube_vert_data);
 	vpp::ShaderModule cubeFragShader(dev, stage_shadowmapCube_frag_data);
-	vpp::GraphicsPipelineInfo cgpi {data.rp, data.pl, {{{
+	vpp::GraphicsPipelineInfo cgpi {data.rpPoint, data.pl, {{{
 		{cubeVertShader, vk::ShaderStageBits::vertex},
 		{cubeFragShader, vk::ShaderStageBits::fragment},
 	}}}, 0, vk::SampleCountBits::e1};
@@ -247,7 +249,7 @@ DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	fbi.height = size_.y;
 	if(data.multiview) {
 		fbi.attachmentCount = 1;
-		fbi.layers = cascadeCount;
+		fbi.layers = 1; // specified by vulkan spec
 		fbi.pAttachments = &target_.vkImageView();
 		fbi.renderPass = data.rpDir;
 		fb_ = {dev, fbi};

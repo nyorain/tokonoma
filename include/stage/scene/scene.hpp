@@ -8,10 +8,16 @@
 #include <nytl/mat.hpp>
 #include <nytl/nonCopyable.hpp>
 #include <vpp/fwd.hpp>
+#include <vpp/vk.hpp>
 #include <tinygltf.hpp>
 #include <vector>
 
 // TODO: support basic AABB culling, always use indirect commands
+//   could do it on the gpu, even more efficiently with khr_draw_indirect_count
+// TODO: dont require multidraw support, see gbuf.vert
+// TODO: support instanced drawing, detect it from gltf structure
+//   we can't rely on gl_DrawID then, we should probably pass
+//   matrices (and with that model/material id) per instance anyways
 
 namespace doi {
 namespace gltf = tinygltf;
@@ -53,11 +59,56 @@ struct Sampler {
 
 class Scene {
 public:
+	static constexpr auto imageCount = 32u;
+	static constexpr auto samplerCount = 8u;
+
 	struct InitData {
 		std::vector<Texture::InitData> images;
-		std::vector<Material::InitData> materials;
-		std::vector<Primitive::InitData> primitives;
+
+		vpp::TrDs::InitData initDs;
+		vpp::SubBuffer::InitData initModels;
+		vpp::SubBuffer::InitData initMaterials;
+		vpp::SubBuffer::InitData initModelIDs;
+		vpp::SubBuffer::InitData initCmds;
+		vpp::SubBuffer::InitData initBlendModelIDs;
 		vpp::SubBuffer::InitData initBlendCmds;
+
+		vpp::SubBuffer::InitData initVert;
+		vpp::SubBuffer::InitData initTexCoords0;
+		vpp::SubBuffer::InitData initTexCoords1;
+		std::vector<std::byte> vertData;
+		std::vector<std::byte> texCoord0Data;
+		std::vector<std::byte> texCoord1Data;
+
+		vpp::SubBuffer stage;
+		vpp::SubBuffer::InitData initStage;
+	};
+
+	struct Primitive {
+		vk::DrawIndexedIndirectCommand cmd;
+		nytl::Mat4f mat;
+		unsigned material;
+		unsigned id;
+	};
+
+	struct MaterialTex {
+		u32 coords;
+		u32 texID;
+		u32 samplerID;
+	};
+
+	struct Material {
+		nytl::Vec4f albedoFac {1.f, 1.f, 1.f, 1.f};
+		nytl::Vec3f emissionFac {0.f, 0.f, 0.f};
+		u32 flags {};
+		float roughnessFac {1.f};
+		float metalnessFac {1.f};
+		float alphaCutoff {0.f};
+		MaterialTex albedo;
+		MaterialTex normals;
+		MaterialTex emission;
+		MaterialTex metalRough;
+		MaterialTex occlusion;
 	};
 
 public:
@@ -66,7 +117,7 @@ public:
 		const gltf::Model&, const gltf::Scene&, nytl::Mat4f matrix,
 		const SceneRenderInfo&);
 
-	void init(InitData&, const WorkBatcher&);
+	void init(InitData&, const WorkBatcher&, vk::ImageView dummyTex);
 	void createImage(unsigned id, bool srgb);
 
 	void updateDevice(nytl::Vec3f viewPos);
@@ -103,7 +154,32 @@ protected:
 	nytl::Vec3f min_;
 	nytl::Vec3f max_;
 
-	vpp::SubBuffer blendCmds_;
+	vpp::TrDsLayout dsLayout_;
+	vpp::TrDs ds_;
+
+	vpp::SubBuffer modelsBuf_;
+	vpp::SubBuffer materialsBuf_;
+
+	unsigned opaqueCount_ {}; // number of opaque primitives
+	vpp::SubBuffer cmds_; // opque
+	vpp::SubBuffer modelIDs_;
+
+	unsigned blendCount_ {}; // number of blend primitives
+	vpp::SubBuffer blendCmds_; // transparent
+	vpp::SubBuffer blendModelIDs_;
+
+	vpp::SubBuffer indices_;
+	vpp::SubBuffer vertices_; // position + normal
+	vpp::SubBuffer texCoords0_;
+	vpp::SubBuffer texCoords1_;
+
+	// TODO: instances
+	// for each primitive instance:
+	// - transform row 0 (4 x float)
+	// - transform row 1 (4 x float)
+	// - transform row 2 (4 x float)
+	// - modelID, matID (2 x uint TODO: check if uint supported)
+	vpp::SubBuffer instanceBuf_;
 };
 
 // Tries to parse the given string as path or filename of a gltf/gltb file

@@ -33,20 +33,48 @@ struct PointLight {
 	mat4 proj[6]; // global -> cubemap [side i] light space
 };
 
-// size: 64
-struct MaterialPcr {
-	vec4 albedo;
-	vec3 emission;
-	uint flags;
-	float roughness;
-	float metallic;
-	float alphaCutoff;
-	uint albedoCoords;
-	uint emissionCoords;
-	uint normalCoords;
-	uint metalRoughCoords;
-	uint occlusionCoords;
+struct ModelData {
+	mat4 matrix;
+	mat4 normal; // [3]: {materialID, modelID, unused, unused}
 };
+
+struct MaterialTex {
+	uint coords;
+	uint id; // texture id
+	uint samplerID;
+};
+
+struct Material {
+	vec4 albedoFac;
+	vec3 emissionFac;
+	uint flags;
+	float roughnessFac;
+	float metallicFac;
+	float alphaCutoff;
+	MaterialTex albedo;
+	MaterialTex normals;
+	MaterialTex emission;
+	MaterialTex metalRough;
+	MaterialTex occlusion;
+};
+
+// TODO: deprecated, remove!
+// using Material in SSBOs instead
+// size: 64
+// struct MaterialPcr {
+// 	vec4 albedo;
+// 	vec3 emission;
+// 	uint flags;
+// 	float roughness;
+// 	float metallic;
+// 	float alphaCutoff;
+// 	uint albedoCoords;
+// 	uint emissionCoords;
+// 	uint normalCoords;
+// 	uint metalRoughCoords;
+// 	uint occlusionCoords;
+// };
+
 
 // returns the z value belonging to the given depth buffer value
 // obviously requires the near and far plane values that were used

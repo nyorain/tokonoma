@@ -6,6 +6,7 @@
 layout(location = 0) in vec2 inTexCoord0;
 layout(location = 1) in vec2 inTexCoord1;
 layout(location = 2) in vec3 inPos;
+layout(location = 3) flat in uint inMatID;
 
 // material
 layout(set = 0, binding = 0, row_major) uniform LightBuf {
@@ -13,22 +14,26 @@ layout(set = 0, binding = 0, row_major) uniform LightBuf {
 };
 
 // material
-layout(set = 1, binding = 0) uniform sampler2D albedoTex;
-layout(push_constant) uniform MaterialPcrBuf {
-	MaterialPcr material;
+layout(set = 1, binding = 2) buffer Materials {
+	Material materials[];
 };
 
-void main() {
-	vec2 uv = (material.albedoCoords == 0) ? inTexCoord0 : inTexCoord1;
-	vec4 albedo = material.albedo * texture(albedoTex, uv);
+layout(set = 1, binding = 3) uniform texture2D textures[32];
+layout(set = 1, binding = 4) uniform sampler samplers[8];
 
-	// NOTE: logic here has to be that weird (two independent if statements)
-	// since otherwise i seem to trigger a bug (probably in driver or llvm?)
-	// on mesas vulkan-radeon 19.0.2
+vec4 readTex(MaterialTex tex) {
+	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
+	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
+}
+
+void main() {
+	Material material = materials[inMatID];
+	vec4 albedo = material.albedoFac * readTex(material.albedo);
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}
 
+	// don't render backfaces by default
 	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
 		discard;
 	}

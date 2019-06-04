@@ -1,4 +1,4 @@
-#version 450
+#version 460
 
 #extension GL_GOOGLE_include_directive : enable
 #include "scene.glsl"
@@ -14,6 +14,9 @@ layout(location = 2) out vec2 outTexCoord0;
 layout(location = 3) out vec2 outTexCoord1;
 layout(location = 4) out float outLinDepth;
 
+layout(location = 5) flat out uint outMatID;
+layout(location = 6) flat out uint outModelID;
+
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj; // view and pojection
 	mat4 _invProj;
@@ -21,17 +24,33 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 	float near, far;
 } scene;
 
-layout(set = 2, binding = 0, row_major) uniform Model {
-	mat4 matrix; // model matrix
-	mat4 normal; // normal matrix (transpose(inverse(matrix))); effectively 3x3
-} model;
+layout(set = 1, binding = 0, std430) buffer ModelIDs {
+	uint modelIDs[];
+};
+
+layout(set = 1, binding = 1, row_major) buffer Models {
+	ModelData models[];
+};
+
+// TODO: don't require multidraw support, implement fallback
+// #if MULTIDRAW
+// 	const uint modelIndex = gl_DrawID;
+// #else
+// 	layout(push_constant) uniform DrawID {
+// 		uint modelIndex;	
+// 	};
+// #endif
 
 void main() {
-	outNormal = mat3(model.normal) * inNormal;
+	uint id = modelIDs[gl_DrawID];
+	outMatID = uint(models[id].normal[3][0]);
+	outModelID = uint(models[id].normal[3][1]);
+
+	outNormal = mat3(models[id].normal) * inNormal;
 	outTexCoord0 = inTexCoord0;
 	outTexCoord1 = inTexCoord1;
 
-	vec4 m = model.matrix * vec4(inPos, 1.0);
+	vec4 m = models[id].matrix * vec4(inPos, 1.0);
 	outPos = m.xyz / m.w;
 
 	gl_Position = scene.proj * m;

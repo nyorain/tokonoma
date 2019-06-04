@@ -22,8 +22,8 @@ class Camera;
 struct ShadowData {
 	vk::Format depthFormat;
 	vpp::Sampler sampler;
-	vpp::RenderPass rp;
-	vpp::RenderPass rpDir; // multiview
+	vpp::RenderPass rpPoint;
+	vpp::RenderPass rpDir; // only valid if multiview
 	vpp::PipelineLayout pl;
 	vpp::Pipeline pipe;
 	vpp::Pipeline pipeCube;
