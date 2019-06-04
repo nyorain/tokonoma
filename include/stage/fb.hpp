@@ -1,3 +1,5 @@
+// WIP (barely started) implementation of iq's floating bar concept
+
 #pragma once
 
 #include <cstdint>

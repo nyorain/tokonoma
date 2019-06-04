@@ -228,7 +228,7 @@ using doi::f16;
 
 class ViewApp : public doi::App {
 public:
-	using Vertex = doi::Primitive::Vertex;
+	using Vertex = doi::Scene::Primitive::Vertex;
 	static constexpr auto pointLight = false;
 
 	static constexpr u32 passScattering = (1u << 1u);
@@ -284,9 +284,7 @@ protected:
 
 	std::optional<Alloc> alloc;
 
-	vpp::TrDsLayout sceneDsLayout_;
-	vpp::TrDsLayout primitiveDsLayout_;
-	vpp::TrDsLayout materialDsLayout_;
+	vpp::TrDsLayout cameraDsLayout_;
 	vpp::TrDsLayout lightDsLayout_;
 
 	// light and shadow
@@ -294,8 +292,8 @@ protected:
 	std::vector<doi::DirLight> dirLights_;
 	std::vector<doi::PointLight> pointLights_;
 
-	vpp::SubBuffer sceneUbo_;
-	vpp::TrDs sceneDs_;
+	vpp::SubBuffer cameraUbo_;
+	vpp::TrDs cameraDs_;
 
 	vpp::Sampler linearSampler_;
 	vpp::Sampler nearestSampler_;
@@ -303,7 +301,7 @@ protected:
 	doi::Texture dummyTex_;
 	doi::Texture dummyCube_;
 	doi::Scene scene_;
-	std::optional<doi::Material> lightMaterial_;
+	// std::optional<doi::Material> lightMaterial_;
 
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
@@ -312,6 +310,7 @@ protected:
 	bool anisotropy_ {}; // whether device supports anisotropy
 	bool multiview_ {}; // whether device supports multiview
 	bool depthClamp_ {}; // whether the device supports depth clamping
+	bool multiDrawIndirect_ {};
 
 	float time_ {};
 	bool rotateView_ {}; // mouseLeft down
@@ -604,9 +603,8 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 	PassCreateInfo passInfo {
 		wb,
 		depthFormat(), {
-			sceneDsLayout_,
-			materialDsLayout_,
-			primitiveDsLayout_,
+			cameraDsLayout_,
+			scene_.dsLayout(),
 			lightDsLayout_,
 		}, {
 			linearSampler_,
@@ -637,7 +635,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 	auto& targetLight = passGeomLight.addOut(syncScopeFlex,
 		geomLight_.lightTarget().vkImage());
 	passGeomLight.record = [&](const auto& buf) {
-		geomLight_.record(buf.cb, buf.size, sceneDs_, scene_, pointLights_,
+		geomLight_.record(buf.cb, buf.size, cameraDs_, scene_, pointLights_,
 			dirLights_, boxIndices_, &env_, timeWidget_);
 	};
 
@@ -681,7 +679,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 			ssao_.target().vkImage());
 
 		passSSAO.record = [&](const auto& buf) {
-			ssao_.record(buf.cb, buf.size, sceneDs_);
+			ssao_.record(buf.cb, buf.size, cameraDs_);
 			timeWidget_.add("ssao");
 		};
 	}
@@ -702,7 +700,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		}
 
 		passAO.record = [&](const auto& buf) {
-			ao_.record(buf.cb, sceneDs_, buf.size);
+			ao_.record(buf.cb, cameraDs_, buf.size);
 			timeWidget_.add("ao");
 		};
 	}
@@ -737,7 +735,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 			ssr_.target().vkImage());
 
 		passSSR.record = [&](const auto& buf) {
-			ssr_.record(buf.cb, sceneDs_, buf.size);
+			ssr_.record(buf.cb, cameraDs_, buf.size);
 			timeWidget_.add("ssr");
 		};
 	}
@@ -756,7 +754,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 			vk::DescriptorSet lightDs = pointLight ?
 				pointLights_[0].ds() :
 				dirLights_[0].ds();
-			scatter_.record(buf.cb, buf.size, sceneDs_, lightDs);
+			scatter_.record(buf.cb, buf.size, cameraDs_, lightDs);
 			timeWidget_.add("scatter");
 		};
 	}
@@ -960,8 +958,10 @@ void ViewApp::initRenderData() {
 	auto sceneBindings = {
 		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer, stages)
 	};
-	sceneDsLayout_ = {dev, sceneBindings};
+	cameraDsLayout_ = {dev, sceneBindings};
 
+	// TODO: shouldn't that be in stage/scene/light.cpp, initShadowData?
+	//   their shaders depend on it...
 	// TODO: use shadow sampler statically here?
 	// there is no real reason not to... expect maybe dir and point
 	// lights using different samplers? look into that
@@ -974,15 +974,6 @@ void ViewApp::initRenderData() {
 			vk::ShaderStageBits::fragment),
 	};
 	lightDsLayout_ = {dev, lightBindings};
-
-	// per object; model matrix and material stuff
-	auto objectBindings = {
-		vpp::descriptorBinding(
-			vk::DescriptorType::uniformBuffer,
-			vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
-	};
-	primitiveDsLayout_ = {dev, objectBindings};
-	materialDsLayout_ = doi::Material::createDsLayout(dev);
 
 	// dummy texture for materials that don't have a texture
 	// TODO: we could just create the dummy cube and make the dummy
@@ -1010,17 +1001,13 @@ void ViewApp::initRenderData() {
 
 	// ubo and stuff
 	auto hostMem = dev.hostMemoryTypes();
-	auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
+	auto camUboSize = sizeof(nytl::Mat4f) // proj matrix
 		+ sizeof(nytl::Mat4f) // inv proj
 		+ sizeof(nytl::Vec3f) // viewPos
 		+ 2 * sizeof(float); // near, far plane
-	vpp::Init<vpp::TrDs> initSceneDs(batch.alloc.ds, sceneDsLayout_);
-	vpp::Init<vpp::SubBuffer> initSceneUbo(batch.alloc.bufHost, sceneUboSize,
+	vpp::Init<vpp::TrDs> initCameraDs(batch.alloc.ds, cameraDsLayout_);
+	vpp::Init<vpp::SubBuffer> initCameraUbo(batch.alloc.bufHost, camUboSize,
 		vk::BufferUsageBits::uniformBuffer, hostMem);
-
-	shadowData_ = doi::initShadowData(dev, depthFormat(),
-		lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
-		doi::Material::pcr(), multiview_, depthClamp_);
 
 	vpp::Init<vpp::SubBuffer> initRenderStage(batch.alloc.bufHost,
 		5 * sizeof(f16), vk::BufferUsageBits::transferDst, hostMem, 16u);
@@ -1060,13 +1047,12 @@ void ViewApp::initRenderData() {
 		samplerAnisotropy = std::max(samplerAnisotropy, maxAnisotropy_);
 	}
 
-	initPasses(batch);
-
 	auto ri = doi::SceneRenderInfo{
-		materialDsLayout_,
-		primitiveDsLayout_,
+		// materialDsLayout_,
+		// primitiveDsLayout_,
 		dummyTex_.vkImageView(),
-		samplerAnisotropy
+		samplerAnisotropy,
+		false, multiDrawIndirect_
 	};
 
 	auto [omodel, path] = doi::loadGltf(modelname_);
@@ -1078,14 +1064,15 @@ void ViewApp::initRenderData() {
 	dlg_info("Found {} scenes", model.scenes.size());
 	auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
 	auto& sc = model.scenes[scene];
-	vpp::Init<doi::Scene> initScene(batch, path, *omodel, sc,
-		mat, ri);
+
+	doi::Scene::InitData initScene;
+	scene_.create(initScene, batch, path, *omodel, sc, mat, ri);
 
 	// scale scene
 	// we want it to be within bounds [-2, 2] for scale 1 and the
 	// center to be in 0. But scale the scene the same along all axis.
-	auto min = initScene.object().min();
-	auto max = initScene.object().max();
+	auto min = scene_.min();
+	auto max = scene_.max();
 	dlg_info("scene min: {}", min);
 	dlg_info("scene max: {}", max);
 	auto size = max - min;
@@ -1100,16 +1087,22 @@ void ViewApp::initRenderData() {
 		0, 0, 0, 1
 	};
 
-	for(auto& primitive : initScene.object().primitives()) {
+	for(auto& primitive : scene_.primitives()) {
 		primitive.matrix = mat * primitive.matrix;
 	}
 
+	shadowData_ = doi::initShadowData(dev, depthFormat(),
+		lightDsLayout_, scene_.dsLayout(),
+		multiview_, depthClamp_);
+
+	initPasses(batch);
+
 	// allocate
-	scene_ = initScene.init(batch);
+	scene_.init(initScene, batch, dummyTex_.imageView());
 	boxIndices_ = initBoxIndices.init();
 	selectionStage_ = initSelectionStage.init();
-	sceneDs_ = initSceneDs.init();
-	sceneUbo_ = initSceneUbo.init();
+	cameraDs_ = initCameraDs.init();
+	cameraUbo_ = initCameraUbo.init();
 	env_.init(envData, batch);
 	brdfLut_ = initBrdfLut.init(batch);
 	renderStage_ = initRenderStage.init();
@@ -1140,9 +1133,10 @@ void ViewApp::initRenderData() {
 
 	// add lights
 	// TODO: defer creation
+	// TODO: cameraDsLayout dummy
 	if(pointLight) {
 		auto& l = pointLights_.emplace_back(batch, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, currentID_++);
+			cameraDsLayout_, shadowData_, currentID_++);
 		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
@@ -1153,7 +1147,7 @@ void ViewApp::initRenderData() {
 		// pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
 		auto& l = dirLights_.emplace_back(batch, lightDsLayout_,
-			primitiveDsLayout_, shadowData_, currentID_++);
+			cameraDsLayout_, shadowData_, currentID_++);
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
@@ -1169,15 +1163,15 @@ void ViewApp::initRenderData() {
 
 	// scene descriptor, used for some pipelines as set 0 for camera
 	// matrix and view position
-	vpp::DescriptorSetUpdate sdsu(sceneDs_);
-	sdsu.uniform({{{sceneUbo_}}});
+	vpp::DescriptorSetUpdate sdsu(cameraDs_);
+	sdsu.uniform({{{cameraUbo_}}});
 	sdsu.apply();
 
 	currentID_ = scene_.primitives().size();
-	lightMaterial_.emplace(materialDsLayout_,
-		dummyTex_.vkImageView(), scene_.defaultSampler(),
-		nytl::Vec{0.f, 0.f, 0.0f, 0.f}, 0.f, 0.f, false,
-		nytl::Vec{1.f, 0.9f, 0.5f});
+	// lightMaterial_.emplace(materialDsLayout_,
+	// 	dummyTex_.vkImageView(), scene_.defaultSampler(),
+	// 	nytl::Vec{0.f, 0.f, 0.0f, 0.f}, 0.f, 0.f, false,
+	// 	nytl::Vec{1.f, 0.9f, 0.5f});
 
 }
 
@@ -1372,6 +1366,13 @@ bool ViewApp::features(doi::Features& enable, const doi::Features& supported) {
 		enable.base.features.depthClamp = true;
 	} else {
 		dlg_warn("DepthClamp not supported");
+	}
+
+	if(supported.base.features.multiDrawIndirect) {
+		multiDrawIndirect_ = true;
+		enable.base.features.multiDrawIndirect = true;
+	} else {
+		dlg_warn("multiDrawIndirect not supported");
 	}
 
 	return true;
@@ -1688,7 +1689,7 @@ void ViewApp::updateDevice() {
 	// update scene ubo
 	if(camera_.update) {
 		camera_.update = false;
-		auto map = sceneUbo_.memoryMap();
+		auto map = cameraUbo_.memoryMap();
 		auto span = map.span();
 		auto mat = matrix(camera_);
 		doi::write(span, mat);
@@ -1698,6 +1699,9 @@ void ViewApp::updateDevice() {
 		doi::write(span, camera_.perspective.far);
 
 		env_.updateDevice(fixedMatrix(camera_));
+
+		auto m = doi::lookAtRH(camera_.pos, camera_.pos + camera_.dir, camera_.up);
+		scene_.updateDevice(m);
 
 		// depend on camera position
 		if(!updateLights_) {

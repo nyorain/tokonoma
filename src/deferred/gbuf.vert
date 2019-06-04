@@ -43,8 +43,9 @@ layout(set = 1, binding = 1, row_major) buffer Models {
 
 void main() {
 	uint id = modelIDs[gl_DrawID];
-	outMatID = uint(models[id].normal[3][0]);
-	outModelID = uint(models[id].normal[3][1]);
+	// remember that matrix addressing is column major in glsl
+	outMatID = uint(models[id].normal[0][3]);
+	outModelID = uint(models[id].normal[1][3]);
 
 	outNormal = mat3(models[id].normal) * inNormal;
 	outTexCoord0 = inTexCoord0;

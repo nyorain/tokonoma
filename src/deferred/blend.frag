@@ -33,7 +33,7 @@ void main() {
 		discard;
 	}
 
-	vec4 albedo = readTex(material.albedo);
+	vec4 albedo = material.albedoFac * readTex(material.albedo);
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}

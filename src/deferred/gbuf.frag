@@ -25,7 +25,7 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 	float near, far;
 } scene;
 
-layout(set = 1, binding = 2) buffer Materials {
+layout(set = 1, binding = 2, std430) buffer Materials {
 	Material materials[];
 };
 
@@ -44,7 +44,7 @@ void main() {
 		discard;
 	}
 
-	vec4 albedo = readTex(material.albedo);
+	vec4 albedo = material.albedoFac * readTex(material.albedo);
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}
@@ -65,7 +65,7 @@ void main() {
 	outNormal.xy = encodeNormal(normal);
 	outAlbedo.rgb = albedo.rgb;
 
-	outEmission.xyz = readTex(material.emission).rgb;
+	outEmission.xyz = material.emissionFac * readTex(material.emission).rgb;
 	outEmission.w = inModelID;
 	outAlbedo.w = readTex(material.occlusion).r;
 

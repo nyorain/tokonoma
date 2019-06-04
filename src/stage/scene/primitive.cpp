@@ -12,6 +12,7 @@
 
 namespace doi {
 
+/*
 const vk::PipelineVertexInputStateCreateInfo& Primitive::vertexInfo() {
 	static constexpr auto stride = sizeof(doi::Primitive::Vertex);
 	static constexpr vk::VertexInputBindingDescription bindings[3] = {
@@ -311,5 +312,6 @@ void Primitive::updateDevice() {
 	doi::write(span, normalMatrix);
 	doi::write(span, std::uint32_t(id_));
 }
+*/
 
 } // namespace gltf

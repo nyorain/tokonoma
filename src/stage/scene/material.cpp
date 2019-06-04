@@ -6,6 +6,7 @@
 
 namespace doi {
 
+/*
 vk::PushConstantRange Material::pcr() {
 	vk::PushConstantRange pcr;
 	pcr.offset = 0;
@@ -228,5 +229,6 @@ void Material::bind(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 		pl, 1, {{ds_.vkHandle()}}, {});
 }
+*/
 
 } // namespace doi

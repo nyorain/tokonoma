@@ -56,6 +56,7 @@ struct Material {
 	MaterialTex emission;
 	MaterialTex metalRough;
 	MaterialTex occlusion;
+	vec2 pad;
 };
 
 // TODO: deprecated, remove!

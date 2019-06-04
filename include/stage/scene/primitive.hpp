@@ -15,6 +15,8 @@
 namespace doi {
 namespace gltf = tinygltf;
 
+
+/*
 // TODO: allow instancing
 
 struct Shape; // stage/scene/shape.hpp
@@ -78,5 +80,6 @@ protected:
 	nytl::Vec3f min_ {};
 	nytl::Vec3f max_ {};
 };
+*/
 
 } // namespace doi

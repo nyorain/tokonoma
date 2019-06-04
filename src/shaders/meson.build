@@ -36,6 +36,7 @@ shaders_src = {
 		['shaders/shadowmap.vert', scene_glsl, 'shadowmap.multiview.vert', ['-DMULTIVIEW']],
 		['shaders/shadowmap.frag', scene_glsl],
 		['shaders/shadowmapCube.vert', scene_glsl],
+		['shaders/shadowmapCube.vert', scene_glsl, 'shadowmapCube.multiview.vert', ['-DMULTIVIEW']],
 		['shaders/shadowmapCube.frag', scene_glsl],
 		['shaders/skybox.vert'],
 		['shaders/skybox.frag'],

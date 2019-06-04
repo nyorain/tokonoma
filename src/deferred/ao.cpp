@@ -51,7 +51,7 @@ void AOPass::create(InitData& data, const PassCreateInfo& info) {
 	pcr.size = 4u;
 	pcr.stageFlags = vk::ShaderStageBits::compute;
 	pipeLayout_ = {dev, {{
-		info.dsLayouts.scene.vkHandle(),
+		info.dsLayouts.camera.vkHandle(),
 		dsLayout_.vkHandle()
 	}}, {{pcr}}};
 

@@ -49,6 +49,12 @@ inline void write(nytl::Span<std::byte>& span, const std::byte* ptr,
 	span = span.last(span.size() - size);
 }
 
+inline void write(nytl::Span<std::byte>& dst, nytl::Span<const std::byte> src) {
+	dlg_assert(dst.size() >= src.size());
+	std::memcpy(dst.data(), src.data(), src.size());
+	dst = dst.last(dst.size() - src.size());
+}
+
 template<typename T>
 void write(nytl::Span<std::byte>& span, T&& data) {
 	write(span, reinterpret_cast<const std::byte*>(&data), sizeof(data));
@@ -63,6 +69,17 @@ template<typename T>
 void write(std::byte*& data, T&& obj) {
 	std::memcpy(data, &obj, sizeof(obj));
 	data += sizeof(obj);
+}
+
+struct DynamicBuffer {
+	std::vector<std::byte> buffer;
+};
+
+template<typename T>
+void write(DynamicBuffer& buffer, T&& obj) {
+	buffer.buffer.resize(buffer.buffer.size() + sizeof(obj));
+	auto data = buffer.buffer.data() + buffer.buffer.size() - sizeof(obj);
+	std::memcpy(data, &obj, sizeof(obj));
 }
 
 // TODO: doesn't really fit in here...

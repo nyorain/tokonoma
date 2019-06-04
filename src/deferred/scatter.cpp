@@ -53,7 +53,7 @@ void LightScatterPass::create(InitData& data, const PassCreateInfo& info,
 
 	dsLayout_ = {dev, scatterBindings};
 	pipeLayout_ = {dev, {{
-		info.dsLayouts.scene.vkHandle(),
+		info.dsLayouts.camera.vkHandle(),
 		dsLayout_.vkHandle(),
 		info.dsLayouts.light.vkHandle()
 	}}, {}};

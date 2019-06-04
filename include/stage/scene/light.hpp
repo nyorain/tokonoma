@@ -23,7 +23,7 @@ struct ShadowData {
 	vk::Format depthFormat;
 	vpp::Sampler sampler;
 	vpp::RenderPass rpPoint;
-	vpp::RenderPass rpDir; // only valid if multiview
+	vpp::RenderPass rpDir;
 	vpp::PipelineLayout pl;
 	vpp::Pipeline pipe;
 	vpp::Pipeline pipeCube;
@@ -35,6 +35,9 @@ constexpr std::uint32_t lightFlagDir = (1u << 0);
 constexpr std::uint32_t lightFlagPcf = (1u << 1);
 constexpr std::uint32_t lightFlagShadow = (1u << 2);
 
+// TODO: doesn't really belong here
+// move all frustum stuff to transfrom.hpp?
+//
 // order:
 // front (topleft, topright, bottomleft, bottomright)
 // back (topleft, topright, bottomleft, bottomright)
@@ -65,7 +68,7 @@ public:
 	// nytl::Mat4f lightBallMatrix(nytl::Vec3f viewPos) const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
-	const Primitive& lightBall() const { return lightBall_; }
+	// const Primitive& lightBall() const { return lightBall_; }
 
 protected:
 	nytl::Vec2ui size_ {512, 512};
@@ -73,7 +76,7 @@ protected:
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
 	vpp::TrDs ds_;
-	Primitive lightBall_;
+	// Primitive lightBall_;
 
 	// non-multiview
 	struct Cascade {
@@ -110,23 +113,28 @@ public:
 	nytl::Mat4f lightBallMatrix() const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return shadowMap_.vkImageView(); }
-	const Primitive& lightBall() const { return lightBall_; }
+	// const Primitive& lightBall() const { return lightBall_; }
 	bool hasShadowMap() const { return data.flags & lightFlagShadow; }
 
 protected:
 	nytl::Vec2ui size_ {256u, 256u}; // per side
-	vpp::ViewableImage target_; // normal depth buffer for rendering
+	// vpp::ViewableImage target_; // normal depth buffer for rendering
 	vpp::ViewableImage shadowMap_; // cube map
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
 	vpp::TrDs ds_;
-	Primitive lightBall_;
+	// Primitive lightBall_;
+
+	// non-multiview
+	struct Face {
+		vpp::ImageView view;
+		vpp::Framebuffer fb;
+	};
+	std::vector<Face> faces_;
 };
 
 ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,
-	vk::DescriptorSetLayout lightDsLayout,
-	vk::DescriptorSetLayout materialDsLayout,
-	vk::DescriptorSetLayout primitiveDsLayout,
-	vk::PushConstantRange materialPcr, bool multiview, bool depthClamp);
+	vk::DescriptorSetLayout lightDsLayout, vk::DescriptorSetLayout sceneDsLayout,
+	bool multiview, bool depthClamp);
 
 } // namespace doi

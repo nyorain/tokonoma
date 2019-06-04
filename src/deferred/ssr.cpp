@@ -42,7 +42,7 @@ void SSRPass::create(InitData& data, const PassCreateInfo& info) {
 
 	dsLayout_ = {dev, ssrBindings};
 	pipeLayout_ = {dev, {{
-		info.dsLayouts.scene.vkHandle(),
+		info.dsLayouts.camera.vkHandle(),
 		dsLayout_.vkHandle()
 	}}, {}};
 

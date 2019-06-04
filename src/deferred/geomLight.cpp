@@ -165,10 +165,8 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 
 	// pipeline
 	geomPipeLayout_ = {dev, {{
-		info.dsLayouts.scene.vkHandle(),
-		info.dsLayouts.material.vkHandle(),
-		info.dsLayouts.primitive.vkHandle(),
-	}}, {{doi::Material::pcr()}}};
+		info.dsLayouts.camera.vkHandle(),
+		info.dsLayouts.scene.vkHandle()}}, {}};
 	vpp::nameHandle(geomPipeLayout_, "GeomLightPass:geomPipeLayout");
 
 	vpp::ShaderModule vertShader(dev, deferred_gbuf_vert_data);
@@ -178,7 +176,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		{fragShader, vk::ShaderStageBits::fragment},
 	}}}, 0};
 
-	gpi.vertex = doi::Primitive::vertexInfo();
+	gpi.vertex = doi::Scene::vertexInfo();
 
 	// we don't blend in the gbuffers; simply overwrite
 	auto blendAttachments = {
@@ -214,7 +212,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		{blendFragShader, vk::ShaderStageBits::fragment},
 	}}}, 1};
 
-	bgpi.vertex = doi::Primitive::vertexInfo();
+	bgpi.vertex = doi::Scene::vertexInfo();
 	bgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 	bgpi.depthStencil.depthTestEnable = true;
 	bgpi.depthStencil.depthWriteEnable = false;
@@ -239,7 +237,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 
 	lightDsLayout_ = {dev, lightBindings};
 	lightPipeLayout_ = {dev, {{
-		info.dsLayouts.scene.vkHandle(),
+		info.dsLayouts.camera.vkHandle(),
 		lightDsLayout_.vkHandle(),
 		info.dsLayouts.light.vkHandle(),
 	}}, {}};
@@ -347,7 +345,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	pcr.size = 4u;
 	pcr.stageFlags = vk::ShaderStageBits::fragment;
 	aoPipeLayout_ = {dev, {{
-		info.dsLayouts.scene.vkHandle(),
+		info.dsLayouts.camera.vkHandle(),
 		aoDsLayout_.vkHandle(),
 	}}, {{pcr}}};
 	vpp::nameHandle(aoDsLayout_, "GeomLightPass:aoDsLayout");
@@ -521,7 +519,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		vpp::DebugLabel(cb, "geometry pass");
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, geomPipe_);
 		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {sceneDs});
-		scene.renderOpaque(cb, geomPipeLayout_);
+		scene.render(cb, geomPipeLayout_, false); // opaque
 		time.add("geometry");
 	}
 
@@ -581,7 +579,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
 		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {sceneDs});
-		scene.renderBlend(cb, geomPipeLayout_);
+		scene.render(cb, geomPipeLayout_, true); // blend
 		time.add("transparent");
 	}
 

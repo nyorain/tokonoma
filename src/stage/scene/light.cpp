@@ -1,5 +1,4 @@
 #include <stage/scene/light.hpp>
-#include <stage/scene/primitive.hpp>
 #include <stage/scene/scene.hpp>
 #include <stage/scene/shape.hpp>
 #include <stage/camera.hpp>
@@ -16,6 +15,7 @@
 #include <shaders/stage.shadowmap.multiview.vert.h>
 #include <shaders/stage.shadowmap.frag.h>
 #include <shaders/stage.shadowmapCube.vert.h>
+#include <shaders/stage.shadowmapCube.multiview.vert.h>
 #include <shaders/stage.shadowmapCube.frag.h>
 
 // TODO: some duplication between dir and point light
@@ -24,10 +24,6 @@
 //   see shadowmap.vert
 
 namespace doi {
-
-// needs to be the same as in shadowmapCube.vert
-TODO: remove
-constexpr auto pcrOffsetFaceID = 64u;
 
 Frustum ndcFrustum() {
 	return {{
@@ -54,9 +50,8 @@ constexpr u32 nlastbits(u32 count) {
 
 ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		vk::DescriptorSetLayout lightDsLayout,
-		vk::DescriptorSetLayout materialDsLayout,
-		vk::DescriptorSetLayout primitiveDsLayout,
-		vk::PushConstantRange materialPcr, bool multiview, bool depthClamp) {
+		vk::DescriptorSetLayout sceneDsLayout,
+		bool multiview, bool depthClamp) {
 	ShadowData data;
 	data.depthFormat = depthFormat;
 	data.multiview = multiview;
@@ -116,9 +111,13 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 
 		viewMask = nlastbits(6);
 		rpm.pViewMasks = &viewMask;
+		data.rpPoint = {dev, rpi};
+	} else {
+		// TODO: could be optimized i guess
+		data.rpDir = {dev, rpi};
+		data.rpPoint = {dev, rpi};
 	}
 
-	data.rpPoint = {dev, rpi};
 
 	// sampler
 	vk::SamplerCreateInfo sci {};
@@ -139,17 +138,16 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	data.sampler = {dev, sci};
 
 	// pipeline layout
-	dlg_assert(materialPcr.size == pcrOffsetFaceID);
-	// TODO: only needed when multiview isnt' enabled,
-	// update for point light
-	vk::PushConstantRange facePcr;
-	facePcr.offset = pcrOffsetFaceID;
-	facePcr.stageFlags = vk::ShaderStageBits::vertex;
-	facePcr.size = 4u;
+	if(!multiview) {
+		vk::PushConstantRange facePcr;
+		facePcr.offset = 0u;
+		facePcr.stageFlags = vk::ShaderStageBits::vertex;
+		facePcr.size = 4u;
 
-	data.pl = {dev,
-		{{lightDsLayout, materialDsLayout, primitiveDsLayout}},
-		{{materialPcr, facePcr}}};
+		data.pl = {dev, {{lightDsLayout, sceneDsLayout}}, {{facePcr}}};
+	} else {
+		data.pl = {dev, {{lightDsLayout, sceneDsLayout}}, {}};
+	}
 
 	// pipeline
 	vpp::ShaderModule vertShader;
@@ -168,7 +166,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 
 	// see cubemap pipeline below
 	gpi.flags(vk::PipelineCreateBits::allowDerivatives);
-	gpi.vertex = doi::Primitive::vertexInfo();
+	gpi.vertex = doi::Scene::vertexInfo();
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 	gpi.depthStencil.depthTestEnable = true;
@@ -203,8 +201,14 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	// TODO: we could alternatively always use a uniform buffer with
 	// dynamic offset for the light view projection... but then we
 	// might have to pad that buffer (since vulkan has an alignment
-	// requirement there) which adds complexity as well
-	vpp::ShaderModule cubeVertShader(dev, stage_shadowmapCube_vert_data);
+	// requirement there) which adds complexity as well.
+	// We don't need the matrices when reading the shadow map though
+	vpp::ShaderModule cubeVertShader;
+	if(multiview) {
+		cubeVertShader = {dev, stage_shadowmapCube_multiview_vert_data};
+	} else {
+		cubeVertShader = {dev, stage_shadowmapCube_vert_data};
+	}
 	vpp::ShaderModule cubeFragShader(dev, stage_shadowmapCube_frag_data);
 	vpp::GraphicsPipelineInfo cgpi {data.rpPoint, data.pl, {{{
 		{cubeVertShader, vk::ShaderStageBits::vertex},
@@ -228,8 +232,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 
 // DirLight
 DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
-		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
-		unsigned id) {
+		const vpp::TrDsLayout&, const ShadowData& data, unsigned) {
 	auto& dev = wb.dev;
 
 	// target
@@ -247,22 +250,19 @@ DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	vk::FramebufferCreateInfo fbi {};
 	fbi.width = size_.x;
 	fbi.height = size_.y;
+	fbi.renderPass = data.rpDir;
+	fbi.layers = 1; // for multiview: specified by vulkan spec
+	fbi.attachmentCount = 1;
 	if(data.multiview) {
-		fbi.attachmentCount = 1;
-		fbi.layers = 1; // specified by vulkan spec
 		fbi.pAttachments = &target_.vkImageView();
-		fbi.renderPass = data.rpDir;
 		fb_ = {dev, fbi};
 	} else {
-		fbi.layers = 1;
-		fbi.renderPass = data.rp;
-
 		info.view.subresourceRange.layerCount = 1;
+		info.view.image = target_.image();
 		cascades_.resize(cascadeCount);
 		for(auto i = 0u; i < cascadeCount; ++i) {
 			auto& c = cascades_[i];
 			info.view.subresourceRange.baseArrayLayer = i;
-			info.view.image = target_.image();
 			c.view = {dev, info.view};
 
 			fbi.pAttachments = &c.view.vkHandle();
@@ -286,8 +286,8 @@ DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	ldsu.apply();
 
 	// light ball
-	auto cube = doi::Cube{{}, {0.2f, 0.2f, 0.2f}};
-	auto shape = doi::generate(cube);
+	// auto cube = doi::Cube{{}, {0.2f, 0.2f, 0.2f}};
+	// auto shape = doi::generate(cube);
 	// lightBall_ = {wb, shape, primitiveDsLayout, 0u,
 	// 	lightBallMatrix(viewPos), id};
 
@@ -323,7 +323,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pl, 0, {{ds_.vkHandle()}}, {});
 
-		scene.render(cb, pl);
+		scene.render(cb, pl, false);
 		vk::cmdEndRenderPass(cb);
 	} else {
 		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
@@ -339,14 +339,14 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 
 		for(u32 i = 0u; i < cascadeCount; ++i) {
 			vk::cmdBeginRenderPass(cb, {
-				data.rp, cascades_[i].fb,
+				data.rpDir, cascades_[i].fb,
 				{0u, 0u, size_.x, size_.y},
 				1, &clearValue
 			}, {});
 
 			vk::cmdPushConstants(cb, data.pl, vk::ShaderStageBits::fragment,
 				0, 4, &i);
-			scene.render(cb, pl);
+			scene.render(cb, pl, false);
 			vk::cmdEndRenderPass(cb);
 		}
 	}
@@ -471,19 +471,23 @@ void DirLight::updateDevice(const Camera& camera) {
 // framebuffers which may also waste resources (but that may be an alternative
 // worth investigating... we'd still need 6 seperate renderpasses though)
 PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
-		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
-		unsigned id, vk::ImageView noShadowMap) {
+		const vpp::TrDsLayout&, const ShadowData& data,
+		unsigned, vk::ImageView noShadowMap) {
 	auto& dev = wb.dev;
 	if(!noShadowMap) {
 		this->data.flags |= lightFlagShadow;
 
 		// target
 		auto targetUsage = vk::ImageUsageBits::depthStencilAttachment |
-			vk::ImageUsageBits::transferSrc;
+			vk::ImageUsageBits::sampled;
 		auto targetInfo = vpp::ViewableImageCreateInfo(data.depthFormat,
 			vk::ImageAspectBits::depth, {size_.x, size_.y}, targetUsage);
+		targetInfo.img.arrayLayers = 6u;
+		targetInfo.img.flags = vk::ImageCreateBits::cubeCompatible;
+		targetInfo.view.subresourceRange.layerCount = 6u;
+		targetInfo.view.viewType = vk::ImageViewType::cube;
 		dlg_assert(vpp::supported(dev, targetInfo.img));
-		target_ = {dev.devMemAllocator(), targetInfo};
+		shadowMap_ = {dev.devMemAllocator(), targetInfo};
 
 		// framebuffer
 		vk::FramebufferCreateInfo fbi {};
@@ -491,19 +495,33 @@ PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 		fbi.width = size_.x;
 		fbi.height = size_.y;
 		fbi.layers = 1u;
-		fbi.pAttachments = &target_.vkImageView();
-		fbi.renderPass = data.rp;
-		fb_ = {dev, fbi};
+		fbi.renderPass = data.rpPoint;
+		if(data.multiview) {
+			fbi.pAttachments = &shadowMap_.vkImageView();
+			fb_ = {dev, fbi};
+		} else {
+			targetInfo.view.subresourceRange.layerCount = 1;
+			targetInfo.view.image = shadowMap_.image();
+			faces_.resize(6u);
+			for(auto i = 0u; i < 6u; ++i) {
+				auto& f = faces_[i];
+				targetInfo.view.subresourceRange.baseArrayLayer = i;
+				f.view = {dev, targetInfo.view};
 
-		// shadow map
-		targetInfo.img.arrayLayers = 6u;
-		targetInfo.img.flags = vk::ImageCreateBits::cubeCompatible;
-		targetInfo.img.usage = vk::ImageUsageBits::sampled |
-			vk::ImageUsageBits::transferDst;
-		targetInfo.view.subresourceRange.layerCount = 6u;
-		targetInfo.view.components = {};
-		targetInfo.view.viewType = vk::ImageViewType::cube;
-		shadowMap_ = {dev.devMemAllocator(), targetInfo};
+				fbi.pAttachments = &f.view.vkHandle();
+				f.fb = {dev, fbi};
+			}
+		}
+
+		// // shadow map
+		// targetInfo.img.arrayLayers = 6u;
+		// targetInfo.img.flags = vk::ImageCreateBits::cubeCompatible;
+		// targetInfo.img.usage = vk::ImageUsageBits::sampled |
+		// 	vk::ImageUsageBits::transferDst;
+		// targetInfo.view.subresourceRange.layerCount = 6u;
+		// targetInfo.view.components = {};
+		// targetInfo.view.viewType = vk::ImageViewType::cube;
+		// shadowMap_ = {dev.devMemAllocator(), targetInfo};
 
 		// initial layout change
 		/*
@@ -540,9 +558,9 @@ PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	ldsu.apply();
 
 	// primitive
-	auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
-	auto shape = doi::generateUV(sphere);
-	lightBall_ = {wb, shape, primitiveDsLayout, 0u, lightBallMatrix(), id};
+	// auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
+	// auto shape = doi::generateUV(sphere);
+	// lightBall_ = {wb, shape, primitiveDsLayout, 0u, lightBallMatrix(), id};
 
 	updateDevice();
 }
@@ -629,12 +647,62 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	// TODO: not sure if this has an effect here. Read up in vulkan spec
 	// if applied even when fragment shader sets gl_FragDepth manually
 	vk::cmdSetDepthBias(cb, 1.0, 0.f, 8.0);
+	vk::ClearValue clearValue {};
+	clearValue.depthStencil = {1.f, 0u};
 
-	auto pl = data.pl.vkHandle();
-	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipeCube);
-	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pl, 0, {{ds_.vkHandle()}}, {});
+	if(data.multiview) {
+		vk::cmdBeginRenderPass(cb, {
+			data.rpDir, fb_,
+			{0u, 0u, size_.x, size_.y},
+			1, &clearValue
+		}, {});
 
+		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
+		vk::cmdSetViewport(cb, 0, 1, vp);
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
+
+		// vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
+
+		auto pl = data.pl.vkHandle();
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+			pl, 0, {{ds_.vkHandle()}}, {});
+
+		scene.render(cb, pl, false);
+		vk::cmdEndRenderPass(cb);
+	} else {
+		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
+		vk::cmdSetViewport(cb, 0, 1, vp);
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
+
+		// vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
+
+		auto pl = data.pl.vkHandle();
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
+		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+			pl, 0, {{ds_.vkHandle()}}, {});
+
+		for(u32 i = 0u; i < 6u; ++i) {
+			vk::cmdBeginRenderPass(cb, {
+				data.rpDir, faces_[i].fb,
+				{0u, 0u, size_.x, size_.y},
+				1, &clearValue
+			}, {});
+
+			vk::cmdPushConstants(cb, data.pl, vk::ShaderStageBits::fragment,
+				0, 4, &i);
+			scene.render(cb, pl, false);
+			vk::cmdEndRenderPass(cb);
+		}
+	}
+
+	// auto pl = data.pl.vkHandle();
+	// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipeCube);
+	// vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+	// 	pl, 0, {{ds_.vkHandle()}}, {});
+
+
+	/*
 	vk::ImageMemoryBarrier cubeBarrier;
 	cubeBarrier.image = shadowMap_.image();
 	cubeBarrier.oldLayout = vk::ImageLayout::undefined;
@@ -647,13 +715,11 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::PipelineStageBits::transfer,
 		{}, {}, {}, {{cubeBarrier}});
 
-	/*
-	vpp::changeLayout(cb, shadowMap_.image(),
-		vk::ImageLayout::shaderReadOnlyOptimal,
-		vk::ImageLayout::transferDstOptimal,
-		vk::AccessBits::transferWrite,
-		{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
-	*/
+	// vpp::changeLayout(cb, shadowMap_.image(),
+	// 	vk::ImageLayout::shaderReadOnlyOptimal,
+	// 	vk::ImageLayout::transferDstOptimal,
+	// 	vk::AccessBits::transferWrite,
+	// 	{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
 
 	// for(auto& normal : normals) {
 	for(std::uint32_t i = 0u; i < 6u; ++i) {
@@ -753,6 +819,7 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	// 	vk::PipelineStageBits::fragmentShader,
 	// 	vk::AccessBits::shaderRead,
 	// 	{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
+	*/
 }
 
 void PointLight::updateDevice() {
@@ -763,8 +830,8 @@ void PointLight::updateDevice() {
 		doi::write(span, lightMatrix(i));
 	}
 
-	lightBall_.matrix = lightBallMatrix();
-	lightBall_.updateDevice();
+	// lightBall_.matrix = lightBallMatrix();
+	// lightBall_.updateDevice();
 }
 
 } // namespace doi

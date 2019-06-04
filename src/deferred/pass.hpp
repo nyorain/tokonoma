@@ -44,9 +44,8 @@ struct PassCreateInfo {
 	vk::Format depthFormat;
 
 	struct {
+		const vpp::TrDsLayout& camera;
 		const vpp::TrDsLayout& scene;
-		const vpp::TrDsLayout& material;
-		const vpp::TrDsLayout& primitive;
 		const vpp::TrDsLayout& light;
 	} dsLayouts;
 
