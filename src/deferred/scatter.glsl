@@ -121,10 +121,10 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, vec2 pixel) {
 	vec3 ipos = rayStart;
 
 	// random dithering, we smooth it out later on
-	// vec2 ppixel = mod(pixel, vec2(4, 4));
-	// float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
-	vec2 ppixel = mod(pixel, vec2(8, 8));
-	float ditherValue = dither8x8[int(ppixel.x) + 8 * int(ppixel.y)] / 64.f;
+	vec2 ppixel = mod(pixel, vec2(4, 4));
+	float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
+	// vec2 ppixel = mod(pixel, vec2(8, 8));
+	// float ditherValue = dither8x8[int(ppixel.x) + 8 * int(ppixel.y)] / 64.f;
 	ipos.xyz += ditherValue * step.xyz;
 	// ipos += 0.5 * random(rayEnd) * step;
 

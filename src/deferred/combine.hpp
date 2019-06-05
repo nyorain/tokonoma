@@ -4,6 +4,16 @@
 #include <stage/render.hpp>
 #include <stage/types.hpp>
 
+// TODO: we can probably apply bloom and scattering in post processing
+// pass, right? they don't really need fxaa/dof (dof for bloom is
+// reasonable but not really needed i guess; dof for scattering
+// is just plain wrong!).
+// This should probably be renamed into SSRApply or sth (or should be
+// part of ssr pass to begin with). This is quite expensive due to
+// the additional buffer and therefore makes bloom and scattering
+// more expensive than they have to be.
+// Rework with proper ssr blurring!
+
 /// Postprocessing pass that applies light scattering, ssr, DOF and bloom.
 /// Always a compute pipeline. Outputs its contents into a given buffer,
 /// re-used from an earlier stage (with rgba16f format).

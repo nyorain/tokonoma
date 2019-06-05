@@ -121,15 +121,11 @@ void main() {
 		// scatter /= total;
 
 		float scatter = 0.f;
-		scatter += texture(scatterTex, uv + pixelSize * samplesLinear8[0]).r;
-		scatter += texture(scatterTex, uv + pixelSize * samplesLinear8[1]).r;
-		scatter += texture(scatterTex, uv + pixelSize * samplesLinear8[2]).r;
-		scatter += texture(scatterTex, uv + pixelSize * samplesLinear8[3]).r;
-		scatter += texture(scatterTex, uv - pixelSize * samplesLinear8[0]).r;
-		scatter += texture(scatterTex, uv - pixelSize * samplesLinear8[1]).r;
-		scatter += texture(scatterTex, uv - pixelSize * samplesLinear8[2]).r;
-		scatter += texture(scatterTex, uv - pixelSize * samplesLinear8[3]).r;
-		scatter /= 8.f;
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear4[0]).r;
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear4[1]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear4[0]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear4[1]).r;
+		scatter /= 4.f;
 
 		// TODO: should be light color
 		color.rgb += scatterFac * scatter * vec3(0.9, 0.8, 0.6);

@@ -65,24 +65,26 @@
 //   bokeh blurring
 // - reflectange probe rendering/dynamic creation
 // - support switching between environment maps
-// - transparency. Can be ordered, i.e. split
-//   primitives into two groups in Scene: BLEND and non-blend material-based.
-//   the blend ones are sorted in each updateDevice (either on gpu
-//   or (probably better for the start) on a host visible buffer)
-//   via draw indirect commands. Render it in geomLight pass if possible (no
-//   bloom/ssr) otherwise we probably have to use extra pass.
-//   When using extra pass, render skybox after that pass (depth optimization)
 // - temporal anti aliasing (TAA), tolksvig maps
 //   e.g. https://media.contentapi.ea.com/content/dam/eacom/frostbite/files/course-notes-moving-frostbite-to-pbr-v2.pdf
 
-// TODO: blur bloom/apply dof depending on light? the brighter,
-//   the more blur (e.g. dof)
 // TODO: timeWidget currently somewhat hacked together, working
 //   around rvg quirks triggering re-record while recording...
 //   probably better to add passes to timeWidget (getting an id)
 //   in initPasses and then use that id when recording to record
 //   a timestamp. Shouldn't be too hard given that initPasses currently
 //   also records the passes, just capture by value
+// TODO: better transparency light model. Respect aoFactor and apply
+//   lightning from environment maps
+// TODO: not sure if this whole transparency sorting is worth it.
+//   doesn't work in a lot of cases.
+//   merge oit somehow? allow to use that?
+//   the sorting isn't really expensive but the whole "one buffer indirect"
+//   is way harder to manage (try to implement dynamic loading
+//   of primitives?). Probably not bad for performance though,
+//   AZDO, allows culling (TODO: implement basic culling).
+// TODO: blur bloom/apply dof depending on light? the brighter,
+//   the more blur (e.g. dof)
 // TODO: group initial layout transitions from undefined layout to general
 //   per frame? could do it externally, undefined -> targetScope()
 //   for luminance (compute), ssr, ssao (compute)
@@ -119,6 +121,7 @@
 //   maybe just generate mipmaps for light buffer, i guess that is how
 //   it's usually done.
 //   probably not worth it though. have to improve ssr performance in another way
+//   Also see combine pass, it's really only needed for ssr!
 // TODO: do we really need depth mip levels anywhere? test if it really
 //   brings ssao performance improvement. Otherwise we are wasting this
 //   whole "depth mip map levels" thing
