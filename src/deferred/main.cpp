@@ -229,7 +229,7 @@ using doi::f16;
 class ViewApp : public doi::App {
 public:
 	using Vertex = doi::Scene::Primitive::Vertex;
-	static constexpr auto pointLight = false;
+	static constexpr auto pointLight = true;
 
 	static constexpr u32 passScattering = (1u << 1u);
 	static constexpr u32 passSSR = (1u << 2u);
@@ -316,6 +316,7 @@ protected:
 	bool rotateView_ {}; // mouseLeft down
 	doi::Camera camera_ {};
 	bool updateLights_ {true};
+	bool updateScene_ {true};
 
 	doi::Texture brdfLut_;
 	doi::Environment env_;
@@ -423,6 +424,13 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 				*set = true;
 			}
 		});
+	};
+
+	auto& cbs = panel.create<Checkbox>("update scene").checkbox();
+	cbs.set(updateScene_);
+	cbs.onToggle = [&](auto&) {
+		updateScene_ ^= true;
+		camera_.update = true; // trigger update
 	};
 
 	// == general/post processing folder ==
@@ -1332,7 +1340,9 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		lumView = luminance_.target().imageView();
 	}
 
-	auto shadowView = dirLights_[0].shadowMap();
+	auto shadowView = pointLight ?
+		pointLights_[0].shadowMap() :
+		dirLights_[0].shadowMap();
 	pp_.updateInputs(ppInput,
 		geomLight_.ldepthTarget().imageView(),
 		geomLight_.normalsTarget().imageView(),
@@ -1699,9 +1709,9 @@ void ViewApp::updateDevice() {
 		doi::write(span, camera_.perspective.far);
 
 		env_.updateDevice(fixedMatrix(camera_));
-
-		auto m = doi::lookAtRH(camera_.pos, camera_.pos + camera_.dir, camera_.up);
-		scene_.updateDevice(m);
+		if(updateScene_) {
+			scene_.updateDevice(mat);
+		}
 
 		// depend on camera position
 		if(!updateLights_) {

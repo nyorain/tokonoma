@@ -84,14 +84,12 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	dependency.srcSubpass = 0u; // last
 	dependency.srcStageMask = vk::PipelineStageBits::allGraphics;
 	dependency.srcAccessMask =
+		vk::AccessBits::memoryWrite |
 		vk::AccessBits::depthStencilAttachmentWrite |
-		vk::AccessBits::depthStencilAttachmentRead |
-		vk::AccessBits::shaderWrite;
+		vk::AccessBits::depthStencilAttachmentRead;
 	dependency.dstSubpass = vk::subpassExternal;
-	dependency.dstStageMask = vk::PipelineStageBits::fragmentShader |
-		vk::PipelineStageBits::transfer;
-	dependency.dstAccessMask = vk::AccessBits::shaderRead |
-		vk::AccessBits::transferRead;
+	dependency.dstStageMask = vk::PipelineStageBits::fragmentShader;
+	dependency.dstAccessMask = vk::AccessBits::shaderRead;
 
 	vk::RenderPassCreateInfo rpi {};
 	rpi.attachmentCount = 1;
@@ -117,7 +115,6 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		data.rpDir = {dev, rpi};
 		data.rpPoint = {dev, rpi};
 	}
-
 
 	// sampler
 	vk::SamplerCreateInfo sci {};
@@ -157,9 +154,8 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		vertShader = {dev, stage_shadowmap_vert_data};
 	}
 
-	auto rp = multiview ? data.rpDir.vkHandle() : data.rpPoint.vkHandle();
 	vpp::ShaderModule fragShader(dev, stage_shadowmap_frag_data);
-	vpp::GraphicsPipelineInfo gpi {rp, data.pl, {{{
+	vpp::GraphicsPipelineInfo gpi {data.rpDir, data.pl, {{{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
 	}}}, 0, vk::SampleCountBits::e1};
@@ -190,12 +186,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	gpi.dynamic.dynamicStateCount = dynamicStates.end() - dynamicStates.begin();
 
 	gpi.blend.attachmentCount = 0;
-
-	vk::Pipeline vkpipe;
-	vk::createGraphicsPipelines(dev, {},
-		1, gpi.info(), NULL, vkpipe);
-
-	data.pipe = {dev, vkpipe};
+	data.pipe = {dev, gpi.info()};
 
 	// cubemap pipe
 	// TODO: we could alternatively always use a uniform buffer with
@@ -222,10 +213,9 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	cgpi.assembly = gpi.assembly;
 	cgpi.vertex = gpi.vertex;
 	cgpi.base(data.pipe); // basically the same, except vertex shader
-
-	vk::createGraphicsPipelines(dev, {},
-		1, cgpi.info(), NULL, vkpipe);
-	data.pipeCube = {dev, vkpipe};
+	cgpi.rasterization.depthBiasEnable = true;
+	cgpi.rasterization.depthClampEnable = depthClamp;
+	data.pipeCube = {dev, cgpi.info()};
 
 	return data;
 }
@@ -384,7 +374,7 @@ void DirLight::updateDevice(const Camera& camera) {
 
 	// calculate split depths
 	// https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
-	constexpr auto splitLambda = 0.75f; // higher: nearer at log split scheme
+	constexpr auto splitLambda = 0.65f; // higher: nearer at log split scheme
 	const auto near = camera.perspective.near;
 	const auto far = camera.perspective.far;
 
@@ -554,7 +544,7 @@ PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	ldsu.imageSampler({{data.sampler, hasShadowMap() ? shadowMap() : noShadowMap,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+		vk::ImageLayout::depthStencilReadOnlyOptimal}});
 	ldsu.apply();
 
 	// primitive
@@ -652,7 +642,7 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 
 	if(data.multiview) {
 		vk::cmdBeginRenderPass(cb, {
-			data.rpDir, fb_,
+			data.rpPoint, fb_,
 			{0u, 0u, size_.x, size_.y},
 			1, &clearValue
 		}, {});
@@ -664,7 +654,7 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		// vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
 
 		auto pl = data.pl.vkHandle();
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipeCube);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pl, 0, {{ds_.vkHandle()}}, {});
 
@@ -678,13 +668,13 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		// vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
 
 		auto pl = data.pl.vkHandle();
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipeCube);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pl, 0, {{ds_.vkHandle()}}, {});
 
 		for(u32 i = 0u; i < 6u; ++i) {
 			vk::cmdBeginRenderPass(cb, {
-				data.rpDir, faces_[i].fb,
+				data.rpPoint, faces_[i].fb,
 				{0u, 0u, size_.x, size_.y},
 				1, &clearValue
 			}, {});

@@ -247,7 +247,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	vpp::ShaderModule pointVertShader(dev, deferred_pointLight_vert_data);
 	vpp::ShaderModule pointFragShader(dev, deferred_pointLight_frag_data);
 	vpp::GraphicsPipelineInfo pgpi{rp_, lightPipeLayout_, {{{
-		{pointVertShader, vk::ShaderStageBits::vertex},
+		{info.fullscreenVertShader, vk::ShaderStageBits::vertex},
 		{pointFragShader, vk::ShaderStageBits::fragment},
 	}}}, 1};
 
@@ -256,12 +256,12 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	// though. Don't enable depth write!
 	pgpi.depthStencil.depthTestEnable = false;
 	pgpi.depthStencil.depthWriteEnable = false;
-	pgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+	// pgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 	// TODO: hack
 	// have to figure out how correctly draw/switch inside/outside box
 	// in vertex shader...
-	pgpi.rasterization.cullMode = vk::CullModeBits::front;
-	pgpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+	// pgpi.rasterization.cullMode = vk::CullModeBits::front;
+	// pgpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 	// additive blending
 	vk::PipelineColorBlendAttachmentState lightBlends[1];
@@ -548,7 +548,8 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 			boxIndices.offset(), vk::IndexType::uint16);
 		for(auto& light : pointLights) {
 			doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light.ds()});
-			vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0); // box
+			// vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0); // box
+			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 		}
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, dirLightPipe_);

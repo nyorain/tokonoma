@@ -69,10 +69,14 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	dlg_assert(ri.multiDrawIndirect);
 
 	if(model.images.size() > imageCount) {
-		throw std::runtime_error("Can't support that many images");
+		auto msg = dlg::format("Model has {} images, only {} supported",
+			model.images.size(), imageCount);
+		throw std::runtime_error(msg);
 	}
 	if(model.samplers.size() > samplerCount) {
-		throw std::runtime_error("Can't support that many samplers");
+		auto msg = dlg::format("Model has {} samplers, only {} supported",
+			model.samplers.size(), samplerCount);
+		throw std::runtime_error(msg);
 	}
 
 	// layout
@@ -86,12 +90,12 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 		// materials
 		vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
 			vk::ShaderStageBits::fragment),
-		// textures[32]
+		// textures[imageCount]
 		vpp::descriptorBinding(vk::DescriptorType::sampledImage,
-			vk::ShaderStageBits::fragment, -1, 32),
-		// samplers[8]
+			vk::ShaderStageBits::fragment, -1, imageCount),
+		// samplers[samplerCount]
 		vpp::descriptorBinding(vk::DescriptorType::sampler,
-			vk::ShaderStageBits::fragment, -1, 8),
+			vk::ShaderStageBits::fragment, -1, samplerCount),
 	};
 
 	dsLayout_ = {dev, bindings};
@@ -163,7 +167,9 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	blendCount_ = 0u;
 	opaqueCount_ = 0u;
 	for(auto& p : primitives_) {
+		dlg_assert(p.material < materials_.size());
 		if(materials_[p.material].blend()) {
+			dlg_trace("blend primitive {} {}", p.id, p.material);
 			++blendCount_;
 		} else {
 			++opaqueCount_;
@@ -314,6 +320,7 @@ void Scene::loadMaterial(InitData&, const WorkBatcher&,
 		auto& alphaMode = am->second.string_value;
 		dlg_assert(!alphaMode.empty());
 		if(alphaMode == "BLEND") {
+			dlg_trace("BLEND alpha mode");
 			m.flags |= Material::Bit::blend;
 			m.alphaCutoff = 0.0;
 		} else if(alphaMode == "MASK") {
@@ -715,11 +722,11 @@ void Scene::updateDevice(nytl::Mat4f proj) {
 	}
 	dlg_assert(blendPrims.size() == blendCount_);
 
-	// sort in descending order
+	// sort in z-descending order
 	auto cmp = [&](const Primitive* p1, const Primitive* p2) {
 		auto c1 = multPos(p1->matrix, 0.5f * (p1->min + p1->max));
 		auto c2 = multPos(p2->matrix, 0.5f * (p2->min + p2->max));
-		return multPos(proj, c1).z < multPos(proj, c2).z;
+		return multPos(proj, c1).z > multPos(proj, c2).z;
 	};
 	std::sort(blendPrims.begin(), blendPrims.end(), cmp);
 

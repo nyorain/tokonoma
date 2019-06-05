@@ -8,6 +8,15 @@ const float ditherPattern[4][4] = {
 	{ 0.1875f, 0.6875f, 0.0625f, 0.5625},
 	{ 0.9375f, 0.4375f, 0.8125f, 0.3125}};
 
+const int dither8x8[64] = int[](0,  32, 8,  40, 2,  34, 10, 42,
+                                     48, 16, 56, 24, 50, 18, 58, 26,
+                                     12, 44, 4,  36, 14, 46, 6,  38,
+                                     60, 28, 52, 20, 62, 30, 54, 22,
+                                     3,  35, 11, 43, 1,  33, 9,  41,
+                                     51, 19, 59, 27, 49, 17, 57, 25,
+                                     15, 47, 7,  39, 13, 45, 5,  37,
+                                     63, 31, 55, 23, 61, 29, 53, 21);
+
 // fragPos and lightPos are in screen space
 // TODO: remove or use z component of ipos; fragDepth
 float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
@@ -19,7 +28,7 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	// float l = dot(ray, ray); // max: 2
 	// uint steps = uint(clamp(10 * l, 5, 15));
 
-	uint steps = 10;
+	uint steps = 10u;
 	vec3 step = ray / steps;
 	float accum = 0.f;
 	vec3 ipos = vec3(fragPos, fragDepth);
@@ -107,15 +116,17 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, vec2 pixel) {
 
 	const uint steps = 10u;
 	vec3 step = ray / steps;
-	// rayStart += 0.01 * random(rayEnd) * step;
 
 	float accum = 0.0;
 	vec3 ipos = rayStart;
 
 	// random dithering, we smooth it out later on
-	vec2 ppixel = mod(pixel, vec2(4, 4));
-	float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
+	// vec2 ppixel = mod(pixel, vec2(4, 4));
+	// float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
+	vec2 ppixel = mod(pixel, vec2(8, 8));
+	float ditherValue = dither8x8[int(ppixel.x) + 8 * int(ppixel.y)] / 64.f;
 	ipos.xyz += ditherValue * step.xyz;
+	// ipos += 0.5 * random(rayEnd) * step;
 
 	// TODO: falloff over time somehow?
 	for(uint i = 0u; i < steps; ++i) {

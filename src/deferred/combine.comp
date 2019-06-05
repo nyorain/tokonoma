@@ -104,8 +104,7 @@ void main() {
 
 	// apply scattering
 	// TODO: blur in different pass? we don't need that strong of blur though
-	// probably best to blur here but with a better blur! use linear
-	// sampling, maybe the 4+1 textures access blur?
+	// visual results would probably improve with a guassian blur
 	if((params.flags & flagScattering) != 0) {
 		// const float scatterFac = 1 / 25.f;
 		const float scatterFac = params.scatterStrength;
@@ -122,11 +121,15 @@ void main() {
 		// scatter /= total;
 
 		float scatter = 0.f;
-		scatter += texture(scatterTex, uv + pixelSize * samplesLinear4[0]).r;
-		scatter += texture(scatterTex, uv + pixelSize * samplesLinear4[1]).r;
-		scatter += texture(scatterTex, uv - pixelSize * samplesLinear4[1]).r;
-		scatter += texture(scatterTex, uv - pixelSize * samplesLinear4[0]).r;
-		scatter /= 4.f;
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear8[0]).r;
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear8[1]).r;
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear8[2]).r;
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear8[3]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear8[0]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear8[1]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear8[2]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear8[3]).r;
+		scatter /= 8.f;
 
 		// TODO: should be light color
 		color.rgb += scatterFac * scatter * vec3(0.9, 0.8, 0.6);

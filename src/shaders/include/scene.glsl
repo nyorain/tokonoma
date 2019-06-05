@@ -10,6 +10,9 @@ const uint lightShadow = (1u << 2); // use shadow
 const uint normalMap = (1u << 0);
 const uint doubleSided = (1u << 1);
 
+const uint imageCount = 96u;
+const uint samplerCount = 8u;
+
 // TODO: don't hardcode. Instead pass per spec constant
 const uint dirLightCascades = 4;
 

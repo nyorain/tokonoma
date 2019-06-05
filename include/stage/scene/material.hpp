@@ -15,7 +15,7 @@ public:
 		doubleSided = (1u << 1),
 		needsTexCoord0 = (1u << 2),
 		needsTexCoord1 = (1u << 3),
-		blend = (1u < 4)
+		blend = (1u << 4)
 	};
 
 	struct Tex {

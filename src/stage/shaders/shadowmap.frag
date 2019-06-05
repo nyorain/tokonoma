@@ -12,8 +12,8 @@ layout(set = 1, binding = 2) buffer Materials {
 	Material materials[];
 };
 
-layout(set = 1, binding = 3) uniform texture2D textures[32];
-layout(set = 1, binding = 4) uniform sampler samplers[8];
+layout(set = 1, binding = 3) uniform texture2D textures[imageCount];
+layout(set = 1, binding = 4) uniform sampler samplers[samplerCount];
 
 vec4 readTex(MaterialTex tex) {
 	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;

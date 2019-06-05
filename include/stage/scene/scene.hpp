@@ -68,7 +68,7 @@ struct Sampler {
 
 class Scene {
 public:
-	static constexpr auto imageCount = 32u;
+	static constexpr auto imageCount = 96u;
 	static constexpr auto samplerCount = 8u;
 	using Index = u32; // for indices
 	using ModelID = u32;

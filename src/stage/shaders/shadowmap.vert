@@ -41,7 +41,7 @@ void main() {
 	outTexCoord1 = inTexCoord1;
 
 	uint id = modelIDs[gl_DrawID];
-	outMatID = uint(models[id].normal[3][0]);
+	outMatID = uint(models[id].normal[0][3]);
 
 	vec4 wpos = models[id].matrix * vec4(inPos, 1.0);
 	gl_Position = light.cascadeProjs[cascadeIndex] * wpos;

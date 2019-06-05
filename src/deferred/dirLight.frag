@@ -27,10 +27,10 @@ void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 	// 	default: lcolor = vec3(1, 1, 1); break;
 	// };
 
-	lcolor *= dirShadowIndex(light, shadowMap, fragPos, index, int(pcf));
+	// lcolor *= dirShadowIndex(light, shadowMap, fragPos, index, int(pcf));
 
 	// bad idea, doesn't look good
-	// float s0 = dirShadowIndex(light, shadowMap, fragPos, index, int(pcf));
-	// float s1 = dirShadowIndex(light, shadowMap, fragPos, index + 1, int(pcf));
-	// lcolor *= mix(s0, s1, between);
+	float s0 = dirShadowIndex(light, shadowMap, fragPos, index, int(pcf));
+	float s1 = dirShadowIndex(light, shadowMap, fragPos, index + 1, int(pcf));
+	lcolor *= mix(s0, s1, between);
 }
