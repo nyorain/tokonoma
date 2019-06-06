@@ -232,7 +232,7 @@ using doi::f16;
 class ViewApp : public doi::App {
 public:
 	using Vertex = doi::Scene::Primitive::Vertex;
-	static constexpr auto pointLight = true;
+	static constexpr auto pointLight = false;
 
 	static constexpr u32 passScattering = (1u << 1u);
 	static constexpr u32 passSSR = (1u << 2u);

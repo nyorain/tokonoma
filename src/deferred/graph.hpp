@@ -17,6 +17,10 @@
 // only relevant as dst scope though
 // TODO: allow byRegion dependencies? not sure if it really has an
 // effect between multiple distict passes though
+// TODO: can be optimized/improved, mainly a first hacked-torgether draft at
+// the moment (that works nontheless).
+// see http://themaister.net/blog/2017/08/15/render-graphs-and-vulkan-a-deep-dive/
+// for a more elaborate render graph system and better synchronization/barriers
 
 class FrameGraph;
 class FramePass;

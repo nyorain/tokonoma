@@ -29,7 +29,7 @@ layout(push_constant) uniform PCR {
 const uint size = gl_WorkGroupSize.x; // == gl_WorkGroupSize.y
 vec2 pixelSize = 1.f / textureSize(inLum, 0);
 
-// contain the current summed-up luminance
+// contains tee current summed-up luminance
 shared float lum[2 * size][2 * size];
 
 float load(vec2 pixel) {
@@ -80,10 +80,8 @@ void main() {
 	lum[2 * l.x + 0][2 * l.y + 1] = load(pixel + vec2(0, 2));
 	lum[2 * l.x + 1][2 * l.y + 1] = load(pixel + vec2(2, 2));
 	for(uint isize = size; isize > 0; isize /= 2) {
-		// wait for initial load/last reduce to complete
-		// apparently both barriers needed:
-		// https://stackoverflow.com/questions/39393560
-		memoryBarrierShared();
+		// one barrier is enough, memoryBarrierShared is not needed.
+		// See GL_KHR_vulkan_glsl and spirv spec
 		barrier();
 
 		// sum up squares
