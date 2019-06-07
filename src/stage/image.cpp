@@ -8,10 +8,6 @@
 #include <vkpp/enums.hpp>
 #include <vpp/imageOps.hpp>
 #include <dlg/dlg.hpp>
-
-#include <sys/mman.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <cstdio>
 
 // make stbi std::unique_ptr<std::byte[]> compatible

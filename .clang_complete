@@ -22,4 +22,4 @@
 -Wpedantic
 -Wno-missing-braces
 -Wno-unused-const-variable
--DDOI_SRC_DIR="something"
+-DDOI_BASE_DIR="something"

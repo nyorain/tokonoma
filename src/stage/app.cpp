@@ -36,7 +36,6 @@ namespace doi {
 // constants
 constexpr auto clearColor = std::array<float, 4>{{0.f, 0.f, 0.f, 1.f}};
 constexpr auto fontHeight = 12;
-constexpr auto baseResPath = "../";
 
 // util
 namespace {
@@ -462,8 +461,8 @@ bool App::init(nytl::Span<const char*> args) {
 		impl_->windowTransform = {rvgContext()};
 		impl_->fontAtlas.emplace(rvgContext());
 
-		std::string fontPath = baseResPath;
-		fontPath += "assets/Roboto-Regular.ttf";
+		std::string fontPath = DOI_BASE_DIR;
+		fontPath += "/assets/Roboto-Regular.ttf";
 		// fontPath += "assets/OpenSans-Light.ttf";
 		// fontPath += "build/Lucida-Grande.ttf"; // nonfree
 		impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath);
@@ -1161,12 +1160,12 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 
 	// include dirs
 	cmd += " -I";
-	cmd += DOI_SRC_DIR;
-	cmd += "/shaders/include";
+	cmd += DOI_BASE_DIR;
+	cmd += "/src/shaders/include";
 
 	// input
-	auto fullPath = std::string(DOI_SRC_DIR);
-	fullPath += "/";
+	auto fullPath = std::string(DOI_BASE_DIR);
+	fullPath += "/src/";
 	fullPath += glslPath;
 
 	cmd += " ";
@@ -1187,7 +1186,11 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 	dlg_styled_fprintf(stderr, style, ">>> End glslang <<<%s\n",
 		dlg_reset_sequence);
 
-	if (WEXITSTATUS(ret) != 0) { // TODO: only working for posix
+#ifdef DOI_LINUX
+	if(WEXITSTATUS(ret) != 0) { // only working for posix
+#else
+	if(ret != 0) {
+#endif
 		dlg_error("Failed to compile shader {}", fullPath);
 		return {};
 	}

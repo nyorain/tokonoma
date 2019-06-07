@@ -71,7 +71,7 @@ public:
 	// const Primitive& lightBall() const { return lightBall_; }
 
 protected:
-	nytl::Vec2ui size_ {2048, 2048};
+	nytl::Vec2ui size_ {512, 512};
 	vpp::ViewableImage target_; // depth
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;

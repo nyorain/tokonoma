@@ -234,7 +234,7 @@ DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	info.view.subresourceRange.layerCount = cascadeCount;
 	info.view.viewType = vk::ImageViewType::e2dArray;
 	dlg_assert(vpp::supported(dev, info.img));
-	target_ = {dev.devMemAllocator(), info};
+	target_ = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
 
 	// framebuffer
 	vk::FramebufferCreateInfo fbi {};
@@ -477,7 +477,7 @@ PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 		targetInfo.view.subresourceRange.layerCount = 6u;
 		targetInfo.view.viewType = vk::ImageViewType::cube;
 		dlg_assert(vpp::supported(dev, targetInfo.img));
-		shadowMap_ = {dev.devMemAllocator(), targetInfo};
+		shadowMap_ = {dev.devMemAllocator(), targetInfo, dev.deviceMemoryTypes()};
 
 		// framebuffer
 		vk::FramebufferCreateInfo fbi {};

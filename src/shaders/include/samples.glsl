@@ -17,6 +17,7 @@ const vec2 samplesLinear8[] = {
 	{+2.5f, +1.5f},
 };
 
+/*
 const ivec2 samplesLinear8Floor[] = {
 	{-1, +1},
 	{-1, +3},
@@ -39,3 +40,4 @@ const vec2 samplesLinear12[] = {
 	{+0.5f, +1.5f},
 	{+2.5f, +1.5f},
 };
+*/

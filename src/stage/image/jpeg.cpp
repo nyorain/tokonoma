@@ -1,3 +1,6 @@
+// WIP, probably way more effort to use plain libjpeg as they don't
+// support decoding as rgba/rgbx
+
 #include <stage/image.hpp>
 #include <stage/types.hpp>
 
@@ -6,39 +9,25 @@
 #include <nytl/span.hpp>
 #include <dlg/dlg.hpp>
 
-#include <turbojpeg.h>
+#include <libjpeg.h>
 
-#include <sys/mman.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <cstdio>
 #include <vector>
 
 namespace doi {
 
-// TODO: unix only atm. Really efficient though, using mmap.
-// probably best to implement C-based alternative that is used on
-// non-unix (or non-linux; not sure how cross platform mmap is) platforms.
-// That should probably first manually copy the whole file in to a large buffer.
 class JpegReader : public ImageProvider {
 public:
-	int fd_ {};
-	u64 fileLength_ {};
-	unsigned char* mapped_ {};
+	std::FILE* file_ {};
 	nytl::Vec2ui size_;
-	tjhandle jpeg_ {};
+	jpeg_decompress_struct jpeg_ {};
 	std::vector<std::byte> tmpData_;
 
 public:
 	~JpegReader() {
-		if(jpeg_) {
-			::tjDestroy(jpeg_);
-		}
-		if(mapped_) {
-			::munmap(mapped_, fileLength_);
-		}
-		if(fd_ > 0) {
-			::close(fd_);
+		::jpeg_destroy_decompress(&jpeg_);
+		if(file_) {}
+			std::fclose(file_);
 		}
 	}
 
@@ -71,39 +60,42 @@ public:
 	}
 };
 
+struct JpegError {
+	struct jpeg_error_mgr pub; // base
+ 	jmp_buf setjmp_buffer;
+};
+
+void jpegErrorHandler(j_common_ptr cinfo) {
+ 	auto err = (JpegError*) cinfo->err;
+	char error[JMSG_LENGTH_MAX];
+	(*(cinfo->err->format_message))(cinfo, error)
+	dlg_debug("libjpeg error: {}", (const char*) error)
+ 	longjmp(err->setjmp_buffer, 1);
+}
+
 ReadError readJpeg(nytl::StringParam filename, JpegReader& reader) {
-	auto fd = ::open(filename.c_str(), O_RDONLY);
-	if(fd < 0) {
+	reader.file_ = std::fopen(filename.c_str(), "rb");
+	if(!reader.file_) {
 		return ReadError::cantOpen;
 	}
-	reader.fd_ = fd;
 
-	auto length = ::lseek(reader.fd_, 0, SEEK_END);
-	if(length < 0) {
-		return ReadError::internal;
-	}
-	reader.fileLength_ = length;
+	struct jpeg_decompress_struct cinfo;
+	struct JpegError jerr;
 
-	auto data = ::mmap(NULL, reader.fileLength_, PROT_READ, MAP_PRIVATE,
-		reader.fd_, 0);
-	if(data == MAP_FAILED || !data) {
-		return ReadError::internal;
-	}
-	reader.mapped_ = static_cast<unsigned char*>(data); // const
+	ReadError retErr = ReadError::invalidType;
+	cinfo.err = jpeg_std_error(&jerr.pub);
+	jerr.pub.error_exit = jpegErrorHandler;
+	if(::setjmp(jerr.setjmp_buffer)) {
+    	return retErr;
+ 	}
 
-	reader.jpeg_ = ::tjInitDecompress();
-	if(!reader.jpeg_) {
-		dlg_warn("Can't initialize jpeg decompressor ('{}')", filename);
-		return ReadError::internal;
-	}
+	jpeg_create_decompress(&cinfo);
+	jpeg_stdio_src(&cinfo, reader.file_);
+	jpeg_read_header(&cinfo, TRUE);
 
-	int width, height;
-	int res = ::tjDecompressHeader(reader.jpeg_, reader.mapped_,
-		reader.fileLength_, &width, &height);
-	if(res) {
-		// in this case, it's propbably just no jpeg
-		return ReadError::invalidType;
-	}
+	retErr = ReadError::intenral;
+
+
 
 	reader.size_.x = width;
 	reader.size_.y = height;

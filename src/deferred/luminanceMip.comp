@@ -2,7 +2,7 @@
 
 // each workgroup reduces groupDimSize * 2 pixels in each dimension.
 // therefore expects the output texture to be smaller by this factor
-// e.g. if the specilization constant groupDimSize is 8 
+// e.g. if the specilization constant groupDimSize is 8
 // (solid choice usually), dimensions of outLim are smaller by factor 16
 // (rounded up though)
 // Can e.g. use 4th next mip level in that case (or the 3th next in case
@@ -33,7 +33,7 @@ vec2 pixelSize = 1.f / textureSize(inLum, 0);
 shared float lum[2 * size][2 * size];
 
 float load(vec2 pixel) {
-	vec2 dist = clamp(pcr.inSize - pixel, 0, 1);
+	vec2 dist = clamp(pcr.inSize - (pixel - 0.5), 0, 1);
 	float fac = dist.x * dist.y;
 	return fac * texture(inLum, min(pixel, pcr.inSize - 0.5) * pixelSize).r;
 

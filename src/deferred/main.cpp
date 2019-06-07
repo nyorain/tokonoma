@@ -232,7 +232,7 @@ using doi::f16;
 class ViewApp : public doi::App {
 public:
 	using Vertex = doi::Scene::Primitive::Vertex;
-	static constexpr auto pointLight = false;
+	static constexpr auto pointLight = true;
 
 	static constexpr u32 passScattering = (1u << 1u);
 	static constexpr u32 passSSR = (1u << 2u);
@@ -406,7 +406,7 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		if(start.size() > 4) {
 			start.resize(4, '\0');
 		}
-		auto& t = at.template create<Textfield>(name, start).textfield();
+		auto& t = at.template create<vui::dat::Textfield>(name, start).textfield();
 		t.onSubmit = [&, f = std::move(func), name](auto& tf) {
 			try {
 				auto val = std::stof(std::string(tf.utf8()));

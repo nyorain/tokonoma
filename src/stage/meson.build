@@ -53,20 +53,25 @@ stage_src = [
 	'scene/pbr.cpp',
 
 	'image.cpp',
-	'image/jpeg.cpp',
+	'image/jpeg_turbo.cpp',
 	'image/png.cpp',
 	'image/ktx.cpp',
 
 	stage_shaders,
 ]
 
+stage_args = []
+if build_machine.system() == 'linux'
+	stage_args += '-DDOI_LINUX'
+endif
+
 stage_lib = library('stage',
 	sources: stage_src,
 	dependencies: stage_deps,
+	cpp_args: stage_args,
 	include_directories: stage_inc)
 
 stage_dep = declare_dependency(
 	link_with: stage_lib,
 	dependencies: stage_deps,
 	include_directories: stage_inc)
-

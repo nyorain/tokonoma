@@ -8,6 +8,7 @@ const float ditherPattern[4][4] = {
 	{ 0.1875f, 0.6875f, 0.0625f, 0.5625},
 	{ 0.9375f, 0.4375f, 0.8125f, 0.3125}};
 
+/*
 const int dither8x8[64] = int[](0,  32, 8,  40, 2,  34, 10, 42,
                                      48, 16, 56, 24, 50, 18, 58, 26,
                                      12, 44, 4,  36, 14, 46, 6,  38,
@@ -16,6 +17,7 @@ const int dither8x8[64] = int[](0,  32, 8,  40, 2,  34, 10, 42,
                                      51, 19, 59, 27, 49, 17, 57, 25,
                                      15, 47, 7,  39, 13, 45, 5,  37,
                                      63, 31, 55, 23, 61, 29, 53, 21);
+*/
 
 // fragPos and lightPos are in screen space
 // TODO: remove or use z component of ipos; fragDepth
@@ -42,7 +44,7 @@ float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
 	// Offset to step probably a bad idea
 	// ipos += 0.7 * random(fragPos) * step;
 	// step += 0.01 * (2 * random(step) - 1) * step;
-	
+
 	// sampling gets more important the closer we get to the light
 	// important to not allow light to shine through completely
 	// closed walls (because there e.g. is only one sample in it)
@@ -138,4 +140,3 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, vec2 pixel) {
 	accum = clamp(accum, 0.0, 1.0);
 	return accum;
 }
-
