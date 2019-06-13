@@ -69,14 +69,17 @@ public:
 		return true;
 	}
 
-	bool features(vk::PhysicalDeviceFeatures& enable,
-			const vk::PhysicalDeviceFeatures& supported) override {
-		if(!supported.fragmentStoresAndAtomics) {
+	bool features(doi::Features& enable, const doi::Features& supported) override {
+		if(!App::features(enable, supported)) {
 			return false;
 		}
 
-		// TODO
-		enable.fragmentStoresAndAtomics = true;
+		// TODO: dont require the feature
+		if(!supported.base.features.fragmentStoresAndAtomics) {
+			return false;
+		}
+
+		enable.base.features.fragmentStoresAndAtomics = true;
 		return true;
 	}
 

@@ -346,26 +346,6 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 nytl::Mat4f DirLight::lightBallMatrix(nytl::Vec3f viewPos) const {
 	return translateMat(viewPos - 5.f * nytl::normalized(this->data.dir));
 }
-
-nytl::Mat4f DirLight::lightMatrix(nytl::Vec3f viewPos) const {
-	// TODO: sizes should be configurable; depend on scene size
-	// TODO: can be opimtized, better position
-	auto pos = viewPos - 5 * this->data.dir;
-	// auto pos = -this->data.dir;
-
-	// discretize
-	// using namespace nytl::vec::cw;
-	// using namespace nytl::vec::operators;
-	auto frustSize = 5.f; // TODO
-	// auto step = 2048 * frustSize / size_.x;
-	// auto step = 4.f;
-	// pos = ceil(pos / step) * step;
-
-	auto mat = doi::ortho3Sym(frustSize, frustSize, 0.5f, 30.f);
-	// mat = mat * doi::lookAtRH(pos, {0.f, 0.f, 0.f}, {0.f, 1.f, 0.f});
-	mat = mat * doi::lookAtRH(pos, viewPos, {0.f, 1.f, 0.f});
-	return mat;
-}
 */
 
 // TODO: calculate stuff in update, not updateDevice
@@ -502,35 +482,6 @@ PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 				f.fb = {dev, fbi};
 			}
 		}
-
-		// // shadow map
-		// targetInfo.img.arrayLayers = 6u;
-		// targetInfo.img.flags = vk::ImageCreateBits::cubeCompatible;
-		// targetInfo.img.usage = vk::ImageUsageBits::sampled |
-		// 	vk::ImageUsageBits::transferDst;
-		// targetInfo.view.subresourceRange.layerCount = 6u;
-		// targetInfo.view.components = {};
-		// targetInfo.view.viewType = vk::ImageViewType::cube;
-		// shadowMap_ = {dev.devMemAllocator(), targetInfo};
-
-		// initial layout change
-		/*
-		auto cb = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
-		vk::beginCommandBuffer(cb, {});
-		vpp::changeLayout(cb, shadowMap_.image(),
-			vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
-			vk::ImageLayout::shaderReadOnlyOptimal,
-			vk::PipelineStageBits::topOfPipe, {},
-			{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
-		vk::endCommandBuffer(cb);
-
-		// TODO: don't wait here... batch that work
-		vk::SubmitInfo submission;
-		submission.commandBufferCount = 1;
-		submission.pCommandBuffers = &cb.vkHandle();
-		dev.queueSubmitter().add(submission);
-		dev.queueSubmitter().wait(dev.queueSubmitter().current());
-		*/
 	}
 
 	// setup light ds and ubo
@@ -559,75 +510,6 @@ nytl::Mat4f PointLight::lightBallMatrix() const {
 	// slight offset since otherwise we end up in ball after
 	// setting it to current position
 	return translateMat(this->data.position);
-}
-
-nytl::Mat4f PointLight::lightMatrix(unsigned i) const {
-	// https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
-	// NOTE: we can't use y inversion in the vertex shader since that
-	// produce wrong results for the +y and -y faces.
-	// we instead flip up for all other faces
-	static constexpr struct {
-		nytl::Vec3f normal;
-		nytl::Vec3f up;
-	} views[6] = {
-		{{1.f, 0.f, 0.f}, {0.f, -1.f, 0.f}},
-		{{-1.f, 0.f, 0.f}, {0.f, -1.f, 0.f}},
-		{{0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}},
-		{{0.f, -1.f, 0.f}, {0.f, 0.f, -1.f}},
-		{{0.f, 0.f, 1.f}, {0.f, -1.f, 0.f}},
-		{{0.f, 0.f, -1.f}, {0.f, -1.f, 0.f}},
-	};
-
-	// NOTE: we could also just generate matrix once and then rotate
-	auto fov = 0.5 * nytl::constants::pi;
-	auto aspect = 1.f;
-	auto np = 0.1f;
-	// auto fp = this->data.farPlane;
-	auto fp = this->data.radius;
-	auto mat = doi::perspective3RH<float>(fov, aspect, np, fp);
-	mat = mat * doi::lookAtRH(this->data.position,
-		this->data.position + views[i].normal,
-		views[i].up);
-	return mat;
-
-	/*
-	// alternative implementation that uses manual rotations (and translation)
-	// instead lookAt
-	// in parts from
-	// https://github.com/SaschaWillems/Vulkan/blob/master/examples/shadowmappingomni/shadowmappingomni.cpp
-	auto pi = float(nytl::constants::pi);
-	auto fov = 0.5 * pi;
-	auto aspect = 1.f;
-	auto np = 0.1f;
-	auto fp = this->data.farPlane;
-	auto mat = doi::perspective3RH<float>(fov, aspect, np, fp);
-	auto viewMat = nytl::identity<4, float>();
-
-	switch(i) {
-	case 0:
-		// viewMat = doi::rotateMat({1.f, 0.f, 0.f}, pi)
-		viewMat = doi::rotateMat({0.f, 1.f, 0.f}, pi / 2);
-		break;
-	case 1:	// NEGATIVE_X
-		// viewMat = doi::rotateMat({1.f, 0.f, 0.f}, pi)
-		viewMat = doi::rotateMat({0.f, 1.f, 0.f}, -pi / 2);
-		break;
-	case 2:	// POSITIVE_Y
-		viewMat = doi::rotateMat({1.f, 0.f, 0.f}, pi / 2);
-		break;
-	case 3:	// NEGATIVE_Y
-		viewMat = doi::rotateMat({1.f, 0.f, 0.f}, -pi / 2);
-		break;
-	case 4:	// POSITIVE_Z
-		viewMat = doi::rotateMat({1.f, 0.f, 0.f}, pi);
-		break;
-	case 5:	// NEGATIVE_Z
-		viewMat = doi::rotateMat({0.f, 0.f, 1.f}, pi);
-		break;
-	}
-
-	return mat * viewMat * doi::translateMat({-this->data.position});
-	*/
 }
 
 void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
@@ -685,139 +567,18 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 			vk::cmdEndRenderPass(cb);
 		}
 	}
-
-	// auto pl = data.pl.vkHandle();
-	// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipeCube);
-	// vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-	// 	pl, 0, {{ds_.vkHandle()}}, {});
-
-
-	/*
-	vk::ImageMemoryBarrier cubeBarrier;
-	cubeBarrier.image = shadowMap_.image();
-	cubeBarrier.oldLayout = vk::ImageLayout::undefined;
-	cubeBarrier.srcAccessMask = vk::AccessBits::shaderRead;
-	cubeBarrier.newLayout = vk::ImageLayout::transferDstOptimal;
-	cubeBarrier.dstAccessMask = vk::AccessBits::transferWrite;
-	cubeBarrier.subresourceRange = {vk::ImageAspectBits::depth, 0, 1, 0, 6u};
-	vk::cmdPipelineBarrier(cb,
-		vk::PipelineStageBits::allGraphics,
-		vk::PipelineStageBits::transfer,
-		{}, {}, {}, {{cubeBarrier}});
-
-	// vpp::changeLayout(cb, shadowMap_.image(),
-	// 	vk::ImageLayout::shaderReadOnlyOptimal,
-	// 	vk::ImageLayout::transferDstOptimal,
-	// 	vk::AccessBits::transferWrite,
-	// 	{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
-
-	// for(auto& normal : normals) {
-	for(std::uint32_t i = 0u; i < 6u; ++i) {
-		vk::ClearValue clearValue {};
-		clearValue.depthStencil = {1.f, 0u};
-
-		// render into shadow map
-		vk::cmdBeginRenderPass(cb, {
-			data.rp, fb_,
-			{0u, 0u, size_.x, size_.y},
-			1, &clearValue
-		}, {});
-
-		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
-		vk::cmdSetViewport(cb, 0, 1, vp);
-		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
-
-		// needed so vertex shader knows which projection matrix to use
-		vk::cmdPushConstants(cb, data.pl, vk::ShaderStageBits::vertex,
-			pcrOffsetFaceID, 4u, &i);
-		scene.render(cb, pl);
-		vk::cmdEndRenderPass(cb);
-
-		vk::ImageMemoryBarrier barrier;
-		barrier.image = target_.image();
-		barrier.oldLayout = vk::ImageLayout::depthStencilReadOnlyOptimal;
-		barrier.srcAccessMask = vk::AccessBits::depthStencilAttachmentWrite;
-		barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
-		barrier.dstAccessMask = vk::AccessBits::transferRead;
-		barrier.subresourceRange = {vk::ImageAspectBits::depth, 0, 1, 0, 1};
-		vk::cmdPipelineBarrier(cb,
-			vk::PipelineStageBits::allGraphics,
-			vk::PipelineStageBits::transfer,
-			{}, {}, {}, {{barrier}});
-
-		// TODO: transitions could be done in extra render pass
-		// copy from render target to shadow cube map
-		// vpp::changeLayout(cb, target_.image(),
-		// 	vk::ImageLayout::depthStencilReadOnlyOptimal,
-		// 	vk::PipelineStageBits::allGraphics, {},
-		// 	vk::ImageLayout::transferSrcOptimal,
-		// 	vk::PipelineStageBits::transfer,
-		// 	vk::AccessBits::transferRead,
-		// 	{vk::ImageAspectBits::depth, 0, 1, 0, 1});
-
-		vk::ImageCopy copy {};
-		copy.extent = {size_.x, size_.y, 1};
-		copy.dstOffset = {0u, 0u, 0u};
-		copy.srcOffset = {0u, 0u, 0u};
-		copy.srcSubresource.aspectMask = vk::ImageAspectBits::depth;
-		copy.srcSubresource.layerCount = 1u;
-		copy.srcSubresource.baseArrayLayer = 0u;
-		copy.dstSubresource.aspectMask = vk::ImageAspectBits::depth;
-		copy.dstSubresource.baseArrayLayer = i;
-		copy.dstSubresource.layerCount = 1u;
-		vk::cmdCopyImage(cb, target_.vkImage(),
-			vk::ImageLayout::transferSrcOptimal,
-			shadowMap_.vkImage(), vk::ImageLayout::transferDstOptimal,
-			{{copy}});
-
-		barrier.oldLayout = vk::ImageLayout::transferSrcOptimal;
-		barrier.newLayout = vk::ImageLayout::depthStencilAttachmentOptimal;
-		barrier.srcAccessMask = vk::AccessBits::transferRead;
-		barrier.dstAccessMask =	vk::AccessBits::depthStencilAttachmentWrite |
-			vk::AccessBits::depthStencilAttachmentRead,
-		vk::cmdPipelineBarrier(cb,
-			vk::PipelineStageBits::transfer,
-			vk::PipelineStageBits::allGraphics,
-			{}, {}, {}, {{barrier}});
-
-		// vpp::changeLayout(cb, target_.image(),
-		// 	vk::ImageLayout::transferSrcOptimal,
-		// 	vk::PipelineStageBits::transfer,
-		// 	vk::AccessBits::transferRead,
-		// 	vk::ImageLayout::depthStencilAttachmentOptimal,
-		// 	vk::PipelineStageBits::allGraphics,
-		// 	vk::AccessBits::depthStencilAttachmentWrite |
-		// 		vk::AccessBits::depthStencilAttachmentRead,
-		// 	{vk::ImageAspectBits::depth, 0, 1, 0, 1});
-	}
-
-	cubeBarrier.oldLayout = vk::ImageLayout::transferDstOptimal;
-	cubeBarrier.srcAccessMask = vk::AccessBits::transferWrite;
-	cubeBarrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	cubeBarrier.dstAccessMask = vk::AccessBits::shaderRead;
-	vk::cmdPipelineBarrier(cb,
-		vk::PipelineStageBits::transfer,
-		vk::PipelineStageBits::fragmentShader |
-			vk::PipelineStageBits::computeShader,
-		{}, {}, {}, {{cubeBarrier}});
-
-	// vpp::changeLayout(cb, shadowMap_.image(),
-	// 	vk::ImageLayout::transferDstOptimal,
-	// 	vk::PipelineStageBits::transfer,
-	// 	vk::AccessBits::transferWrite,
-	// 	vk::ImageLayout::shaderReadOnlyOptimal,
-	// 	vk::PipelineStageBits::fragmentShader,
-	// 	vk::AccessBits::shaderRead,
-	// 	{vk::ImageAspectBits::depth, 0, 1, 0, 6u});
-	*/
 }
 
 void PointLight::updateDevice() {
 	auto map = ubo_.memoryMap();
 	auto span = map.span();
 	doi::write(span, this->data);
+
+	auto np = 0.1f;
+	auto fp = this->data.radius;
 	for(auto i = 0u; i < 6u; ++i) {
-		doi::write(span, lightMatrix(i));
+		auto mat = doi::cubeProjectionVP(this->data.position, i, np, fp);
+		doi::write(span, mat);
 	}
 
 	// lightBall_.matrix = lightBallMatrix();

@@ -1,0 +1,97 @@
+// spherical harmonics computations
+// gets a cubemap as input and computes the sphercial harmonic coefficients
+// writes them into the given storage buffer
+// TODO: only works for 32x32 input cubemaps. we curently rely on
+//   shared memory and do the whole computation in one work group,
+//   otherwise we would have to use some kind of multi-pass-reduction
+//   or use atomic addition (ugly since we need float here)
+
+#version 460
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0) uniform samplerCube cubemap; // size 32x32
+layout(set = 0, binding = 1, std430) buffer SSBO {
+	vec3 coeffs[];
+} ssbo;
+
+const uint size = gl_WorkGroupSize.x; // == gl_WorkGroupSize.y
+shared vec3 coeffs[size][size][9];
+
+vec3 cubeCoords(uint face, vec2 uv) {
+	switch(face) {
+		case 0: return vec3(1.f, uv.y, -uv.x);
+		case 1: return vec3(-1.f, uv.y, uv.x);
+		case 2: return vec3(uv.x, -1.f, uv.y);
+		case 3: return vec3(uv.x, 1.f, -uv.y);
+		case 4: return vec3(uv.x, uv.y, 1.f);
+		case 5: return vec3(-uv.x, uv.y, -1.f);
+	}
+}
+
+// we use linear sampling even if it's not 100% correct. It's close enough
+// and improves performance here quite a bit
+void main() {
+	uvec2 l = gl_LocalInvocationID.xy;
+	vec2 pixel = 2 * gl_GlobalInvocationID.xy; // top-left of sampled pixels
+	pixel += 1; // for linear sampling
+
+	vec2 pixelSize = 1.f / textureSize(cubemap, 0);
+	vec2 uv = pixel * pixelSize;
+	uv = 2 * uv - 1;
+
+	// initialize coeffs to 0
+	for(uint j = 0u; j < 9; ++j) {
+		coeffs[l.x][l.y][j] = vec3(0.0);
+	}
+
+	// accumulate coeffs
+	for(uint i = 0u; i < 6; ++i) {
+		vec3 c = normalize(cubeCoords(i, uv));
+		vec3 color = 4 * texture(cubemap, c).rgb; // times 4 due to linear filter
+		coeffs[l.x][l.y][0] += color;
+		coeffs[l.x][l.y][1] += color * c.y;
+		coeffs[l.x][l.y][2] += color * c.z;
+		coeffs[l.x][l.y][3] += color * c.x;
+		coeffs[l.x][l.y][4] += color * c.x * c.y;
+		coeffs[l.x][l.y][5] += color * c.y * c.z;
+		coeffs[l.x][l.y][6] += color * (3.f * c.z * c.z - 1.f);
+		coeffs[l.x][l.y][7] += color * c.x * c.z;
+		coeffs[l.x][l.y][8] += color * (c.x * c.x - c.y * c.y);
+	}
+
+	// normalize coeffs
+	// factor the same for all sampled pixels (approx)
+	float pixelArea = pixelSize.x * pixelSize.y;
+	// TODO: re-check normalization, might be off
+	float fac = 4 * pixelArea / (1 + uv.x * uv.x + uv.y * uv.y);
+	coeffs[l.x][l.y][0] *= 0.282095f * fac;
+	coeffs[l.x][l.y][1] *= 0.488603f * fac;
+	coeffs[l.x][l.y][2] *= 0.488603f * fac;
+	coeffs[l.x][l.y][3] *= 0.488603f * fac;
+	coeffs[l.x][l.y][4] *= 1.092548f * fac;
+	coeffs[l.x][l.y][5] *= 1.092548f * fac;
+	coeffs[l.x][l.y][6] *= 0.315392f * fac;
+	coeffs[l.x][l.y][7] *= 1.092548f * fac;
+	coeffs[l.x][l.y][8] *= 0.546274f * fac;
+
+	// reduce
+	for(uint isize = size / 2; isize > 0; isize /= 2) {
+		barrier();
+
+		// sum up squares
+		if(l.x < isize && l.y < isize) {
+			for(uint i = 0u; i < 9; ++i) {
+				coeffs[l.x][l.y][i] += coeffs[isize + l.x][l.y][i];
+				coeffs[l.x][l.y][i] += coeffs[l.x][isize + l.y][i];
+				coeffs[l.x][l.y][i] += coeffs[isize + l.x][isize + l.y][i];
+			}
+		}
+	}
+
+	// write back
+	if(l.x == 0 && l.y == 0) {
+		for(uint i = 0u; i < 9; ++i) {
+			ssbo.coeffs[i] = coeffs[0][0][i];
+		}
+	}
+}

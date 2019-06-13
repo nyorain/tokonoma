@@ -1,6 +1,7 @@
 #include <stage/headless.hpp>
 #include <stage/bits.hpp>
 #include <stage/types.hpp>
+#include <stage/render.hpp>
 #include <stage/image.hpp>
 #include <stage/texture.hpp>
 #include <stage/scene/pbr.hpp>
@@ -19,9 +20,11 @@
 
 #include <dlg/dlg.hpp>
 #include <nytl/vec.hpp>
+#include <nytl/vecOps.hpp>
 
 #include <shaders/stage.brdflut.comp.h>
 #include <iostream>
+#include <fstream>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stage/stb_image_write.h>
@@ -38,6 +41,8 @@ void saveCubemap(const char* equirect, const char* outfile,
 void saveIrradiance(const char* cubemap, const char* outfile,
 	const vpp::Device& dev);
 void saveConvoluted(const char* cubemap, const char* outfile,
+	const vpp::Device& dev);
+void saveSHProj(const char* cubemap, const char* outfile,
 	const vpp::Device& dev);
 
 int main(int argc, const char** argv) {
@@ -57,6 +62,9 @@ int main(int argc, const char** argv) {
 	parser.definitions.push_back({
 		"output", {"--output", "-o"},
 		"The file to write the output to. Otherwise default is used", 1});
+	parser.definitions.push_back({
+		"shproj", {"--shproj"},
+		"Project an irradiance map onto spherical harmonics", 1});
 
 	auto usage = std::string("Usage: ") + argv[0] + " [options]\n\n";
 	argagg::parser_results result;
@@ -97,6 +105,9 @@ int main(int argc, const char** argv) {
 	} else if(result.has_option("irradiance")) {
 		auto out = output.value_or("irradiance.ktx");
 		saveIrradiance(result["irradiance"], out, dev);
+	} else if(result.has_option("shproj")) {
+		auto out = output.value_or("sh.bin");
+		saveSHProj(result["shproj"], out, dev);
 	} else {
 		dlg_fatal("No command given!");
 		argagg::fmt_ostream help(std::cerr);
@@ -241,6 +252,7 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 	dlg_assertm(res == doi::WriteError::none, (int) res);
 }
 
+// TODO: might move that to doi
 vpp::Sampler linearSampler(const vpp::Device& dev) {
 	vk::SamplerCreateInfo sci;
 	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
@@ -495,3 +507,98 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 	dlg_assertm(res == doi::WriteError::none, (int) res);
 }
 
+void saveSHProj(const char* cubemap, const char* outfile,
+		const vpp::Device& dev) {
+	auto format = vk::Format::r16g16b16a16Sfloat;
+	auto p = doi::read(cubemap, true);
+	auto size = p->size();
+	// we mip down to the level before 32x32
+	auto maxLevels = int(vpp::mipmapLevels({size.x, size.y})) - 5;
+	unsigned mipLevels = std::max(maxLevels, 1);
+	auto lastSize = doi::mipmapSize({size.x, size.y}, mipLevels - 1);
+
+	doi::TextureCreateParams params;
+	params.format = format;
+	params.cubemap = true;
+	params.mipLevels = mipLevels;
+	params.fillMipmaps = true;
+	params.usage =
+		params.defaultUsage | // not really needed though
+		vk::ImageUsageBits::transferSrc |
+		vk::ImageUsageBits::transferDst;
+	auto envmap = doi::Texture(dev, std::move(p), params);
+
+	auto& qs = dev.queueSubmitter();
+	auto cb = dev.commandAllocator().get(qs.queue().family());
+	vk::beginCommandBuffer(cb, {});
+
+	// copy the downscaled version to an image with exact size 32x32
+	// the sh compute shader can't handle anything else at the moment
+	auto info = vpp::ViewableImageCreateInfo(vk::Format::r16g16b16a16Sfloat,
+		vk::ImageAspectBits::color, {32, 32},
+		vk::ImageUsageBits::transferDst | vk::ImageUsageBits::sampled);
+	info.img.flags = vk::ImageCreateBits::cubeCompatible;
+	info.img.arrayLayers = 6;
+	info.view.viewType = vk::ImageViewType::cube;
+	dlg_assert(vpp::supported(dev, info.img));
+	vpp::ViewableImage img(dev.devMemAllocator(), info);
+
+	// barriers
+	vk::ImageMemoryBarrier barriers[2];
+	barriers[0].image = envmap.image();
+	barriers[0].subresourceRange = {vk::ImageAspectBits::color, mipLevels - 1, 1, 0, 6};
+	barriers[0].oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	barriers[0].newLayout = vk::ImageLayout::transferSrcOptimal;
+	barriers[0].dstAccessMask = vk::AccessBits::transferRead;
+
+	barriers[1].image = img.image();
+	barriers[1].subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 6};
+	barriers[1].oldLayout = vk::ImageLayout::undefined;
+	barriers[1].newLayout = vk::ImageLayout::transferDstOptimal;
+	barriers[1].dstAccessMask = vk::AccessBits::transferWrite;
+
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
+		vk::PipelineStageBits::transfer, {}, {}, {}, barriers);
+
+	vk::ImageBlit blit;
+	blit.srcOffsets[1] = {i32(lastSize.width), i32(lastSize.height), 1};
+	blit.srcSubresource = {vk::ImageAspectBits::color, mipLevels - 1, 0, 6};
+	blit.dstOffsets[1] = {32, 32, 1};
+	blit.dstSubresource = {vk::ImageAspectBits::color, 0, 0, 6};
+	vk::cmdBlitImage(cb, envmap.image(), vk::ImageLayout::transferSrcOptimal,
+		img.vkImage(), vk::ImageLayout::transferDstOptimal, {{blit}},
+		vk::Filter::linear);
+
+	barriers[1].oldLayout = vk::ImageLayout::transferDstOptimal;
+	barriers[1].newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	barriers[1].srcAccessMask = vk::AccessBits::transferWrite;
+	barriers[1].dstAccessMask = vk::AccessBits::shaderRead;
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
+		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barriers[1]}});
+
+	auto sampler = linearSampler(dev);
+	doi::SHProjector shproj;
+	shproj.create(dev, sampler);
+
+	shproj.record(cb, img.imageView());
+
+	vk::endCommandBuffer(cb);
+	qs.wait(qs.add(cb));
+
+	// read coeffs
+	auto map = shproj.coeffsBuffer().memoryMap();
+	auto span = map.span();
+	auto coeffs = doi::read<std::array<nytl::Vec3f, 9>>(span);
+	for(auto i = 0u; i < coeffs.size(); ++i) {
+		dlg_info("coeffs[{}]: {}", i, coeffs[i]);
+	}
+
+	auto file = std::ofstream(outfile,
+		std::ios_base::out | std::ios_base::binary);
+	if(!file.is_open()) {
+		dlg_fatal("Failed to open {}", outfile);
+		return;
+	}
+
+	file.write(reinterpret_cast<const char*>(&coeffs), sizeof(coeffs));
+}

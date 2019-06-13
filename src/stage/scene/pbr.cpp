@@ -1,5 +1,6 @@
 #include <stage/scene/pbr.hpp>
 #include <stage/bits.hpp>
+#include <stage/render.hpp>
 #include <stage/types.hpp>
 
 #include <vpp/vk.hpp>
@@ -16,6 +17,7 @@
 #include <shaders/stage.equirectToCube.comp.h>
 #include <shaders/stage.brdflut.comp.h>
 #include <shaders/stage.convolute.comp.h>
+#include <shaders/stage.shProj.comp.h>
 
 namespace doi {
 namespace {
@@ -42,7 +44,7 @@ constexpr struct CubeFace {
 	nytl::Vec3f x;
 	u32 face; // id of the face
 	nytl::Vec3f y;
-	float roughness; // padding for most
+	float roughness; // only relevant for specular filtering
 	nytl::Vec3f z; // direction of the face
 } faces[] = {
 	{{0, 0, -1}, 0u, {0, 1, 0}, 0.f, {1, 0, 0}},
@@ -346,6 +348,52 @@ void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
 			vk::cmdDispatch(cb, dx, dy, 1);
 		}
 	}
+}
+
+// SHProjector
+void SHProjector::create(const vpp::Device& dev, vk::Sampler linear) {
+	auto bindings = {
+		vpp::descriptorBinding( // sampled input irradiance cube
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::compute, -1, 1, &linear),
+		vpp::descriptorBinding( // coeffs storage buffer
+			vk::DescriptorType::storageBuffer,
+			vk::ShaderStageBits::compute)
+	};
+
+	dsLayout_ = {dev, bindings};
+	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
+	vpp::nameHandle(dsLayout_, "SHProjector:dsLayout");
+	vpp::nameHandle(pipeLayout_, "SHProjector:pipeLayout");
+
+	vpp::ShaderModule shader(dev, stage_shProj_comp_data);
+	vk::ComputePipelineCreateInfo cpi;
+	cpi.layout = pipeLayout_;
+	cpi.stage.module = shader;
+	cpi.stage.stage = vk::ShaderStageBits::compute;
+	cpi.stage.pName = "main";
+	pipe_ = {dev, cpi};
+	vpp::nameHandle(pipe_, "SHProjector:pipe");
+
+	// TODO(perf): defer creation of ds and buffer
+	ds_ = {dev.descriptorAllocator(), dsLayout_};
+	vpp::nameHandle(ds_, "SHProjector:ds");
+
+	// TODO: allow to configure whether to allocator on host or
+	// device memory
+	dst_ = {dev.bufferAllocator(), sizeof(nytl::Vec3f) * 9,
+		vk::BufferUsageBits::storageBuffer, dev.hostMemoryTypes()};
+}
+
+void SHProjector::record(vk::CommandBuffer cb, vk::ImageView irradianceCube) {
+	vpp::DescriptorSetUpdate dsu(ds_);
+	dsu.imageSampler({{{}, irradianceCube, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.storage({{{dst_}}});
+	dsu.apply();
+
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
+	doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {ds_});
+	vk::cmdDispatch(cb, 1, 1, 1);
 }
 
 } // namespace doi

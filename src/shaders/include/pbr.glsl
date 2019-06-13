@@ -23,7 +23,12 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 f0, float roughness) {
 // Normal distribution function (ndf), Trowbridge-Reitz GGX.
 // Returns relative area of surface (microfacets) aligned like H; in [0, 1]
 float distributionGGX(vec3 n, vec3 h, float roughness) {
+	// NOTE: originally a (usually called alpha) was the roughness of
+	// the material but for better visual results, roughness * roughness
+	// is often used.
+	// float a = roughness;
 	float a = roughness * roughness;
+
 	float a2 = a * a;
 	float ndh = max(dot(n, h), 0.0);
 	float ndh2 = ndh * ndh;

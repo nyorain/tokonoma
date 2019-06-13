@@ -2,8 +2,12 @@
 
 #include <vpp/handles.hpp>
 #include <vpp/image.hpp>
+#include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <nytl/vec.hpp>
+
+// just a collection of various utilities useful for pbr.
+// should probably be split into their own files
 
 namespace doi {
 
@@ -67,7 +71,8 @@ protected:
 
 // TODO: filter from mipmaps to avoid artefacts
 // TODO: can probably be just a functions that returns staging
-// objects?
+// objects? Otherwise seperate init and run methods
+
 /// Prefilters an environment map for specular ibl.
 /// Renders them as mipmap levels onto the cubemap.
 class EnvironmentMapFilter {
@@ -92,6 +97,22 @@ protected:
 	};
 
 	std::vector<Mip> mips_;
+};
+
+/// Projects cubemaps to sphere harmonics (up to l=2, i.e. 9 coefficients).
+/// Requires a cubemap 32x32-per-face image as input.
+class SHProjector {
+public:
+	void create(const vpp::Device& dev, vk::Sampler linear);
+	void record(vk::CommandBuffer, vk::ImageView irradianceCube);
+	vpp::BufferSpan coeffsBuffer() const { return dst_; }
+
+protected:
+	vpp::TrDsLayout dsLayout_;
+	vpp::PipelineLayout pipeLayout_;
+	vpp::Pipeline pipe_;
+	vpp::TrDs ds_;
+	vpp::SubBuffer dst_;
 };
 
 } // namesapce doi

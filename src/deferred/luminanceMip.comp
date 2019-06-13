@@ -1,5 +1,14 @@
 #version 450
 
+// for basic documentation (may be slightly out of date) see
+// https://nyorain.github.io/mipmap-compute-shader.html
+// also contains notes for further optimization
+//
+// can probably be optimzied. Especially if just choose a fixed workgroup
+// size, then we can unroll the loop which should help with performance.
+// Otherwise, a good driver should be able to do it as well...
+// http://developer.download.nvidia.com/compute/cuda/1_1/Website/projects/reduction/doc/reduction.pdf
+
 // each workgroup reduces groupDimSize * 2 pixels in each dimension.
 // therefore expects the output texture to be smaller by this factor
 // e.g. if the specilization constant groupDimSize is 8
@@ -8,11 +17,6 @@
 // Can e.g. use 4th next mip level in that case (or the 3th next in case
 // the 4th is to small - can happen with rounding up since mipmaps sizes
 // are rounded down)
-
-// TODO: can probably be optimzied. Especially if just choose a fixed workgroup
-// size, then we can unroll the loop which should help with performance.
-// Otherwise, a good driver should be able to do it as well...
-// http://developer.download.nvidia.com/compute/cuda/1_1/Website/projects/reduction/doc/reduction.pdf
 
 // NOTE: we assume that x and y work group sizes are the same.
 // There is no reason why we should choose something else and it
@@ -30,43 +34,12 @@ const uint size = gl_WorkGroupSize.x; // == gl_WorkGroupSize.y
 vec2 pixelSize = 1.f / textureSize(inLum, 0);
 
 // contains tee current summed-up luminance
-shared float lum[2 * size][2 * size];
+shared float lum[size][size];
 
 float load(vec2 pixel) {
 	vec2 dist = clamp(pcr.inSize - (pixel - 0.5), 0, 1);
 	float fac = dist.x * dist.y;
 	return fac * texture(inLum, min(pixel, pcr.inSize - 0.5) * pixelSize).r;
-
-	// NOTE: below is the reference implementation that should do exactly
-	// the same as the optimized version above. We have to make sure
-	// to correctly handle all border conditions, sampling outside of
-	// the input image might give us values like nan or inf, forgetting
-	// pixels might result in huge errors (think of 2x1 -> 1x1 in the
-	// last step, "forgetting" a pixel (or both) there is a problem).
-#if 0
-	// return 0 when outside of image.
-	// don't make a multiplication or something else out of this
-	// since we might sample values like inf or nan from the texture
-	// outside of inSize
-	if(any(greaterThan(pixel, vec2(pcr.inSize)))) {
-		return 0.f;
-	}
-
-	// on the image edge we might have to sample two (or 1 in case of corner)
-	// instead of the normals 4 pixels. Weigh them accordingly and make
-	// sure we never sample over input image (inSize) edge.
-	float fac = 1.f;
-	if(pixel.x > pcr.inSize.x - 0.5) {
-		fac *= 0.5f;
-		pixel.x = pcr.inSize.x - 0.5;
-	}
-	if(pixel.y > pcr.inSize.y - 0.5) {
-		fac *= 0.5f;
-		pixel.y = pcr.inSize.y - 0.5;
-	}
-
-	return fac * texture(inLum, pixel * pixelSize).r;
-#endif
 }
 
 // no early returns due to all the barriers. We use a sampler
@@ -74,12 +47,16 @@ float load(vec2 pixel) {
 void main() {
 	uvec2 l = gl_LocalInvocationID.xy;
 	vec2 pixel = 4 * gl_GlobalInvocationID.xy; // top-left of sampled pixels
-	pixel += 1;
-	lum[2 * l.x + 0][2 * l.y + 0] = load(pixel + vec2(0, 0));
-	lum[2 * l.x + 1][2 * l.y + 0] = load(pixel + vec2(2, 0));
-	lum[2 * l.x + 0][2 * l.y + 1] = load(pixel + vec2(0, 2));
-	lum[2 * l.x + 1][2 * l.y + 1] = load(pixel + vec2(2, 2));
-	for(uint isize = size; isize > 0; isize /= 2) {
+	pixel += 1; // for linear sampling
+
+	// first reduction locally
+	float val = 0.0;
+	val += load(pixel + vec2(0, 0));
+	val += load(pixel + vec2(2, 0));
+	val += load(pixel + vec2(0, 2));
+	val += load(pixel + vec2(2, 2));
+	lum[l.x][l.y] = val;
+	for(uint isize = size / 2; isize > 0; isize /= 2) {
 		// one barrier is enough, memoryBarrierShared is not needed.
 		// See GL_KHR_vulkan_glsl and spirv spec
 		barrier();

@@ -88,9 +88,6 @@ TEST(outOfOrder) {
 	auto& b = order[2].barriers[0];
 	EXPECT(b.src, scope2);
 	EXPECT(b.dst, scope3);
-	EXPECT(b.subres.layerCount, 1u);
-	EXPECT(b.subres.levelCount, 1u);
-	EXPECT(b.subres.aspectMask, vk::ImageAspectBits::color);
 	EXPECT(b.target, &out3);
 
 	EXPECT(graph.check(), true);

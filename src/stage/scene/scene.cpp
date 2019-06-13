@@ -185,14 +185,16 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	auto size = pcount * sizeof(nytl::Mat4f) * 2;
 	stageSize += size;
 	modelsBuf_ = {data.initModels, wb.alloc.bufHost, size,
-		vk::BufferUsageBits::storageBuffer, devMem};
+		vk::BufferUsageBits::storageBuffer |
+		vk::BufferUsageBits::transferDst,
+		devMem};
 
 	// primitive buffers
 	size = data.indexCount * sizeof(Index);
 	stageSize += size;
 	indices_ = {data.initIndices, wb.alloc.bufDevice, size,
 		vk::BufferUsageBits::indexBuffer |
-		vk::BufferUsageBits::indexBuffer, devMem};
+		vk::BufferUsageBits::transferDst, devMem};
 
 	size = data.tc1Count * sizeof(nytl::Vec2f);
 	tc0Offset_ = size;
@@ -202,7 +204,7 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	stageSize += size;
 	vertices_ = {data.initVertices, wb.alloc.bufDevice, size,
 		vk::BufferUsageBits::vertexBuffer |
-		vk::BufferUsageBits::indexBuffer, devMem};
+		vk::BufferUsageBits::transferDst, devMem};
 
 	// materials buffer
 	size = materials_.size() * sizeof(Material);

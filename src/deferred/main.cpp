@@ -21,6 +21,7 @@
 #include <stage/bits.hpp>
 #include <stage/gltf.hpp>
 #include <stage/defer.hpp>
+#include <stage/image.hpp>
 #include <stage/scene/shape.hpp>
 #include <stage/scene/light.hpp>
 #include <stage/scene/scene.hpp>
@@ -63,11 +64,14 @@
 // - better dof implementations, current impl is naive
 //   probably best to use own pass, see gpugems article
 //   bokeh blurring
+//     - make dof etc as physically based as possible
+//       note where it's not possible
 // - reflectange probe rendering/dynamic creation
 // - support switching between environment maps
 // - temporal anti aliasing (TAA), tolksvig maps
 //   e.g. https://media.contentapi.ea.com/content/dam/eacom/frostbite/files/course-notes-moving-frostbite-to-pbr-v2.pdf
 
+// TODO: fix screenshot
 // TODO: timeWidget currently somewhat hacked together, working
 //   around rvg quirks triggering re-record while recording...
 //   probably better to add passes to timeWidget (getting an id)
@@ -83,8 +87,6 @@
 //   is way harder to manage (try to implement dynamic loading
 //   of primitives?). Probably not bad for performance though,
 //   AZDO, allows culling (TODO: implement basic culling).
-// TODO: blur bloom/apply dof depending on light? the brighter,
-//   the more blur (e.g. dof)
 // TODO: group initial layout transitions from undefined layout to general
 //   per frame? could do it externally, undefined -> targetScope()
 //   for luminance (compute), ssr, ssao (compute)
@@ -109,6 +111,8 @@
 //   which is guaranteed to be supported? and then encode it
 
 // not that important but should be considered:
+// TODO(idea): blur bloom/apply dof depending on light? the brighter,
+//   the more blur (e.g. dof), is it maybe possible to merge bloom and dof?
 // TODO: support destroying pass render buffers like previously
 //   done on deferred. Only create them is needed/pass is active.
 // TODO: support dynamic shader reloading (from file) on pass (re-)creation?
@@ -245,10 +249,14 @@ public:
 
 	static constexpr unsigned timestampCount = 13u;
 
+	static constexpr auto probeSize = vk::Extent2D {2048, 2048};
+	static constexpr auto probeFaceSize = probeSize.width * probeSize.height * 8;
+
 public:
 	bool init(const nytl::Span<const char*> args) override;
 	void initRenderData() override;
 	void initPasses(const doi::WorkBatcher&);
+	void screenshot();
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
@@ -384,6 +392,29 @@ protected:
 		vui::dat::Label* focusDepth;
 		vui::dat::Label* dofDepth;
 	} gui_;
+
+	// for rendering the scene into a cubemap
+	// used for screenshots and probes (light/reflection)
+	enum class ProbeState {
+		invalid = 0,
+		initialized = 1,
+		pending = 2,
+	};
+
+	struct {
+		GeomLightPass geomLight;
+		ProbeState state {};
+		vpp::CommandBuffer cb;
+		vpp::SubBuffer retrieve;
+		vpp::ViewableImage depth;
+
+		struct Face {
+			vpp::TrDs ds;
+			vpp::SubBuffer ubo;
+		};
+
+		std::array<Face, 6u> faces;
+	} probe_ {};
 };
 
 bool ViewApp::init(const nytl::Span<const char*> args) {
@@ -647,7 +678,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		geomLight_.lightTarget().vkImage());
 	passGeomLight.record = [&](const auto& buf) {
 		geomLight_.record(buf.cb, buf.size, cameraDs_, scene_, pointLights_,
-			dirLights_, boxIndices_, &env_, timeWidget_);
+			dirLights_, boxIndices_, &env_, &timeWidget_);
 	};
 
 	vpp::InitObject initPP(pp_, passInfo, swapchainInfo().imageFormat);
@@ -1360,6 +1391,10 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 
 // enable anisotropy if possible
 bool ViewApp::features(doi::Features& enable, const doi::Features& supported) {
+	if(!App::features(enable, supported)) {
+		return false;
+	}
+
 	if(supported.base.features.samplerAnisotropy) {
 		anisotropy_ = true;
 		enable.base.features.samplerAnisotropy = true;
@@ -1501,6 +1536,144 @@ void ViewApp::update(double dt) {
 	App::scheduleRedraw();
 }
 
+// TODO: fix environment (uses the main cameras fixed matrix)
+//   would probably best to just abolish the ubo in environment
+//   and use an externally passed cameraUbo instead, contains
+//   fixedMatrix
+// TODO: currently y-flipped not sure why
+// TODO: some problems with the current probe approach:
+//  - the shadow buffers are from the last frame
+//  - for cascaded shadow maps (i.e. directional lights), the
+//    shadows are messed up outside of the current viewing volume.
+//  - due to sharing the shadow buffers with the normal frame rendering
+//    this can't happen in parallalel which we require for probes later on
+//  - transparent surfaces not ordered correctly on all sides
+void ViewApp::screenshot() {
+	if(probe_.state == ProbeState::pending) {
+		dlg_error("Screenshot already pending");
+		return;
+	}
+
+	if(probe_.state == ProbeState::invalid) {
+		auto& dev = vulkanDevice();
+
+		// faces, ubo, ds
+		// TODO: duplication with cameraUbo_ and cameraDs_
+		// TODO(perf): defer initialization for buffers
+		auto camUboSize = sizeof(nytl::Mat4f) // proj matrix
+			+ sizeof(nytl::Mat4f) // inv proj
+			+ sizeof(nytl::Vec3f) // viewPos
+			+ 2 * sizeof(float); // near, far plane
+		for(auto& face : probe_.faces) {
+			face.ubo = {dev.bufferAllocator(), camUboSize,
+				vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+			face.ds = {dev.descriptorAllocator(), cameraDsLayout_};
+
+			vpp::DescriptorSetUpdate dsu(face.ds);
+			dsu.uniform({{{face.ubo}}});
+		}
+
+		probe_.retrieve = {dev.bufferAllocator(), probeFaceSize * 6,
+			vk::BufferUsageBits::transferDst, dev.hostMemoryTypes(), 8u};
+
+		// passes
+		// no cb needed in wb
+		auto wb = doi::WorkBatcher::createDefault(vulkanDevice());
+		PassCreateInfo passInfo {
+			wb,
+			depthFormat(), {
+				cameraDsLayout_,
+				scene_.dsLayout(),
+				lightDsLayout_,
+			}, {
+				linearSampler_,
+				nearestSampler_,
+			},
+			fullVertShader_
+		};
+
+		SyncScope empty {};
+		SyncScope dstLight;
+		dstLight.access = vk::AccessBits::transferRead;
+		dstLight.layout = vk::ImageLayout::transferSrcOptimal;
+		dstLight.stages = vk::PipelineStageBits::transfer;
+		vpp::InitObject initGeomLight(probe_.geomLight, passInfo,
+			empty, empty, empty, empty, empty, dstLight, true);
+		initGeomLight.init();
+
+		// buffers
+		probe_.depth = createDepthTarget(probeSize);
+
+		GeomLightPass::InitBufferData geomLightBuffers;
+		probe_.geomLight.createBuffers(geomLightBuffers, wb, probeSize);
+		probe_.geomLight.initBuffers(geomLightBuffers, probeSize,
+			probe_.depth.imageView(), env_.irradiance().imageView(),
+			env_.envMap().imageView(), env_.convolutionMipmaps(),
+			brdfLut_.imageView());
+
+		// cb
+		auto& qs = device().queueSubmitter();
+		auto qfam = qs.queue().family();
+		probe_.cb = device().commandAllocator().get(qfam);
+		auto cb = probe_.cb.vkHandle();
+
+		vk::beginCommandBuffer(probe_.cb, {});
+		vk::Viewport vp{0.f, 0.f,
+			(float) probeSize.width, (float) probeSize.height, 0.f, 1.f};
+		vk::cmdSetViewport(cb, 0, 1, vp);
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, probeSize.width, probeSize.height});
+
+		auto lightImg = probe_.geomLight.lightTarget().vkImage();
+		for(auto i = 0u; i < 6; ++i) {
+			auto& face = probe_.faces[i];
+			probe_.geomLight.record(cb, probeSize, face.ds, scene_,
+				pointLights_, dirLights_, boxIndices_, &env_, nullptr);
+
+			vk::BufferImageCopy copy;
+			copy.imageSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
+			copy.bufferOffset = probe_.retrieve.offset() + probeFaceSize * i;
+			copy.imageExtent = {probeSize.width, probeSize.height, 1};
+			vk::cmdCopyImageToBuffer(cb, lightImg,
+				vk::ImageLayout::transferSrcOptimal, probe_.retrieve.buffer(),
+				{{copy}});
+
+			vk::ImageMemoryBarrier barrier;
+			barrier.image = lightImg;
+			barrier.srcAccessMask = vk::AccessBits::transferRead;
+			barrier.oldLayout = vk::ImageLayout::transferSrcOptimal;
+			// TODO: probably cleared next, right? what access/stage is that,
+			// probably transfer or something?
+			barrier.dstAccessMask = vk::AccessBits::memoryWrite;
+			barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
+			barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+			vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
+				vk::PipelineStageBits::allCommands, {}, {}, {}, {{barrier}});
+		}
+
+		vk::endCommandBuffer(probe_.cb);
+	}
+
+	// update ubo for camera
+	for(auto i = 0u; i < 6u; ++i) {
+		auto map = probe_.faces[i].ubo.memoryMap();
+		auto span = map.span();
+
+		auto mat = doi::cubeProjectionVP(camera_.pos, i);
+		auto inv = nytl::Mat4f(nytl::inverse(mat));
+		doi::write(span, mat);
+		doi::write(span, inv);
+		doi::write(span, camera_.pos);
+		doi::write(span, 0.01f); // near
+		doi::write(span, 30.f); // far
+
+		if(!map.coherent()) {
+			map.flush();
+		}
+	}
+
+	probe_.state = ProbeState::pending;
+}
+
 bool ViewApp::key(const ny::KeyEvent& ev) {
 	static std::default_random_engine rnd(std::time(nullptr));
 	if(App::key(ev)) {
@@ -1543,6 +1716,10 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		case ny::Keycode::minus:
 			desiredLuminance_ /= 1.1f;
 			return true;
+		case ny::Keycode::t: { // screenshot
+			screenshot();
+			return true;
+		}
 
 		// TODO: re-add with work batcher
 		/*
@@ -1834,6 +2011,39 @@ void ViewApp::updateDevice() {
 	}
 
 	timeWidget_.updateDevice();
+
+	// screenshot
+	// TODO: inefficient, don't stall!
+	if(probe_.state == ProbeState::pending) {
+		auto& qs = vulkanDevice().queueSubmitter();
+		qs.wait(qs.add(probe_.cb));
+
+		auto map = probe_.retrieve.memoryMap();
+		if(!map.coherent()) {
+			map.invalidate();
+		}
+
+		dlg_assert(map.size() == 6 * probeFaceSize);
+
+		const auto* const ptr = map.ptr();
+		auto ptrs = {
+			ptr + 0 * probeFaceSize,
+			ptr + 1 * probeFaceSize,
+			ptr + 2 * probeFaceSize,
+			ptr + 3 * probeFaceSize,
+			ptr + 4 * probeFaceSize,
+			ptr + 5 * probeFaceSize,
+		};
+
+		auto format = GeomLightPass::lightFormat;
+		auto provider = doi::wrap({probeSize.width, probeSize.height},
+			format, 1, 1, 6, {ptrs});
+		auto res = doi::writeKtx("probe.ktx", *provider);
+		dlg_assertm(res == doi::WriteError::none, (int) res);
+		dlg_info("written");
+
+		probe_.state = ProbeState::initialized;
+	}
 
 	// NOTE: not sure where to put that. after rvg label changes here
 	// because it updates rvg

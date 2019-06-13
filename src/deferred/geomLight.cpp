@@ -402,7 +402,12 @@ void GeomLightPass::createBuffers(InitBufferData& data,
 	constexpr auto emissionUsage = baseUsage |
 		vk::ImageUsageBits::transferSrc |
 		vk::ImageUsageBits::storage;
-	constexpr auto lightUsage = baseUsage | vk::ImageUsageBits::storage;
+	constexpr auto lightUsage = baseUsage |
+		vk::ImageUsageBits::storage |
+		// TODO: only needed in special geomLight pass for probes
+		// and screenshots. Should probably be a parameter to this
+		// function whether this is used (performance)
+		vk::ImageUsageBits::transferSrc;
 
 	auto info = createInfo(normalsFormat, baseUsage);
 	normals_ = {data.initNormals.initTarget, wb.alloc.memDevice, info.img,
@@ -495,10 +500,10 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 }
 
 void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
-		vk::DescriptorSet sceneDs, const doi::Scene& scene,
+		vk::DescriptorSet camDs, const doi::Scene& scene,
 		nytl::Span<doi::PointLight> pointLights,
 		nytl::Span<doi::DirLight> dirLights, vpp::BufferSpan boxIndices,
-		const doi::Environment* env, TimeWidget& time) {
+		const doi::Environment* env, TimeWidget* time) {
 	vpp::DebugLabel(cb, "GeomLightPass");
 	auto width = size.width;
 	auto height = size.height;
@@ -509,7 +514,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 	cv[2] = {{0.f, 0.f, 0.f, 0.f}}; // emission, rgba16f
 	cv[3].depthStencil = {1.f, 0u}; // depth
 	cv[4] = {{1000.f, 0.f, 0.f, 0.f}}; // linear r16f depth
-	cv[5] = {{0.f, 0.f, 0.f, 0.f}}; // light, rgba16f
+	cv[5] = {{0.f, 0.f, 0.f, 1.f}}; // light, rgba16f
 	vk::cmdBeginRenderPass(cb, {rp_, fb_,
 		{0u, 0u, width, height},
 		std::uint32_t(cv.size()), cv.data()
@@ -518,9 +523,11 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 	{
 		vpp::DebugLabel(cb, "geometry pass");
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, geomPipe_);
-		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {sceneDs});
+		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {camDs});
 		scene.render(cb, geomPipeLayout_, false); // opaque
-		time.add("geometry");
+		if(time) {
+			time->add("geometry");
+		}
 	}
 
 	// render light balls with emission material
@@ -542,7 +549,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 
 	{
 		vpp::DebugLabel(cb, "light pass");
-		doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 0, {sceneDs, lightDs_});
+		doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 0, {camDs, lightDs_});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pointLightPipe_);
 		vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
 			boxIndices.offset(), vk::IndexType::uint16);
@@ -558,15 +565,19 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 		}
 
-		time.add("light");
+		if(time) {
+			time->add("light");
+		}
 		if(renderAO()) {
 			vpp::DebugLabel(cb, "ao pass");
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, aoPipe_);
-			doi::cmdBindGraphicsDescriptors(cb, aoPipeLayout_, 0, {sceneDs, aoDs_});
+			doi::cmdBindGraphicsDescriptors(cb, aoPipeLayout_, 0, {camDs, aoDs_});
 			vk::cmdPushConstants(cb, aoPipeLayout_, vk::ShaderStageBits::fragment,
 				0, 4, &aoEnvLods_);
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
-			time.add("ao");
+			if(time) {
+				time->add("ao");
+			}
 		}
 
 		// important that this comes before the transparent pass since
@@ -575,13 +586,17 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 			vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
 				boxIndices.offset(), vk::IndexType::uint16);
 			env->render(cb);
-			time.add("env");
+			if(time) {
+				time->add("env");
+			}
 		}
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
-		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {sceneDs});
+		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {camDs});
 		scene.render(cb, geomPipeLayout_, true); // blend
-		time.add("transparent");
+		if(time) {
+			time->add("transparent");
+		}
 	}
 
 	vk::cmdEndRenderPass(cb);

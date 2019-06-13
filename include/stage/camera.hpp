@@ -57,4 +57,9 @@ inline void rotateView(Camera& c, float dyaw, float dpitch) {
 // returns whether a change was made
 bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt);
 
+// returns the view projection matrix to render a cubemap from position 'pos'
+// for face 'i'. Aspect is assumed to be 1.
+nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
+	float near = 0.01f, float far = 30.f);
+
 } // namespace doi

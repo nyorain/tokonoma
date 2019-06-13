@@ -374,18 +374,18 @@ public:
 		return true;
 	}
 
-	bool features(vk::PhysicalDeviceFeatures& enable,
-			const vk::PhysicalDeviceFeatures& supported) override {
+	bool features(doi::Features& enable, const doi::Features& supported) override {
 		if(!App::features(enable, supported)) {
 			return false;
 		}
 
-		if(!supported.shaderStorageImageExtendedFormats) {
+		// TODO: really not needed, just check manually for format support...
+		if(!supported.base.features.shaderStorageImageExtendedFormats) {
 			dlg_fatal("shaderStorageImageExtendedFormats not supported");
 			return false;
 		}
 
-		enable.shaderStorageImageExtendedFormats = true;
+		enable.base.features.shaderStorageImageExtendedFormats = true;
 		return true;
 	}
 
