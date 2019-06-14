@@ -109,10 +109,18 @@
 // TODO: rgba16snorm (normalsFormat) isn't guaranteed to be supported
 //   as color attachment... i guess we could fall back to rgba16sint
 //   which is guaranteed to be supported? and then encode it
+// TODO: we don't need one extra ubo/ds for environment.
+//   the whole fixedMatrix stuff is rather bad, we could just add
+//   the position in skybox.vert to viewPos and use the normal matrix
 
 // not that important but should be considered:
 // TODO(idea): blur bloom/apply dof depending on light? the brighter,
 //   the more blur (e.g. dof), is it maybe possible to merge bloom and dof?
+// TODO(idea): we could render the skybox implicitly in the ao pass (we
+//   can calculate the view direction there in world space) instead of
+//   Environment:render. Would abolish the need for a ds/dslayout in
+//   Environment and additional render call (not sure how to stay
+//   compatible with ddd though).
 // TODO: support destroying pass render buffers like previously
 //   done on deferred. Only create them is needed/pass is active.
 // TODO: support dynamic shader reloading (from file) on pass (re-)creation?
@@ -305,6 +313,8 @@ protected:
 
 	vpp::SubBuffer cameraUbo_;
 	vpp::TrDs cameraDs_;
+	vpp::SubBuffer envCameraUbo_;
+	vpp::TrDs envCameraDs_;
 
 	vpp::Sampler linearSampler_;
 	vpp::Sampler nearestSampler_;
@@ -411,6 +421,9 @@ protected:
 		struct Face {
 			vpp::TrDs ds;
 			vpp::SubBuffer ubo;
+
+			vpp::TrDs envDs;
+			vpp::SubBuffer envUbo;
 		};
 
 		std::array<Face, 6u> faces;
@@ -678,7 +691,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		geomLight_.lightTarget().vkImage());
 	passGeomLight.record = [&](const auto& buf) {
 		geomLight_.record(buf.cb, buf.size, cameraDs_, scene_, pointLights_,
-			dirLights_, boxIndices_, &env_, &timeWidget_);
+			dirLights_, boxIndices_, envCameraDs_, &env_, &timeWidget_);
 	};
 
 	vpp::InitObject initPP(pp_, passInfo, swapchainInfo().imageFormat);
@@ -933,7 +946,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 	}
 
 	// others
-	env_.createPipe(device(), geomLight_.renderPass(), 1,
+	env_.createPipe(device(), cameraDsLayout_, geomLight_.renderPass(), 1,
 		vk::SampleCountBits::e1);
 }
 
@@ -1051,6 +1064,10 @@ void ViewApp::initRenderData() {
 	vpp::Init<vpp::SubBuffer> initCameraUbo(batch.alloc.bufHost, camUboSize,
 		vk::BufferUsageBits::uniformBuffer, hostMem);
 
+	vpp::Init<vpp::TrDs> initEnvCameraDs(batch.alloc.ds, cameraDsLayout_);
+	vpp::Init<vpp::SubBuffer> initEnvCameraUbo(batch.alloc.bufHost,
+		sizeof(nytl::Mat4f), vk::BufferUsageBits::uniformBuffer, hostMem);
+
 	vpp::Init<vpp::SubBuffer> initRenderStage(batch.alloc.bufHost,
 		5 * sizeof(f16), vk::BufferUsageBits::transferDst, hostMem, 16u);
 
@@ -1145,6 +1162,8 @@ void ViewApp::initRenderData() {
 	selectionStage_ = initSelectionStage.init();
 	cameraDs_ = initCameraDs.init();
 	cameraUbo_ = initCameraUbo.init();
+	envCameraDs_ = initEnvCameraDs.init();
+	envCameraUbo_ = initEnvCameraUbo.init();
 	env_.init(envData, batch);
 	brdfLut_ = initBrdfLut.init(batch);
 	renderStage_ = initRenderStage.init();
@@ -1208,6 +1227,10 @@ void ViewApp::initRenderData() {
 	vpp::DescriptorSetUpdate sdsu(cameraDs_);
 	sdsu.uniform({{{cameraUbo_}}});
 	sdsu.apply();
+
+	vpp::DescriptorSetUpdate edsu(envCameraDs_);
+	edsu.uniform({{{envCameraUbo_}}});
+	edsu.apply();
 
 	currentID_ = scene_.primitives().size();
 	// lightMaterial_.emplace(materialDsLayout_,
@@ -1569,8 +1592,15 @@ void ViewApp::screenshot() {
 				vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 			face.ds = {dev.descriptorAllocator(), cameraDsLayout_};
 
+			face.envUbo = {dev.bufferAllocator(), sizeof(nytl::Mat4f),
+				vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+			face.envDs = {dev.descriptorAllocator(), cameraDsLayout_};
+
 			vpp::DescriptorSetUpdate dsu(face.ds);
 			dsu.uniform({{{face.ubo}}});
+
+			vpp::DescriptorSetUpdate edsu(face.envDs);
+			edsu.uniform({{{face.envUbo}}});
 		}
 
 		probe_.retrieve = {dev.bufferAllocator(), probeFaceSize * 6,
@@ -1627,7 +1657,8 @@ void ViewApp::screenshot() {
 		for(auto i = 0u; i < 6; ++i) {
 			auto& face = probe_.faces[i];
 			probe_.geomLight.record(cb, probeSize, face.ds, scene_,
-				pointLights_, dirLights_, boxIndices_, &env_, nullptr);
+				pointLights_, dirLights_, boxIndices_, face.envDs, &env_,
+				nullptr);
 
 			vk::BufferImageCopy copy;
 			copy.imageSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
@@ -1668,6 +1699,16 @@ void ViewApp::screenshot() {
 
 		if(!map.coherent()) {
 			map.flush();
+		}
+
+		auto envMap = probe_.faces[i].envUbo.memoryMap();
+		auto envSpan = envMap.span();
+
+		// fixed matrix, position irrelevant
+		doi::write(envSpan, doi::cubeProjectionVP({}, i));
+
+		if(!envMap.coherent()) {
+			envMap.flush();
 		}
 	}
 
@@ -1887,8 +1928,17 @@ void ViewApp::updateDevice() {
 		doi::write(span, camera_.pos);
 		doi::write(span, camera_.perspective.near);
 		doi::write(span, camera_.perspective.far);
+		if(!map.coherent()) {
+			map.flush();
+		}
 
-		env_.updateDevice(fixedMatrix(camera_));
+		auto envMap = envCameraUbo_.memoryMap();
+		auto envSpan = envMap.span();
+		doi::write(envSpan, fixedMatrix(camera_));
+		if(!envMap.coherent()) {
+			envMap.flush();
+		}
+
 		if(updateScene_) {
 			scene_.updateDevice(mat);
 		}

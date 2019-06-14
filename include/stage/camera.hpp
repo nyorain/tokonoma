@@ -12,7 +12,7 @@ namespace doi {
 // Simple perspective 3D matrix (rh coordinate system)
 struct Camera {
 	bool update = true; // set when changed
-	nytl::Vec3f pos {0.f, 0.f, 3.f};
+	nytl::Vec3f pos {0.f, 0.f, 2.f};
 	nytl::Vec3f dir {0.f, 0.f, -1.f};
 	nytl::Vec3f up {0.f, 1.f, 0.f};
 

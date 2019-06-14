@@ -31,25 +31,25 @@ public:
 	struct InitData {
 		doi::Texture::InitData initEnvMap;
 		doi::Texture::InitData initIrradiance;
-		vpp::SubBuffer::InitData initUbo;
 		vpp::TrDs::InitData initDs;
 	};
 
 public:
 	Environment() = default;
-	void create(InitData&, const WorkBatcher& wb, nytl::StringParam envMapPath,
-		nytl::StringParam irradiancePath, vk::Sampler linear);
-	void init(InitData&, const WorkBatcher&);
-	void createPipe(const vpp::Device&, vk::RenderPass rp, unsigned subpass,
-		vk::SampleCountBits samples);
-
 	Environment(Environment&&) = delete;
 	Environment& operator=(Environment&&) = delete;
 
-	// Requires caller to bind cube index buffer with boxInsideIndices
-	void render(vk::CommandBuffer cb) const;
-	void updateDevice(const nytl::Mat4f& viewProj);
+	void create(InitData&, const WorkBatcher& wb, nytl::StringParam envMapPath,
+		nytl::StringParam irradiancePath, vk::Sampler linear);
+	void init(InitData&, const WorkBatcher&);
+	void createPipe(const vpp::Device&, vk::DescriptorSetLayout camDsLayout,
+		vk::RenderPass rp, unsigned subpass, vk::SampleCountBits samples);
 
+	// Requires caller to bind cube index buffer with boxInsideIndices.
+	// Also requires the camera ds to be bound as set 0.
+	void render(vk::CommandBuffer cb) const;
+
+	auto& pipeLayout() const { return pipeLayout_; }
 	auto& envMap() const { return envMap_; }
 	auto& irradiance() const { return irradiance_; }
 	auto convolutionMipmaps() const { return convolutionMipmaps_; }
@@ -58,7 +58,6 @@ protected:
 	doi::Texture envMap_; // contains specular ibl mip maps
 	doi::Texture irradiance_;
 
-	vpp::SubBuffer ubo_;
 	vpp::TrDsLayout dsLayout_;
 	vpp::TrDs ds_;
 	vpp::PipelineLayout pipeLayout_;

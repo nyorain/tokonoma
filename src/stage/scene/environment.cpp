@@ -1,6 +1,7 @@
 #include <stage/scene/environment.hpp>
 #include <stage/texture.hpp>
 #include <stage/bits.hpp>
+#include <stage/render.hpp>
 
 #include <vpp/bufferOps.hpp>
 #include <vpp/imageOps.hpp>
@@ -41,38 +42,31 @@ void Environment::create(InitData& data, const WorkBatcher& wb,
 	// ds layout
 	auto bindings = {
 		vpp::descriptorBinding(
-			vk::DescriptorType::uniformBuffer,
-			vk::ShaderStageBits::vertex),
-		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &linear),
 	};
 
 	dsLayout_ = {dev, bindings};
-	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 
 	// ubo
-	auto uboSize = sizeof(nytl::Mat4f);
-	ubo_ = {data.initUbo, dev.bufferAllocator(), uboSize,
-		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
-
 	ds_ = {data.initDs, dev.descriptorAllocator(), dsLayout_};
 }
 
 void Environment::init(InitData& data, const WorkBatcher& wb) {
 	envMap_.init(data.initEnvMap, wb);
 	irradiance_.init(data.initIrradiance, wb);
-	ubo_.init(data.initUbo);
 	ds_.init(data.initDs);
 
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	dsu.imageSampler({{{}, envMap_.vkImageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 }
 
-void Environment::createPipe(const vpp::Device& dev, vk::RenderPass rp,
+void Environment::createPipe(const vpp::Device& dev,
+		vk::DescriptorSetLayout camDsLayout, vk::RenderPass rp,
 		unsigned subpass, vk::SampleCountBits samples) {
+	pipeLayout_ = {dev, {{camDsLayout, dsLayout_.vkHandle()}}, {}};
+
 	vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);
 	vpp::ShaderModule fragShader(dev, stage_skybox_frag_data);
 	vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{{
@@ -89,6 +83,7 @@ void Environment::createPipe(const vpp::Device& dev, vk::RenderPass rp,
 	// gpi.rasterization.cullMode = vk::CullModeBits::back;
 	// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
+	// TODO: not sure whether we need blending here, probably not?
 	vk::PipelineColorBlendAttachmentState blendAttachment;
 	blendAttachment.blendEnable = true;
 	blendAttachment.colorBlendOp = vk::BlendOp::add;
@@ -105,16 +100,9 @@ void Environment::createPipe(const vpp::Device& dev, vk::RenderPass rp,
 }
 
 void Environment::render(vk::CommandBuffer cb) const {
-	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pipeLayout_, 0, {{ds_.vkHandle()}}, {});
+	doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 1, {ds_});
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 	vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
-}
-
-void Environment::updateDevice(const nytl::Mat4f& viewProj) {
-	auto map = ubo_.memoryMap();
-	auto span = map.span();
-	doi::write(span, viewProj);
 }
 
 } // namespace doi

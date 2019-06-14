@@ -47,7 +47,6 @@ void main() {
 	outPos = m.xyz / m.w;
 
 	gl_Position = light.proj[faceIndex] * m;
-	// gl_Position.y = -gl_Position.y;
+	gl_Position.y = -gl_Position.y;
 }
-
 

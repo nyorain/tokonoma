@@ -1,5 +1,6 @@
 #include <stage/app.hpp>
 #include <stage/window.hpp>
+#include <stage/render.hpp>
 #include <stage/texture.hpp>
 #include <stage/bits.hpp>
 #include <stage/defer.hpp>
@@ -28,8 +29,7 @@
 #include <shaders/stage.skybox.vert.h>
 #include <shaders/stage.skybox.frag.h>
 
-// TODO: allow selecting different mip layers/faces/array layers
-// also add cubemap visualization
+// TODO: add checkerboard pattern for visualizing alpha
 
 using namespace doi::types;
 
@@ -123,18 +123,25 @@ public:
 
 		// layouts
 		vpp::SubBuffer boxIndicesStage;
+		auto tbindings = {
+			vpp::descriptorBinding(
+				vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+		};
+
+		texDsLayout_ = {dev, tbindings};
+
 		if(cubemap_) {
-			auto bindings = {
+			auto cbindings = {
 				vpp::descriptorBinding(
 					vk::DescriptorType::uniformBuffer,
 					vk::ShaderStageBits::vertex),
-				vpp::descriptorBinding(
-					vk::DescriptorType::combinedImageSampler,
-					vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 			};
 
-			dsLayout_ = {dev, bindings};
-			pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
+			camDsLayout_ = {dev, cbindings};
+			pipeLayout_ = {dev, {{
+				camDsLayout_.vkHandle(),
+				texDsLayout_.vkHandle()}}, {}};
 
 			// indices
 			auto usage = vk::BufferUsageBits::indexBuffer |
@@ -156,14 +163,7 @@ public:
 			gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 			pipe_ = {dev, gpi.info()};
 		} else {
-			auto bindings = {
-				vpp::descriptorBinding(
-					vk::DescriptorType::combinedImageSampler,
-					vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-			};
-
-			dsLayout_ = {dev, bindings};
-			pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
+			pipeLayout_ = {dev, {{texDsLayout_.vkHandle()}}, {}};
 
 			// pipeline
 			vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
@@ -187,15 +187,15 @@ public:
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 		// ds
-		ds_ = {dev.descriptorAllocator(), dsLayout_};
-		vpp::DescriptorSetUpdate dsu(ds_);
+		texDs_ = {dev.descriptorAllocator(), texDsLayout_};
+		vpp::DescriptorSetUpdate dsu(texDs_);
+		dsu.imageSampler({{{{}, view_,
+			vk::ImageLayout::shaderReadOnlyOptimal}}});
+
 		if(cubemap_) {
-			dsu.uniform({{{cameraUbo_}}});
-			dsu.imageSampler({{{{}, view_,
-				vk::ImageLayout::shaderReadOnlyOptimal}}});
-		} else {
-			dsu.imageSampler({{{{}, view_,
-				vk::ImageLayout::shaderReadOnlyOptimal}}});
+			camDs_ = {dev.descriptorAllocator(), camDsLayout_};
+			vpp::DescriptorSetUpdate cdsu(camDs_);
+			cdsu.uniform({{{cameraUbo_}}});
 		}
 
 		return true;
@@ -226,13 +226,13 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {{ds_.vkHandle()}}, {});
 		if(cubemap_) {
+			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {camDs_, texDs_});
 			vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 				boxIndices_.offset(), vk::IndexType::uint16);
 			vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
 		} else {
+			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {texDs_});
 			vk::cmdDraw(cb, 4, 1, 0, 0);
 		}
 	}
@@ -264,15 +264,9 @@ public:
 			viewInfo.subresourceRange.layerCount = 1u;
 			viewInfo.subresourceRange.levelCount = 1u;
 			view_ = {device(), viewInfo};
-			vpp::DescriptorSetUpdate dsu(ds_);
-			if(cubemap_) {
-				dsu.uniform({{{cameraUbo_}}});
-				dsu.imageSampler({{{{}, view_,
-					vk::ImageLayout::shaderReadOnlyOptimal}}});
-			} else {
-				dsu.imageSampler({{{{}, view_,
-					vk::ImageLayout::shaderReadOnlyOptimal}}});
-			}
+			vpp::DescriptorSetUpdate dsu(texDs_);
+			dsu.imageSampler({{{{}, view_,
+				vk::ImageLayout::shaderReadOnlyOptimal}}});
 
 			App::scheduleRerecord();
 		}
@@ -351,8 +345,12 @@ protected:
 	vpp::ImageView view_;
 
 	vpp::Sampler sampler_;
-	vpp::TrDsLayout dsLayout_;
-	vpp::TrDs ds_;
+	vpp::TrDsLayout texDsLayout_;
+	vpp::TrDs texDs_;
+	// cubemap only
+	vpp::TrDsLayout camDsLayout_;
+	vpp::TrDs camDs_;
+
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
 	vpp::Pipeline boxPipe_;

@@ -51,16 +51,45 @@ bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
 
 nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 		float near, float far) {
+	constexpr struct CubeFace {
+		nytl::Vec3f x;
+		nytl::Vec3f y;
+		nytl::Vec3f z; // direction of the face
+	} faces[] = {
+		{{0, 0, -1}, {0, -1, 0}, {1, 0, 0}},
+		{{0, 0, 1}, {0, -1, 0}, {-1, 0, 0}},
+		{{1, 0, 0}, {0, 0, 1}, {0, -1, 0}},
+		{{1, 0, 0}, {0, 0, -1}, {0, 1, 0}},
+		{{1, 0, 0}, {0, -1, 0}, {0, 0, 1}},
+		{{-1, 0, 0}, {0, -1, 0}, {0, 0, -1}},
+	};
+
+	auto& f = faces[face];
+	nytl::Mat4f view = nytl::identity<4, float>();
+	view[0] = nytl::Vec4f(f.x);
+	view[1] = nytl::Vec4f(f.y);
+	view[2] = -nytl::Vec4f(f.z);
+
+	view[0][3] = -dot(f.x, pos);
+	view[1][3] = -dot(f.y, pos);
+	view[2][3] = dot(f.z, pos);
+
+	auto fov = 0.5 * nytl::constants::pi;
+	auto aspect = 1.f;
+	auto mat = doi::perspective3RH<float>(fov, aspect, near, far);
+	return mat * view;
+
+	/*
 	static constexpr struct {
 		nytl::Vec3f normal;
 		nytl::Vec3f up;
 	} views[6] = {
-		{{1.f, 0.f, 0.f}, {0.f, -1.f, 0.f}},
-		{{-1.f, 0.f, 0.f}, {0.f, -1.f, 0.f}},
+		{{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}},
+		{{-1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}},
 		{{0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}},
 		{{0.f, -1.f, 0.f}, {0.f, 0.f, -1.f}},
-		{{0.f, 0.f, 1.f}, {0.f, -1.f, 0.f}},
-		{{0.f, 0.f, -1.f}, {0.f, -1.f, 0.f}},
+		{{0.f, 0.f, 1.f}, {0.f, 1.f, 0.f}},
+		{{0.f, 0.f, -1.f}, {0.f, 1.f, 0.f}},
 	};
 
 	auto fov = 0.5 * nytl::constants::pi;
@@ -68,6 +97,7 @@ nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 	auto mat = doi::perspective3RH<float>(fov, aspect, near, far);
 	mat = mat * doi::lookAtRH(pos, pos + views[face].normal, views[face].up);
 	return mat;
+	*/
 
 	/*
 	// alternative implementation that uses manual rotations (and translation)
@@ -76,12 +106,10 @@ nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 	auto pi = float(nytl::constants::pi);
 	auto fov = 0.5 * pi;
 	auto aspect = 1.f;
-	auto np = 0.1f;
-	auto fp = this->data.farPlane;
-	auto mat = doi::perspective3RH<float>(fov, aspect, np, fp);
+	auto mat = doi::perspective3RH<float>(fov, aspect, near, far);
 	auto viewMat = nytl::identity<4, float>();
 
-	switch(i) {
+	switch(face) {
 	case 0:
 		// viewMat = doi::rotateMat({1.f, 0.f, 0.f}, pi)
 		viewMat = doi::rotateMat({0.f, 1.f, 0.f}, pi / 2);
@@ -104,7 +132,7 @@ nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 		break;
 	}
 
-	return mat * viewMat * doi::translateMat({-this->data.position});
+	return mat * viewMat * doi::translateMat({-pos});
 	*/
 }
 

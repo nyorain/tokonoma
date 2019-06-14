@@ -49,6 +49,7 @@ void main() {
 	dist += bias;
 	// XXX: use slope as with vkCmdSetDepthBias; probably not perfect
 	// read up in vulkan spec how it's implemented
+	// TODO: use gl_FragCoord.z instead of inPos.z?
 	const float biasSlope = 3.0;
 	dist += biasSlope * max(abs(dFdx(inPos.z)), abs(dFdy(inPos.z)));
 

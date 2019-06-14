@@ -503,7 +503,8 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		vk::DescriptorSet camDs, const doi::Scene& scene,
 		nytl::Span<doi::PointLight> pointLights,
 		nytl::Span<doi::DirLight> dirLights, vpp::BufferSpan boxIndices,
-		const doi::Environment* env, TimeWidget* time) {
+		vk::DescriptorSet envCamDs, const doi::Environment* env,
+		TimeWidget* time) {
 	vpp::DebugLabel(cb, "GeomLightPass");
 	auto width = size.width;
 	auto height = size.height;
@@ -583,6 +584,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		// important that this comes before the transparent pass since
 		// that doesn't write the depth buffer
 		if(env) {
+			doi::cmdBindGraphicsDescriptors(cb, env->pipeLayout(), 0, {envCamDs});
 			vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
 				boxIndices.offset(), vk::IndexType::uint16);
 			env->render(cb);
