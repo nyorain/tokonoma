@@ -1,6 +1,7 @@
 #include <stage/camera.hpp>
 #include <ny/keyboardContext.hpp>
 #include <ny/key.hpp>
+#include <dlg/dlg.hpp>
 
 namespace doi {
 
@@ -51,20 +52,25 @@ bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
 
 nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 		float near, float far) {
+	// y sign flipped everywhere
+	// TODO: not sure why slightly different to pbr.cpp
 	constexpr struct CubeFace {
 		nytl::Vec3f x;
 		nytl::Vec3f y;
 		nytl::Vec3f z; // direction of the face
 	} faces[] = {
-		{{0, 0, -1}, {0, -1, 0}, {1, 0, 0}},
-		{{0, 0, 1}, {0, -1, 0}, {-1, 0, 0}},
-		{{1, 0, 0}, {0, 0, 1}, {0, -1, 0}},
+		{{0, 0, -1}, {0, 1, 0}, {1, 0, 0}},
+		{{0, 0, 1}, {0, 1, 0}, {-1, 0, 0}},
 		{{1, 0, 0}, {0, 0, -1}, {0, 1, 0}},
-		{{1, 0, 0}, {0, -1, 0}, {0, 0, 1}},
-		{{-1, 0, 0}, {0, -1, 0}, {0, 0, -1}},
+		{{1, 0, 0}, {0, 0, 1}, {0, -1, 0}},
+		{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
+		{{-1, 0, 0}, {0, 1, 0}, {0, 0, -1}},
 	};
 
 	auto& f = faces[face];
+	dlg_assertm(nytl::cross(f.x, f.y) == f.z,
+		"{} {}", nytl::cross(f.x, f.y), f.z);
+
 	nytl::Mat4f view = nytl::identity<4, float>();
 	view[0] = nytl::Vec4f(f.x);
 	view[1] = nytl::Vec4f(f.y);

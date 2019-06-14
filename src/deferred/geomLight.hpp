@@ -68,7 +68,7 @@ public:
 		SyncScope dstDepth,
 		SyncScope dstLDepth,
 		SyncScope dstLight,
-		bool ao);
+		bool ao, bool flipCull = false);
 	void init(InitData&);
 
 	void createBuffers(InitBufferData&, const doi::WorkBatcher&, vk::Extent2D);

@@ -36,6 +36,7 @@ vpp::ViewableImageCreateInfo cubemapCreateInfo(nytl::Vec2ui size) {
 	return info;
 }
 
+// TODO: not sure why slightly different to camera.cpp (cubeProjectionVP)
 // https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
 // the directions vectors are like table 26 (chapter 15.6.4) in the vulkan
 // spec, except that the y axis is always the opposite, since up
@@ -47,12 +48,12 @@ constexpr struct CubeFace {
 	float roughness; // only relevant for specular filtering
 	nytl::Vec3f z; // direction of the face
 } faces[] = {
-	{{0, 0, -1}, 0u, {0, -1, 0}, 0.f, {1, 0, 0}},
-	{{0, 0, 1}, 1u, {0, -1, 0}, 0.f, {-1, 0, 0}},
-	{{1, 0, 0}, 2u, {0, 0, 1}, 0.f, {0, 1, 0}},
-	{{1, 0, 0}, 3u, {0, 0, -1}, 0.f, {0, -1, 0}},
-	{{1, 0, 0}, 4u, {0, -1, 0}, 0.f, {0, 0, 1}},
-	{{-1, 0, 0}, 5u, {0, -1, 0}, 0.f, {0, 0, -1}},
+	{{0, 0, -1}, 0u, {0, 1, 0}, 0.f, {1, 0, 0}},
+	{{0, 0, 1}, 1u, {0, 1, 0}, 0.f, {-1, 0, 0}},
+	{{1, 0, 0}, 2u, {0, 0, 1}, 0.f, {0, -1, 0}},
+	{{1, 0, 0}, 3u, {0, 0, -1}, 0.f, {0, 1, 0}},
+	{{1, 0, 0}, 4u, {0, 1, 0}, 0.f, {0, 0, 1}},
+	{{-1, 0, 0}, 5u, {0, 1, 0}, 0.f, {0, 0, -1}},
 };
 
 } // anon namespace

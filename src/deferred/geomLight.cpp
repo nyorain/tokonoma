@@ -25,7 +25,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		SyncScope dstEmission,
 		SyncScope dstDepth,
 		SyncScope dstLDepth,
-		SyncScope dstLight, bool ao) {
+		SyncScope dstLight, bool ao, bool flipCull) {
 	auto& dev = info.wb.dev;
 
 	// render pass
@@ -200,7 +200,9 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 	// fragment shader. That is required since some models rely on
 	// backface culling for effects (e.g. outlines). See model.frag
 	gpi.rasterization.cullMode = vk::CullModeBits::none;
-	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+	gpi.rasterization.frontFace = flipCull ?
+		vk::FrontFace::clockwise :
+		vk::FrontFace::counterClockwise;
 	geomPipe_ = {dev, gpi.info()};
 	vpp::nameHandle(geomPipe_, "GeomLightPass:geomPipe");
 

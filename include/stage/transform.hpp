@@ -150,7 +150,7 @@ nytl::SquareMat<4, P> perspective3LH(P fov, P aspect, P pnear, P pfar) {
 	ret[2][2] = pfar / (pfar - pnear);
 	ret[3][2] = P(1);
 
-	ret[2][3] = (pfar * pnear) / (pnear - pfar);
+	ret[2][3] = -(pfar * pnear) / (pfar - pnear);
 	return ret;
 }
 
@@ -163,10 +163,10 @@ nytl::SquareMat<4, P> perspective3RH(P fov, P aspect, P pnear, P pfar) {
 	ret[0][0] = f / aspect;
 	ret[1][1] = f;
 
-	ret[2][2] = pfar / (pnear - pfar);
+	ret[2][2] = -pfar / (pfar - pnear);
 	ret[3][2] = -P(1);
 
-	ret[2][3] = (pfar * pnear) / (pnear - pfar);
+	ret[2][3] = -(pfar * pnear) / (pfar - pnear);
 	return ret;
 }
 

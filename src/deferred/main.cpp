@@ -1553,6 +1553,7 @@ void ViewApp::update(double dt) {
 	// implementations of same pass...
 	geomLight_.aoParams.flags = ao_.params.flags;
 	geomLight_.aoParams.factor = ao_.params.factor;
+	probe_.geomLight.aoParams.factor = ao_.params.factor;
 
 	// TODO: only here for fps testing, could be removed to not
 	// render when not needed
@@ -1628,7 +1629,7 @@ void ViewApp::screenshot() {
 		dstLight.layout = vk::ImageLayout::transferSrcOptimal;
 		dstLight.stages = vk::PipelineStageBits::transfer;
 		vpp::InitObject initGeomLight(probe_.geomLight, passInfo,
-			empty, empty, empty, empty, empty, dstLight, true);
+			empty, empty, empty, empty, empty, dstLight, true, true);
 		initGeomLight.init();
 
 		// buffers
@@ -2065,6 +2066,7 @@ void ViewApp::updateDevice() {
 	// screenshot
 	// TODO: inefficient, don't stall!
 	if(probe_.state == ProbeState::pending) {
+		probe_.geomLight.updateDevice();
 		auto& qs = vulkanDevice().queueSubmitter();
 		qs.wait(qs.add(probe_.cb));
 
