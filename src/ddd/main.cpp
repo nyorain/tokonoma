@@ -1,3 +1,11 @@
+// Simple forward renderer mainly as reference for other rendering
+// concepts.
+// TODO: re-add point light support (mainly in shader, needs way to
+//   differentiate light types, aliasing is undefined behavior)
+//   probably best to just have an array of both descriptors and
+//   pass `numDirLights`, `numPointLights`
+// TODO: fix/remove light visualization
+
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
 #include <stage/render.hpp>
@@ -45,9 +53,6 @@
 #include <vector>
 #include <string>
 
-// TODO: lightBall visualization really bad idea for
-// directional light...
-
 class ViewApp : public doi::App {
 public:
 	static constexpr auto maxLightSize = 8u;
@@ -92,12 +97,6 @@ public:
 		sci.maxLod = 0.25;
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
 		sampler_ = {dev, sci};
-
-		doi::Environment::InitData initEnv;
-		environment_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx",
-			sampler_);
-		environment_.createPipe(device(), renderPass(), 0u, samples());
-		environment_.init(initEnv, batch);
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
@@ -151,6 +150,13 @@ public:
 		};
 
 		lightDsLayout_ = {dev, lightBindings};
+
+		doi::Environment::InitData initEnv;
+		environment_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx",
+			sampler_);
+		environment_.createPipe(device(), cameraDsLayout_,
+			renderPass(), 0u, samples());
+		environment_.init(initEnv, batch);
 
 		// pipeline layout consisting of all ds layouts and pcrs
 		pipeLayout_ = {dev, {{
@@ -223,6 +229,10 @@ public:
 		cameraUbo_ = {dev.bufferAllocator(), cameraUboSize,
 			vk::BufferUsageBits::uniformBuffer, hostMem};
 
+		envCameraUbo_ = {dev.bufferAllocator(), sizeof(nytl::Mat4f),
+			vk::BufferUsageBits::uniformBuffer, hostMem};
+		envCameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
+
 		// == example light ==
 		shadowData_ = doi::initShadowData(dev, depthFormat(),
 			lightDsLayout_, scene_.dsLayout(), multiview_, depthClamp_);
@@ -239,6 +249,10 @@ public:
 		vpp::DescriptorSetUpdate sdsu(cameraDs_);
 		sdsu.uniform({{{cameraUbo_}}});
 		sdsu.apply();
+
+		vpp::DescriptorSetUpdate edsu(envCameraDs_);
+		edsu.uniform({{{envCameraUbo_}}});
+		edsu.apply();
 
 		return true;
 	}
@@ -325,6 +339,8 @@ public:
 
 		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 			boxIndices_.offset(), vk::IndexType::uint16);
+		doi::cmdBindGraphicsDescriptors(cb, environment_.pipeLayout(), 0,
+			{envCameraDs_});
 		environment_.render(cb);
 	}
 
@@ -415,10 +431,18 @@ public:
 			doi::write(span, camera_.pos);
 			doi::write(span, camera_.perspective.near);
 			doi::write(span, camera_.perspective.far);
+			if(!map.coherent()) {
+				map.flush();
+			}
+
+			auto envMap = envCameraUbo_.memoryMap();
+			auto envSpan = envMap.span();
+			doi::write(envSpan, fixedMatrix(camera_));
+			if(!envMap.coherent()) {
+				envMap.flush();
+			}
 
 			scene_.updateDevice(matrix(camera_));
-			environment_.updateDevice(fixedMatrix(camera_));
-
 			updateLight_ = true;
 		}
 
@@ -441,14 +465,13 @@ public:
 protected:
 	vpp::Sampler sampler_;
 	vpp::TrDsLayout cameraDsLayout_;
-	// vpp::TrDsLayout sceneDsLayout_;
-	// vpp::TrDsLayout primitiveDsLayout_;
-	// vpp::TrDsLayout materialDsLayout_;
 	vpp::TrDsLayout lightDsLayout_;
 	vpp::PipelineLayout pipeLayout_;
 
 	vpp::SubBuffer cameraUbo_;
 	vpp::TrDs cameraDs_;
+	vpp::SubBuffer envCameraUbo_;
+	vpp::TrDs envCameraDs_;
 	vpp::Pipeline pipe_;
 
 	doi::Texture dummyTex_;

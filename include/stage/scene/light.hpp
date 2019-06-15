@@ -9,6 +9,7 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 
+// TODO: overall way too much duct tape here
 // TODO: we currently have a hardcoded depth bias guess
 // TODO: allow to configure dir light view frustum size
 // TODO: allow to configure/change size_
@@ -71,7 +72,7 @@ public:
 	// const Primitive& lightBall() const { return lightBall_; }
 
 protected:
-	nytl::Vec2ui size_ {512, 512};
+	nytl::Vec2ui size_ {1024, 1024};
 	vpp::ViewableImage target_; // depth
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;

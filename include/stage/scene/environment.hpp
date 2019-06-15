@@ -50,7 +50,7 @@ public:
 	void render(vk::CommandBuffer cb) const;
 
 	auto& pipeLayout() const { return pipeLayout_; }
-	auto& envMap() const { return envMap_; }
+	auto& envMap() const { return envMap_; } // contains filtered mipmaps
 	auto& irradiance() const { return irradiance_; }
 	auto convolutionMipmaps() const { return convolutionMipmaps_; }
 

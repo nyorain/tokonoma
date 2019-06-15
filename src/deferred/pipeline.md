@@ -1,4 +1,5 @@
 **likely outdated in future, passes change often**
+Just check out `initPasses` in deferred, describes basically everything.
 
 list of passes
 managed by new FrameGraph concept (drop-in, keep it as simple as possible)

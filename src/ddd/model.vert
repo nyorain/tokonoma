@@ -27,10 +27,6 @@ layout(set = 1, binding = 1, row_major) buffer Models {
 	ModelData models[];
 };
 
-layout(set = 2, binding = 0, row_major) uniform LightBuf {
-	DirLight light;
-};
-
 void main() {
 	outTexCoord0 = inTexCoord0;
 	outTexCoord1 = inTexCoord1;
