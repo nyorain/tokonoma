@@ -51,8 +51,8 @@ struct ContactListener : public b2ContactListener {
 
 class Mists : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!App::init(settings)) {
+	bool init(const nytl::Span<const char*> args) override {
+		if(!App::init(args)) {
 			return false;
 		}
 
@@ -94,7 +94,7 @@ public:
 			metals_.back().paint = {rvgContext(), metalPaint_};
 
 			auto& font = gui().font();
-			metals_.back().label = {rvgContext(), label, font, {}};
+			metals_.back().label = {rvgContext(), {}, label, font, 14.f};
 		};
 
 		createMetal({2, 2}, {0.05, 0.05}, 0.5f, "h");
@@ -340,6 +340,8 @@ public:
 		return physics_.world;
 	}
 
+	const char* name() const override { return "Mists"; }
+
 
 protected:
 	PhysicsSystem physics_;
@@ -410,7 +412,7 @@ void ContactListener::EndContact(b2Contact*) {
 
 int main(int argc, const char** argv) {
 	Mists app;
-	if(!app.init({"mists", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

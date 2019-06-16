@@ -1,5 +1,4 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/bits.hpp>
 #include <stage/window.hpp>
 #include <stage/transform.hpp>
@@ -11,11 +10,13 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/pipeline.hpp>
-#include <vpp/pipelineInfo.hpp>
 #include <vpp/bufferOps.hpp>
 #include <vpp/formats.hpp>
 #include <vpp/image.hpp>
 #include <vpp/imageOps.hpp>
+#include <vpp/submit.hpp>
+#include <vpp/commandAllocator.hpp>
+#include <vpp/vk.hpp>
 
 #include <nytl/mat.hpp>
 #include <ny/mouseButton.hpp>
@@ -38,8 +39,8 @@ constexpr auto faceHeight = 1024u;
 
 class SenApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -68,14 +69,17 @@ public:
 		return true;
 	}
 
-	bool features(vk::PhysicalDeviceFeatures& enable,
-			const vk::PhysicalDeviceFeatures& supported) override {
-		if(!supported.fragmentStoresAndAtomics) {
+	bool features(doi::Features& enable, const doi::Features& supported) override {
+		if(!App::features(enable, supported)) {
 			return false;
 		}
 
-		// TODO
-		enable.fragmentStoresAndAtomics = true;
+		// TODO: dont require the feature
+		if(!supported.base.features.fragmentStoresAndAtomics) {
+			return false;
+		}
+
+		enable.base.features.fragmentStoresAndAtomics = true;
 		return true;
 	}
 
@@ -91,7 +95,7 @@ public:
 		};
 
 		comp_.dsLayout = {dev, dsBindings};
-		comp_.pipeLayout = {dev, {comp_.dsLayout}, {}};
+		comp_.pipeLayout = {dev, {{comp_.dsLayout.vkHandle()}}, {}};
 
 		vpp::ShaderModule compShader(dev, sen_sen_comp_data);
 		vk::ComputePipelineCreateInfo cpi;
@@ -100,15 +104,13 @@ public:
 		cpi.stage.pName = "main";
 		cpi.stage.stage = vk::ShaderStageBits::compute;
 
-		vk::Pipeline vkPipeline;
-		vk::createComputePipelines(dev, {}, 1, cpi, nullptr, vkPipeline);
-		comp_.pipe = {dev, vkPipeline};
+		comp_.pipe = {dev, cpi};
 
 		// ds
 		comp_.ds = {dev.descriptorAllocator(), comp_.dsLayout};
 		vpp::DescriptorSetUpdate dsu(comp_.ds);
-		dsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
-		dsu.storage({{boxesBuf_.buffer(), boxesBuf_.offset(), boxesBuf_.size()}});
+		dsu.uniform({{{ubo_}}});
+		dsu.storage({{{boxesBuf_}}});
 		dsu.storage({{{}, lightTex_.vkImageView(), vk::ImageLayout::general}});
 		dsu.apply();
 	}
@@ -126,53 +128,53 @@ public:
 		};
 
 		pt_.dsLayout = {dev, dsBindings};
-		pt_.pipeLayout = {dev, {pt_.dsLayout}, {}};
+		pt_.pipeLayout = {dev, {{pt_.dsLayout.vkHandle()}}, {}};
 
 		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
 		vpp::ShaderModule textureShader(dev, sen_senpt_frag_data);
-		auto rp = renderer().renderPass();
-		vpp::GraphicsPipelineInfo pipeInfo(rp, pt_.pipeLayout, {{
+		vpp::GraphicsPipelineInfo pipeInfo(renderPass(), pt_.pipeLayout, {{{
 			{fullscreenShader, vk::ShaderStageBits::vertex},
 			{textureShader, vk::ShaderStageBits::fragment}
-		}}, 0, renderer().samples());
+		}}}, 0, samples());
 
-		vk::Pipeline vkpipe;
-		vk::createGraphicsPipelines(dev, {},  1, pipeInfo.info(),
-			nullptr, vkpipe);
-		pt_.pipe = {dev, vkpipe};
+		pt_.pipe = {dev, pipeInfo.info()};
 
 		// box images
 		std::uint32_t width = 6 * faceWidth;
 		std::uint32_t height = boxes_.size() * faceHeight;
-		atlasSize_ = {width, height};
-
-		auto imgi = vpp::ViewableImageCreateInfo::color(
-			dev, vk::Extent3D {width, height, 1u}).value();
-		imgi.img.flags = vk::ImageCreateBits::mutableFormat;
-		imgi.img.usage = vk::ImageUsageBits::transferDst |
+		// auto format = vk::Format::r32g32b32a32Sfloat;
+		auto format = vk::Format::r32Uint;
+		auto usage = vk::ImageUsageBits::transferDst |
 			vk::ImageUsageBits::transferSrc |
 			vk::ImageUsageBits::storage |
 			vk::ImageUsageBits::sampled;
+		atlasSize_ = {width, height};
 
-		// imgi.img.format = vk::Format::r32g32b32a32Sfloat;
-		// imgi.view.format = vk::Format::r32g32b32a32Sfloat;
-		imgi.img.format = vk::Format::r32Uint;
-		imgi.view.format = vk::Format::r32Uint;
+		auto imgi = vpp::ViewableImageCreateInfo(format,
+			vk::ImageAspectBits::color, {width, height}, usage);
+		dlg_assert(vpp::supported(device(), imgi.img));
 
 		// TODO: we could create second view with r8g8b8a8 format
-		// and then use linear interpolation in sampler
-		// mutable format already set
-		lightTex_ = {dev, imgi};
+		// and then use linear interpolation in sampler,
+		// use mutable format for that
+		// imgi.img.flags = vk::ImageCreateBits::mutableFormat;
+
+		lightTex_ = {dev.devMemAllocator(), imgi};
 
 		auto& qs = dev.queueSubmitter();
 		auto cb = dev.commandAllocator().get(qs.queue().family());
 		vk::beginCommandBuffer(cb, {});
 
-		vpp::changeLayout(cb, lightTex_.image(), vk::ImageLayout::undefined,
-			vk::PipelineStageBits::topOfPipe, {}, vk::ImageLayout::general,
-			vk::PipelineStageBits::transfer,
-			vk::AccessBits::memoryWrite, // not sure what clear image is
-			{vk::ImageAspectBits::color, 0, 1, 0, 1u});
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = lightTex_.image();
+		barrier.oldLayout = vk::ImageLayout::undefined;
+		barrier.srcAccessMask = {};
+		barrier.newLayout = vk::ImageLayout::general;
+		barrier.dstAccessMask = vk::AccessBits::memoryWrite; // TODO: not sure what clear image is
+		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
+			vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
 
 		auto clearValue = vk::ClearColorValue{};
 		clearValue.uint32 = {0x44444444u, 0u, 0u, 0u};
@@ -181,8 +183,8 @@ public:
 		range.baseArrayLayer = 0;
 		range.layerCount = 1u;
 		range.levelCount = 1;
-		vk::cmdClearColorImage(cb, lightTex_.image(), vk::ImageLayout::general,
-			clearValue, {range});
+		vk::cmdClearColorImage(cb, lightTex_.image(),
+			vk::ImageLayout::general, clearValue, {{range}});
 
 		vk::endCommandBuffer(cb);
 
@@ -206,7 +208,7 @@ public:
 
 		// TODO: use real size instead of larger dummy
 		ubo_ = {dev.bufferAllocator(), sizeof(float) * 128,
-			vk::BufferUsageBits::uniformBuffer, 0, mem};
+			vk::BufferUsageBits::uniformBuffer, mem};
 
 		auto renderBindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
@@ -221,15 +223,15 @@ public:
 		vk::PipelineLayoutCreateInfo plInfo;
 		plInfo.setLayoutCount = 1;
 		plInfo.pSetLayouts = pipeSets.begin();
-		pipeLayout_ = {dev, {dsLayout_}, {{vk::ShaderStageBits::fragment, 0, 4u}}};
+		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}},
+			{{{vk::ShaderStageBits::fragment, 0, 4u}}}};
 
 		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
 		vpp::ShaderModule textureShader(dev, sen_sen_frag_data);
-		auto rp = renderer().renderPass();
-		vpp::GraphicsPipelineInfo pipeInfo(rp, pipeLayout_, {{
+		vpp::GraphicsPipelineInfo pipeInfo(renderPass(), pipeLayout_, {{{
 			{fullscreenShader, vk::ShaderStageBits::vertex},
 			{textureShader, vk::ShaderStageBits::fragment}
-		}}, 0, renderer().samples());
+		}}}, 0, samples());
 
 		vk::Pipeline vkpipe;
 		vk::createGraphicsPipelines(dev, {},  1, pipeInfo.info(),
@@ -241,7 +243,7 @@ public:
 		auto sizePerBox = sizeof(nytl::Mat4f) + sizeof(nytl::Vec4f);
 		auto size = boxes_.size() * sizePerBox;
 		boxesBuf_ = {dev.bufferAllocator(), size,
-			vk::BufferUsageBits::storageBuffer, 0, dev.hostMemoryTypes()};
+			vk::BufferUsageBits::storageBuffer, dev.hostMemoryTypes()};
 
 		auto map = boxesBuf_.memoryMap();
 		auto span = map.span();
@@ -263,7 +265,6 @@ public:
 
 	void initRasterPipe() {
 		auto& dev = vulkanDevice();
-		auto rp = renderer().renderPass();
 
 		vk::SamplerCreateInfo sci {};
 		sci.magFilter = vk::Filter::nearest;
@@ -290,15 +291,17 @@ public:
 
 		rasterSceneDsLayout_ = {dev, sceneBindings};
 		rasterObjectDsLayout_ = {dev, objectBindings};
-		rasterPipeLayout_ = {dev, {rasterSceneDsLayout_, rasterObjectDsLayout_}, {}};
+		rasterPipeLayout_ = {dev, {{
+			rasterSceneDsLayout_.vkHandle(),
+			rasterObjectDsLayout_.vkHandle()}}, {}};
 
 		// pipe
 		vpp::ShaderModule vertShader(dev, sen_senr_vert_data);
 		vpp::ShaderModule fragShader(dev, sen_senr_frag_data);
-		vpp::GraphicsPipelineInfo gpi(rp, rasterPipeLayout_, {{
+		vpp::GraphicsPipelineInfo gpi(renderPass(), rasterPipeLayout_, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment}
-		}}, 0, renderer().samples());
+		}}}, 0, samples());
 
 		constexpr auto stride = 2 * sizeof(nytl::Vec3f);
 		vk::VertexInputBindingDescription bufferBinding {
@@ -337,11 +340,11 @@ public:
 			vk::BufferUsageBits::indexBuffer |
 				vk::BufferUsageBits::vertexBuffer |
 				vk::BufferUsageBits::transferDst,
-			0, dev.deviceMemoryTypes()};
+			dev.deviceMemoryTypes()};
 
 		// fill
 		auto stage = vpp::SubBuffer{dev.bufferAllocator(), boxModelSize,
-			vk::BufferUsageBits::transferSrc, 0u, dev.hostMemoryTypes()};
+			vk::BufferUsageBits::transferSrc, dev.hostMemoryTypes()};
 		auto map = stage.memoryMap();
 		auto span = map.span();
 
@@ -397,7 +400,7 @@ public:
 		region.dstOffset = boxModel_.offset();
 		region.srcOffset = stage.offset();
 		region.size = boxModelSize;
-		vk::cmdCopyBuffer(cb, stage.buffer(), boxModel_.buffer(), {region});
+		vk::cmdCopyBuffer(cb, stage.buffer(), boxModel_.buffer(), {{region}});
 		vk::endCommandBuffer(cb);
 
 		// execute
@@ -413,14 +416,14 @@ public:
 			+ sizeof(nytl::Vec3f) // viewPos
 			+ sizeof(float); // show light tex
 		rasterSceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
-			vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
+			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 		// scene ds
 		rasterSceneDs_ = {dev.descriptorAllocator(), rasterSceneDsLayout_};
 		vpp::DescriptorSetUpdate sdsu(rasterSceneDs_);
 		sdsu.uniform({{rasterSceneUbo_.buffer(),
 			rasterSceneUbo_.offset(), rasterSceneUbo_.size()}});
-		vpp::apply({sdsu});
+		sdsu.apply();
 
 		// boxes
 		auto bufSize = 2 * sizeof(nytl::Mat4f) + sizeof(nytl::Vec4f)
@@ -428,7 +431,7 @@ public:
 		auto i = 0u;
 		for(auto& b: boxes_) {
 			b.rasterdata = {dev.bufferAllocator(), bufSize,
-				vk::BufferUsageBits::uniformBuffer, 0, dev.hostMemoryTypes()};
+				vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 			{
 				auto map = b.rasterdata.memoryMap();
 				auto span = map.span();
@@ -532,7 +535,7 @@ public:
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
 				comp_.pipe);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
-				comp_.pipeLayout, 0, {comp_.ds}, {});
+				comp_.pipeLayout, 0, {{comp_.ds.vkHandle()}}, {});
 			vk::cmdDispatch(cb, 256, 256, 1);
 		}
 	}
@@ -545,22 +548,22 @@ public:
 			vk::cmdBindVertexBuffers(cb, 0, 1, {boxModel_.buffer()},
 				{boxModel_.offset() + 36 * sizeof(std::uint32_t)});
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-				rasterPipeLayout_, 0, {rasterSceneDs_}, {});
+				rasterPipeLayout_, 0, {{rasterSceneDs_.vkHandle()}}, {});
 
 			for(auto& b : boxes_) {
 				vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-					rasterPipeLayout_, 1, {b.ds}, {});
+					rasterPipeLayout_, 1, {{b.ds.vkHandle()}}, {});
 				vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
 			}
 		} else if(renderMode_ == 1) {
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-				pipeLayout_, 0, {ds_.vkHandle()}, {});
+				pipeLayout_, 0, {{ds_.vkHandle()}}, {});
 			vk::cmdDraw(cb, 4, 1, 0, 0);
 		} else if(renderMode_ == 2) {
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pt_.pipe);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-				pt_.pipeLayout, 0, {pt_.ds.vkHandle()}, {});
+				pt_.pipeLayout, 0, {{pt_.ds.vkHandle()}}, {});
 			vk::cmdDraw(cb, 4, 1, 0, 0);
 		}
 	}
@@ -615,37 +618,7 @@ public:
 		App::scheduleRedraw(); // TODO: can be optimized
 		time_ += delta;
 
-		// movement
-		auto kc = appContext().keyboardContext();
-		auto fac = delta;
-
-		auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-		auto right = nytl::normalized(nytl::cross(camera_.dir, yUp));
-		auto up = nytl::normalized(nytl::cross(camera_.dir, right));
-		if(kc->pressed(ny::Keycode::d)) { // right
-			camera_.pos += fac * right;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::a)) { // left
-			camera_.pos += -fac * right;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::w)) {
-			camera_.pos += fac * camera_.dir;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::s)) {
-			camera_.pos += -fac * camera_.dir;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::q)) { // up
-			camera_.pos += -fac * up;
-			camera_.update = true;
-		}
-		if(kc->pressed(ny::Keycode::e)) { // down
-			camera_.pos += fac * up;
-			camera_.update = true;
-		}
+		doi::checkMovement(camera_, *appContext().keyboardContext(), delta);
 	}
 
 	void updateDevice() override {
@@ -702,6 +675,8 @@ public:
 
 		// save texture
 		if(saveImage_) {
+			dlg_error("TODO: image saving not updated/reimplemented yet");
+			/*
 			auto work = vpp::retrieveStaging(lightTex_.image(),
 				vk::Format::r32Uint, vk::ImageLayout::general,
 				{atlasSize_.x, atlasSize_.y, 1},
@@ -714,6 +689,7 @@ public:
 			stbi_write_png(name, atlasSize_.x, atlasSize_.y, 4,
 				buf.data(), atlasSize_.x * 4);
 			saveImage_ = false;
+			*/
 		}
 	}
 
@@ -726,6 +702,8 @@ public:
 	bool needsDepth() const override {
 		return true;
 	}
+
+	const char* name() const override { return "sen"; }
 
 private:
 	vpp::PipelineLayout pipeLayout_;
@@ -780,7 +758,7 @@ private:
 int main(int argc, const char** argv) {
 	// run app
 	SenApp app;
-	if(!app.init({"sen", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

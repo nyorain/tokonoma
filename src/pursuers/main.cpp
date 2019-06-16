@@ -1,11 +1,9 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/pipeline.hpp>
-#include <vpp/pipelineInfo.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
 #include <vui/dat.hpp>
@@ -60,8 +58,8 @@ public:
 	PursuerSystem(vpp::Device& dev) {
 		auto pcount = pointCount * particleCount;
 		auto size = pcount * sizeof(nytl::Vec2f);
-		buf_ = {dev, {{}, size, vk::BufferUsageBits::vertexBuffer},
-			dev.hostMemoryTypes()};
+		buf_ = {dev.bufferAllocator(), size,
+			vk::BufferUsageBits::vertexBuffer, dev.hostMemoryTypes()};
 
 		// setup
 		std::mt19937 rgen;
@@ -131,8 +129,7 @@ public:
 			auto c = p.color;
 			vk::cmdPushConstants(cb, layout,
 				vk::ShaderStageBits::fragment, 0u, sizeof(c), &c);
-			vk::cmdBindVertexBuffers(cb, 0, {buf_},
-				{offset});
+			vk::cmdBindVertexBuffers(cb, 0, 1, buf_.buffer(), offset);
 			vk::cmdDraw(cb, pointCount, 1, 0, 0);
 			offset += pointCount * sizeof(nytl::Vec2f);
 		}
@@ -148,13 +145,13 @@ protected:
 	};
 
 	std::vector<Particle> particles_;
-	vpp::Buffer buf_;
+	vpp::SubBuffer buf_;
 };
 
 class PursuersApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(const nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -163,16 +160,15 @@ public:
 		// pipe
 		auto range = vk::PushConstantRange {vk::ShaderStageBits::fragment,
 			0u, sizeof(nytl::Vec4f)};
-		particlePipeLayout_ = {dev, {}, {range}};
+		particlePipeLayout_ = {dev, {}, {{range}}};
 
 		auto lineVert = vpp::ShaderModule(dev, pursuers_line_vert_data);
 		auto lineFrag = vpp::ShaderModule(dev, pursuers_line_frag_data);
 
-		vpp::GraphicsPipelineInfo pipeInfo(renderer().renderPass(),
-			particlePipeLayout_, vpp::ShaderProgram({
+		vpp::GraphicsPipelineInfo pipeInfo(renderPass(), particlePipeLayout_, {{{
 				{lineVert, vk::ShaderStageBits::vertex},
 				{lineFrag, vk::ShaderStageBits::fragment}
-		}), 0u, samples());
+		}}}, 0u, samples());
 
 		constexpr auto stride = sizeof(float) * 2;
 		auto bufferBinding = vk::VertexInputBindingDescription {
@@ -206,7 +202,7 @@ public:
 			auto& t = at.template create<Textfield>(name, start).textfield();
 			t.onSubmit = [&, name](auto& tf) {
 				try {
-					value = std::stof(tf.utf8());
+					value = std::stof(std::string(tf.utf8()));
 				} catch(const std::exception& err) {
 					dlg_error("Invalid float for {}: {}", name, tf.utf8());
 					return;
@@ -261,7 +257,7 @@ public:
 			return true;
 		}
 
-		if(ev.pressed && ev.keycode == ny::Keycode::n) {
+		if(ev.pressed && ev.keycode == ny::Keycode::p) {
 			frame_ = !frame_;
 			return true;
 		}
@@ -276,6 +272,8 @@ public:
 		gui().draw(cb);
 	}
 
+	const char* name() const override { return "pursuers"; }
+
 protected:
 	vpp::PipelineLayout particlePipeLayout_;
 	vpp::Pipeline particlePipe_;
@@ -287,7 +285,7 @@ protected:
 // main
 int main(int argc, const char** argv) {
 	PursuersApp app;
-	if(!app.init({"pendulum", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

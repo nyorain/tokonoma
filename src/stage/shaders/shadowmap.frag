@@ -3,23 +3,33 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "scene.glsl"
 
-layout(location = 0) in vec2 inUV;
+layout(location = 0) in vec2 inTexCoord0;
+layout(location = 1) in vec2 inTexCoord1;
+layout(location = 2) flat in uint inMatID;
 
 // material
-layout(set = 1, binding = 0) uniform sampler2D albedoTex;
-layout(push_constant) uniform MaterialPcrBuf {
-	MaterialPcr material;
+layout(set = 1, binding = 2) buffer Materials {
+	Material materials[];
 };
 
+layout(set = 1, binding = 3) uniform texture2D textures[imageCount];
+layout(set = 1, binding = 4) uniform sampler samplers[samplerCount];
+
+vec4 readTex(MaterialTex tex) {
+	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
+	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
+}
+
 void main() {
-	vec4 albedo = material.albedo * texture(albedoTex, inUV);
+	Material material = materials[inMatID];
+	vec4 albedo = material.albedoFac * readTex(material.albedo);
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}
 
-	// NOTE: logic here has to be that weird (two independent if statements)
-	// since otherwise i seem to trigger a bug (probably in driver or llvm?)
-	// on mesas vulkan-radeon 19.0.2
+	// don't render backfaces. We render with depth clamping (manual
+	// workaround if needed) so no problem if the front face is behind
+	// the near plane
 	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
 		discard;
 	}

@@ -2,7 +2,6 @@
 #include <stage/bits.hpp>
 
 #include <vpp/formats.hpp>
-#include <vpp/pipelineInfo.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/debug.hpp>
 
@@ -136,10 +135,10 @@ void Light::createBuf() {
 	constexpr auto usage = vk::ImageUsageBits::colorAttachment |
 		vk::ImageUsageBits::sampled;
 
-	auto targetInfo = vpp::ViewableImageCreateInfo::general(dev,
-			{bufSize_, bufSize_, 1}, usage, {shadowFormat},
-			vk::ImageAspectBits::color).value();
-	shadowTarget_ = {dev, targetInfo};
+	auto targetInfo = vpp::ViewableImageCreateInfo(shadowFormat,
+			vk::ImageAspectBits::color, {bufSize_, bufSize_}, usage);
+	dlg_assert(vpp::supported(dev, targetInfo.img));
+	shadowTarget_ = {dev.devMemAllocator(), targetInfo};
 
 	// framebuffer
 	auto imgView = shadowTarget_.vkImageView();
@@ -172,7 +171,7 @@ void Light::init() {
 			dev.properties().limits.minUniformBufferOffsetAlignment);
 	constexpr auto bufUsage = vk::BufferUsageBits::uniformBuffer;
 	auto types = dev.hostMemoryTypes();
-	buffer_ = {bufalloc, lightUboSize, bufUsage, bufAlign, types};
+	buffer_ = {bufalloc, lightUboSize, bufUsage, types, bufAlign};
 
 	vpp::DescriptorSetUpdate update(shadowDs_);
 	update.uniform({{buffer_.buffer(), buffer_.offset(), lightUboSize}});
@@ -278,9 +277,10 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 			vk::ImageUsageBits::inputAttachment |
 			vk::ImageUsageBits::sampled;
 
-		auto targetInfo = vpp::ViewableImageCreateInfo::color(dev,
-				{renderSize_[0], renderSize_[1], 1}, usage, {lightFormat}).value();
-		renderTarget_ = {dev, targetInfo};
+		auto targetInfo = vpp::ViewableImageCreateInfo(lightFormat,
+			vk::ImageAspectBits::color, {renderSize_[0], renderSize_[1]}, usage);
+		dlg_assert(vpp::supported(dev, targetInfo.img));
+		renderTarget_ = {dev.devMemAllocator(), targetInfo};
 
 		auto imgView = renderTarget_.vkImageView();;
 		vk::FramebufferCreateInfo fbinfo;
@@ -349,17 +349,15 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		auto lightVertex = vpp::ShaderModule(dev, smooth_shadow_light_vert_data);
 		auto lightFragment = vpp::ShaderModule(dev, smooth_shadow_light_frag_data);
 
-		vpp::GraphicsPipelineInfo shadowInfo(shadowPass_,
-				shadowPipeLayout_, vpp::ShaderProgram({
-					{shadowVertex, vk::ShaderStageBits::vertex},
-					{shadowFragment, vk::ShaderStageBits::fragment}
-		}));
+		vpp::GraphicsPipelineInfo shadowInfo(shadowPass_, shadowPipeLayout_, {{{
+				{shadowVertex, vk::ShaderStageBits::vertex},
+				{shadowFragment, vk::ShaderStageBits::fragment}
+		}}});
 
-		vpp::GraphicsPipelineInfo lightInfo(lightPass_,
-				lightPipeLayout_, vpp::ShaderProgram({
-					{lightVertex, vk::ShaderStageBits::vertex},
-					{lightFragment, vk::ShaderStageBits::fragment}
-		}));
+		vpp::GraphicsPipelineInfo lightInfo(lightPass_, lightPipeLayout_, {{{
+			{lightVertex, vk::ShaderStageBits::vertex},
+			{lightFragment, vk::ShaderStageBits::fragment}
+		}}});
 
 		// shadow
 		constexpr auto stride = sizeof(float) * 5; // inPointA, inPointB, opacity
@@ -412,10 +410,10 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		lightInfo.blend.attachmentCount = 1;
 		lightInfo.blend.pAttachments = &lightBlendAttachment;
 
-		auto pipes = vk::createGraphicsPipelines(dev, {}, {
+		auto pipes = vk::createGraphicsPipelines(dev, {}, {{
 				shadowInfo.info(),
-				lightInfo.info()},
-				nullptr);
+				lightInfo.info()
+			}}, nullptr);
 		shadowPipe_ = {dev, pipes[0]};
 		lightPipe_ = {dev, pipes[1]};
 
@@ -425,7 +423,7 @@ LightSystem::LightSystem(vpp::Device& dev, vk::DescriptorSetLayout viewLayout)
 		auto hostTypes = dev.hostMemoryTypes();
 		vertexBuffer_ = {dev.bufferAllocator(), startSize,
 			vk::BufferUsageBits::vertexBuffer |
-				vk::BufferUsageBits::indirectBuffer, 4, hostTypes};
+				vk::BufferUsageBits::indirectBuffer, hostTypes, 4};
 	}
 
 void LightSystem::addSegment(const ShadowSegment& seg) {
@@ -447,7 +445,7 @@ bool LightSystem::updateDevice() {
 		vertexBuffer_ = {};
 		vertexBuffer_ = {device().bufferAllocator(), neededSize * 2,
 			vk::BufferUsageBits::vertexBuffer |
-				vk::BufferUsageBits::indirectBuffer, 4, memBits};
+				vk::BufferUsageBits::indirectBuffer, memBits, 4};
 		rerecord = true;
 	}
 
@@ -491,10 +489,10 @@ void LightSystem::renderLights(vk::CommandBuffer cmdBuf) {
 	vk::cmdSetViewport(cmdBuf, 0, 1, vp);
 	vk::cmdSetScissor(cmdBuf, 0, 1, {0, 0, width, height});
 
-	vk::cmdBindVertexBuffers(cmdBuf, 0, {vertexBuffer_.buffer()},
-			{vertexBuffer_.offset() + sizeof(vk::DrawIndirectCommand)});
+	vk::cmdBindVertexBuffers(cmdBuf, 0, 1, vertexBuffer_.buffer(),
+		vertexBuffer_.offset() + sizeof(vk::DrawIndirectCommand));
 	vk::cmdBindPipeline(cmdBuf, vk::PipelineBindPoint::graphics,
-			lightPipe_);
+		lightPipe_);
 
 	// render normal lights
 	for(auto& light : lights_) {
@@ -504,7 +502,7 @@ void LightSystem::renderLights(vk::CommandBuffer cmdBuf) {
 
 		// vpp::DebugRegion dr(device(), cmdBuf, "light", light.color);
 		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
-				lightPipeLayout_, 1, {light.lightDs()}, {});
+			lightPipeLayout_, 1, {{light.lightDs()}}, {});
 		vk::cmdDraw(cmdBuf, 4, 1, 0, 0);
 	}
 
@@ -517,9 +515,9 @@ void LightSystem::renderShadowBuffers(vk::CommandBuffer cmdBuf) {
 	// vpp::DebugRegion rShadow(device(), cmdBuf, "shadowBuffers");
 
 	vk::cmdBindPipeline(cmdBuf, vk::PipelineBindPoint::graphics,
-			shadowPipe_);
-	vk::cmdBindVertexBuffers(cmdBuf, 0, {vertexBuffer_.buffer().vkHandle()},
-			{vertexBuffer_.offset() + sizeof(vk::DrawIndirectCommand)});
+		shadowPipe_);
+	vk::cmdBindVertexBuffers(cmdBuf, 0, 1, vertexBuffer_.buffer().vkHandle(),
+		vertexBuffer_.offset() + sizeof(vk::DrawIndirectCommand));
 
 	// render normal lights into their buffers
 	// vpp::DebugRegion rNormal(device(), cmdBuf, "normal");
@@ -547,10 +545,10 @@ void LightSystem::renderShadowBuffers(vk::CommandBuffer cmdBuf) {
 		vk::cmdSetViewport(cmdBuf, 0, 1, vp);
 		vk::cmdSetScissor(cmdBuf, 0, 1, {0, 0, bufSize, bufSize});
 		vk::cmdBindDescriptorSets(cmdBuf, vk::PipelineBindPoint::graphics,
-				shadowPipeLayout_, 1, {light.shadowDs()}, {});
+			shadowPipeLayout_, 1, {{light.shadowDs()}}, {});
 
 		vk::cmdDrawIndirect(cmdBuf, vertexBuffer_.buffer(),
-				vertexBuffer_.offset(), 1, 0);
+			vertexBuffer_.offset(), 1, 0);
 		vk::cmdEndRenderPass(cmdBuf);
 	}
 }

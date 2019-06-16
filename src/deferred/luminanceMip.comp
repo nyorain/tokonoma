@@ -1,0 +1,76 @@
+#version 450
+
+// for basic documentation (may be slightly out of date) see
+// https://nyorain.github.io/mipmap-compute-shader.html
+// also contains notes for further optimization
+//
+// can probably be optimzied. Especially if just choose a fixed workgroup
+// size, then we can unroll the loop which should help with performance.
+// Otherwise, a good driver should be able to do it as well...
+// http://developer.download.nvidia.com/compute/cuda/1_1/Website/projects/reduction/doc/reduction.pdf
+
+// each workgroup reduces groupDimSize * 2 pixels in each dimension.
+// therefore expects the output texture to be smaller by this factor
+// e.g. if the specilization constant groupDimSize is 8
+// (solid choice usually), dimensions of outLim are smaller by factor 16
+// (rounded up though)
+// Can e.g. use 4th next mip level in that case (or the 3th next in case
+// the 4th is to small - can happen with rounding up since mipmaps sizes
+// are rounded down)
+
+// NOTE: we assume that x and y work group sizes are the same.
+// There is no reason why we should choose something else and it
+// simplifies the computation here tremendously
+layout(local_size_x_id = 0, local_size_y_id = 0) in;
+layout(set = 0, binding = 0) uniform sampler2D inLum;
+layout(set = 0, binding = 1, r16f) uniform writeonly image2D outLum;
+
+layout(push_constant) uniform PCR {
+	uvec2 inSize;
+} pcr;
+
+// constant for all invocations
+const uint size = gl_WorkGroupSize.x; // == gl_WorkGroupSize.y
+vec2 pixelSize = 1.f / textureSize(inLum, 0);
+
+// contains tee current summed-up luminance
+shared float lum[size][size];
+
+float load(vec2 pixel) {
+	vec2 dist = clamp(pcr.inSize - (pixel - 0.5), 0, 1);
+	float fac = dist.x * dist.y;
+	return fac * texture(inLum, min(pixel, pcr.inSize - 0.5) * pixelSize).r;
+}
+
+// no early returns due to all the barriers. We use a sampler
+// with a black border and clampToBorder instead.
+void main() {
+	uvec2 l = gl_LocalInvocationID.xy;
+	vec2 pixel = 4 * gl_GlobalInvocationID.xy; // top-left of sampled pixels
+	pixel += 1; // for linear sampling
+
+	// first reduction locally
+	float val = 0.0;
+	val += load(pixel + vec2(0, 0));
+	val += load(pixel + vec2(2, 0));
+	val += load(pixel + vec2(0, 2));
+	val += load(pixel + vec2(2, 2));
+	lum[l.x][l.y] = val;
+	for(uint isize = size / 2; isize > 0; isize /= 2) {
+		// one barrier is enough, memoryBarrierShared is not needed.
+		// See GL_KHR_vulkan_glsl and spirv spec
+		barrier();
+
+		// sum up squares
+		if(l.x < isize && l.y < isize) {
+			lum[l.x][l.y] += lum[isize + l.x][l.y];
+			lum[l.x][l.y] += lum[l.x][isize + l.y];
+			lum[l.x][l.y] += lum[isize + l.x][isize + l.y];
+		}
+	}
+
+	if(l.x == 0 && l.y == 0) {
+		float avg = lum[0][0] / (4 * size * size);
+		imageStore(outLum, ivec2(gl_WorkGroupID.xy), vec4(avg));
+	}
+}

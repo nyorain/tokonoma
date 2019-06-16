@@ -1,14 +1,15 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/bits.hpp>
 #include <argagg.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
-#include <vpp/pipelineInfo.hpp>
+#include <vpp/shader.hpp>
 #include <vpp/descriptor.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/bufferOps.hpp>
+#include <vpp/submit.hpp>
+#include <vpp/commandAllocator.hpp>
 #include <vpp/vk.hpp>
 #include <ny/mouseButton.hpp>
 #include <nytl/vecOps.hpp>
@@ -47,18 +48,18 @@ public:
 
 		gfxDsLayout_ = {dev, gfxBindings};
 		gfxDs_ = {dev.descriptorAllocator(), gfxDsLayout_};
-		gfxPipelineLayout_ = {dev, {gfxDsLayout_}, {}};
+		gfxPipelineLayout_ = {dev, {{gfxDsLayout_.vkHandle()}}, {}};
 
 		auto usage = nytl::Flags(vk::BufferUsageBits::uniformBuffer);
 		auto mem = dev.memoryTypeBits(vk::MemoryPropertyBits::hostVisible);
-		gfxUbo_ = {device().bufferAllocator(), gfxUboSize, usage, 0u, mem};
+		gfxUbo_ = {device().bufferAllocator(), gfxUboSize, usage, mem};
 
 		vpp::ShaderModule vertShader(device(), particles_particle_vert_data);
 		vpp::ShaderModule fragShader(device(), particles_particle_frag_data);
-		vpp::GraphicsPipelineInfo gpi {rp, gfxPipelineLayout_, {{
+		vpp::GraphicsPipelineInfo gpi {rp, gfxPipelineLayout_, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
-		}}, 0, samples};
+		}}}, 0, samples};
 
 		constexpr auto stride = sizeof(float) * 4; // vec2 pos, velocity
 		vk::VertexInputBindingDescription bufferBinding {
@@ -96,7 +97,7 @@ public:
 
 		compDsLayout_ = {dev, compBindings};
 		compDs_ = {dev.descriptorAllocator(), compDsLayout_};
-		compPipelineLayout_ = {dev, {compDsLayout_}, {}};
+		compPipelineLayout_ = {dev, {{compDsLayout_.vkHandle()}}, {}};
 
 		vk::ComputePipelineCreateInfo cpi;
 		vpp::ShaderModule compShader(device(), particles_particle_comp_data);
@@ -126,13 +127,12 @@ public:
 		usage = vk::BufferUsageBits::vertexBuffer
 			| vk::BufferUsageBits::storageBuffer
 			| vk::BufferUsageBits::transferDst;
-		particleBuffer_ = {device().bufferAllocator(), bufSize,
-			usage, 0u, mem};
+		particleBuffer_ = {device().bufferAllocator(), bufSize, usage, mem};
 
 		bufSize = compUboSize;
 		usage = vk::BufferUsageBits::uniformBuffer;
 		mem = dev.memoryTypeBits(vk::MemoryPropertyBits::hostVisible);
-		compUbo_ = {device().bufferAllocator(), bufSize, usage, 0u, mem};
+		compUbo_ = {device().bufferAllocator(), bufSize, usage, mem};
 
 		// create & upload particles
 		{
@@ -150,7 +150,17 @@ public:
 				part.vel = {0.f, 0.f};
 			}
 
-			vpp::writeStaging430(particleBuffer_, vpp::rawSpan(particles));
+			auto& qs = dev.queueSubmitter();
+			auto qfam = qs.queue().family();
+			auto cb = dev.commandAllocator().get(qfam);
+			vk::beginCommandBuffer(cb, {});
+
+			auto pspan = nytl::span(particles);
+			auto stage = vpp::fillStaging(cb, particleBuffer_,
+				nytl::as_bytes(pspan));
+
+			vk::endCommandBuffer(cb);
+			qs.wait(qs.add(cb));
 		}
 
 		// write descriptor
@@ -165,7 +175,7 @@ public:
 			update2.uniform({{gfxUbo_.buffer(), gfxUbo_.offset(),
 				gfxUbo_.size()}});
 
-			vpp::apply({update1, update2});
+			vpp::apply({{{update1}, {update2}}});
 		}
 
 		count_ = count;
@@ -174,22 +184,24 @@ public:
 	void compute(vk::CommandBuffer cb) {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, compPipeline_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
-			compPipelineLayout_, 0, {compDs_}, {});
-		vk::cmdDispatch(cb, count_ / 16, 1, 1);
+			compPipelineLayout_, 0, {{compDs_.vkHandle()}}, {});
+
+		auto size = std::ceil(std::sqrt(count_ / 64.f));
+		vk::cmdDispatch(cb, size, size, 1);
 	}
 
 	void render(vk::CommandBuffer cb) {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfxPipeline_);
-		vk::cmdBindVertexBuffers(cb, 0, {particleBuffer_.buffer()},
-			{particleBuffer_.offset()});
+		vk::cmdBindVertexBuffers(cb, 0, {{particleBuffer_.buffer().vkHandle()}},
+			{{particleBuffer_.offset()}});
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			gfxPipelineLayout_, 0, {gfxDs_}, {});
+			gfxPipelineLayout_, 0, {{gfxDs_.vkHandle()}}, {});
 		vk::cmdDraw(cb, count_, 1, 0, 0);
 	}
 
 	void updateDevice(double delta, nytl::Span<nytl::Vec2f> attractors) {
 		if(attractors.size() > 10) {
-			 attractors = attractors.slice(0, 10);
+			 attractors = attractors.first(10);
 		}
 
 		auto view = compUbo_.memoryMap();
@@ -200,7 +212,7 @@ public:
 		}
 
 		auto off = sizeof(nytl::Vec4f) * 5;
-		span = view.span().slice(off, view.span().size() - off);
+		span = view.span().last(view.span().size() - off);
 		doi::write(span, float(delta));
 		doi::write(span, std::uint32_t(attractors.size()));
 
@@ -236,14 +248,13 @@ protected:
 
 class ParticlesApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
 		// system
-		auto& r = renderer();
-		system_.init(vulkanDevice(), r.renderPass(), r.samples(), count_);
+		system_.init(vulkanDevice(), renderPass(), samples(), count_);
 
 		// gui
 		auto& panel = gui().create<vui::dat::Panel>(
@@ -251,7 +262,7 @@ public:
 		auto tfChangeProp = [&](auto& prop) {
 			return [&](auto& tf) {
 				try {
-					prop = std::stof(tf.utf8());
+					prop = std::stof(std::string(tf.utf8()));
 					system_.paramsChanged = true;
 				} catch(const std::exception& err) {
 					dlg_error("Invalid float: {}", tf.utf8());
@@ -338,6 +349,8 @@ public:
 		system_.updateDevice(delta_, attractors_);
 	}
 
+	const char* name() const override { return "particles"; }
+
 protected:
 	ParticleSystem system_;
 	unsigned count_ {100'000};
@@ -347,7 +360,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	ParticlesApp app;
-	if(!app.init({"particles", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

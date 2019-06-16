@@ -26,36 +26,52 @@ stage_deps = [
   dep_vulkan,
   dep_soundio,
   dep_b2d,
+  dep_turbojpeg,
+  dep_png,
   gltf_dep,
 ]
 
 stage_src = [
 	'app.cpp',
 	'audio.cpp',
-	'render.cpp',
 	'window.cpp',
 	'camera.cpp',
 	'geometry.cpp',
 	'physics.cpp',
 	'texture.cpp',
+	'render.cpp',
+	'headless.cpp',
+	'defer.cpp',
+	'f16.cpp',
 
 	'scene/scene.cpp',
 	'scene/material.cpp',
 	'scene/primitive.cpp',
 	'scene/shape.cpp',
 	'scene/light.cpp',
-	'scene/skybox.cpp',
+	'scene/environment.cpp',
+	'scene/pbr.cpp',
+
+	'image.cpp',
+	'image/jpeg_turbo.cpp',
+	'image/png.cpp',
+	'image/ktx.cpp',
 
 	stage_shaders,
 ]
 
+stage_args = []
+if build_machine.system() == 'linux'
+	stage_args += '-DDOI_LINUX'
+endif
+
 stage_lib = library('stage',
 	sources: stage_src,
 	dependencies: stage_deps,
+	cpp_args: stage_args,
 	include_directories: stage_inc)
 
 stage_dep = declare_dependency(
 	link_with: stage_lib,
 	dependencies: stage_deps,
 	include_directories: stage_inc)
-

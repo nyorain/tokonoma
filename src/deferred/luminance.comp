@@ -1,0 +1,31 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+layout(set = 0, binding = 0) uniform sampler2D lightTex;
+layout(set = 0, binding = 1, r16f) uniform writeonly image2D outLuminance;
+layout(push_constant) uniform PCR {
+	vec3 luminance;
+} pcr;
+
+const float minLum = -100.f;
+const float maxLum = 100.f;
+
+void main() {
+	uvec2 size = textureSize(lightTex, 0);
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec3 col = texture(lightTex, vec2(pixel) / size).rgb;
+	float luminance = dot(col, pcr.luminance);
+	// the clamp here is important and effects the output quite a bit.
+	// log2(luminance) rarely goes over the top value but e.g. for
+	// completely black regions of the screen (doesn't usually happen
+	// when ao is enabled in any form but think about *purely*
+	// black surfaces or a plain black backgroun) we have -inf here.
+	// But since that value would mess with our geometric mean, we clamp it
+	// instead.
+	luminance = clamp(log2(luminance), minLum, maxLum);
+	imageStore(outLuminance, ivec2(pixel), vec4(luminance));
+}

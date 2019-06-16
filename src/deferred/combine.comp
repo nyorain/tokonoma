@@ -1,0 +1,135 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+#include "scene.glsl"
+#include "pbr.glsl"
+
+const uint flagScattering = (1 << 0);
+const uint flagSSR = (1 << 1);
+const uint flagBloom = (1 << 2);
+const uint flagBloomDecrease = (1 << 3);
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform image2D outCol;
+layout(set = 0, binding = 1) uniform sampler2D lightTex;
+layout(set = 0, binding = 2) uniform sampler2D depthTex;
+layout(set = 0, binding = 3) uniform sampler2D bloomTex;
+layout(set = 0, binding = 4) uniform sampler2D ssrTex;
+layout(set = 0, binding = 5) uniform sampler2D scatterTex;
+
+layout(set = 0, binding = 6) uniform Params {
+	uint flags;
+	float bloomStrength;
+	float scatterStrength;
+} params;
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outCol);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + 0.5) * pixelSize;
+	vec3 color = texture(lightTex, uv).rgb;
+
+	// ssr
+	if((params.flags & flagSSR) != 0) {
+		vec4 refl = textureLod(ssrTex, uv, 0);
+		vec2 ruv = refl.xy / textureSize(ssrTex, 0);
+		if(refl.xy != vec2(0.0)) {
+			float fac = refl.w;
+
+			float centerDepth = textureLod(depthTex, ruv, 0).r;
+			const float dthreshold = 0.1;
+
+			// TODO: this gets really expensive.
+			// when using high range we could just use high lod.
+			// Currently don't have mipmap of lights though, could
+			// generate if before this pass...
+			// NOTE: when dof is active we could calculate the coc
+			// for the end position (sample depth at refl.xy add
+			// that to the depth of the current fragment). For a high
+			// coc we could additionally blur
+			int range = int(clamp(2 * refl.z, 0.0, 4.0));
+			int lod = 0;
+			vec3 light = vec3(0.0);
+			float total = 0.0;
+			for(int x = -range; x <= range; ++x) {
+				for(int y = -range; y <= range; ++y) {
+					vec2 off = pixelSize * vec2(x, y);
+					vec2 uvo = clamp(ruv + off, 0.0, 1.0);
+					if(uvo != clamp(uvo, 0.0, 1.0)) {
+						continue;
+					}
+
+					float sampleDepth = textureLod(depthTex, uvo, lod).r;
+					float diff = abs(sampleDepth - centerDepth);
+					// TODO: probably better to use gaussian filter (just 
+					// use function manually instead of precomputed)
+					float fac = smoothstep(-dthreshold, -0.5 * dthreshold, -diff);
+
+					light += fac * textureLod(lightTex, uvo, lod).rgb;
+					total += fac;
+				}
+			}
+
+			light /= total;
+
+			// make reflections weaker when near image borders
+			// to avoid popping in
+			vec2 sdist = 1 - 2 * abs(vec2(0.5, 0.5) - ruv);
+			fac *= pow(sdist.x * sdist.y, 0.8);
+			color += fac * light;
+		}
+	}
+
+	// apply bloom
+	// first level was already applied in combine.frag
+	if((params.flags & flagBloom) != 0) {
+		uint bloomLevels = textureQueryLevels(bloomTex);
+		vec3 accum = vec3(0.0);
+		for(uint i = 0u; i < bloomLevels; ++i) {
+			float fac = params.bloomStrength;
+			if((params.flags & flagBloomDecrease) != 0) {
+				fac /= (1 + i);
+			}
+			accum += fac * textureLod(bloomTex, uv, i).rgb;
+		}
+
+		color += accum;
+	}
+
+	// apply scattering
+	// TODO: blur in different pass? we don't need that strong of blur though
+	// visual results would probably improve with a guassian blur
+	if((params.flags & flagScattering) != 0) {
+		// const float scatterFac = 1 / 25.f;
+		const float scatterFac = params.scatterStrength;
+		// float scatter = 0.f;
+		// int range = 1;
+		// for(int x = -range; x <= range; ++x) {
+		// 	for(int y = -range; y <= range; ++y) {
+		// 		vec2 off = pixelSize * vec2(x, y);
+		// 		scatter += texture(scatterTex, uv + off).r;
+		// 	}
+		// }
+// 
+		// int total = ((2 * range + 1) * (2 * range + 1));
+		// scatter /= total;
+
+		float scatter = 0.f;
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear4[0]).r;
+		scatter += texture(scatterTex, uv + pixelSize * samplesLinear4[1]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear4[0]).r;
+		scatter += texture(scatterTex, uv - pixelSize * samplesLinear4[1]).r;
+		scatter /= 4.f;
+
+		// TODO: should be light color
+		color.rgb += scatterFac * scatter * vec3(0.9, 0.8, 0.6);
+	}
+
+	imageStore(outCol, ivec2(pixel), vec4(color, 1.0));
+}

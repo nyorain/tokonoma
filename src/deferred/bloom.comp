@@ -1,0 +1,56 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+
+const uint normManhattan = 1;
+const uint normEuclidean = 2;
+const uint normMax = 3;
+
+layout(set = 0, binding = 0) uniform sampler2D inLight;
+layout(set = 0, binding = 1, rgba16f) uniform image2D outBloom;
+layout(set = 0, binding = 2) uniform UBO {
+	float highPassThreshold;
+	float bloomPow;
+	uint norm;
+} ubo;
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outBloom);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+	vec4 bloom = imageLoad(outBloom, ivec2(pixel));
+	vec3 light = texture(inLight, uv).rgb;
+
+	float l;
+	if(ubo.norm == normManhattan) {
+		l = light.r + light.g + light.b;
+	} else if(ubo.norm == normEuclidean) {
+		l = length(light);
+	} else if(ubo.norm == normMax) {
+		l = max(light.r, max(light.g, light.b));
+	}
+
+	if(l <= ubo.highPassThreshold) {
+		return;
+	}
+
+	// color *= pow(1 - (highPassThreshold / l), 2);
+	// color *= 1 - (highPassThreshold / l);
+	// color *= smoothstep(0.0, 1.0, l - highPassThreshold);
+	// color *= (l - highPassThreshold);
+
+	// NOTE: this one turns out to be be best.
+	// the pow leads to pushing the color vector towards
+	// length 1 (lower power means stronger towards 1).
+	// this is important since otherwise single well-lit pixels
+	// may create really bright bloom which leads to bloom popping
+	// when moving
+	light *= pow(l - ubo.highPassThreshold, ubo.bloomPow) / l;
+	bloom.rgb += light;
+	imageStore(outBloom, ivec2(pixel), bloom);
+}

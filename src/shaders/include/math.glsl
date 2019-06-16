@@ -56,7 +56,7 @@ float dirac(float a, float x) {
 // interp(low, high, -> inf) := high
 // interp(low, high, -> -inf) := low
 float interp(float low, float high, float x) {
-	return low + 0.5 * (high - low) * tanh(x);
+	return 0.5 * ((high + low) + (high - low) * tanh(x));
 }
 
 // NOTE: all following ripped from

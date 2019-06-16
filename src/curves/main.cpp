@@ -1,5 +1,4 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/geometry.hpp>
 #include <nytl/math.hpp>
@@ -13,8 +12,8 @@ public:
 	static constexpr float xoff = 0.1;
 
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -130,6 +129,8 @@ public:
 		curve4_.change()->points = discretize(fi(-4.2, -0.32, 0.06), 0.01);
 	}
 
+	const char* name() const override { return "Curves"; }
+
 protected:
 	rvg::Paint curvePaint_;
 	rvg::Paint pointPaint_;
@@ -147,7 +148,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	CurveApp app;
-	if(!app.init({"curves", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

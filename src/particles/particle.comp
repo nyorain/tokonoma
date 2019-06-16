@@ -8,7 +8,7 @@ struct Particle {
 const float attractionFactor = 5;
 const float frictionFactor = 0.7;
 
-layout(local_size_x = 16) in;
+layout(local_size_x = 64) in;
 layout(std430, set = 0, binding = 0) buffer Particles {
 	Particle particles[];
 };
@@ -51,6 +51,10 @@ void leftBorder(inout vec2 pos, inout vec2 vel) {
 void main() {
 	// Current SSBO index
 	uint index = gl_GlobalInvocationID.x;
+	index += gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+	if(index >= particles.length()) {
+		return;
+	}
 
 	// Read position and velocity
 	vec2 pos = particles[index].pos;

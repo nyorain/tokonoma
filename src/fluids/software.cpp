@@ -154,7 +154,7 @@ int main() {
 template<typename C>
 auto sample(const C& c, nytl::Vec2f pos, nytl::Vec2ui size) {
 	using namespace nytl::vec::cw;
-	auto [x, y] = clamp(pos, nytl::Vec {1.f, 1.f}, size - nytl::Vec{1.f, 1.f});
+	auto [x, y] = clamp(pos, nytl::Vec {1.f, 1.f}, size - nytl::Vec{2.f, 2.f});
 
 	// -+--------+--------+-
 	//  |        |        |
@@ -233,7 +233,7 @@ void diffuse(Field<T>& f, const Field<T>& f0, float diff, float dt,
 
 	auto a = dt * diff * f.size().x * f.size().y;
 
-	constexpr auto iters = 20;
+	constexpr auto iters = 5;
 	for(auto k = 0u; k < iters; ++k) {
 		for(auto x = 1u; x < f.size().x - 2; ++x) {
 			for(auto y = 1u; y < f.size().y - 2; ++y) {
@@ -388,7 +388,8 @@ void FluidSystem::projectVelocity() {
 	setBoundary(div_, 0);
 	setBoundary(p_, 0);
 
-	for ( k=0 ; k<30 ; k++ ) {
+	auto iters = 5u;
+	for ( k=0 ; k < iters ; k++ ) {
 		for ( i=1 ; i<=size_.x - 2 ; i++ ) {
 			for ( j=1 ; j<=size_.y - 2 ; j++ ) {
 				p_(i,j) = (div_(i,j)+p_(i-1,j)+p_(i+1,j)+ p_(i,j-1)+p_(i,j+1))/4;

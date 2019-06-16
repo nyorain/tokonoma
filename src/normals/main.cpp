@@ -1,14 +1,14 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/texture.hpp>
 #include <stage/bits.hpp>
 
 #include <vpp/sharedBuffer.hpp>
+#include <vpp/vk.hpp>
 #include <vpp/device.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
-#include <vpp/pipelineInfo.hpp>
+#include <vpp/pipeline.hpp>
 
 #include <ny/key.hpp>
 #include <ny/keyboardContext.hpp>
@@ -19,19 +19,25 @@
 
 class DummyApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
 		auto& dev = vulkanDevice();
 		auto mem = dev.hostMemoryTypes();
 		ubo_ = {dev.bufferAllocator(), sizeof(float) * 4,
-			vk::BufferUsageBits::uniformBuffer, 0, mem};
+			vk::BufferUsageBits::uniformBuffer, mem};
 
 		// make sure to load the normal map in linear rgb space, *not* srgb
-		diffuse_ = doi::loadTexture(dev, "../assets/gravel_color.png");
-		normal_ = doi::loadTexture(dev, "../assets/gravel_normal.png", false);
+		doi::TextureCreateParams params;
+		params.srgb = true;
+		diffuse_ = std::move(doi::Texture(dev,
+			doi::read("../assets/gravel_color.png"), params).viewableImage());
+
+		params.srgb = false;
+		normal_ = std::move(doi::Texture(dev,
+			doi::read("../assets/gravel_normal.png"), params).viewableImage());
 
 		// pipe
 		auto info = vk::SamplerCreateInfo {};
@@ -59,18 +65,17 @@ public:
 		vk::PipelineLayoutCreateInfo plInfo;
 		plInfo.setLayoutCount = 1;
 		plInfo.pSetLayouts = pipeSets.begin();
-		pipeLayout_ = {dev, {dsLayout_}, {{vk::ShaderStageBits::fragment, 0, 4u}}};
+		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}},
+			{{{vk::ShaderStageBits::fragment, 0, 4u}}}};
 
 		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
 		vpp::ShaderModule textureShader(dev, normals_texn_frag_data);
-		auto rp = renderer().renderPass();
-		vpp::GraphicsPipelineInfo pipeInfo(rp, pipeLayout_, {{
+		vpp::GraphicsPipelineInfo pipeInfo(renderPass(), pipeLayout_, {{{
 			{fullscreenShader, vk::ShaderStageBits::vertex},
 			{textureShader, vk::ShaderStageBits::fragment}
-		}});
+		}}});
 
-		auto pipes = vk::createGraphicsPipelines(dev, {},  {pipeInfo.info()});
-		pipeline_ = {dev, pipes[0]};
+		pipeline_ = {dev, pipeInfo.info()};
 
 		// descriptor
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
@@ -80,7 +85,7 @@ public:
 				vk::ImageLayout::shaderReadOnlyOptimal}});
 			update.imageSampler({{{}, normal_.vkImageView(),
 				vk::ImageLayout::shaderReadOnlyOptimal}});
-			update.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+			update.uniform({{{ubo_}}});
 		}
 
 		return true;
@@ -89,13 +94,12 @@ public:
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipeline_);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {ds_.vkHandle()}, {});
+			pipeLayout_, 0, {{ds_.vkHandle()}}, {});
 		vk::cmdDraw(cb, 4, 1, 0, 0);
 	}
 
 	void update(double dt) override {
 		App::update(dt);
-		App::scheduleRedraw();
 
 		auto fac = dt;
 		auto kc = appContext().keyboardContext();
@@ -136,6 +140,8 @@ public:
 		doi::write(span, time_);
 	}
 
+	const char* name() const override { return "normals"; }
+
 protected:
 	float time_ {};
 	vpp::Sampler sampler_;
@@ -152,7 +158,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	DummyApp app;
-	if(!app.init({"dummy", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

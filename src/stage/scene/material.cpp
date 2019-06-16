@@ -5,107 +5,70 @@
 #include <stage/texture.hpp>
 
 namespace doi {
-namespace {
 
-vpp::ViewableImage loadImage(const vpp::Device& dev, const gltf::Image& tex,
-		nytl::StringParam path, bool srgb) {
-
-	auto name = tex.name.empty() ?
-		tex.name :
-		"'" + tex.name + "'";
-	dlg_info("  Loading image {}", name);
-
-	// TODO: we could support additional formats like r8 or r8g8.
-	// check tex.pixel_type. Also support other image parameters
-	if(!tex.uri.empty()) {
-		auto full = std::string(path);
-		full += tex.uri;
-		return doi::loadTexture(dev, full, srgb);
-	}
-
-	// TODO: simplifying assumptions that are usually met
-	dlg_assert(tex.component == 4);
-	dlg_assert(!tex.as_is);
-
-	vk::Extent3D extent;
-	extent.width = tex.width;
-	extent.height = tex.height;
-	extent.depth = 1;
-
-	auto format = srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
-	auto dataSize = extent.width * extent.height * 4u;
-	auto ptr = reinterpret_cast<const std::byte*>(tex.image.data());
-	auto data = nytl::Span<const std::byte>(ptr, dataSize);
-
-	return doi::loadTexture(dev, extent, format, data);
-}
-
-} // anon namespace
-
-
+/*
 vk::PushConstantRange Material::pcr() {
 	vk::PushConstantRange pcr;
 	pcr.offset = 0;
-	pcr.size = sizeof(float) * 8;
+	pcr.size = sizeof(PCR);
 	pcr.stageFlags = vk::ShaderStageBits::fragment;
 	return pcr;
 }
 
-vpp::TrDsLayout Material::createDsLayout(const vpp::Device& dev,
-		vk::Sampler sampler) {
+vpp::TrDsLayout Material::createDsLayout(const vpp::Device& dev) {
 	auto bindings = {
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, 0, 1, &sampler), // albedo
+			vk::ShaderStageBits::fragment), // albedo
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, 1, 1, &sampler), // metalRough
+			vk::ShaderStageBits::fragment), // metalRough
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, 2, 1, &sampler), // normal
+			vk::ShaderStageBits::fragment), // normal
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, 3, 1, &sampler), // occlusion
+			vk::ShaderStageBits::fragment), // occlusion
+		vpp::descriptorBinding(
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment), // emission
 	};
 
 	return {dev, bindings};
 }
 
-Material::Material(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
-		vk::ImageView dummy, nytl::Vec4f albedo, float roughness,
-		float metalness, bool doubleSided) {
-	albedo_ = albedo;
-	roughness_ = roughness;
-	metalness_ = metalness;
+Material::Material(const vpp::TrDsLayout& dsLayout,
+		vk::ImageView dummy, vk::Sampler dummySampler, nytl::Vec4f albedo,
+		float roughness, float metalness, bool doubleSided,
+		nytl::Vec3f emission) {
+	pcr_.albedo = albedo;
+	pcr_.roughness = roughness;
+	pcr_.metalness = metalness;
 	if(doubleSided) {
-		flags_ |= Flags::doubleSided;
+		pcr_.flags |= flagDoubleSided;
 	}
+	pcr_.emission = emission;
 
-	// descriptor
-	ds_ = {dev.descriptorAllocator(), dsLayout};
-	vpp::DescriptorSetUpdate update(ds_);
-	auto imgLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	albedoTex_ = {dummy, dummySampler};
+	metalnessRoughnessTex_ = {dummy, dummySampler};
+	normalTex_ = {dummy, dummySampler};
+	occlusionTex_ = {dummy, dummySampler};
+	emissionTex_ = {dummy, dummySampler};
 
-	albedoTex_ = dummy;
-	metalnessRoughnessTex_ = dummy;
-	normalTex_ = dummy;
-	occlusionTex_ = dummy;
-
-	update.imageSampler({{{}, albedoTex_, imgLayout}});
-	update.imageSampler({{{}, metalnessRoughnessTex_, imgLayout}});
-	update.imageSampler({{{}, normalTex_, imgLayout}});
-	update.imageSampler({{{}, occlusionTex_, imgLayout}});
+	ds_ = {dsLayout.device().descriptorAllocator(), dsLayout};
+	updateDs();
 }
 
-Material::Material(const vpp::Device& dev, const gltf::Model& model,
+Material::Material(InitData& data, const gltf::Model& model,
 		const gltf::Material& material, const vpp::TrDsLayout& dsLayout,
-		vk::ImageView dummyView, nytl::StringParam path,
-		nytl::Span<SceneImage> images) {
+		vk::ImageView dummyView, Scene& scene) {
+	ds_ = {data.initDs, dsLayout.device().descriptorAllocator(), dsLayout};
+
 	auto& pbr = material.values;
 	auto& add = material.additionalValues;
 	if(auto color = pbr.find("baseColorFactor"); color != pbr.end()) {
 		auto c = color->second.ColorFactor();
-		albedo_ = nytl::Vec4f{
+		pcr_.albedo = nytl::Vec4f{
 			float(c[0]),
 			float(c[1]),
 			float(c[2]),
@@ -114,75 +77,79 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 
 	if(auto roughness = pbr.find("roughnessFactor"); roughness != pbr.end()) {
 		dlg_assert(roughness->second.has_number_value);
-		roughness_ = roughness->second.Factor();
+		pcr_.roughness = roughness->second.Factor();
 	}
 
 	if(auto metal = pbr.find("metallicFactor"); metal != pbr.end()) {
 		dlg_assert(metal->second.has_number_value);
-		metalness_ = metal->second.Factor();
+		pcr_.metalness = metal->second.Factor();
 	}
 
-	// TODO: repsect texture (sampler) parameters
-	// TODO: we really should allocate textures at once, using
-	// deferred initialization
-	// TODO: loading images like that prevents us from parallalizing
-	// image loading. Work on that. Maybe first make a list
-	// of what images are needed, then parallalize loading (from disk),
-	// then submit and wait for command buffers, then finish initialization
-	// materials (i.e. write descriptor sets)
-	auto getImage = [&](unsigned id, bool srgb) {
-		dlg_assert(id < images.size());
-		if(images[id].image.vkImageView()) {
-			dlg_assert(images[id].srgb == srgb);
-			return images[id].image.vkImageView();
+	if(auto em = add.find("emissiveFactor"); em != add.end()) {
+		auto c = em->second.ColorFactor();
+		pcr_.emission = {float(c[0]), float(c[1]), float(c[2])};
+	}
+
+	auto getTex = [&](const gltf::Parameter& p, bool srgb,
+			vk::Sampler& sampler, u32& coord) {
+		coord = p.TextureTexCoord();
+		dlg_assert(coord <= 1);
+		if(coord == 0) {
+			pcr_.flags |= flagNeedsTexCoords0;
+		} else if(coord == 1) {
+			pcr_.flags |= flagNeedsTexCoords1;
 		}
 
-		images[id].image = loadImage(dev, model.images[id], path, srgb);
-		images[id].srgb = srgb;
-		return images[id].image.vkImageView();
+		auto texid = p.TextureIndex();
+		dlg_assert(texid != -1);
+		auto& tex = model.textures[texid];
+
+		sampler = scene.defaultSampler().vkHandle();
+		if(tex.sampler >= 0) {
+			dlg_assert(unsigned(tex.sampler) < scene.samplers().size());
+			sampler = scene.samplers()[tex.sampler].sampler;
+		}
+
+		dlg_assert(tex.source >= 0);
+		auto id = unsigned(tex.source);
+		scene.createImage(id, srgb);
+		return id;
 	};
 
-	if(auto color = pbr.find("baseColorTexture"); color != pbr.end()) {
-		auto tex = color->second.TextureIndex();
-		dlg_assert(tex != -1);
-		unsigned src = model.textures[tex].source;
-		albedoTex_ = getImage(src, true);
-		flags_ |= Flags::textured;
+	if(auto tex = pbr.find("baseColorTexture"); tex != pbr.end()) {
+		data.albedo = getTex(tex->second, true,
+			albedoTex_.sampler, pcr_.albedoCoords);
 	} else {
-		albedoTex_ = dummyView;
+		albedoTex_ = {dummyView, scene.defaultSampler()};
 	}
 
-	if(auto rm = pbr.find("metallicRoughnessTexture"); rm != pbr.end()) {
-		auto tex = rm->second.TextureIndex();
-		dlg_assert(tex != -1);
-		unsigned src = model.textures[tex].source;
-		metalnessRoughnessTex_ = getImage(src, false);
-		flags_ |= Flags::textured;
+	if(auto tex = pbr.find("metallicRoughnessTexture"); tex != pbr.end()) {
+		data.metalRoughness = getTex(tex->second, false,
+			metalnessRoughnessTex_.sampler, pcr_.metalRoughCoords);
 	} else {
-		metalnessRoughnessTex_ = dummyView;
+		metalnessRoughnessTex_ = {dummyView, scene.defaultSampler()};
 	}
 
-	// TODO: we could also respect the factors for normal (?) and occlusion
-	// we are completely ignoring emission atm
-	if(auto rm = add.find("normalTexture"); rm != add.end()) {
-		auto tex = rm->second.TextureIndex();
-		dlg_assert(tex != -1);
-		unsigned src = model.textures[tex].source;
-		normalTex_ = getImage(src, false);
-		flags_ |= Flags::textured;
-		flags_ |= Flags::normalMap;
+	if(auto tex = add.find("normalTexture"); tex != add.end()) {
+		data.normal = getTex(tex->second, false, normalTex_.sampler,
+			pcr_.normalsCoords);
+		pcr_.flags |= flagNormalMap;
 	} else {
-		normalTex_ = dummyView;
+		normalTex_ = {dummyView, scene.defaultSampler()};
 	}
 
-	if(auto rm = add.find("occlusionTexture"); rm != add.end()) {
-		auto tex = rm->second.TextureIndex();
-		dlg_assert(tex != -1);
-		unsigned src = model.textures[tex].source;
-		occlusionTex_ = getImage(src, false);
-		flags_ |= Flags::textured;
+	if(auto tex = add.find("occlusionTexture"); tex != add.end()) {
+		data.occlusion = getTex(tex->second, false, occlusionTex_.sampler,
+			pcr_.occlusionCoords);
 	} else {
-		occlusionTex_ = dummyView;
+		occlusionTex_ = {dummyView, scene.defaultSampler()};
+	}
+
+	if(auto tex = add.find("emissiveTexture"); tex != add.end()) {
+		data.emission = getTex(tex->second, true, emissionTex_.sampler,
+			pcr_.emissionCoords);
+	} else {
+		emissionTex_ = {dummyView, scene.defaultSampler()};
 	}
 
 	// default is OPAQUE (alphaCutoff_ == -1.f);
@@ -191,14 +158,17 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 		dlg_assert(!alphaMode.empty());
 		if(alphaMode == "BLEND") {
 			// NOTE: sorting and stuff is required for that to work...
+			// TODO: we currently set alpha cutoff to a really small
+			// value to at least somewhat mimic MASK mode in this case
+			// as well. Probably not a good idea, just implement sorting
 			dlg_warn("BLEND alphaMode not yet fully supported");
-			alphaCutoff_ = 0.0001f; // TODO
+			pcr_.alphaCutoff = 0.0001f;
+			pcr_.flags |= flagBlend;
 		} else if(alphaMode == "MASK") {
-			alphaCutoff_ = 0.5; // default per gltf
+			pcr_.alphaCutoff = 0.5; // default per gltf
 			if(auto m = add.find("alphaCutoff"); m != add.end()) {
 				dlg_assert(m->second.has_number_value);
-				alphaCutoff_ = m->second.number_value;
-				dlg_info("{}", alphaCutoff_);
+				pcr_.alphaCutoff = m->second.number_value;
 			}
 		}
 	}
@@ -206,44 +176,59 @@ Material::Material(const vpp::Device& dev, const gltf::Model& model,
 	// doubleSided, default is false
 	if(auto d = add.find("doubleSided"); d != add.end()) {
 		if(d->second.bool_value) {
-			flags_ |= Flags::doubleSided;
+			pcr_.flags |= flagDoubleSided;
 		}
 	}
-
-	// descriptor
-	ds_ = {dev.descriptorAllocator(), dsLayout};
-	vpp::DescriptorSetUpdate update(ds_);
-	auto imgLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-
-	update.imageSampler({{{}, albedoTex_, imgLayout}});
-	update.imageSampler({{{}, metalnessRoughnessTex_, imgLayout}});
-	update.imageSampler({{{}, normalTex_, imgLayout}});
-	update.imageSampler({{{}, occlusionTex_, imgLayout}});
 }
 
-bool Material::hasTexture() const {
-	return flags_ & Flags::textured;
+void Material::init(InitData& data, const Scene& scene) {
+	if(!normalTex_.view) {
+		dlg_assert(data.normal <= scene.images().size());
+		normalTex_.view = scene.images()[data.normal].image.vkImageView();
+	}
+	if(!albedoTex_.view) {
+		dlg_assert(data.albedo <= scene.images().size());
+		albedoTex_.view = scene.images()[data.albedo].image.vkImageView();
+	}
+	if(!occlusionTex_.view) {
+		dlg_assert(data.occlusion <= scene.images().size());
+		occlusionTex_.view = scene.images()[data.occlusion].image.vkImageView();
+	}
+	if(!emissionTex_.view) {
+		dlg_assert(data.emission <= scene.images().size());
+		emissionTex_.view = scene.images()[data.emission].image.vkImageView();
+	}
+	if(!metalnessRoughnessTex_.view) {
+		dlg_assert(data.metalRoughness <= scene.images().size());
+		metalnessRoughnessTex_.view =
+			scene.images()[data.metalRoughness].image.vkImageView();
+	}
+
+	ds_.init(data.initDs);
+	updateDs();
+}
+
+void Material::updateDs() {
+	vpp::DescriptorSetUpdate update(ds_);
+
+	auto write = [&](auto& tex) {
+		auto imgLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		update.imageSampler({{tex.sampler, tex.view, imgLayout}});
+	};
+
+	write(albedoTex_);
+	write(metalnessRoughnessTex_);
+	write(normalTex_);
+	write(occlusionTex_);
+	write(emissionTex_);
 }
 
 void Material::bind(vk::CommandBuffer cb, vk::PipelineLayout pl) const {
-	struct {
-		nytl::Vec4f albedo;
-		float roughness;
-		float metalness;
-		std::uint32_t flags;
-		float alphaCutoff;
-	} data = {
-		albedo_,
-		roughness_,
-		metalness_,
-		flags_.value(),
-		alphaCutoff_
-	};
-
 	vk::cmdPushConstants(cb, pl, vk::ShaderStageBits::fragment, 0,
-		sizeof(data), &data);
+		sizeof(pcr_), &pcr_);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		pl, 1, {ds_}, {});
+		pl, 1, {{ds_.vkHandle()}}, {});
 }
+*/
 
 } // namespace doi

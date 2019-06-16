@@ -12,7 +12,7 @@ namespace doi {
 // Simple perspective 3D matrix (rh coordinate system)
 struct Camera {
 	bool update = true; // set when changed
-	nytl::Vec3f pos {0.f, 0.f, 3.f};
+	nytl::Vec3f pos {0.f, 0.f, 2.f};
 	nytl::Vec3f dir {0.f, 0.f, -1.f};
 	nytl::Vec3f up {0.f, 1.f, 0.f};
 
@@ -27,16 +27,17 @@ struct Camera {
 	} perspective;
 };
 
-inline auto fixedMatrix(Camera& c) {
+inline auto projection(const Camera& c) {
 	auto& p = c.perspective;
-	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
-	return mat * doi::lookAtRH({}, c.dir, c.up);
+	return doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
 }
 
-inline auto matrix(Camera& c) {
-	auto& p = c.perspective;
-	auto mat = doi::perspective3RH<float>(p.fov, p.aspect, p.near, p.far);
-	return mat * doi::lookAtRH(c.pos, c.pos + c.dir, c.up);
+inline auto fixedMatrix(const Camera& c) {
+	return projection(c) * doi::lookAtRH({}, c.dir, c.up);
+}
+
+inline auto matrix(const Camera& c) {
+	return projection(c) * doi::lookAtRH(c.pos, c.pos + c.dir, c.up);
 }
 
 inline void rotateView(Camera& c, float dyaw, float dpitch) {
@@ -55,5 +56,10 @@ inline void rotateView(Camera& c, float dyaw, float dpitch) {
 // checks default wasd+qe movement
 // returns whether a change was made
 bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt);
+
+// returns the view projection matrix to render a cubemap from position 'pos'
+// for face 'i'. Aspect is assumed to be 1.
+nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
+	float near = 0.01f, float far = 30.f);
 
 } // namespace doi

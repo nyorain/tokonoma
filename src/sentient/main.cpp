@@ -1,5 +1,4 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 #include <stage/bits.hpp>
 
@@ -11,10 +10,12 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/trackedDescriptor.hpp>
-#include <vpp/pipelineInfo.hpp>
 
 #include <shaders/sentient.sentient.frag.h>
 #include <shaders/sentient.sentient.vert.h>
+
+// idea: 2D dynamically animated creatures. never really got anywhere with
+// it though
 
 // generates the vertices to draw a circle with triangle strip, writing
 // them directly into the given data buffer (which must be large enough)
@@ -44,15 +45,15 @@ public:
 		pcrange.stageFlags = vk::ShaderStageBits::fragment;
 		pcrange.offset = 0;
 		pcrange.size = 64;
-		pipeLayout_ = {dev, {}, {pcrange}};
+		pipeLayout_ = {dev, {}, {{pcrange}}};
 
 		// pipe
 		vpp::ShaderModule vert(dev, sentient_sentient_vert_data);
 		vpp::ShaderModule frag(dev, sentient_sentient_frag_data);
-		vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{
+		vpp::GraphicsPipelineInfo gpi {rp, pipeLayout_, {{{
 			{vert, vk::ShaderStageBits::vertex},
 			{frag, vk::ShaderStageBits::fragment},
-		}}, 0, samples};
+		}}}, 0, samples};
 
 		constexpr auto stride = sizeof(nytl::Vec2f);
 		vk::VertexInputBindingDescription bufferBinding {
@@ -68,13 +69,10 @@ public:
 		gpi.vertex.vertexBindingDescriptionCount = 1u;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleStrip;
 
-		vk::Pipeline vkpipe;
-		vk::createGraphicsPipelines(dev, {},
-			1, gpi.info(), NULL, vkpipe);
-
-		pipe_ = {dev, vkpipe};
+		pipe_ = {dev, gpi.info()};
 
 		// vert buffer
+		// TODO
 	}
 
 	void render(vk::CommandBuffer cb) {
@@ -100,8 +98,8 @@ protected:
 
 class CreaturesApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -115,11 +113,13 @@ public:
 	void update(double delta) override {
 		App::update(delta);
 	}
+
+	const char* name() const override { return "creatures"; }
 };
 
 int main(int argc, const char** argv) {
 	CreaturesApp app;
-	if(!app.init({"creatures", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

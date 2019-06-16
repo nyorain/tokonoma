@@ -25,8 +25,8 @@
 
 class Fun : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!App::init(args)) {
 			return false;
 		}
 
@@ -125,6 +125,8 @@ public:
 		levelTransform_.matrix(mat);
 	}
 
+	const char* name() const override { return "fun"; }
+
 protected:
 	doi::PhysicsSystem physics_;
 
@@ -142,7 +144,7 @@ protected:
 
 int main(int argc, const char** argv) {
 	Fun app;
-	if(!app.init({"fun", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

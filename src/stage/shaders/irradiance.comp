@@ -1,0 +1,75 @@
+#version 450
+
+// #extension GL_GOOGLE_include_directive : enable
+// #include "noise.glsl"
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+layout(constant_id = 2) const float sampleDelta = 0.025;
+
+layout(push_constant) uniform Face {
+	vec3 x;
+	uint face;
+	vec3 y;
+	float _2; // padding
+	vec3 z; // normal, cube map face
+} pcr;
+
+layout(set = 0, binding = 0, rgba16f) uniform writeonly imageCube outCol;
+layout(set = 0, binding = 1) uniform samplerCube envMap;
+
+const float pi = 3.1415926535897932;
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outCol);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+	uv = 2 * uv - 1;
+
+	vec3 normal = normalize(pcr.z + uv.x * pcr.x + uv.y * pcr.y);
+	normal.y *= -1.f;
+
+	vec3 accum = vec3(0.0);  
+	vec3 up = vec3(0.0, 1.0, 0.0);
+	vec3 right = cross(up, normal);
+	up = cross(normal, right);
+
+	float nrSamples = 0.0; 
+	for(float phi = 0.0; phi < 2.0 * pi; phi += sampleDelta) {
+		for(float theta = 0.0; theta < 0.5 * pi; theta += sampleDelta) {
+			// spherical to cartesian (in tangent space)
+			vec3 tangentSample = vec3(sin(theta) * cos(phi),  sin(theta) * sin(phi), cos(theta));
+			// tangent space to world
+			vec3 sampleVec = tangentSample.x * right + 
+				tangentSample.y * up +
+				tangentSample.z * normal;
+
+			accum += texture(envMap, sampleVec).rgb * cos(theta) * sin(theta);
+			nrSamples++;
+		}
+	}
+
+	accum = pi * accum * (1.0 / float(nrSamples));
+
+	// just using random samples... probably not as good
+	// combining both should give the best results i guess
+	// float total = 0.f;
+	// for(uint i = 0u; i < 100u; ++i) {
+	// 	vec3 tangentSample = random3(1 + i * normal);
+	// 	tangentSample.xy = 2 * pow(tangentSample.xy, vec2(2)) - 1;
+	// 	vec3 sampleVec = normalize(tangentSample.x * right + 
+	// 		tangentSample.y * up +
+	// 		tangentSample.z * normal);
+	// 	float fac = dot(sampleVec, normal);
+	// 	accum += fac * texture(envMap, sampleVec).rgb;
+	// 	total += fac;
+	// }
+	// accum /= total;
+
+	imageStore(outCol, ivec3(pixel, pcr.face), vec4(accum, 1.0));
+}
+

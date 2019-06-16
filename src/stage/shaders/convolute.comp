@@ -1,0 +1,53 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+#include "pbr.glsl"
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+layout(constant_id = 2) const uint sampleCount = 1024u;
+
+layout(push_constant) uniform Face {
+	vec3 x;
+	uint face;
+	vec3 y;
+	float roughness;
+	vec3 z; // normal, cube map face
+} pcr;
+
+layout(set = 0, binding = 0, rgba16f) uniform writeonly imageCube outCol;
+layout(set = 0, binding = 1) uniform samplerCube envMap;
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outCol);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+	uv = 2 * uv - 1;
+
+	vec3 N = normalize(pcr.z + uv.x * pcr.x + uv.y * pcr.y);
+	N.y *= -1.f;
+
+    vec3 R = N;
+    vec3 V = R;
+
+    float total = 0.0;   
+    vec3 accum = vec3(0.0);     
+    for(uint i = 0u; i < sampleCount; ++i) {
+        vec2 xi = hammersley(i, sampleCount);
+        vec3 H = importanceSampleGGX(xi, N, pcr.roughness);
+        vec3 L = normalize(2.0 * dot(V, H) * H - V);
+
+        float ndl = max(dot(N, L), 0.0);
+        if(ndl > 0.0) {
+            accum += texture(envMap, L).rgb * ndl;
+            total += ndl;
+        }
+    }
+
+    accum /= total;
+	imageStore(outCol, ivec3(pixel, pcr.face), vec4(accum, 1.0));
+}

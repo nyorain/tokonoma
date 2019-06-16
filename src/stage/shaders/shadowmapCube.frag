@@ -3,8 +3,10 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "scene.glsl"
 
-layout(location = 0) in vec2 inUV;
-layout(location = 1) in vec3 inPos;
+layout(location = 0) in vec2 inTexCoord0;
+layout(location = 1) in vec2 inTexCoord1;
+layout(location = 2) in vec3 inPos;
+layout(location = 3) flat in uint inMatID;
 
 // material
 layout(set = 0, binding = 0, row_major) uniform LightBuf {
@@ -12,35 +14,43 @@ layout(set = 0, binding = 0, row_major) uniform LightBuf {
 };
 
 // material
-layout(set = 1, binding = 0) uniform sampler2D albedoTex;
-layout(push_constant) uniform MaterialPcrBuf {
-	MaterialPcr material;
+layout(set = 1, binding = 2) buffer Materials {
+	Material materials[];
 };
 
+layout(set = 1, binding = 3) uniform texture2D textures[imageCount];
+layout(set = 1, binding = 4) uniform sampler samplers[samplerCount];
+
+vec4 readTex(MaterialTex tex) {
+	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
+	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
+}
+
 void main() {
-	// NOTE: logic here has to be that weird (two independent if statements)
-	// since otherwise i seem to trigger a bug (probably in driver or llvm?)
-	// on mesas vulkan-radeon 19.0.2
-	vec4 albedo = material.albedo * texture(albedoTex, inUV);
+	Material material = materials[inMatID];
+	vec4 albedo = material.albedoFac * readTex(material.albedo);
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}
 
+	// don't render backfaces by default
 	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
 		discard;
 	}
 
 	// store depth: distance from light to pixel in that direction
-	float farPlane = light.farPlane;
+	// float farPlane = light.farPlane;
+	float farPlane = light.radius;
     float dist = length(inPos - light.pos);
 
 	// depth bias, roughly like vkCmdSetDepthBias
 	// TODO: should be configurable, e.g. use push constant
-	const float bias = 0.01;
+	const float bias = 0.005;
 	dist += bias;
 	// XXX: use slope as with vkCmdSetDepthBias; probably not perfect
 	// read up in vulkan spec how it's implemented
-	const float biasSlope = 5.0;
+	// TODO: use gl_FragCoord.z instead of inPos.z?
+	const float biasSlope = 3.0;
 	dist += biasSlope * max(abs(dFdx(inPos.z)), abs(dFdy(inPos.z)));
 
     gl_FragDepth = dist / farPlane; // map to [0, 1]; required for depth output

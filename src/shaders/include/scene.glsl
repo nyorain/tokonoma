@@ -1,63 +1,246 @@
+#include "samples.glsl"
 #include "noise.glsl"
 
 // Light.flags
 const uint lightDir = (1u << 0); // otherwise point
 const uint lightPcf = (1u << 1); // use pcf
+const uint lightShadow = (1u << 2); // use shadow
 
 // MaterialPcr.flags
 const uint normalMap = (1u << 0);
 const uint doubleSided = (1u << 1);
 
-// struct Light {
-// 	vec3 pos; // position for point light, direction of dir light
-// 	uint type; // point or dir
-// 	vec3 color;
-// 	uint pcf;
-// };
+const uint imageCount = 96u;
+const uint samplerCount = 8u;
+
+// TODO: don't hardcode. Instead pass per spec constant
+const uint dirLightCascades = 4;
 
 struct DirLight {
-	vec3 color; // w: pcf
+	vec3 color;
 	uint flags;
 	vec3 dir;
 	float _; // unused padding
-	mat4 proj; // global -> light space
+	mat4 cascadeProjs[dirLightCascades]; // global -> light space
+	vec4 cascadeSplits[(dirLightCascades + 3) / 4];
 };
 
 struct PointLight {
 	vec3 color;
 	uint flags;
 	vec3 pos;
-	float farPlane;
+	// float farPlane;
+	float _;
+	vec3 attenuation;
+	float radius;
 	mat4 proj[6]; // global -> cubemap [side i] light space
 };
 
-struct MaterialPcr {
-	vec4 albedo;
-	float roughness;
-	float metallic;
-	uint flags;
-	float alphaCutoff;
+struct ModelData {
+	mat4 matrix;
+	mat4 normal; // [3]: {materialID, modelID, unused, unused}
 };
+
+struct MaterialTex {
+	uint coords;
+	uint id; // texture id
+	uint samplerID;
+};
+
+struct Material {
+	vec4 albedoFac;
+	vec3 emissionFac;
+	uint flags;
+	float roughnessFac;
+	float metallicFac;
+	float alphaCutoff;
+	MaterialTex albedo;
+	MaterialTex normals;
+	MaterialTex emission;
+	MaterialTex metalRough;
+	MaterialTex occlusion;
+	vec2 pad;
+};
+
+// TODO: deprecated, remove!
+// using Material in SSBOs instead
+// size: 64
+// struct MaterialPcr {
+// 	vec4 albedo;
+// 	vec3 emission;
+// 	uint flags;
+// 	float roughness;
+// 	float metallic;
+// 	float alphaCutoff;
+// 	uint albedoCoords;
+// 	uint emissionCoords;
+// 	uint normalCoords;
+// 	uint metalRoughCoords;
+// 	uint occlusionCoords;
+// };
+
+
+// returns the z value belonging to the given depth buffer value
+// obviously requires the near and far plane values that were used
+// in the perspective projection.
+// depth expected in standard vulkan range [0,1]
+// NOTE: we could implement an alternative version that uses the projection
+// matrix for depthtoz. But we always use the premultiplied
+// projectionView matrix and we can't get the information out of that.
+float depthtoz(float depth, float near, float far) {
+	// return near * far / (far + near - depth * (far - near));
+	return far * near / (far - depth * (far - near));
+}
+float ztodepth(float z, float near, float far) {
+	// return (near + far - near * far / z) / (far - near);
+	return (far - near * far / z) / (far - near);
+}
+
+// Reconstructs the fragment position in world space from the it's uv coord,
+// the sampled depth ([0,1]) for this fragment and the scenes inverse viewProj.
+// uv expected to have it's origin topleft, while world coord system has
+// up y axis
+vec3 reconstructWorldPos(vec2 uv, mat4 invViewProj, float depth) {
+	vec2 suv = 2 * uv - 1;
+	suv.y *= -1.f; // flip y, different directions in screen/world space
+	vec4 pos4 = invViewProj * vec4(suv, depth, 1.0);
+	return pos4.xyz / pos4.w;
+}
+
+vec3 sceneMap(mat4 proj, vec4 pos) {
+	pos = proj * pos;
+	vec3 mapped = pos.xyz / pos.w;
+	mapped.y *= -1; // invert y
+	mapped.xy = 0.5 + 0.5 * mapped.xy; // normalize for texture access
+	return mapped;
+}
+
+vec3 sceneMap(mat4 proj, vec3 pos) {
+	return sceneMap(proj, vec4(pos, 1.0));
+}
 
 // computes shadow for directional light
 // returns (1 - shadow), i.e. the light factor
 float dirShadow(sampler2DShadow shadowMap, vec3 pos, int range) {
-	if(pos.z > 1.0) {
+	if(pos.z < 0.0 || pos.z > 1.0) {
 		return 1.0;
 	}
 
 	vec2 texelSize = 1.f / textureSize(shadowMap, 0);
 	float sum = 0.f;
+
 	for(int x = -range; x <= range; ++x) {
 		for(int y = -range; y <= range; ++y) {
+			vec3 off = 1.5 * vec3(texelSize * vec2(x, y),  0);
 			// sampler has builtin comparison
-			vec3 off = vec3(texelSize * vec2(x, y),  0);
 			sum += texture(shadowMap, pos + off).r;
 		}
 	}
 
 	float total = ((2 * range + 1) * (2 * range + 1));
 	return sum / total;
+}
+
+uint getCascadeIndex(DirLight light, float linearz) {
+	uint i = 0u;
+	for(; i < dirLightCascades; ++i) {
+		if(linearz < light.cascadeSplits[i / 4][i % 4]) {
+			break;
+		}
+	}
+	return i;
+}
+
+uint getCascadeIndex(DirLight light, float linearz, out float between) {
+	uint i = 0u;
+	float last = 0.0;
+	for(; i < dirLightCascades; ++i) {
+		float split = light.cascadeSplits[i / 4][i % 4];
+		if(linearz < split) {
+			between = (linearz - last) / (split - last);
+			return i;
+		}
+		last = split;
+	}
+
+	between = 0.f;
+	return i;
+}
+
+float dirShadowIndex(DirLight light, sampler2DArrayShadow shadowMap,
+		vec3 worldPos, uint index, int range) {
+	// sampler has builtin comparison
+	// array index comes *before* the comparison value (i.e. i before pos.z)
+	vec3 pos = sceneMap(light.cascadeProjs[index], worldPos);
+	if(pos.z <= 0.0 || pos.z >= 1.0) {
+		return 0.0;
+	}
+
+	float sum = 0.f;
+
+	// NOTE: not a good idea to use this here, apparently linear
+	// filtering for shadow samplers doesn't really mean linear
+	// filtering and instead just that they take multiple
+	// pixels into account... can't realy on linear sampling
+	// optimizations therefore
+	/*
+	// TODO: simpler with two seperate sampler objects probably
+	const vec2 texSize = textureSize(shadowMap, 0).xy;
+	const vec2 nf = 1.f / texSize; // normalization factor
+	ivec2 ipos = ivec2(floor(pos.xy * texSize)); // unnormalized position
+	vec4 access = vec4((ipos + 0.5) * nf, index, pos.z);
+	// vec4 access = vec4(pos.xy, index, pos.z);
+	sum += texture(shadowMap, access).r;
+
+	access.xy = ipos * nf;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[0]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[1]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[2]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[3]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[4]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[5]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[6]).r;
+	sum += textureOffset(shadowMap, access, samplesLinear8Floor[7]).r;
+	// for(uint i = 0u; i < 4; ++i) {
+	// 	vec2 off = nf * samplesLinear8[i];
+	// 	sum += texture(shadowMap, vec4(pos.xy + off, index, pos.z));
+	// 	sum += texture(shadowMap, vec4(pos.xy - off, index, pos.z));
+	// }
+
+	return sum / 9;
+	*/
+
+	const vec2 texelSize = 1.f / textureSize(shadowMap, 0).xy;
+	for(int x = -range; x <= range; ++x) {
+		for(int y = -range; y <= range; ++y) {
+			vec2 off = texelSize * vec2(x, y);
+			sum += texture(shadowMap, vec4(pos.xy + off, index, pos.z)).r;
+		}
+	}
+
+	float total = ((2 * range + 1) * (2 * range + 1));
+	return sum / total;
+}
+
+float dirShadow(DirLight light, sampler2DArrayShadow shadowMap, vec3 worldPos,
+		float linearz, int range) {
+	uint i = getCascadeIndex(light, linearz);
+	return dirShadowIndex(light, shadowMap, worldPos, i, range);
+}
+
+// Calculates the light attentuation based on the distance d and the
+// light attenuation parameters
+// float attenuation(float d, vec3 params) {
+float attenuation(float d, float radius) {
+	// return 1.f / (params.x + params.y * d + params.z * (d * d));
+	
+	// TODO
+	// hardcoded, normalized attenuation
+	// at the outer border of the light (when d / radius = 1), the
+	// light will have an attenuation of below 0.01, so at normal
+	// exposure there will be no edge
+	d /= radius;
+	return 1.f / (1 + 8 * d + 96 * (d * d));
 }
 
 // from https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows
@@ -115,49 +298,20 @@ vec2 signNotZero(vec2 v) {
 }
 
 // n must be normalized
-vec2 encodeNormal(vec3 n) {
-	// spherical encoding (lattitude, longitude)
-	// float latt = asin(n.y);
-	// float long = asin(n.x / latt); // or acos(n.z / latt)
-	// return vec2(latt, long);
-
-	// naive
-	// return vec2(n.x, n.y);
-	
-	// oct
+// using oct compression
+vec2 encodeNormal(vec3 n) { 
 	vec2 p = n.xy * (1.0 / (abs(n.x) + abs(n.y) + abs(n.z)));
 	return (n.z <= 0.0) ? ((1.0 - abs(p.yx)) * signNotZero(p)) : p;
 }
 
 // returns normalized vector
 vec3 decodeNormal(vec2 n) {
-	// spherical encoding (lattitude, longitude)
-	// float xz = cos(n.x);
-	// float y = sin(n.x);
-	// return vec3(xz * sin(n.y), y, xz * cos(n.y));
-
-	// naive
-	// return vec3(n.x, n.y, sqrt(1 - n.x * n.x - n.y * n.y));
-	
-	// oct
 	vec3 v = vec3(n.xy, 1.0 - abs(n.x) - abs(n.y));
 	if (v.z < 0) v.xy = (1.0 - abs(v.yx)) * signNotZero(v.xy);
 	return normalize(v);
 }
 
 // == screen space light scatter algorithms ==
-vec3 sceneMap(mat4 proj, vec4 pos) {
-	pos = proj * pos;
-	vec3 mapped = pos.xyz / pos.w;
-	mapped.y *= -1; // invert y
-	mapped.xy = 0.5 + 0.5 * mapped.xy; // normalize for texture access
-	return mapped;
-}
-
-vec3 sceneMap(mat4 proj, vec3 pos) {
-	return sceneMap(proj, vec4(pos, 1.0));
-}
-
 // ripped from http://www.alexandre-pestana.com/volumetric-lights/
 float mieScattering(float lightDotView, float gs) {
 	float result = 1.0f - gs * gs;
@@ -165,138 +319,14 @@ float mieScattering(float lightDotView, float gs) {
 	return result;
 }
 
-// fragPos and lightPos are in screen space
-// viewDir and lightDir must be normalized
-float lightScatterDepth(vec2 fragPos, vec2 lightPos, float lightDepth,
-		vec3 lightDir, vec3 viewDir, sampler2D depthTex) {
-	// if light position is outside of screen, we can't scatter since
-	// we can't track rays to the ray (since depth map only covers screen)
-	if(clamp(lightPos, 0.0, 1.0) != lightPos) {
-		return 0.f;
-	}
-
-	// NOTE: random factors (especially the 35 seems weird...)
-	// currently tuned for directional light
-	float ldv = -dot(lightDir, viewDir);
-	float fac = mieScattering(ldv, 0.05);
-	fac *= 35.0 * ldv;
-
-	// nice small "sun" in addition to the all around scattering
-	fac += mieScattering(ldv, 0.95);
-
-	// Make sure light gradually fades when light gets outside of screen
-	// instead of suddenly jumping to 0 because of 'if' at beginning.
-	fac *= pow(lightPos.x * (1 - lightPos.x), 0.9);
-	fac *= pow(lightPos.y * (1 - lightPos.y), 0.9);
-
-	vec2 ray = lightPos - fragPos;
-
-	// NOTE: making the number of steps dependent on the ray length
-	// is probably a bad idea. When light an pixel (geometry) are close, the
-	// chance for artefacts is the highest i guess
-	// float l = dot(ray, ray); // max: 2
-	// uint steps = uint(clamp(10 * l, 5, 15));
-
-	uint steps = 10;
-	vec2 step = ray / steps;
-	float accum = 0.f;
-	vec2 ipos = fragPos;
-
-	vec2 ppixel = mod(fragPos * textureSize(depthTex, 0), vec2(4, 4));
-	const float ditherPattern[4][4] = {
-		{ 0.0f, 0.5f, 0.125f, 0.625f},
-		{ 0.75f, 0.22f, 0.875f, 0.375f},
-		{ 0.1875f, 0.6875f, 0.0625f, 0.5625},
-		{ 0.9375f, 0.4375f, 0.8125f, 0.3125}};
-	float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
-	ipos += ditherValue * step;
-
-	// TODO: atm, light can shine through completely closed wall...
-	// idea: make samples near the light more important.
-
-	// NOTE: instead of the dithering we could use a fully random
-	// offset. Doesn't seem to work as well though.
-	// Offset to step probably a bad idea
-	// ipos += 0.7 * random(fragPos) * step;
-	// step += 0.01 * (2 * random(step) - 1) * step;
-	for(uint i = 0u; i < steps; ++i) {
-		// sampler2DShadow: z value is the value we compare with
-		// accum += texture(depthTex, vec3(ipos, rayEnd.z)).r;
-
-		float depth = texture(depthTex, ipos).r;
-		accum += (depth < lightDepth ? 0.f : 1.f);
-		ipos += step;
-		if(ipos != clamp(ipos, 0, 1)) {
-			break;
-		}
-	}
-
-	accum *= fac / steps;
-	accum = clamp(accum, 0.0, 1.0);
-	return accum;
+// https://www.shadertoy.com/view/lslXDr
+float phaseMie(float c, float g) {
+	float cc = c * c;
+	float gg = g * g;
+	float a = ( 1.0 - gg ) * ( 1.0 + cc );
+	float b = 1.0 + gg - 2.0 * g * c;
+	b *= sqrt( b );
+	b *= 2.0 + gg;	
+	return (3.0 / 8.0 / 3.141) * a / b;
 }
-
-/*
-// TODO: fix. Needs some serious changes for point lights
-float lightScatterShadow(vec3 pos) {
-	// NOTE: first attempt at light scattering
-	// http://www.alexandre-pestana.com/volumetric-lights/
-	// problem with this is that it doesn't work if background
-	// is clear.
-	vec3 rayStart = scene.viewPos;
-	vec3 rayEnd = pos;
-	vec3 ray = rayEnd - rayStart;
-
-	float rayLength = length(ray);
-	vec3 rayDir = ray / rayLength;
-	rayLength = min(rayLength, 8.f);
-	ray = rayDir * rayLength;
-
-	// float fac = 1 / dot(normalize(-ldir), rayDir);
-	// TODO
-	vec3 lrdir = light.pos.xyz - scene.viewPos;
-	// float div = pow(dot(lrdir, lrdir), 0.6);
-	// float div = length(lrdir);
-	float div = 1.f;
-	float fac = mieScattering(dot(normalize(lrdir), rayDir), 0.01) / div;
-
-	const uint steps = 20u;
-	vec3 step = ray / steps;
-	// offset slightly for smoother but noisy results
-	// TODO: instead use per-pixel dither pattern and smooth out
-	// in pp pass. Needs additional scattering attachment though
-	// rayStart += 0.1 * random(rayEnd) * rayDir;
-	step += 0.01 * random(step) * step;
-	rayStart += 0.01 * random(rayEnd) * step;
-
-	float accum = 0.0;
-	pos = rayStart;
-
-	// TODO: falloff over time
-	// float ffac = 1.f;
-	// float falloff = 0.9;
-	for(uint i = 0u; i < steps; ++i) {
-		// position in light space
-		// vec4 pls = light.proj * vec4(pos, 1.0);
-		// pls.xyz /= pls.w;
-		// pls.y *= -1; // invert y
-		// pls.xy = 0.5 + 0.5 * pls.xy; // normalize for texture access
-// 
-		// // float fac = max(dot(normalize(light.pd - pos), rayDir), 0.0); // TODO: light.position
-		// // accum += fac * texture(shadowTex, pls.xyz).r;
-		// // TODO: implement/use mie scattering function
-		// accum += texture(shadowTex, pls.xyz).r;
-
-		accum += pointShadow(shadowTex, light.pos, pos);
-		pos += step;
-	}
-
-	// 0.25: random factor, should be configurable
-	// accum *= 0.25 * fac;
-	accum *= fac;
-	accum /= steps;
-	accum = clamp(accum, 0.0, 1.0);
-	return accum;
-}
-*/
 

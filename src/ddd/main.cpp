@@ -1,3 +1,11 @@
+// Simple forward renderer mainly as reference for other rendering
+// concepts.
+// TODO: re-add point light support (mainly in shader, needs way to
+//   differentiate light types, aliasing is undefined behavior)
+//   probably best to just have an array of both descriptors and
+//   pass `numDirLights`, `numPointLights`
+// TODO: fix/remove light visualization
+
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
 #include <stage/render.hpp>
@@ -10,7 +18,7 @@
 #include <stage/scene/shape.hpp>
 #include <stage/scene/scene.hpp>
 #include <stage/scene/light.hpp>
-#include <stage/scene/skybox.hpp>
+#include <stage/scene/environment.hpp>
 #include <argagg.hpp>
 
 #include <stage/scene/scene.hpp>
@@ -22,9 +30,12 @@
 #include <ny/mouseButton.hpp>
 
 #include <vpp/sharedBuffer.hpp>
+#include <vpp/init.hpp>
 #include <vpp/trackedDescriptor.hpp>
+#include <vpp/submit.hpp>
+#include <vpp/vk.hpp>
+#include <vpp/commandAllocator.hpp>
 #include <vpp/formats.hpp>
-#include <vpp/pipelineInfo.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/bufferOps.hpp>
 #include <vpp/imageOps.hpp>
@@ -42,17 +53,13 @@
 #include <vector>
 #include <string>
 
-// TODO: lightBall visualization really bad idea for
-// directional light...
-
 class ViewApp : public doi::App {
 public:
 	static constexpr auto maxLightSize = 8u;
-	using Vertex = doi::Primitive::Vertex;
 
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -62,7 +69,22 @@ public:
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
 		auto hostMem = dev.hostMemoryTypes();
-		skybox_.init(dev, renderer().renderPass(), 0, renderer().samples());
+		vpp::DeviceMemoryAllocator memStage(dev);
+		vpp::BufferAllocator bufStage(memStage);
+
+		auto& qs = dev.queueSubmitter();
+		auto qfam = qs.queue().family();
+		auto cb = dev.commandAllocator().get(qfam);
+		vk::beginCommandBuffer(cb, {});
+
+		alloc_.emplace(dev);
+		auto& alloc = *this->alloc_;
+		doi::WorkBatcher batch{dev, cb, {
+				alloc.memDevice, alloc.memHost, memStage,
+				alloc.bufDevice, alloc.bufHost, bufStage,
+				dev.descriptorAllocator(),
+			}
+		};
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -76,37 +98,45 @@ public:
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
 		sampler_ = {dev, sci};
 
-		// dummy texture for materials that don't have a texture
-		std::array<std::uint8_t, 4> data{255u, 255u, 255u, 255u};
-		auto ptr = reinterpret_cast<std::byte*>(data.data());
-		dummyTex_ = doi::loadTexture(dev, {1, 1, 1},
-			vk::Format::r8g8b8a8Unorm, {ptr, data.size()});
+		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
+		auto span = nytl::as_bytes(nytl::span(idata));
+		auto p = doi::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+		doi::TextureCreateParams params;
+		params.format = vk::Format::r8g8b8a8Unorm;
+		dummyTex_ = {batch, std::move(p), params};
 
-		// per scense; view + projection matrix, lights
-		auto sceneBindings = {
+		// Load scene
+		auto s = sceneScale_;
+		auto mat = doi::scaleMat<4, float>({s, s, s});
+		auto samplerAnisotropy = 1.f;
+		if(anisotropy_) {
+			samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
+		}
+		auto ri = doi::SceneRenderInfo{
+			dummyTex_.vkImageView(),
+			samplerAnisotropy, false, multiDrawIndirect_
+		};
+		auto [omodel, path] = doi::loadGltf(modelname_);
+		if(!omodel) {
+			return false;
+		}
+
+		auto& model = *omodel;
+		auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
+		auto& sc = model.scenes[scene];
+
+		auto initScene = vpp::InitObject<doi::Scene>(scene_, batch, path,
+			model, sc, mat, ri);
+		initScene.init(batch, dummyTex_.vkImageView());
+
+		// view + projection matrix
+		auto cameraBindings = {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		sceneDsLayout_ = {dev, sceneBindings};
-
-		// per object; model matrix and material stuff
-		auto objectBindings = {
-			vpp::descriptorBinding(
-				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
-		};
-
-		primitiveDsLayout_ = {dev, objectBindings};
-
-		// per material
-		// push constant range for material
-		materialDsLayout_ = doi::Material::createDsLayout(dev, sampler_);
-		vk::PushConstantRange pcr;
-		pcr.offset = 0;
-		pcr.size = sizeof(float) * 8;
-		pcr.stageFlags = vk::ShaderStageBits::fragment;
+		cameraDsLayout_ = {dev, cameraBindings};
 
 		// per light
 		// TODO: statically use shadow data sampler here?
@@ -121,13 +151,18 @@ public:
 
 		lightDsLayout_ = {dev, lightBindings};
 
+		doi::Environment::InitData initEnv;
+		environment_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx",
+			sampler_);
+		environment_.createPipe(device(), cameraDsLayout_,
+			renderPass(), 0u, samples());
+		environment_.init(initEnv, batch);
+
 		// pipeline layout consisting of all ds layouts and pcrs
-		pipeLayout_ = {dev, {
-			sceneDsLayout_,
-			materialDsLayout_,
-			primitiveDsLayout_,
-			lightDsLayout_,
-		}, {pcr}};
+		pipeLayout_ = {dev, {{
+			cameraDsLayout_.vkHandle(),
+			scene_.dsLayout().vkHandle(),
+			lightDsLayout_.vkHandle()}}, {}};
 
 		vk::SpecializationMapEntry maxLightsEntry;
 		maxLightsEntry.size = sizeof(std::uint32_t);
@@ -140,32 +175,12 @@ public:
 
 		vpp::ShaderModule vertShader(dev, ddd_model_vert_data);
 		vpp::ShaderModule fragShader(dev, ddd_model_frag_data);
-		vpp::GraphicsPipelineInfo gpi {renderer().renderPass(), pipeLayout_, {{
+		vpp::GraphicsPipelineInfo gpi {renderPass(), pipeLayout_, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment, &fragSpec},
-		}}, 0, renderer().samples()};
+		}}}, 0, samples()};
 
-		constexpr auto stride = sizeof(Vertex);
-		vk::VertexInputBindingDescription bufferBindings[2] = {
-			{0, stride, vk::VertexInputRate::vertex},
-			{1, sizeof(float) * 2, vk::VertexInputRate::vertex} // uv
-		};
-
-		vk::VertexInputAttributeDescription attributes[3] {};
-		attributes[0].format = vk::Format::r32g32b32Sfloat; // pos
-
-		attributes[1].format = vk::Format::r32g32b32Sfloat; // normal
-		attributes[1].offset = sizeof(float) * 3; // pos
-		attributes[1].location = 1;
-
-		attributes[2].format = vk::Format::r32g32Sfloat; // uv
-		attributes[2].location = 2;
-		attributes[2].binding = 1;
-
-		gpi.vertex.pVertexAttributeDescriptions = attributes;
-		gpi.vertex.vertexAttributeDescriptionCount = 3u;
-		gpi.vertex.pVertexBindingDescriptions = bufferBindings;
-		gpi.vertex.vertexBindingDescriptionCount = 2u;
+		gpi.vertex = doi::Scene::vertexInfo();
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 		gpi.depthStencil.depthTestEnable = true;
@@ -186,40 +201,94 @@ public:
 
 		pipe_ = {dev, vkpipe};
 
-		// Load Model
-		auto s = sceneScale_;
-		auto mat = doi::scaleMat<4, float>({s, s, s});
-		auto ri = doi::SceneRenderInfo{materialDsLayout_, primitiveDsLayout_,
-			pipeLayout_, dummyTex_.vkImageView()};
-		if(!(scene_ = doi::loadGltf(modelname_, dev, mat, ri))) {
-			return false;
-		}
+		// box indices
+		std::array<std::uint16_t, 36> indices = {
+			0, 1, 2,  2, 1, 3, // front
+			1, 5, 3,  3, 5, 7, // right
+			2, 3, 6,  6, 3, 7, // top
+			4, 0, 6,  6, 0, 2, // left
+			4, 5, 0,  0, 5, 1, // bottom
+			5, 4, 7,  7, 4, 6, // back
+		};
+
+		boxIndices_ = {alloc.bufDevice,
+			36u * sizeof(std::uint16_t),
+			vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
+			dev.deviceMemoryTypes(), 4u};
+		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
 
 		// add light primitive
-		lightMaterial_.emplace(vulkanDevice(), materialDsLayout_,
-			dummyTex_.vkImageView(), nytl::Vec{1.f, 1.f, 0.4f, 1.f});
+		// lightMaterial_.emplace(materialDsLayout_,
+		// 	dummyTex_.vkImageView(), scene_->defaultSampler(),
+		// 	nytl::Vec{1.f, 1.f, 0.4f, 1.f});
 
 		// == ubo and stuff ==
-		auto sceneUboSize = sizeof(nytl::Mat4f) // proj matrix
-			+ sizeof(nytl::Vec3f); // viewPos
-		sceneDs_ = {dev.descriptorAllocator(), sceneDsLayout_};
-		sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
-			vk::BufferUsageBits::uniformBuffer, 0, hostMem};
+		auto cameraUboSize = sizeof(nytl::Mat4f) // proj matrix
+			+ sizeof(nytl::Vec3f) + sizeof(float) * 2; // viewPos, near, far
+		cameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
+		cameraUbo_ = {dev.bufferAllocator(), cameraUboSize,
+			vk::BufferUsageBits::uniformBuffer, hostMem};
+
+		envCameraUbo_ = {dev.bufferAllocator(), sizeof(nytl::Mat4f),
+			vk::BufferUsageBits::uniformBuffer, hostMem};
+		envCameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
 
 		// == example light ==
-		shadowData_ = doi::initShadowData(dev, renderer().depthFormat(),
-			lightDsLayout_, materialDsLayout_, primitiveDsLayout_,
-			doi::Material::pcr());
-		light_ = {dev, lightDsLayout_, primitiveDsLayout_, shadowData_,
-			camera_.pos, *lightMaterial_};
+		shadowData_ = doi::initShadowData(dev, depthFormat(),
+			lightDsLayout_, scene_.dsLayout(), multiview_, depthClamp_);
+		// light_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
+		light_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
 		light_.data.dir = {5.8f, -12.0f, 4.f};
 		// light_.data.position = {0.f, 5.0f, 0.f};
 		updateLight_ = true;
 
+		vk::endCommandBuffer(cb);
+		qs.wait(qs.add(cb));
+
 		// descriptors
-		vpp::DescriptorSetUpdate sdsu(sceneDs_);
-		sdsu.uniform({{sceneUbo_.buffer(), sceneUbo_.offset(), sceneUbo_.size()}});
-		vpp::apply({sdsu});
+		vpp::DescriptorSetUpdate sdsu(cameraDs_);
+		sdsu.uniform({{{cameraUbo_}}});
+		sdsu.apply();
+
+		vpp::DescriptorSetUpdate edsu(envCameraDs_);
+		edsu.uniform({{{envCameraUbo_}}});
+		edsu.apply();
+
+		return true;
+	}
+
+	bool features(doi::Features& enable, const doi::Features& supported) override {
+		if(!App::features(enable, supported)) {
+			return false;
+		}
+
+		if(supported.base.features.samplerAnisotropy) {
+			anisotropy_ = true;
+			enable.base.features.samplerAnisotropy = true;
+		} else {
+			dlg_warn("sampler anisotropy not supported");
+		}
+
+		if(supported.multiview.multiview) {
+			multiview_ = true;
+			enable.multiview.multiview = true;
+		} else {
+			dlg_warn("Multiview not supported");
+		}
+
+		if(supported.base.features.depthClamp) {
+			depthClamp_ = true;
+			enable.base.features.depthClamp = true;
+		} else {
+			dlg_warn("DepthClamp not supported");
+		}
+
+		if(supported.base.features.multiDrawIndirect) {
+			multiDrawIndirect_ = true;
+			enable.base.features.multiDrawIndirect = true;
+		} else {
+			dlg_warn("multiDrawIndirect not supported");
+		}
 
 		return true;
 	}
@@ -254,18 +323,25 @@ public:
 
 	void beforeRender(vk::CommandBuffer cb) override {
 		App::beforeRender(cb);
-		light_.render(cb, shadowData_, *scene_);
+		light_.render(cb, shadowData_, scene_);
 	}
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {sceneDs_}, {});
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 3, {light_.ds()}, {});
-		scene_->render(cb, pipeLayout_);
-		light_.lightBall().render(cb, pipeLayout_);
-		skybox_.render(cb);
+		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
+		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {light_.ds()});
+
+		scene_.render(cb, pipeLayout_, false); // opaque
+		scene_.render(cb, pipeLayout_, true); // transparent/blend
+
+		// lightMaterial_->bind(cb, pipeLayout_);
+		// light_.lightBall().render(cb, pipeLayout_);
+
+		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
+			boxIndices_.offset(), vk::IndexType::uint16);
+		doi::cmdBindGraphicsDescriptors(cb, environment_.pipeLayout(), 0,
+			{envCameraDs_});
+		environment_.render(cb);
 	}
 
 	void update(double dt) override {
@@ -348,19 +424,31 @@ public:
 			camera_.update = false;
 			// updateLights_ set to false below
 
-			auto map = sceneUbo_.memoryMap();
+			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
 
 			doi::write(span, matrix(camera_));
 			doi::write(span, camera_.pos);
+			doi::write(span, camera_.perspective.near);
+			doi::write(span, camera_.perspective.far);
+			if(!map.coherent()) {
+				map.flush();
+			}
 
-			skybox_.updateDevice(fixedMatrix(camera_));
+			auto envMap = envCameraUbo_.memoryMap();
+			auto envSpan = envMap.span();
+			doi::write(envSpan, fixedMatrix(camera_));
+			if(!envMap.coherent()) {
+				envMap.flush();
+			}
 
+			scene_.updateDevice(matrix(camera_));
 			updateLight_ = true;
 		}
 
 		if(updateLight_) {
-			light_.updateDevice(camera_.pos);
+			// light_.updateDevice(camera_.pos);
+			light_.updateDevice(camera_);
 			updateLight_ = false;
 		}
 	}
@@ -371,29 +459,33 @@ public:
 		camera_.update = true;
 	}
 
-	bool needsDepth() const override {
-		return true;
-	}
+	bool needsDepth() const override { return true; }
+	const char* name() const override { return "3D Forward renderer"; }
 
 protected:
 	vpp::Sampler sampler_;
-	vpp::TrDsLayout sceneDsLayout_;
-	vpp::TrDsLayout primitiveDsLayout_;
-	vpp::TrDsLayout materialDsLayout_;
+	vpp::TrDsLayout cameraDsLayout_;
 	vpp::TrDsLayout lightDsLayout_;
 	vpp::PipelineLayout pipeLayout_;
 
-	vpp::SubBuffer sceneUbo_;
-	vpp::TrDs sceneDs_;
+	vpp::SubBuffer cameraUbo_;
+	vpp::TrDs cameraDs_;
+	vpp::SubBuffer envCameraUbo_;
+	vpp::TrDs envCameraDs_;
 	vpp::Pipeline pipe_;
 
-	vpp::ViewableImage dummyTex_;
+	doi::Texture dummyTex_;
 	bool moveLight_ {false};
+
+	bool anisotropy_ {}; // whether device supports anisotropy
+	bool multiview_ {}; // whether device supports multiview
+	bool depthClamp_ {}; // whether the device supports depth clamping
+	bool multiDrawIndirect_ {};
 
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
 
-	std::unique_ptr<doi::Scene> scene_; // no default constructor
+	doi::Scene scene_; // no default constructor
 	doi::Camera camera_ {};
 
 	// light and shadow
@@ -402,18 +494,34 @@ protected:
 	// doi::PointLight light_;
 	bool updateLight_ {true};
 	// light ball
-	std::optional<doi::Material> lightMaterial_;
+	// std::optional<doi::Material> lightMaterial_;
 
-	doi::Skybox skybox_;
+	doi::Environment environment_;
 
 	// args
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
+
+	vpp::SubBuffer boxIndices_;
+
+	struct Alloc {
+		vpp::DeviceMemoryAllocator memHost;
+		vpp::DeviceMemoryAllocator memDevice;
+
+		vpp::BufferAllocator bufHost;
+		vpp::BufferAllocator bufDevice;
+
+		Alloc(const vpp::Device& dev) :
+			memHost(dev), memDevice(dev),
+			bufHost(memHost), bufDevice(memDevice) {}
+	};
+
+	std::optional<Alloc> alloc_;
 };
 
 int main(int argc, const char** argv) {
 	ViewApp app;
-	if(!app.init({"3D View", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

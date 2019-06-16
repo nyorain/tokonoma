@@ -1,5 +1,4 @@
 #include <stage/app.hpp>
-#include <stage/render.hpp>
 #include <stage/window.hpp>
 
 #include <rvg/shapes.hpp>
@@ -93,8 +92,8 @@ public:
 // PendulumApp
 class PendulumApp : public doi::App {
 public:
-	bool init(const doi::AppSettings& settings) override {
-		if(!doi::App::init(settings)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!doi::App::init(args)) {
 			return false;
 		}
 
@@ -113,7 +112,7 @@ public:
 			auto& t = at.template create<Textfield>(name, start).textfield();
 			t.onSubmit = [&, name](auto& tf) {
 				try {
-					value = std::stof(tf.utf8());
+					value = std::stof(std::string(tf.utf8()));
 				} catch(const std::exception& err) {
 					dlg_error("Invalid float for {}: {}", name, tf.utf8());
 					return;
@@ -267,6 +266,8 @@ public:
 		return true;
 	}
 
+	const char* name() const override { return "pendulum"; }
+
 protected:
 	Pendulum pendulum_;
 	rvg::Paint whitePaint_;
@@ -289,7 +290,7 @@ protected:
 // main
 int main(int argc, const char** argv) {
 	PendulumApp app;
-	if(!app.init({"pendulum", {*argv, std::size_t(argc)}})) {
+	if(!app.init({argv, argv + argc})) {
 		return EXIT_FAILURE;
 	}
 

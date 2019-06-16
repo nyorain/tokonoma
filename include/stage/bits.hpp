@@ -15,41 +15,44 @@ T read(const std::byte*& data) {
 	return ret;
 }
 
-// TODO: remove the non-const version.
-// Only needed due to missing Span 'nonconst -> const' constructor
 template<typename T>
 T read(nytl::Span<std::byte>& span) {
 	T ret;
-	dlg_assert(span.size() >= sizeof(ret));
+	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
 	std::memcpy(&ret, span.data(), sizeof(ret));
-	span = span.slice(sizeof(ret), span.size() - sizeof(ret));
+	span = span.last(span.size() - sizeof(ret));
 	return ret;
 }
 
 template<typename T>
 T read(nytl::Span<const std::byte>& span) {
 	T ret;
-	dlg_assert(span.size() >= sizeof(ret));
+	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
 	std::memcpy(&ret, span.data(), sizeof(ret));
-	span = span.slice(sizeof(ret), span.size() - sizeof(ret));
+	span = span.last(span.size() - sizeof(ret));
 	return ret;
 }
 
-// TODO: not sure if this is valid with aliasing rules. check up!
 template<typename T>
 T& refRead(nytl::Span<std::byte>& span) {
 	T ret;
-	dlg_assert(span.size() >= sizeof(ret));
+	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
 	auto data = span.data();
-	span = span.slice(sizeof(ret), span.size() - sizeof(ret));
+	span = span.last(span.size() - sizeof(ret));
 	return *reinterpret_cast<T*>(data);
 }
 
 inline void write(nytl::Span<std::byte>& span, const std::byte* ptr,
 		std::size_t size) {
-	dlg_assert(span.size() >= size);
+	dlg_assert(std::size_t(span.size()) >= size);
 	std::memcpy(span.data(), ptr, size);
-	span = span.slice(size, span.size() - size);
+	span = span.last(span.size() - size);
+}
+
+inline void write(nytl::Span<std::byte>& dst, nytl::Span<const std::byte> src) {
+	dlg_assert(dst.size() >= src.size());
+	std::memcpy(dst.data(), src.data(), src.size());
+	dst = dst.last(dst.size() - src.size());
 }
 
 template<typename T>
@@ -58,14 +61,31 @@ void write(nytl::Span<std::byte>& span, T&& data) {
 }
 
 inline void skip(nytl::Span<std::byte>& span, std::size_t bytes) {
-	dlg_assert(span.size() >= bytes);
-	span = span.slice(bytes, span.size() - bytes);
+	dlg_assert(std::size_t(span.size()) >= bytes);
+	span = span.last(span.size() - bytes);
 }
 
 template<typename T>
 void write(std::byte*& data, T&& obj) {
 	std::memcpy(data, &obj, sizeof(obj));
 	data += sizeof(obj);
+}
+
+struct DynamicBuffer {
+	std::vector<std::byte> buffer;
+};
+
+template<typename T>
+void write(DynamicBuffer& buffer, T&& obj) {
+	buffer.buffer.resize(buffer.buffer.size() + sizeof(obj));
+	auto data = buffer.buffer.data() + buffer.buffer.size() - sizeof(obj);
+	std::memcpy(data, &obj, sizeof(obj));
+}
+
+// TODO: doesn't really fit in here...
+template<typename T>
+T bit(T value, T bit, bool set) {
+	return set ? (value | bit) : (value & ~bit);
 }
 
 } // namespace doi

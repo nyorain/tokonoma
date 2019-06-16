@@ -40,9 +40,8 @@ add_project_arguments(
 	language: 'cpp')
 
 # mainly needed for shaders and assets and stuff
-src_dir = join_paths(meson.current_source_dir(), 'src')
 add_project_arguments(
-	'-DDOI_SRC_DIR="@0@"'.format(src_dir),
+	'-DDOI_BASE_DIR="@0@"'.format(meson.current_source_dir()),
 	language: 'cpp')
 
 # project-specific stuff
@@ -58,6 +57,8 @@ dep_ny = dependency('ny', fallback: ['ny', 'ny_dep'])
 dep_rvg = dependency('rvg', fallback: ['rvg', 'rvg_dep'])
 dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
+dep_turbojpeg = dependency('libturbojpeg', fallback: ['turbojpeg', 'jpeg_dep'])
+dep_png = dependency('libpng', fallback: ['png', 'png_dep'])
 
 external_inc = include_directories('external/include')
 libpath = join_paths(meson.source_root(), 'external', 'lib', build_machine.system())
@@ -65,6 +66,7 @@ message('libpath: ' + libpath)
 
 subdir('src/shaders')
 subdir('src/stage')
+subdir('docs/tests')
 
 # projects
 subdir('src/smooth_shadow')
@@ -76,7 +78,6 @@ subdir('src/sentient')
 subdir('src/sss')
 subdir('src/iro')
 subdir('src/ddd')
-# subdir('src/lith')
 subdir('src/deferred')
 
 # inline (for small projects)
@@ -132,6 +133,20 @@ executable('ps', [
 executable('sen', [
 		'src/sen/main.cpp',
 		sen_shaders,
+	], dependencies: stage_dep)
+
+executable('pbr', [
+		'src/pbr/main.cpp',
+		stage_shaders,
+	], dependencies: stage_dep)
+
+executable('iv',
+	'src/iv/main.cpp',
+	dependencies: stage_dep)
+
+executable('shv', [
+		'src/shv/main.cpp',
+		shv_shaders,
 	], dependencies: stage_dep)
 
 # executable('pg',

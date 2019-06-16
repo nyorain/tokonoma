@@ -4,8 +4,10 @@
 #include <vpp/vk.hpp>
 #include <vpp/bufferOps.hpp>
 #include <vpp/imageOps.hpp>
-#include <vpp/pipelineInfo.hpp>
+#include <vpp/pipeline.hpp>
 #include <vpp/formats.hpp>
+#include <vpp/commandAllocator.hpp>
+#include <vpp/submit.hpp>
 
 #include <nytl/mat.hpp>
 #include <nytl/matOps.hpp>
@@ -27,7 +29,7 @@ void Automaton::display(vui::dat::Folder&) {}
 void Automaton::render(vk::CommandBuffer cb) {
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfxPipe_);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		gfxPipeLayout_, 0, {gfxDs_}, {});
+		gfxPipeLayout_, 0, {{gfxDs_.vkHandle()}}, {});
 
 	if(gridType_ == GridType::hex) {
 		vk::cmdDraw(cb, 6, size_.x * size_.y, 0, 0);
@@ -51,22 +53,31 @@ void Automaton::compute(vk::CommandBuffer cb) {
 		auto l = vk::ImageSubresourceLayers{vk::ImageAspectBits::color, 0, 0, 1};
 		vk::ImageSubresourceRange subres{vk::ImageAspectBits::color, 0, 1, 0, 1};
 
-		vpp::changeLayout(cb, img_.image(),
-			vk::ImageLayout::general, vk::PipelineStageBits::allCommands,
-			vk::AccessBits::transferRead | vk::AccessBits::transferWrite,
-			vk::ImageLayout::transferSrcOptimal,
-			vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferRead, subres);
-		vpp::changeLayout(cb, imgBack_.image(),
-			vk::ImageLayout::general, vk::PipelineStageBits::computeShader,
-			vk::AccessBits::shaderRead,
-			vk::ImageLayout::transferDstOptimal,
-			vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferWrite, subres);
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = img_.image();
+		barrier.oldLayout = vk::ImageLayout::general;
+		barrier.srcAccessMask = vk::AccessBits::transferRead |
+			vk::AccessBits::transferWrite;
+		barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
+		barrier.dstAccessMask = vk::AccessBits::transferRead;
+		barrier.subresourceRange = subres;
+
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::allCommands,
+			vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
+
+		barrier.image = imgBack_.image();
+		barrier.oldLayout = vk::ImageLayout::general;
+		barrier.srcAccessMask = vk::AccessBits::shaderRead;
+		barrier.newLayout = vk::ImageLayout::transferDstOptimal;
+		barrier.dstAccessMask = vk::AccessBits::transferWrite;
+		barrier.subresourceRange = subres;
+
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
+			vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
 
 		vk::cmdCopyImage(cb, img_.image(), vk::ImageLayout::transferSrcOptimal,
 			imgBack_.image(), vk::ImageLayout::transferDstOptimal,
-			{{l, {}, l, {}, {size_.x, size_.y, 1}}});
+			{{{l, {}, l, {}, {size_.x, size_.y, 1}}}});
 
 		vk::ImageMemoryBarrier barrierBack(
 			vk::AccessBits::transferWrite,
@@ -83,12 +94,12 @@ void Automaton::compute(vk::CommandBuffer cb) {
 		vk::cmdPipelineBarrier(cb,
 			vk::PipelineStageBits::transfer,
 			vk::PipelineStageBits::computeShader,
-			{}, {}, {}, {barrierBack, barrierNew});
+			{}, {}, {}, {{barrierBack, barrierNew}});
 	}
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, compPipeline_);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
-		compPipelineLayout_, 0, {compDs_}, {});
+		compPipelineLayout_, 0, {{compDs_.vkHandle()}}, {});
 
 	if(dispatchCount_) {
 		vk::cmdDispatch(cb, *dispatchCount_, 1, 1);
@@ -131,7 +142,7 @@ void Automaton::writeGfxData(nytl::Span<std::byte>& data) {
 		transform_ = {};
 	} else { // skip
 		auto s = sizeof(nytl::Mat4f);
-		data.slice(s, data.size() - s);
+		data.last(data.size() - s);
 	}
 
 	if(gridType_ == GridType::hex) {
@@ -200,13 +211,20 @@ std::pair<bool, vk::Semaphore> Automaton::updateDevice() {
 	vk::ImageSubresourceRange subres{vk::ImageAspectBits::color, 0, 1, 0, 1};
 	if(!fill_.empty()) {
 		auto cb = getRecording();
-		vpp::changeLayout(cb, img_.image(),
-			layout, vk::PipelineStageBits::allCommands,
-			vk::AccessBits::transferRead | vk::AccessBits::shaderWrite,
-			vk::ImageLayout::transferDstOptimal,
-			vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferWrite, subres);
+
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = img_.image();
+		barrier.oldLayout = layout;
+		barrier.srcAccessMask = vk::AccessBits::transferRead |
+			vk::AccessBits::shaderWrite,
+		barrier.newLayout = vk::ImageLayout::transferDstOptimal;
+		barrier.dstAccessMask = vk::AccessBits::transferWrite;
+		barrier.subresourceRange = subres;
+
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::allCommands,
+			vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
 		layout = vk::ImageLayout::transferDstOptimal;
+
 		for(auto& f : fill_) {
 			f.stage = vpp::fillStaging(cb, img_.image(),
 				format_, layout, f.size, f.data,
@@ -217,25 +235,30 @@ std::pair<bool, vk::Semaphore> Automaton::updateDevice() {
 		oldFill_ = std::move(fill_);
 
 		// TODO: only do this when there is no retrieve
-		vpp::changeLayout(cb, img_.image(),
-			layout, vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferWrite,
-			vk::ImageLayout::general,
-			vk::PipelineStageBits::allCommands,
-			vk::AccessBits::transferRead, // will be copied first
-			subres);
+		barrier.oldLayout = layout;
+		barrier.srcAccessMask = vk::AccessBits::transferWrite;
+		barrier.newLayout = vk::ImageLayout::general;
+		barrier.dstAccessMask = vk::AccessBits::transferRead, // will be copied first
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
+			vk::PipelineStageBits::allCommands, {}, {}, {}, {{barrier}});
+
 		layout = vk::ImageLayout::general;
 	}
 
 	if(!retrieve_.empty()) {
 		auto cb = getRecording();
-		vpp::changeLayout(cb, img_.image(),
-			layout, vk::PipelineStageBits::allCommands,
-			vk::AccessBits::transferWrite | vk::AccessBits::shaderWrite,
-			vk::ImageLayout::transferSrcOptimal,
-			vk::PipelineStageBits::allCommands,
-			vk::AccessBits::transferRead, // will be copied first
-			subres);
+
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = img_.image();
+		barrier.oldLayout = layout;
+		barrier.srcAccessMask = vk::AccessBits::transferWrite |
+			vk::AccessBits::shaderWrite,
+		barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
+		barrier.dstAccessMask = vk::AccessBits::transferRead;
+		barrier.subresourceRange = subres;
+
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::allCommands,
+			vk::PipelineStageBits::allCommands, {}, {}, {}, {{barrier}});
 		layout = vk::ImageLayout::transferSrcOptimal;
 
 		for(auto& r : retrieve_) {
@@ -246,13 +269,13 @@ std::pair<bool, vk::Semaphore> Automaton::updateDevice() {
 		}
 
 		retrieve_ = {};
-		vpp::changeLayout(cb, img_.image(),
-			layout, vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferRead,
-			vk::ImageLayout::general,
-			vk::PipelineStageBits::allCommands,
-			vk::AccessBits::transferRead, // will be copied first
-			subres);
+
+		barrier.oldLayout = layout;
+		barrier.srcAccessMask = vk::AccessBits::transferRead;
+		barrier.newLayout = vk::ImageLayout::general;
+		barrier.dstAccessMask = vk::AccessBits::transferRead, // will be copied first
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
+			vk::PipelineStageBits::allCommands, {}, {}, {}, {{barrier}});
 		layout = vk::ImageLayout::general;
 	}
 
@@ -293,7 +316,7 @@ void Automaton::initBuffers(unsigned additionalSize) {
 
 	auto memBits = device().hostMemoryTypes();
 	gfxUbo_ = {device().bufferAllocator(), size,
-		vk::BufferUsageBits::uniformBuffer, 16u, memBits};
+		vk::BufferUsageBits::uniformBuffer, memBits, 16u};
 }
 
 void Automaton::initCompPipe(nytl::Span<const std::uint32_t> shader) {
@@ -333,10 +356,9 @@ void Automaton::initGfxPipe(vk::RenderPass renderPass,
 
 	vpp::ShaderModule vertShader(device(), vert);
 	vpp::ShaderModule fragShader(device(), frag);
-	vpp::GraphicsPipelineInfo ginfo(renderPass,
-		gfxPipeLayout_, {{
+	vpp::GraphicsPipelineInfo ginfo(renderPass, gfxPipeLayout_, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
-			{fragShader, vk::ShaderStageBits::fragment}}});
+			{fragShader, vk::ShaderStageBits::fragment}}}});
 
 	std::vector<vk::GraphicsPipelineCreateInfo> infos = {ginfo.info()};
 
@@ -345,9 +367,9 @@ void Automaton::initGfxPipe(vk::RenderPass renderPass,
 	if(gridType_ == GridType::hex) {
 		lineVertShader = {device(), automaton_hex_line_vert_data};
 		lineInfo = {renderPass,
-			gfxPipeLayout_, {{
+			gfxPipeLayout_, {{{
 				{lineVertShader, vk::ShaderStageBits::vertex},
-				{fragShader, vk::ShaderStageBits::fragment}}}};
+				{fragShader, vk::ShaderStageBits::fragment}}}}};
 		lineInfo->assembly.topology = vk::PrimitiveTopology::lineStrip;
 		infos.push_back(lineInfo->info());
 	}
@@ -391,24 +413,31 @@ void Automaton::initImages() {
 		vk::ImageUsageBits::transferSrc |
 		vk::ImageUsageBits::transferDst;
 
-	auto imgInfo = vpp::ViewableImageCreateInfo::color(device(),
-		{size_.x, size_.y, 1}, usage, {format_}).value();
-	img_ = {device(), imgInfo, mem};
+	auto imgInfo = vpp::ViewableImageCreateInfo(format_,
+		vk::ImageAspectBits::color, {size_.x, size_.y}, usage);
+	dlg_assert(vpp::supported(device(), imgInfo.img));
+	img_ = {device().devMemAllocator(), imgInfo, mem};
 
 	auto cb = getRecording();
-	vpp::changeLayout(cb, img_.image(),
-		vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
-		vk::ImageLayout::general, vk::PipelineStageBits::transfer,
-			vk::AccessBits::transferWrite,
-			{vk::ImageAspectBits::color, 0, 1, 0, 1});
+
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = img_.image();
+	barrier.oldLayout = vk::ImageLayout::undefined;
+	barrier.srcAccessMask = {};
+	barrier.newLayout = vk::ImageLayout::general;
+	barrier.dstAccessMask = vk::AccessBits::transferWrite;
+	barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
+		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
 
 	if(bufferMode_ == BufferMode::doubled) {
-		imgBack_ = {device(), imgInfo, mem};
-		vpp::changeLayout(cb, imgBack_.image(),
-			vk::ImageLayout::undefined, vk::PipelineStageBits::topOfPipe, {},
-			vk::ImageLayout::general, vk::PipelineStageBits::transfer,
-				vk::AccessBits::transferWrite,
-				{vk::ImageAspectBits::color, 0, 1, 0, 1});
+		imgBack_ = {device().devMemAllocator(), imgInfo, mem};
+
+		// same barrier
+		barrier.image = imgBack_.image();
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
+			vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
 	}
 }
 
@@ -422,7 +451,7 @@ void Automaton::compDsUpdate(vpp::DescriptorSetUpdate& update) {
 
 void Automaton::gfxDsUpdate(vpp::DescriptorSetUpdate& update) {
 	auto layout = vk::ImageLayout::general;
-	update.uniform({{gfxUbo_.buffer(), gfxUbo_.offset(), gfxUbo_.size()}});
+	update.uniform({{{gfxUbo_}}});
 	if(gridType_ == GridType::hex) {
 		update.imageSampler({{{}, img_.imageView(), layout}});
 	} else {
@@ -447,7 +476,8 @@ void Automaton::init(vpp::Device& dev, vk::RenderPass rp,
 
 	uploadSemaphore_ = {device()};
 	uploadCb_ = device().commandAllocator().get(
-		device().queueSubmitter().queue().family());
+		device().queueSubmitter().queue().family(),
+		vk::CommandPoolCreateBits::resetCommandBuffer);
 
 	initSampler();
 	initLayouts();

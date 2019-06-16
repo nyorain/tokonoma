@@ -1,0 +1,41 @@
+#version 450
+
+// simple two-step gaussian blur
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+layout(set = 0, binding = 0) uniform sampler2D inCol;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outCol;
+// layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outCol;
+
+// whether to blend horizontally or vertically
+layout(push_constant) uniform Params {
+	uint horizontal;
+};
+
+// based upon
+// http://rastergrid.com/blog/2010/09/efficient-gaussian-blur-with-linear-sampling/
+// gauss filter values; 9x9
+const float offsets[3] = {0.0, 1.3846153846, 3.2307692308};
+const float weights[3] = {0.2270270270, 0.3162162162, 0.0702702703};
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outCol);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	// +0.5 offset for pixel important to make blur centered
+	// pixel centers is at 0.5
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+	vec3 blurred = texture(inCol, uv).rgb * weights[0];
+
+	vec2 off = pixelSize * vec2(horizontal, 1 - horizontal);
+	blurred += texture(inCol, uv + offsets[1] * off).rgb * weights[1];
+	blurred += texture(inCol, uv - offsets[1] * off).rgb * weights[1];
+	blurred += texture(inCol, uv + offsets[2] * off).rgb * weights[2];
+	blurred += texture(inCol, uv - offsets[2] * off).rgb * weights[2];
+
+	imageStore(outCol, ivec2(pixel), vec4(blurred, 0.0));
+}

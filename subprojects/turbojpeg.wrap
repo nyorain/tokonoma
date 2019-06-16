@@ -1,0 +1,4 @@
+[wrap-git]
+directory=turbojpeg
+url=https://github.com/nyorain/mesonwrap-libjpeg-turbo
+revision=master

@@ -1,0 +1,19 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+#include "ssao.glsl"
+
+layout(local_size_x_id = 1, local_size_y_id = 2) in;
+layout(set = 1, binding = 4, r8) uniform image2D outSSAO;
+
+void main() {
+	uvec2 size = imageSize(outSSAO);
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + 0.5) * pixelSize;
+	imageStore(outSSAO, ivec2(pixel), vec4(computeSSAO(uv)));
+}

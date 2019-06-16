@@ -12,8 +12,19 @@
 // TODO: consistent naming and lhs/rhs; zo/no conventions
 // maybe use own namespaces that can just be used?
 // made for vulkan. Update them!
+// TODO: rotate version that only uses dot/cross
 
 namespace doi {
+
+inline nytl::Vec3f multPos(const nytl::Mat4f& m, nytl::Vec3f v) {
+	auto v4 = m * nytl::Vec4f{v.x, v.y, v.z, 1.f};
+	return {v4[0] / v4[3], v4[1] / v4[3], v4[2] / v4[3]};
+}
+
+inline nytl::Vec3f multDir(const nytl::Mat4f& m, nytl::Vec3f v) {
+	return static_cast<nytl::Mat3f>(m) * v;
+}
+
 
 /// Returns a matix that scales by s.
 template<size_t D = 4, typename P = float, size_t R = D - 1>
@@ -85,12 +96,12 @@ nytl::SquareMat<D, P> rotateMat(const nytl::Vec3<P>& vec, P angle) {
 
 template<size_t D, typename P>
 void rotate(nytl::SquareMat<D, P>& mat, P rot) {
-	mat = scaleMat<D, P>(rot) * mat;
+	mat = rotateMat<D, P>(rot) * mat;
 }
 
 template<size_t D, typename P>
 void rotate(nytl::SquareMat<D, P>& mat, const nytl::Vec3<P>& vec, P angle) {
-	mat = scaleMat<D, P>(vec, angle) * mat;
+	mat = rotateMat<D, P>(vec, angle) * mat;
 }
 
 template<size_t D, typename P, size_t R>
@@ -139,7 +150,7 @@ nytl::SquareMat<4, P> perspective3LH(P fov, P aspect, P pnear, P pfar) {
 	ret[2][2] = pfar / (pfar - pnear);
 	ret[3][2] = P(1);
 
-	ret[2][3] = (pfar * pnear) / (pnear - pfar);
+	ret[2][3] = -(pfar * pnear) / (pfar - pnear);
 	return ret;
 }
 
@@ -152,10 +163,10 @@ nytl::SquareMat<4, P> perspective3RH(P fov, P aspect, P pnear, P pfar) {
 	ret[0][0] = f / aspect;
 	ret[1][1] = f;
 
-	ret[2][2] = pfar / (pnear - pfar);
+	ret[2][2] = -pfar / (pfar - pnear);
 	ret[3][2] = -P(1);
 
-	ret[2][3] = (pfar * pnear) / (pnear - pfar);
+	ret[2][3] = -(pfar * pnear) / (pfar - pnear);
 	return ret;
 }
 
@@ -164,11 +175,12 @@ nytl::SquareMat<4, P> perspective3RH(P fov, P aspect, P pnear, P pfar) {
 // near and far both positive
 template<typename P>
 nytl::SquareMat<4, P> ortho3(P left, P right, P top, P bottom, P pnear, P far) {
-	auto ret = nytl::identity<4, P>();
 
+	auto ret = nytl::Mat4f {};
 	ret[0][0] = P(2) / (right - left);
 	ret[1][1] = P(2) / (top - bottom);
 	ret[2][2] = P(1) / (pnear - far);
+	ret[3][3] = 1;
 
 	ret[0][3] = (right + left) / (left - right);
 	ret[1][3] = (top + bottom) / (bottom - top);

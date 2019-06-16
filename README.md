@@ -7,3 +7,5 @@ Those licenses can also be found in assets/licenses.
 
 `assets/gravel_*`: CC0, from [https://cc0textures.com/view.php?tex=Gravel08](!)
 The files in `assets/gltf` have their copyright embedded.
+
+On windows: `meson build/win --default-library static --backend ninja`

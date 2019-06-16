@@ -7,6 +7,7 @@
 -I./subprojects/katachi/include
 -I./subprojects/bugged/include
 -I./subprojects/rvg/include
+-I./subprojects/rvg/src
 -I./subprojects/vui/include
 -I./build/subprojects/vkpp/include
 -I./build/subprojects/ny/include
@@ -21,4 +22,4 @@
 -Wpedantic
 -Wno-missing-braces
 -Wno-unused-const-variable
--DDOI_SRC_DIR="something"
+-DDOI_BASE_DIR="something"

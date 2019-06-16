@@ -1,72 +1,90 @@
 #pragma once
 
 #include <stage/scene/primitive.hpp>
+#include <stage/types.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/mat.hpp>
-#include <vpp/framebuffer.hpp>
+#include <vpp/handles.hpp>
 #include <vpp/image.hpp>
-#include <vpp/renderPass.hpp>
-#include <vpp/pipeline.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 
-// TODO:
-// shadow mapping badly implemented. Still some artefacts, light matrix
-// and depth bias guessing, mixing up point and dir light;
-// no support for point light: shadow cube map
-// TODO: something about matrix configuration
-// TODO: light ball visualization (primitive)
+// TODO: overall way too much duct tape here
+// TODO: we currently have a hardcoded depth bias guess
+// TODO: allow to configure dir light view frustum size
 // TODO: allow to configure/change size_
 //  probably based on light radius
 
 namespace doi {
 
 class Scene;
+class Camera;
 
 struct ShadowData {
 	vk::Format depthFormat;
 	vpp::Sampler sampler;
-	vpp::RenderPass rp;
+	vpp::RenderPass rpPoint;
+	vpp::RenderPass rpDir;
 	vpp::PipelineLayout pl;
 	vpp::Pipeline pipe;
 	vpp::Pipeline pipeCube;
+	bool multiview;
 };
 
 // TODO: enum or something?
 constexpr std::uint32_t lightFlagDir = (1u << 0);
 constexpr std::uint32_t lightFlagPcf = (1u << 1);
+constexpr std::uint32_t lightFlagShadow = (1u << 2);
+
+// TODO: doesn't really belong here
+// move all frustum stuff to transfrom.hpp?
+//
+// order:
+// front (topleft, topright, bottomleft, bottomright)
+// back (topleft, topright, bottomleft, bottomright)
+using Frustum = std::array<nytl::Vec3f, 8>;
+Frustum ndcFrustum(); // frustum in ndc space, i.e. [-1, 1]^3
 
 class DirLight {
 public:
+	// TODO: make variable
+	static constexpr u32 cascadeCount = 4u;
+
 	struct {
 		nytl::Vec3f color {1.f, 1.f, 1.f};
-		std::uint32_t flags {lightFlagDir};
+		std::uint32_t flags {lightFlagDir | lightFlagPcf};
 		nytl::Vec3f dir {1.f, 1.f, 1.f};
 		float _ {}; // padding
 	} data;
 
 public:
 	DirLight() = default;
-	DirLight(const vpp::Device&, const vpp::TrDsLayout& matDsLayout,
+	DirLight(const WorkBatcher&, const vpp::TrDsLayout& matDsLayout,
 		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
-		nytl::Vec3f viewPos, const Material& lightBallMat);
+		unsigned id);
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
-	void updateDevice(nytl::Vec3f viewPos);
-	nytl::Mat4f lightMatrix(nytl::Vec3f viewPos) const;
-	nytl::Mat4f lightBallMatrix(nytl::Vec3f viewPos) const;
+	void updateDevice(const Camera& camera);
+	// nytl::Mat4f lightBallMatrix(nytl::Vec3f viewPos) const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
-	const Primitive& lightBall() const { return lightBall_; }
+	// const Primitive& lightBall() const { return lightBall_; }
 
 protected:
-	nytl::Vec2ui size_ {2048u, 2048u};
+	nytl::Vec2ui size_ {1024, 1024};
 	vpp::ViewableImage target_; // depth
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
 	vpp::TrDs ds_;
-	Primitive lightBall_;
+	// Primitive lightBall_;
+
+	// non-multiview
+	struct Cascade {
+		vpp::ImageView view;
+		vpp::Framebuffer fb;
+	};
+	std::vector<Cascade> cascades_;
 };
 
 class PointLight {
@@ -75,38 +93,48 @@ public:
 		nytl::Vec3f color {1.f, 1.f, 1.f};
 		std::uint32_t flags {0};
 		nytl::Vec3f position {1.f, 1.f, 1.f};
-		float farPlane {30.f};
+		float _; // padding
+		// TODO: params.x (constant term) is basically always 1.f, get rid
+		// of that everywhere?
+		// TODO: always automatically calculate attenuation from radius?
+		nytl::Vec3f attenuation {1.f, 4, 8};
+		float radius {2.f};
 	} data;
 
 public:
 	PointLight() = default;
-	PointLight(const vpp::Device&, const vpp::TrDsLayout& matLayout,
+	PointLight(const WorkBatcher&, const vpp::TrDsLayout& matLayout,
 		const vpp::TrDsLayout& primitiveLayout, const ShadowData& data,
-		const Material& lightBallMat);
+		unsigned id, vk::ImageView noShadowMap = {});
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
 	void updateDevice();
-	nytl::Mat4f lightMatrix(unsigned) const;
 	nytl::Mat4f lightBallMatrix() const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return shadowMap_.vkImageView(); }
-	const Primitive& lightBall() const { return lightBall_; }
+	// const Primitive& lightBall() const { return lightBall_; }
+	bool hasShadowMap() const { return data.flags & lightFlagShadow; }
 
 protected:
-	nytl::Vec2ui size_ {512u, 512u}; // per side
-	vpp::ViewableImage target_; // normal depth buffer for rendering
+	nytl::Vec2ui size_ {256u, 256u}; // per side
+	// vpp::ViewableImage target_; // normal depth buffer for rendering
 	vpp::ViewableImage shadowMap_; // cube map
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
 	vpp::TrDs ds_;
-	Primitive lightBall_;
+	// Primitive lightBall_;
+
+	// non-multiview
+	struct Face {
+		vpp::ImageView view;
+		vpp::Framebuffer fb;
+	};
+	std::vector<Face> faces_;
 };
 
 ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,
-	vk::DescriptorSetLayout lightDsLayout,
-	vk::DescriptorSetLayout materialDsLayout,
-	vk::DescriptorSetLayout primitiveDsLayout,
-	vk::PushConstantRange materialPcr);
+	vk::DescriptorSetLayout lightDsLayout, vk::DescriptorSetLayout sceneDsLayout,
+	bool multiview, bool depthClamp);
 
 } // namespace doi

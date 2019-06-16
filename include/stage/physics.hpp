@@ -1,3 +1,5 @@
+// whole header is more WIP than really useful...
+
 #pragma once
 
 #include <nytl/nonCopyable.hpp>

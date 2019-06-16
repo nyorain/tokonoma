@@ -1,0 +1,69 @@
+#version 450
+
+const uint blurSide = 4;
+const uint blurSize = 2 * blurSide + 1;
+const uint dimSize = blurSide + blurSize + blurSide;
+const ivec2 offs[] = {{0, 0}, {0, 1}, {1, 0}, {1, 1}};
+shared vec3 colors[dimSize][dimSize];
+
+layout(local_size_x = blurSize, local_size_y = blurSize) in;
+layout(set = 0, binding = 0, rgba16f) uniform writeonly image2D outColor;
+layout(set = 0, binding = 1) uniform sampler2D inColor;
+
+// see guassian.cpp
+const float kernel[] = {0.20416, 0.18017, 0.12383, 0.06628, 0.02763};
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outColor);
+
+	// this invocation won't write anything, don't have to blur.
+	// the out-of-bounds values this invocation would be responsible for
+	// will not be read anyways
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	uvec2 local = gl_LocalInvocationID.xy;
+	ivec2 slocal = ivec2(-blurSide + local.x, blurSide + local.y);
+	ivec2 s = sign(slocal);
+
+	vec2 pixelSize = 1.f / textureSize(inColor, 0);
+	uvec2 centerPixel = gl_WorkGroupID.xy * gl_WorkGroupSize.xy + blurSide;
+	vec2 center = centerPixel + 0.5;
+
+	// phase 1: gather
+	for(uint i = 0u; i < 4u; ++i) {
+		ivec2 off = s * offs[i];
+		ivec2 sid = 2 * slocal + off;
+		uvec2 id = uvec2(2 * blurSide + sid.x, 2 * blurSide + sid.y);
+		vec2 uv = (center + sid) * pixelSize;
+		colors[id.x][id.y] = texture(inColor, uv).rgb;
+	}
+
+	// wait for all invocations to complete reads
+	// apparently both are needed: https://stackoverflow.com/questions/39393560
+	memoryBarrierShared();
+	barrier();
+
+	// phase 2: blur, using the gathered data
+	vec3 col = vec3(0.0);
+	uvec2 base = local + blurSide;
+	float total = 0.f;
+	for(int x = -int(blurSide); x <= blurSide; ++x) {
+		for(int y = -int(blurSide); y <= blurSide; ++y) {
+			ivec2 p = ivec2(base) + ivec2(x, y);
+			if(p != clamp(p, ivec2(0), ivec2(size - 1))) {
+				// out of bounds
+				continue;
+			}
+
+			float fac = kernel[abs(x)] * kernel[abs(y)];
+			col += fac * colors[base.x + x][base.y + y];
+			total += fac;
+		}
+	}
+
+	col /= total; // normalize
+	imageStore(outColor, ivec2(pixel), vec4(col, 0.0));
+}

@@ -1,0 +1,87 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+#include "scene.glsl"
+#include "pbr.glsl"
+
+// const uint flagDiffuseIBL = (1u << 0u);
+// const uint flagSpecularIBL = (1u << 1u);
+const uint flagEmission = (1u << 2u);
+const uint flagSSAO = (1u << 3u);
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+layout(set = 0, binding = 0, row_major) uniform SceneUbo {
+	mat4 proj;
+	mat4 invProj;
+	vec3 viewPos;
+	float near, far;
+} scene;
+
+layout(set = 1, binding = 0, rgba16f) uniform image2D outCol;
+
+layout(set = 1, binding = 1) uniform sampler2D albedoTex;
+layout(set = 1, binding = 2) uniform sampler2D emissionTex;
+layout(set = 1, binding = 3) uniform sampler2D linDepthTex;
+layout(set = 1, binding = 4) uniform sampler2D normalTex;
+layout(set = 1, binding = 5) uniform sampler2D ssaoTex;
+
+layout(set = 1, binding = 6) uniform samplerCube irradianceMap;
+layout(set = 1, binding = 7) uniform samplerCube envMap;
+layout(set = 1, binding = 8) uniform sampler2D brdfLut;
+
+layout(set = 1, binding = 9) uniform Params {
+	uint flags;
+	float factor;
+	float ssaoPow;
+} params;
+
+layout(push_constant) uniform PCR {
+	uint filteredEnvLods;
+} pcr;
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outCol);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + 0.5) * pixelSize;
+	vec4 color = imageLoad(outCol, ivec2(pixel));
+
+	// apply emission
+	vec4 vEmission = textureLod(emissionTex, uv, 0);
+	vec3 emission = vEmission.rgb;
+	if((params.flags & flagEmission) != 0) {
+		color.rgb += emission;
+	}
+
+	float ld = textureLod(linDepthTex, uv, 0).r;
+	float depth = ztodepth(ld, scene.near, scene.far);
+	if(depth < 1.f && params.factor > 0.f) {
+		vec4 vAlbedo = texture(albedoTex, uv);
+		vec3 albedo = vAlbedo.rgb;
+
+		vec4 vNormal = texture(normalTex, uv);
+		vec3 normal = decodeNormal(vNormal.xy);
+		float roughness = vNormal.w;
+		float metallic = vNormal.z;
+
+		// reconstruct position
+		vec3 fragPos = reconstructWorldPos(uv, scene.invProj, depth);
+		vec3 viewDir = normalize(fragPos - scene.viewPos);
+		vec3 ambient = ao(params.flags, viewDir, normal, albedo, metallic,
+			roughness, irradianceMap, envMap, brdfLut, pcr.filteredEnvLods);
+
+		float ao = params.factor * vAlbedo.w;
+		if((params.flags & flagSSAO) != 0) {
+			ao *= pow(texture(ssaoTex, uv).r, params.ssaoPow);
+		}
+
+		color.rgb += ao * ambient;
+	}
+
+	imageStore(outCol, ivec2(pixel), color);
+}
+
