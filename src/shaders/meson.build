@@ -48,7 +48,9 @@ shaders_src = {
 		['shaders/convolute.comp'],
 		['shaders/brdflut.comp'],
 		['shaders/texture.frag'],
-		['shaders/simple.vert'],
+		['shaders/simple3.vert'],
+		['shaders/simple2.vert'],
+		['shaders/color.frag'],
 		['shaders/shProj.comp'],
 		['shaders/test.frag'], # only for testing included shaders on their own
 	],

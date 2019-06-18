@@ -149,6 +149,13 @@ executable('shv', [
 		shv_shaders,
 	], dependencies: stage_dep)
 
+mp_dep = dependency('openmp')
+executable('cloth', [
+		'src/cloth/main.cpp',
+		stage_shaders,
+	], dependencies: [stage_dep, mp_dep],
+	cpp_args: '-O3')
+
 # executable('pg',
 # 	'src/playground/main2.cpp',
 # 	dependencies: stage_dep)

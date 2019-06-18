@@ -32,8 +32,6 @@
 #include <shaders/iro.iro.frag.h>
 #include <shaders/iro.iro_building.vert.h>
 #include <shaders/iro.iro_texture.frag.h>
-// #include <shaders/simple.vert.h>
-// #include <shaders/texture.frag.h>
 // #include <shaders/iro_outline.vert.h>
 // #include <shaders/iro_outline.frag.h>
 #include <shaders/iro.iro.comp.h>
