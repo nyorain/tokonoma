@@ -151,7 +151,6 @@ shaders_src = {
 	],
 	'cloth': [
 		['cloth.comp'],
-		['apply.comp'],
 	]
 }
 

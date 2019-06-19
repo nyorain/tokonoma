@@ -32,6 +32,10 @@
 // when the time step is too large. Might have to adjust time step
 // when increasing spring or damping factors (especially latter)
 
+// TODO: when stepdt is changed the next iteration will give wrong
+// results, due to verlet integration. Solution sketch: when stepdt
+// is changed fix lpos for it based on the velocity
+
 using namespace doi::types;
 using nytl::Vec3f;
 
@@ -209,7 +213,6 @@ public:
 		for(auto y = 0u; y < gridSize_; ++y) {
 			for(auto x = 0u; x < gridSize_; ++x) {
 				auto pos =  nytl::Vec3f{start + x, 0, start + y};
-				dlg_info(pos);
 				nodes_[id(x, y)] = {pos, {0.f, 0.f, 0.f}, pos, pos};
 			}
 		}
