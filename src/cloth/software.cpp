@@ -4,6 +4,7 @@
 #include <stage/window.hpp>
 #include <stage/camera.hpp>
 #include <stage/types.hpp>
+#include <argagg.hpp>
 
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
@@ -17,23 +18,22 @@
 #include <ny/mouseButton.hpp>
 #include <ny/keyboardContext.hpp>
 #include <ny/appContext.hpp>
+#include <vui/dat.hpp>
+#include <vui/gui.hpp>
 
 #include <shaders/stage.simple3.vert.h>
 #include <shaders/stage.color.frag.h>
-#include <shaders/cloth.cloth.comp.h>
-#include <shaders/cloth.apply.comp.h>
 
-// TODO:
-// - make all values in `params_` configurable via simple gui (vui::dat)
-// - allow to choose grid size via command line args
+// Simple cloth example, simulation done using verlet integration on
+// the cpu. Currently using OpenMP (pragma should just be ignored
+// when OpenMP isn't supported/found).
+// Uses a fixed time step, when simulation is too slow will simply
+// slow down the simulation. Verlet integration will simply explode
+// when the time step is too large. Might have to adjust time step
+// when increasing spring or damping factors (especially latter)
 
 using namespace doi::types;
 using nytl::Vec3f;
-
-// TODO: better third person camera
-inline auto matrix3(const doi::Camera& c) {
-	return projection(c) * doi::lookAtRH(-c.dir, {}, c.up);
-}
 
 class ClothApp : public doi::App {
 public:
@@ -55,15 +55,7 @@ public:
 		auto& dev = vulkanDevice();
 
 		// init nodes
-		nodes_.resize(gridSize_ * gridSize_);
-		auto start = -int(gridSize_) / 2.f;
-		for(auto y = 0u; y < gridSize_; ++y) {
-			for(auto x = 0u; x < gridSize_; ++x) {
-				auto pos =  nytl::Vec3f{start + x, 0, start + y};
-				dlg_info(pos);
-				nodes_[id(x, y)] = {pos, {0.f, 0.f, 0.f}, pos, pos};
-			}
-		}
+		resetCloth();
 
 		// pipeline
 		auto bindings = {
@@ -147,7 +139,80 @@ public:
 		vpp::DescriptorSetUpdate dsu(gfx_.ds);
 		dsu.uniform({{{gfx_.ubo}}});
 
+		// init gui
+		using namespace vui::dat;
+		auto& gui = this->gui();
+		auto pos = nytl::Vec2f {100.f, 0};
+		auto& panel = gui.create<vui::dat::Panel>(pos, 300.f);
+
+		auto createNumTextfield = [](auto& at, auto name, auto initial, auto func) {
+			auto start = std::to_string(initial);
+			if(start.size() > 4) {
+				start.resize(4, '\0');
+			}
+			auto& t = at.template create<vui::dat::Textfield>(name, start).textfield();
+			t.onSubmit = [&, f = std::move(func), name](auto& tf) {
+				try {
+					auto val = std::stof(std::string(tf.utf8()));
+					f(val);
+				} catch(const std::exception& err) {
+					dlg_error("Invalid float for {}: {}", name, tf.utf8());
+					return;
+				}
+			};
+
+			return &t;
+		};
+
+		auto createValueTextfield = [createNumTextfield](auto& at, auto name,
+				auto& value, bool* set = {}) {
+			return createNumTextfield(at, name, value, [&value, set](auto v){
+				value = v;
+				if(set) {
+					*set = true;
+				}
+			});
+		};
+
+		createValueTextfield(panel, "ks0", params_.ks[0]);
+		createValueTextfield(panel, "ks1", params_.ks[1]);
+		createValueTextfield(panel, "ks2", params_.ks[2]);
+
+		createValueTextfield(panel, "kd0", params_.kd[0]);
+		createValueTextfield(panel, "kd1", params_.kd[1]);
+		createValueTextfield(panel, "kd2", params_.kd[2]);
+
+		createValueTextfield(panel, "dt", params_.stepdt);
+		createValueTextfield(panel, "dtfac", params_.facdt);
+		createValueTextfield(panel, "mass", params_.mass);
+
+		for(auto i = 0u; i < 4; ++i) {
+			auto name = "corner " + std::to_string(i);
+			auto& cb = panel.create<Checkbox>(name).checkbox();
+			cb.set(params_.fixCorners[i]);
+			cb.onToggle = [=](auto&) {
+				params_.fixCorners[i] ^= true;
+			};
+		}
+
+		auto& b = panel.create<Button>("Reset");
+		b.onClick = [&]{
+			resetCloth();
+		};
+
 		return true;
+	}
+
+	void resetCloth() {
+		nodes_.resize(gridSize_ * gridSize_);
+		auto start = -int(gridSize_) / 2.f;
+		for(auto y = 0u; y < gridSize_; ++y) {
+			for(auto x = 0u; x < gridSize_; ++x) {
+				auto pos =  nytl::Vec3f{start + x, 0, start + y};
+				dlg_info(pos);
+				nodes_[id(x, y)] = {pos, {0.f, 0.f, 0.f}, pos, pos};
+			}
+		}
 	}
 
 	std::size_t id(unsigned x, unsigned y) {
@@ -163,6 +228,9 @@ public:
 		vk::cmdBindIndexBuffer(cb, indexBuf_.buffer(), indexBuf_.offset(),
 			vk::IndexType::uint32);
 		vk::cmdDrawIndexed(cb, indexCount_, 1, 0, 0, 0);
+
+		rvgContext().bindDefaults(cb);
+		gui().draw(cb);
 	}
 
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
@@ -274,7 +342,7 @@ public:
 
 		// simulate
 		// fixed time step
-		accumdt_ += dt;
+		accumdt_ += params_.facdt * dt;
 		auto total = 0u;
 		while(accumdt_ > params_.stepdt) {
 			if(++total > 3u) {
@@ -318,6 +386,28 @@ public:
 		map.flush();
 	}
 
+	argagg::parser argParser() const override {
+		auto parser = App::argParser();
+		parser.definitions.push_back({
+			"size",
+			{"-s", "--size"},
+			"Size of the grid in each dimension", 1
+		});
+		return parser;
+	}
+
+	bool handleArgs(const argagg::parser_results& result) override {
+		if (!App::handleArgs(result)) {
+			return false;
+		}
+
+		if(result["size"].count()) {
+			gridSize_ = result["size"].as<unsigned>();
+		}
+
+		return true;
+	}
+
 	const char* name() const override { return "cloth"; }
 	bool needsDepth() const override { return true; }
 
@@ -345,6 +435,7 @@ protected:
 		std::array<float, 3> kd {0.03f, 0.03f, 0.03f}; // damping constants
 		std::array<bool, 4> fixCorners {true, true, true, true};
 		float stepdt {0.01}; // in s
+		float facdt {1.f};
 		float mass {0.05}; // in kg
 	} params_;
 };
@@ -357,5 +448,4 @@ int main(int argc, const char** argv) {
 
 	app.run();
 }
-
 

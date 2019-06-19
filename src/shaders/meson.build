@@ -149,6 +149,10 @@ shaders_src = {
 	'shv': [
 		['shv.frag'],
 	],
+	'cloth': [
+		['cloth.comp'],
+		['apply.comp'],
+	]
 }
 
 # build them

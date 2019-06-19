@@ -79,6 +79,7 @@ subdir('src/sss')
 subdir('src/iro')
 subdir('src/ddd')
 subdir('src/deferred')
+subdir('src/cloth')
 
 # inline (for small projects)
 executable('pendulum',
@@ -148,13 +149,6 @@ executable('shv', [
 		'src/shv/main.cpp',
 		shv_shaders,
 	], dependencies: stage_dep)
-
-mp_dep = dependency('openmp')
-executable('cloth', [
-		'src/cloth/main.cpp',
-		stage_shaders,
-	], dependencies: [stage_dep, mp_dep],
-	cpp_args: '-O3')
 
 # executable('pg',
 # 	'src/playground/main2.cpp',

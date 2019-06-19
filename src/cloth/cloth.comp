@@ -1,0 +1,84 @@
+#version 460
+
+const uint fixCorner0 = (1 << 0);
+const uint fixCorner1 = (1 << 1);
+const uint fixCorner2 = (1 << 2);
+const uint fixCorner3 = (1 << 3);
+
+const float length = 1.f;
+const float ldiag = sqrt(2) * length;
+
+layout(set = 0, binding = 0) uniform UBO {
+	uint gridSize;
+	float dt;
+	float ks0;
+	float ks1;
+	float ks2;
+	float kd0;
+	float kd1;
+	float kd2;
+	uint fixedCorners;
+	float mass;
+} params;
+
+struct Node {
+	vec3 pos;
+	vec3 vel;
+	vec3 npos; // for integration only
+};
+
+layout(set = 0, binding = 1) buffer Nodes {
+	Node nodes[];
+};
+
+vec3 springForce(vec3 pd, vec3 vd, float ks, float kd, float l) {
+	float pdl = pd.length();
+	return pd * (ks * (pdl - l) + kd * dot(vd, pd / pdl));
+}
+
+vec3 force(Node node, ivec2 dst, float ks, float kd, float l) {
+	if(clamp(dst, 0, params.gridSize) != dst) {
+		return vec3(0.0);
+	}
+
+	Node dnode = nodes[dst.y * params.gridSize + dst.x];
+	vec3 pd = dnode.pos - node.pos;
+	vec3 vd = dnode.vel - node.vel;
+	return springForce(pd, vd, ks, kd, l);
+}
+
+void main() {
+	ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+	if(id.x >= params.gridSize || id.y > params.gridSize) {
+		return;
+	}
+
+	uint nid = id.y * params.gridSize + id.x;
+	Node node = nodes[nid];
+
+	// start with external forces: gravity
+	vec3 f = vec3(0.0, -10.0 * params.mass, 0.0);
+
+	// 1
+	f += force(node, id + ivec2(0, 1), params.ks0, params.kd0, length);
+	f += force(node, id + ivec2(0, -1), params.ks0, params.kd0, length);
+	f += force(node, id + ivec2(1, 0), params.ks0, params.kd0, length);
+	f += force(node, id + ivec2(-1, 0), params.ks0, params.kd0, length);
+
+	// 2
+	f += force(node, id + ivec2(0, 2), params.ks1, params.kd1, 2 * length);
+	f += force(node, id + ivec2(0, -2), params.ks1, params.kd1, 2 * length);
+	f += force(node, id + ivec2(2, 0), params.ks1, params.kd1, 2 * length);
+	f += force(node, id + ivec2(-2, 0), params.ks1, params.kd1, 2 * length);
+
+	// 3
+	f += force(node, id + ivec2(1, 1), params.ks2, params.kd2, ldiag);
+	f += force(node, id + ivec2(1, -1), params.ks2, params.kd2, ldiag);
+	f += force(node, id + ivec2(-1, 1), params.ks2, params.kd2, ldiag);
+	f += force(node, id + ivec2(-1, -1), params.ks2, params.kd2, ldiag);
+
+	f /= params.mass;
+
+	node.npos = 2 * node.pos - node.npos + params.dt * params.dt * f;
+	nodes[nid] = node;
+}
