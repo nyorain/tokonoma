@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <type_traits>
 #include <dlg/dlg.hpp>
 #include <nytl/span.hpp>
 
@@ -86,6 +87,18 @@ void write(DynamicBuffer& buffer, T&& obj) {
 template<typename T>
 T bit(T value, T bit, bool set) {
 	return set ? (value | bit) : (value & ~bit);
+}
+
+template<typename T>
+std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<const std::byte>>
+bytes(const T& val) {
+	return {reinterpret_cast<const std::byte*>(&val), sizeof(val)};
+}
+
+template<typename T>
+std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<const std::byte>>
+bytes(const std::vector<T>& val) {
+	return nytl::as_bytes(nytl::span(val));
 }
 
 } // namespace doi

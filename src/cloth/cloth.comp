@@ -94,11 +94,10 @@ void main() {
 		return;
 	}
 
+	// NOTE: not sure if 100% correct verlet integration
 	float dt = params.dt;
 	vec3 a = totalForce(node, id) / params.mass;
 	node.pos.xyz = node.pos.xyz + dt * node.vel.xyz + 0.5 * dt * dt * a;
-
-	vec3 anew = totalForce(node, id)/ params.mass;
-	node.vel.xyz = node.vel.xyz + 0.5 * dt * (a + anew);
+	node.vel.xyz = node.vel.xyz + 0.5 * dt * a;
 	outNodes[nid] = node;
 }

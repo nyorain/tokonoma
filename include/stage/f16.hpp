@@ -29,7 +29,7 @@ public:
 	unsigned exp() const;
 	unsigned mantissa() const;
 
-private:
+public:
 	u16 bits_;
 };
 

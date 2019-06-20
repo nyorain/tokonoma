@@ -4,7 +4,7 @@
 #include <nytl/vec.hpp>
 
 namespace doi {
-namespace types {
+inline namespace types {
 
 using i8 = std::int8_t;
 using i16 = std::int16_t;
@@ -32,7 +32,4 @@ using nytl::Vec3ui;
 using nytl::Vec4ui;
 
 } // namespace types
-
-using namespace doi::types;
-
 } // namespace doi

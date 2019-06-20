@@ -23,6 +23,8 @@
 //   but then we require the drawIndirectFirstInstance vulkan features
 // TODO: sorting primitives by how they are layed out in the vertex
 //   buffers? could improve cache locality
+// TODO: de-interleave normals and postions, makes e.g. for more
+//   efficient shadow map rendering
 
 namespace doi {
 namespace gltf = tinygltf;

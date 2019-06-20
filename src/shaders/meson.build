@@ -151,7 +151,11 @@ shaders_src = {
 	],
 	'cloth': [
 		['cloth.comp'],
-	]
+	],
+	'volume': [
+		['volume.vert'],
+		['volume.frag'],
+	],
 }
 
 # build them

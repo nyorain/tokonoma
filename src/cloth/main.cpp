@@ -157,6 +157,9 @@ public:
 		gpi.assembly.topology = vk::PrimitiveTopology::lineStrip;
 		gpi.assembly.primitiveRestartEnable = true;
 		gpi.rasterization.polygonMode = vk::PolygonMode::line;
+		gpi.depthStencil.depthTestEnable = true;
+		gpi.depthStencil.depthWriteEnable = true;
+		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 
 		gfx_.pipe = {dev, gpi.info()};
 
@@ -427,6 +430,12 @@ public:
 		}
 
 		return true;
+	}
+
+	void resize(const ny::SizeEvent& ev) override {
+		App::resize(ev);
+		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+		camera_.update = true;
 	}
 
 	const char* name() const override { return "cloth"; }
