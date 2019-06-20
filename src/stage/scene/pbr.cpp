@@ -380,7 +380,7 @@ void SHProjector::create(const vpp::Device& dev, vk::Sampler linear) {
 	ds_ = {dev.descriptorAllocator(), dsLayout_};
 	vpp::nameHandle(ds_, "SHProjector:ds");
 
-	// TODO: allow to configure whether to allocator on host or
+	// TODO: allow to configure whether to allocate on host or
 	// device memory
 	dst_ = {dev.bufferAllocator(), sizeof(nytl::Vec3f) * 9,
 		vk::BufferUsageBits::storageBuffer, dev.hostMemoryTypes()};

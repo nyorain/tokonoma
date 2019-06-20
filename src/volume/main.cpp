@@ -321,7 +321,7 @@ public:
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
 
 		vpp::DescriptorSetUpdate dsu(ds_);
-		dsu.uniform({{cameraUbo_}});
+		dsu.uniform({{{cameraUbo_}}});
 		dsu.apply();
 
 		// upload data

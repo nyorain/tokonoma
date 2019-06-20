@@ -15,6 +15,7 @@ scene_glsl = files(
 	'include/pbr.glsl',
 	'include/scene.glsl',
 	'include/scene.frag.glsl',
+	'include/spharm.glsl',
 )
 
 deferred_glsl = include_glsl + scene_glsl + files(
@@ -104,6 +105,7 @@ shaders_src = {
 	'ddd': [
 		['model.vert', scene_glsl],
 		['model.frag', scene_glsl],
+		['shProj.comp', scene_glsl],
 	],
 	'iro': [
 		['iro.vert', include_glsl],

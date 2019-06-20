@@ -1518,20 +1518,13 @@ void ViewApp::screenshot() {
 		doi::write(span, camera_.pos);
 		doi::write(span, 0.01f); // near
 		doi::write(span, 30.f); // far
-
-		if(!map.coherent()) {
-			map.flush();
-		}
-
-		auto envMap = probe_.faces[i].envUbo.memoryMap();
-		auto envSpan = envMap.span();
+		map.flush();
 
 		// fixed matrix, position irrelevant
+		auto envMap = probe_.faces[i].envUbo.memoryMap();
+		auto envSpan = envMap.span();
 		doi::write(envSpan, doi::cubeProjectionVP({}, i));
-
-		if(!envMap.coherent()) {
-			envMap.flush();
-		}
+		envMap.flush();
 	}
 
 	probe_.state = ProbeState::pending;
