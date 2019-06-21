@@ -11,7 +11,7 @@ float sh7(vec3 nrm) { return 0.858085 * nrm.x * nrm.z; }
 float sh8(vec3 nrm) { return 0.429043 * (nrm.x * nrm.x - nrm.y * nrm.y); }
 
 vec3 evalSH(vec3 nrm, vec3 coeffs[9]) {
-	return oneOverPi *
+	return oneOverPi * (
 		coeffs[0] * sh0(nrm) +
 		coeffs[1] * sh1(nrm) +
 		coeffs[2] * sh2(nrm) +
@@ -20,5 +20,5 @@ vec3 evalSH(vec3 nrm, vec3 coeffs[9]) {
 		coeffs[5] * sh5(nrm) +
 		coeffs[6] * sh6(nrm) +
 		coeffs[7] * sh7(nrm) +
-		coeffs[8] * sh8(nrm);
+		coeffs[8] * sh8(nrm));
 }

@@ -224,17 +224,10 @@ struct Volume {
 		std::unordered_map<Vec3f, int> seen;
 		auto write = 0u;
 		for(auto i = 0u; i < positions.size(); ++i) {
-			auto found = -1;
-			auto it = seen.find(positions[i]);
-			if(it != seen.end()) {
-				found = it->second;
+			if(auto it = seen.find(positions[i]); it != seen.end()) {
+				indices.push_back(it->second);
 			} else {
 				seen[positions[i]] = write;
-			}
-
-			if(found >= 0) {
-				indices.push_back(found);
-			} else {
 				indices.push_back(write);
 				positions[write] = positions[i];
 				++write;

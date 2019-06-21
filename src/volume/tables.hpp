@@ -1,3 +1,5 @@
+#include <nytl/flags.hpp>
+
 // Indexing of corners
 //
 //      ^ Y
@@ -36,20 +38,24 @@
 //  |/                  |/
 //  o--------2----------o
 
-// enum class Edge {
-// 	e0 = 1 << 0,
-// 	e1 = 1 << 1,
-// 	e2 = 1 << 2,
-// 	e3 = 1 << 3,
-// 	e4 = 1 << 4,
-// 	e5 = 1 << 5,
-// 	e6 = 1 << 6,
-// 	e7 = 1 << 7,
-// 	e8 = 1 << 8,
-// 	e9 = 1 << 9,
-// 	e10 = 1 << 10,
-// 	e11 = 1 << 11,
-// };
+enum class Edge {
+	none = 0,
+	e0 = 1 << 0,
+	e1 = 1 << 1,
+	e2 = 1 << 2,
+	e3 = 1 << 3,
+	e4 = 1 << 4,
+	e5 = 1 << 5,
+	e6 = 1 << 6,
+	e7 = 1 << 7,
+	e8 = 1 << 8,
+	e9 = 1 << 9,
+	e10 = 1 << 10,
+	e11 = 1 << 11,
+};
+
+using EdgeFlags = nytl::Flags<Edge>;
+NYTL_FLAG_OPS(Edge);
 
 // indexed by edge
 constexpr struct {
@@ -364,4 +370,267 @@ constexpr int triTable[256][16] = {
 	{0, 9, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
 	{0, 3, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
 	{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
+};
+
+// the first table index is the cube configuration,
+// the second index is for up to four dual points.
+// Each value of a table entry encodes the edges with an associated dual point.
+// A value of 0 indicates a dummy point.
+EdgeFlags dualPointsList[256][4] = {
+	{Edge::none, Edge::none, Edge::none, Edge::none}, // Edge::none
+	{Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none, Edge::none}, // 1
+	{Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none, Edge::none}, // 2
+	{Edge::e1|Edge::e3|Edge::e8|Edge::e9, Edge::none, Edge::none, Edge::none}, // 3
+	{Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none, Edge::none}, // 4
+	{Edge::e1|Edge::e2|Edge::e10, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 5
+	{Edge::e0|Edge::e2|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 6
+	{Edge::e2|Edge::e3|Edge::e8|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 7
+	{Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none, Edge::none}, // 8
+	{Edge::e0|Edge::e2|Edge::e8|Edge::e11, Edge::none, Edge::none, Edge::none}, // 9
+	{Edge::e0|Edge::e1|Edge::e9, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 10
+	{Edge::e1|Edge::e2|Edge::e8|Edge::e9|Edge::e11, Edge::none, Edge::none, Edge::none}, // 11
+	{Edge::e1|Edge::e3|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 12
+	{Edge::e0|Edge::e1|Edge::e8|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 13
+	{Edge::e0|Edge::e3|Edge::e9|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 14
+	{Edge::e8|Edge::e9|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 15
+	{Edge::e4|Edge::e7|Edge::e8, Edge::none, Edge::none, Edge::none}, // 16
+	{Edge::e0|Edge::e3|Edge::e4|Edge::e7, Edge::none, Edge::none, Edge::none}, // 17
+	{Edge::e4|Edge::e7|Edge::e8, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 18
+	{Edge::e1|Edge::e3|Edge::e4|Edge::e7|Edge::e9, Edge::none, Edge::none, Edge::none}, // 19
+	{Edge::e4|Edge::e7|Edge::e8, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 20
+	{Edge::e0|Edge::e3|Edge::e4|Edge::e7, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 21
+	{Edge::e0|Edge::e2|Edge::e9|Edge::e10, Edge::e4|Edge::e7|Edge::e8, Edge::none, Edge::none}, // 22
+	{Edge::e2|Edge::e3|Edge::e4|Edge::e7|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 23
+	{Edge::e4|Edge::e7|Edge::e8, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 24
+	{Edge::e2|Edge::e4|Edge::e7|Edge::e11|Edge::e0, Edge::none, Edge::none, Edge::none}, // 25
+	{Edge::e4|Edge::e7|Edge::e8, Edge::e2|Edge::e3|Edge::e11, Edge::e0|Edge::e1|Edge::e9, Edge::none}, // 26
+	{Edge::e1|Edge::e2|Edge::e4|Edge::e7|Edge::e9|Edge::e11, Edge::none, Edge::none, Edge::none}, // 27
+	{Edge::e1|Edge::e3|Edge::e10|Edge::e11, Edge::e4|Edge::e7|Edge::e8, Edge::none, Edge::none}, // 28
+	{Edge::e0|Edge::e1|Edge::e4|Edge::e7|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 29
+	{Edge::e0|Edge::e3|Edge::e9|Edge::e10|Edge::e11, Edge::e4|Edge::e7|Edge::e8, Edge::none, Edge::none}, // 30
+	{Edge::e4|Edge::e7|Edge::e9|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 31
+	{Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none, Edge::none}, // 32
+	{Edge::e4|Edge::e5|Edge::e9, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 33
+	{Edge::e0|Edge::e1|Edge::e4|Edge::e5, Edge::none, Edge::none, Edge::none}, // 34
+	{Edge::e1|Edge::e3|Edge::e4|Edge::e5|Edge::e8, Edge::none, Edge::none, Edge::none}, // 35
+	{Edge::e4|Edge::e5|Edge::e9, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 36
+	{Edge::e4|Edge::e5|Edge::e9, Edge::e1|Edge::e2|Edge::e10, Edge::e0|Edge::e3|Edge::e8, Edge::none}, // 37
+	{Edge::e0|Edge::e2|Edge::e4|Edge::e5|Edge::e10,0, Edge::none, Edge::none}, // 38
+	{Edge::e2|Edge::e3|Edge::e4|Edge::e5|Edge::e8|Edge::e10,0, Edge::none, Edge::none}, // 39
+	{Edge::e4|Edge::e5|Edge::e9,Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 40
+	{Edge::e0|Edge::e2|Edge::e8|Edge::e11, Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none}, // 41
+	{Edge::e0|Edge::e1|Edge::e4|Edge::e5, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 42
+	{Edge::e1|Edge::e2|Edge::e4|Edge::e5|Edge::e8|Edge::e11, Edge::none, Edge::none, Edge::none}, // 43
+	{Edge::e1|Edge::e3|Edge::e10|Edge::e11, Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none}, // 44
+	{Edge::e0|Edge::e1|Edge::e8|Edge::e10|Edge::e11, Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none}, // 45
+	{Edge::e0|Edge::e4|Edge::e5|Edge::e3|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 46
+	{Edge::e4|Edge::e5|Edge::e8|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 47
+	{Edge::e5|Edge::e7|Edge::e8|Edge::e9, Edge::none, Edge::none, Edge::none}, // 48
+	{Edge::e0|Edge::e3|Edge::e5|Edge::e7|Edge::e9, Edge::none, Edge::none, Edge::none}, // 49
+	{Edge::e0|Edge::e1|Edge::e5|Edge::e7|Edge::e8, Edge::none, Edge::none, Edge::none}, // 50
+	{Edge::e1|Edge::e3|Edge::e5|Edge::e7, Edge::none, Edge::none, Edge::none}, // 51
+	{Edge::e5|Edge::e7|Edge::e8|Edge::e9, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 52
+	{Edge::e0|Edge::e3|Edge::e5|Edge::e7|Edge::e9, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 53
+	{Edge::e0|Edge::e2|Edge::e5|Edge::e7|Edge::e8|Edge::e10, Edge::none, Edge::none, Edge::none}, // 54
+	{Edge::e2|Edge::e3|Edge::e5|Edge::e7|Edge::e10, Edge::none, Edge::none, Edge::none}, // 55
+	{Edge::e5|Edge::e7|Edge::e8|Edge::e9, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 56
+	{Edge::e0|Edge::e2|Edge::e11|Edge::e7|Edge::e5|Edge::e9, Edge::none, Edge::none, Edge::none}, // 57
+	{Edge::e7|Edge::e8|Edge::e5|Edge::e0|Edge::e1, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 58
+	{Edge::e1|Edge::e2|Edge::e5|Edge::e7|Edge::e11, Edge::none, Edge::none, Edge::none}, // 59
+	{Edge::e5|Edge::e7|Edge::e8|Edge::e9, Edge::e1|Edge::e3|Edge::e10|Edge::e11, Edge::none, Edge::none}, // 60
+	{Edge::e1|Edge::e10|Edge::e5|Edge::e9|Edge::e0|Edge::e11|Edge::e7, Edge::none, Edge::none, Edge::none}, // 61
+	{Edge::e11|Edge::e3|Edge::e7|Edge::e8|Edge::e5|Edge::e0|Edge::e10, Edge::none, Edge::none, Edge::none}, // 62
+	{Edge::e5|Edge::e7|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 63
+	{Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none, Edge::none}, // 64
+	{Edge::e5|Edge::e6|Edge::e10, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 65
+	{Edge::e5|Edge::e6|Edge::e10, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 66
+	{Edge::e1|Edge::e3|Edge::e8|Edge::e9, Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none}, // 67
+	{Edge::e1|Edge::e2|Edge::e5|Edge::e6, Edge::none, Edge::none, Edge::none}, // 68
+	{Edge::e1|Edge::e2|Edge::e5|Edge::e6, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 69
+	{Edge::e0|Edge::e2|Edge::e5|Edge::e6|Edge::e9, Edge::none, Edge::none, Edge::none}, // 70
+	{Edge::e3|Edge::e8|Edge::e9|Edge::e2|Edge::e6|Edge::e5, Edge::none, Edge::none, Edge::none}, // 71
+	{Edge::e5|Edge::e6|Edge::e10, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 72
+	{Edge::e0|Edge::e2|Edge::e8|Edge::e11, Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none}, // 73
+	{Edge::e0|Edge::e1|Edge::e9, Edge::e5|Edge::e6|Edge::e10, Edge::e2|Edge::e3|Edge::e11, Edge::none}, // 74
+	{Edge::e1|Edge::e2|Edge::e8|Edge::e9|Edge::e11, Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none}, // 75
+	{Edge::e1|Edge::e5|Edge::e6|Edge::e3|Edge::e11, Edge::none, Edge::none, Edge::none}, // 76
+	{Edge::e0|Edge::e8|Edge::e11|Edge::e6|Edge::e5|Edge::e1|Edge::e0, Edge::none, Edge::none, Edge::none}, // 77
+	{Edge::e5|Edge::e6|Edge::e3|Edge::e11|Edge::e0|Edge::e9, Edge::none, Edge::none, Edge::none}, // 78
+	{Edge::e8|Edge::e9|Edge::e11|Edge::e5|Edge::e6, Edge::none, Edge::none, Edge::none}, // 79
+	{Edge::e4|Edge::e7|Edge::e8, Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none}, // 80
+	{Edge::e0|Edge::e3|Edge::e4|Edge::e7, Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none}, // 81
+	{Edge::e4|Edge::e7|Edge::e8, Edge::e0|Edge::e1|Edge::e9, Edge::e5|Edge::e6|Edge::e10, Edge::none}, // 82
+	{Edge::e4|Edge::e7|Edge::e3|Edge::e1|Edge::e9, Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none}, // 83
+	{Edge::e1|Edge::e2|Edge::e5|Edge::e6, Edge::e4|Edge::e7|Edge::e8, Edge::none, Edge::none}, // 84
+	{Edge::e0|Edge::e3|Edge::e4|Edge::e7, Edge::e1|Edge::e2|Edge::e5|Edge::e6, Edge::none, Edge::none}, // 85
+	{Edge::e6|Edge::e5|Edge::e0|Edge::e2|Edge::e9, Edge::e4|Edge::e7|Edge::e8, Edge::none, Edge::none}, // 86
+	{Edge::e7|Edge::e3|Edge::e4|Edge::e6|Edge::e5|Edge::e2|Edge::e9, Edge::none, Edge::none, Edge::none}, // 87
+	{Edge::e4|Edge::e7|Edge::e8, Edge::e5|Edge::e6|Edge::e10, Edge::e2|Edge::e3|Edge::e11, Edge::none}, // 88
+	{Edge::e4|Edge::e7|Edge::e11|Edge::e2|Edge::e0, Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none}, // 89
+	{Edge::e4|Edge::e7|Edge::e8, Edge::e2|Edge::e3|Edge::e11, Edge::e5|Edge::e6|Edge::e10, Edge::e0|Edge::e1|Edge::e9}, // 90
+	{Edge::e2|Edge::e11|Edge::e7|Edge::e4|Edge::e1|Edge::e9, Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none}, // 91
+	{Edge::e11|Edge::e3|Edge::e6|Edge::e5|Edge::e1, Edge::e4|Edge::e7|Edge::e8, Edge::none, Edge::none}, // 92
+	{Edge::e7|Edge::e4|Edge::e11|Edge::e6|Edge::e5|Edge::e0|Edge::e1, Edge::none, Edge::none, Edge::none}, // 93
+	{Edge::e11|Edge::e3|Edge::e5|Edge::e6|Edge::e0|Edge::e9, Edge::e4|Edge::e7|Edge::e8, Edge::none, Edge::none}, // 94
+	{Edge::e4|Edge::e7|Edge::e11|Edge::e5|Edge::e6|Edge::e9, Edge::none, Edge::none, Edge::none}, // 95
+	{Edge::e4|Edge::e6|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 96
+	{Edge::e4|Edge::e6|Edge::e9|Edge::e10, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 97
+	{Edge::e0|Edge::e1|Edge::e4|Edge::e6|Edge::e10, Edge::none, Edge::none, Edge::none}, // 98
+	{Edge::e3|Edge::e8|Edge::e1|Edge::e4|Edge::e6|Edge::e10, Edge::none, Edge::none, Edge::none}, // 99
+	{Edge::e6|Edge::e2|Edge::e1|Edge::e4|Edge::e9, Edge::none, Edge::none, Edge::none}, // 100
+	{Edge::e6|Edge::e2|Edge::e1|Edge::e4|Edge::e9, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 101
+	{Edge::e0|Edge::e2|Edge::e4|Edge::e6, Edge::none, Edge::none, Edge::none}, // 102
+	{Edge::e3|Edge::e8|Edge::e4|Edge::e6|Edge::e2, Edge::none, Edge::none, Edge::none}, // 103
+	{Edge::e4|Edge::e9|Edge::e6|Edge::e10, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 104
+	{Edge::e4|Edge::e9|Edge::e6|Edge::e10, Edge::e0|Edge::e2|Edge::e8|Edge::e11, Edge::none, Edge::none}, // 105
+	{Edge::e6|Edge::e10|Edge::e4|Edge::e0|Edge::e1, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 106
+	{Edge::e2|Edge::e11|Edge::e8|Edge::e1|Edge::e4|Edge::e10|Edge::e6, Edge::none, Edge::none, Edge::none}, // 107
+	{Edge::e3|Edge::e11|Edge::e6|Edge::e4|Edge::e1|Edge::e9, Edge::none, Edge::none, Edge::none}, // 108
+	{Edge::e8|Edge::e0|Edge::e11|Edge::e6|Edge::e4|Edge::e9|Edge::e1, Edge::none, Edge::none, Edge::none}, // 109
+	{Edge::e11|Edge::e3|Edge::e6|Edge::e4|Edge::e0, Edge::none, Edge::none, Edge::none}, // 110
+	{Edge::e4|Edge::e6|Edge::e8|Edge::e11, Edge::none, Edge::none, Edge::none}, // 111
+	{Edge::e7|Edge::e6|Edge::e8|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 112
+	{Edge::e3|Edge::e7|Edge::e0|Edge::e6|Edge::e10|Edge::e9, Edge::none, Edge::none, Edge::none}, // 113
+	{Edge::e7|Edge::e8|Edge::e0|Edge::e1|Edge::e10|Edge::e6, Edge::none, Edge::none, Edge::none}, // 114
+	{Edge::e7|Edge::e3|Edge::e6|Edge::e10|Edge::e1, Edge::none, Edge::none, Edge::none}, // 115
+	{Edge::e7|Edge::e8|Edge::e6|Edge::e9|Edge::e2|Edge::e1, Edge::none, Edge::none, Edge::none}, // 116
+	{Edge::e7|Edge::e3|Edge::e0|Edge::e9|Edge::e1|Edge::e2|Edge::e6, Edge::none, Edge::none, Edge::none}, // 117
+	{Edge::e7|Edge::e8|Edge::e0|Edge::e2|Edge::e6, Edge::none, Edge::none, Edge::none}, // 118
+	{Edge::e7|Edge::e6|Edge::e3|Edge::e2, Edge::none, Edge::none, Edge::none}, // 119
+	{Edge::e7|Edge::e8|Edge::e9|Edge::e6|Edge::e10, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 120
+	{Edge::e7|Edge::e11|Edge::e2|Edge::e0|Edge::e6|Edge::e10|Edge::e9, Edge::none, Edge::none, Edge::none}, // 121
+	{Edge::e7|Edge::e8|Edge::e6|Edge::e10|Edge::e0|Edge::e1, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 122
+	{Edge::e7|Edge::e6|Edge::e10|Edge::e1|Edge::e2|Edge::e11, Edge::none, Edge::none, Edge::none}, // 123
+	{Edge::e7|Edge::e8|Edge::e11|Edge::e6|Edge::e3|Edge::e9|Edge::e1, Edge::none, Edge::none, Edge::none}, // 124
+	{Edge::e11|Edge::e6|Edge::e7, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 125
+	{Edge::e7|Edge::e8|Edge::e11|Edge::e3|Edge::e6|Edge::e0, Edge::none, Edge::none, Edge::none}, // 126
+	{Edge::e7|Edge::e6|Edge::e11, Edge::none, Edge::none, Edge::none}, // 127
+	{Edge::e7|Edge::e6|Edge::e11, Edge::none, Edge::none, Edge::none}, // 128
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 129
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 130
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e1|Edge::e3|Edge::e8|Edge::e9, Edge::none, Edge::none}, // 131
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 132
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e1|Edge::e2|Edge::e10, Edge::e0|Edge::e3|Edge::e8, Edge::none}, // 133
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e0|Edge::e2|Edge::e9|Edge::e10, Edge::none, Edge::none}, // 134
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e2|Edge::e3|Edge::e8|Edge::e9|Edge::e10, Edge::none, Edge::none}, // 135
+	{Edge::e2|Edge::e3|Edge::e6|Edge::e7, Edge::none, Edge::none, Edge::none}, // 136
+	{Edge::e0|Edge::e2|Edge::e6|Edge::e7|Edge::e8, Edge::none, Edge::none, Edge::none}, // 137
+	{Edge::e2|Edge::e3|Edge::e6|Edge::e7, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 138
+	{Edge::e1|Edge::e2|Edge::e6|Edge::e7|Edge::e8|Edge::e9, Edge::none, Edge::none, Edge::none}, // 139
+	{Edge::e7|Edge::e6|Edge::e10|Edge::e1|Edge::e3, Edge::none, Edge::none, Edge::none}, // 140
+	{Edge::e7|Edge::e6|Edge::e8|Edge::e0|Edge::e10|Edge::e1, Edge::none, Edge::none, Edge::none}, // 141
+	{Edge::e3|Edge::e6|Edge::e7|Edge::e0|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 142
+	{Edge::e7|Edge::e6|Edge::e8|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 143
+	{Edge::e4|Edge::e6|Edge::e8|Edge::e11, Edge::none, Edge::none, Edge::none}, // 144
+	{Edge::e0|Edge::e3|Edge::e4|Edge::e6|Edge::e11, Edge::none, Edge::none, Edge::none}, // 145
+	{Edge::e4|Edge::e6|Edge::e8|Edge::e11, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 146
+	{Edge::e6|Edge::e11|Edge::e3|Edge::e4|Edge::e9|Edge::e1, Edge::none, Edge::none, Edge::none}, // 147
+	{Edge::e4|Edge::e6|Edge::e8|Edge::e11, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 148
+	{Edge::e0|Edge::e3|Edge::e4|Edge::e6|Edge::e11, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 149
+	{Edge::e4|Edge::e6|Edge::e8|Edge::e11, Edge::e0|Edge::e2|Edge::e9|Edge::e10, Edge::none, Edge::none}, // 150
+	{Edge::e11|Edge::e6|Edge::e3|Edge::e4|Edge::e9|Edge::e10|Edge::e2, Edge::none, Edge::none, Edge::none}, // 151
+	{Edge::e4|Edge::e6|Edge::e2|Edge::e3|Edge::e8, Edge::none, Edge::none, Edge::none}, // 152
+	{Edge::e0|Edge::e2|Edge::e4|Edge::e6, Edge::none, Edge::none, Edge::none}, // 153
+	{Edge::e4|Edge::e6|Edge::e2|Edge::e3|Edge::e8, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 154
+	{Edge::e4|Edge::e6|Edge::e2|Edge::e1|Edge::e9, Edge::none, Edge::none, Edge::none}, // 155
+	{Edge::e4|Edge::e6|Edge::e10|Edge::e1|Edge::e8|Edge::e3, Edge::none, Edge::none, Edge::none}, // 156
+	{Edge::e6|Edge::e4|Edge::e0|Edge::e1|Edge::e10, Edge::none, Edge::none, Edge::none}, // 157
+	{Edge::e9|Edge::e0|Edge::e10|Edge::e6|Edge::e4|Edge::e8|Edge::e3, Edge::none, Edge::none, Edge::none}, // 158
+	{Edge::e4|Edge::e6|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 159
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none}, // 160
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e4|Edge::e5|Edge::e9, Edge::e0|Edge::e3|Edge::e8, Edge::none}, // 161
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e0|Edge::e1|Edge::e4|Edge::e5, Edge::none, Edge::none}, // 162
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e8|Edge::e3|Edge::e1|Edge::e5|Edge::e4, Edge::none, Edge::none}, // 163
+	{Edge::e6|Edge::e7|Edge::e11, Edge::e4|Edge::e5|Edge::e9, Edge::e1|Edge::e2|Edge::e10, Edge::none}, // 164
+	{Edge::e6|Edge::e7|Edge::e11, Edge::e0|Edge::e3|Edge::e8, Edge::e1|Edge::e2|Edge::e10, Edge::e4|Edge::e5|Edge::e9}, // 165
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e4|Edge::e5|Edge::e0|Edge::e10|Edge::e2, Edge::none, Edge::none}, // 166
+	{Edge::e7|Edge::e6|Edge::e11, Edge::e3|Edge::e8|Edge::e4|Edge::e5|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 167
+	{Edge::e2|Edge::e3|Edge::e6|Edge::e7, Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none}, // 168
+	{Edge::e0|Edge::e2|Edge::e6|Edge::e7|Edge::e8, Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none}, // 169
+	{Edge::e2|Edge::e3|Edge::e6|Edge::e7, Edge::e0|Edge::e1|Edge::e4|Edge::e5, Edge::none, Edge::none}, // 170
+	{Edge::e7|Edge::e6|Edge::e2|Edge::e8|Edge::e4|Edge::e5|Edge::e1, Edge::none, Edge::none, Edge::none}, // 171
+	{Edge::e6|Edge::e7|Edge::e3|Edge::e10|Edge::e1, Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none}, // 172
+	{Edge::e0|Edge::e8|Edge::e6|Edge::e7|Edge::e1|Edge::e10, Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none}, // 173
+	{Edge::e7|Edge::e6|Edge::e3|Edge::e10|Edge::e0|Edge::e4|Edge::e5, Edge::none, Edge::none, Edge::none}, // 174
+	{Edge::e8|Edge::e7|Edge::e6|Edge::e10|Edge::e4|Edge::e5, Edge::none, Edge::none, Edge::none}, // 175
+	{Edge::e11|Edge::e6|Edge::e5|Edge::e9|Edge::e8, Edge::none, Edge::none, Edge::none}, // 176
+	{Edge::e11|Edge::e6|Edge::e5|Edge::e9|Edge::e0|Edge::e3, Edge::none, Edge::none, Edge::none}, // 177
+	{Edge::e11|Edge::e6|Edge::e5|Edge::e8|Edge::e0|Edge::e1, Edge::none, Edge::none, Edge::none}, // 178
+	{Edge::e11|Edge::e6|Edge::e5|Edge::e1|Edge::e3, Edge::none, Edge::none, Edge::none}, // 179
+	{Edge::e11|Edge::e6|Edge::e5|Edge::e9|Edge::e8, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 180
+	{Edge::e6|Edge::e11|Edge::e0|Edge::e3|Edge::e5|Edge::e9, Edge::e1|Edge::e10|Edge::e2, Edge::none, Edge::none}, // 181
+	{Edge::e11|Edge::e6|Edge::e5|Edge::e10|Edge::e2|Edge::e8|Edge::e0, Edge::none, Edge::none, Edge::none}, // 182
+	{Edge::e6|Edge::e11|Edge::e3|Edge::e2|Edge::e10|Edge::e5, Edge::none, Edge::none, Edge::none}, // 183
+	{Edge::e2|Edge::e3|Edge::e6|Edge::e5|Edge::e9|Edge::e8, Edge::none, Edge::none, Edge::none}, // 184
+	{Edge::e0|Edge::e2|Edge::e6|Edge::e5|Edge::e9, Edge::none, Edge::none, Edge::none}, // 185
+	{Edge::e2|Edge::e6|Edge::e5|Edge::e1|Edge::e8|Edge::e0|Edge::e3, Edge::none, Edge::none, Edge::none}, // 186
+	{Edge::e1|Edge::e2|Edge::e5|Edge::e6, Edge::none, Edge::none, Edge::none}, // 187
+	{Edge::e6|Edge::e5|Edge::e10|Edge::e3|Edge::e1|Edge::e9|Edge::e8, Edge::none, Edge::none, Edge::none}, // 188
+	{Edge::e6|Edge::e5|Edge::e9|Edge::e0|Edge::e1|Edge::e10, Edge::none, Edge::none, Edge::none}, // 189
+	{Edge::e0|Edge::e3|Edge::e8, Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none}, // 190
+	{Edge::e5|Edge::e6|Edge::e10, Edge::none, Edge::none, Edge::none}, // 191
+	{Edge::e5|Edge::e7|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 192
+	{Edge::e5|Edge::e7|Edge::e10|Edge::e11, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 193
+	{Edge::e5|Edge::e7|Edge::e10|Edge::e11, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 194
+	{Edge::e5|Edge::e7|Edge::e10|Edge::e11, Edge::e1|Edge::e3|Edge::e8|Edge::e9, Edge::none, Edge::none}, // 195
+	{Edge::e11|Edge::e7|Edge::e5|Edge::e2|Edge::e1, Edge::none, Edge::none, Edge::none}, // 196
+	{Edge::e11|Edge::e7|Edge::e5|Edge::e2|Edge::e1, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 197
+	{Edge::e11|Edge::e7|Edge::e5|Edge::e2|Edge::e0|Edge::e9, Edge::none, Edge::none, Edge::none}, // 198
+	{Edge::e3|Edge::e8|Edge::e11|Edge::e7|Edge::e5|Edge::e2|Edge::e9, Edge::none, Edge::none, Edge::none}, // 199
+	{Edge::e7|Edge::e5|Edge::e10|Edge::e2|Edge::e3, Edge::none, Edge::none, Edge::none}, // 200
+	{Edge::e7|Edge::e5|Edge::e10|Edge::e2|Edge::e0|Edge::e8, Edge::none, Edge::none, Edge::none}, // 201
+	{Edge::e7|Edge::e5|Edge::e10|Edge::e2|Edge::e3, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 202
+	{Edge::e7|Edge::e5|Edge::e10|Edge::e2|Edge::e8|Edge::e9|Edge::e1, Edge::none, Edge::none, Edge::none}, // 203
+	{Edge::e1|Edge::e3|Edge::e5|Edge::e7, Edge::none, Edge::none, Edge::none}, // 204
+	{Edge::e0|Edge::e1|Edge::e5|Edge::e7|Edge::e8, Edge::none, Edge::none, Edge::none}, // 205
+	{Edge::e3|Edge::e7|Edge::e5|Edge::e0|Edge::e9, Edge::none, Edge::none, Edge::none}, // 206
+	{Edge::e5|Edge::e7|Edge::e8|Edge::e9, Edge::none, Edge::none, Edge::none}, // 207
+	{Edge::e4|Edge::e8|Edge::e5|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 208
+	{Edge::e0|Edge::e3|Edge::e11|Edge::e4|Edge::e5|Edge::e10, Edge::none, Edge::none, Edge::none}, // 209
+	{Edge::e4|Edge::e8|Edge::e11|Edge::e10|Edge::e5, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 210
+	{Edge::e4|Edge::e5|Edge::e10|Edge::e1|Edge::e9|Edge::e11|Edge::e3, Edge::none, Edge::none, Edge::none}, // 211
+	{Edge::e4|Edge::e8|Edge::e11|Edge::e5|Edge::e2|Edge::e1, Edge::none, Edge::none, Edge::none}, // 212
+	{Edge::e11|Edge::e3|Edge::e2|Edge::e4|Edge::e5|Edge::e1|Edge::e0, Edge::none, Edge::none, Edge::none}, // 213
+	{Edge::e11|Edge::e8|Edge::e2|Edge::e4|Edge::e0|Edge::e9|Edge::e5, Edge::none, Edge::none, Edge::none}, // 214
+	{Edge::e4|Edge::e5|Edge::e9, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 215
+	{Edge::e4|Edge::e8|Edge::e3|Edge::e2|Edge::e10|Edge::e5, Edge::none, Edge::none, Edge::none}, // 216
+	{Edge::e5|Edge::e10|Edge::e0|Edge::e2|Edge::e4, Edge::none, Edge::none, Edge::none}, // 217
+	{Edge::e4|Edge::e8|Edge::e3|Edge::e2|Edge::e5|Edge::e10, Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none}, // 218
+	{Edge::e4|Edge::e5|Edge::e10|Edge::e2|Edge::e1|Edge::e9, Edge::none, Edge::none, Edge::none}, // 219
+	{Edge::e4|Edge::e8|Edge::e5|Edge::e1|Edge::e3, Edge::none, Edge::none, Edge::none}, // 220
+	{Edge::e0|Edge::e1|Edge::e4|Edge::e5, Edge::none, Edge::none, Edge::none}, // 221
+	{Edge::e4|Edge::e8|Edge::e3|Edge::e5|Edge::e0|Edge::e9, Edge::none, Edge::none, Edge::none}, // 222
+	{Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none, Edge::none}, // 223
+	{Edge::e4|Edge::e9|Edge::e10|Edge::e11|Edge::e7, Edge::none, Edge::none, Edge::none}, // 224
+	{Edge::e4|Edge::e9|Edge::e10|Edge::e11|Edge::e7, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 225
+	{Edge::e7|Edge::e11|Edge::e10|Edge::e4|Edge::e0|Edge::e1, Edge::none, Edge::none, Edge::none}, // 226
+	{Edge::e7|Edge::e11|Edge::e10|Edge::e1|Edge::e4|Edge::e8|Edge::e3, Edge::none, Edge::none, Edge::none}, // 227
+	{Edge::e7|Edge::e11|Edge::e4|Edge::e9|Edge::e2|Edge::e1, Edge::none, Edge::none, Edge::none}, // 228
+	{Edge::e7|Edge::e11|Edge::e4|Edge::e9|Edge::e2|Edge::e1, Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none}, // 229
+	{Edge::e7|Edge::e11|Edge::e2|Edge::e0|Edge::e4, Edge::none, Edge::none, Edge::none}, // 230
+	{Edge::e7|Edge::e11|Edge::e3|Edge::e8|Edge::e4|Edge::e2, Edge::none, Edge::none, Edge::none}, // 231
+	{Edge::e2|Edge::e3|Edge::e10|Edge::e9|Edge::e4|Edge::e7, Edge::none, Edge::none, Edge::none}, // 232
+	{Edge::e7|Edge::e8|Edge::e4|Edge::e2|Edge::e0|Edge::e10|Edge::e9, Edge::none, Edge::none, Edge::none}, // 233
+	{Edge::e7|Edge::e4|Edge::e3|Edge::e2|Edge::e0|Edge::e1|Edge::e10, Edge::none, Edge::none, Edge::none}, // 234
+	{Edge::e4|Edge::e7|Edge::e8, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 235
+	{Edge::e7|Edge::e3|Edge::e1|Edge::e4|Edge::e9, Edge::none, Edge::none, Edge::none}, // 236
+	{Edge::e7|Edge::e4|Edge::e8|Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none, Edge::none}, // 237
+	{Edge::e0|Edge::e3|Edge::e4|Edge::e7, Edge::none, Edge::none, Edge::none}, // 238
+	{Edge::e4|Edge::e7|Edge::e8, Edge::none, Edge::none, Edge::none}, // 239
+	{Edge::e8|Edge::e9|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 240
+	{Edge::e9|Edge::e10|Edge::e11|Edge::e0|Edge::e3, Edge::none, Edge::none, Edge::none}, // 241
+	{Edge::e8|Edge::e10|Edge::e11|Edge::e0|Edge::e1, Edge::none, Edge::none, Edge::none}, // 242
+	{Edge::e1|Edge::e3|Edge::e10|Edge::e11, Edge::none, Edge::none, Edge::none}, // 243
+	{Edge::e8|Edge::e9|Edge::e11|Edge::e1|Edge::e2, Edge::none, Edge::none, Edge::none}, // 244
+	{Edge::e11|Edge::e9|Edge::e3|Edge::e0|Edge::e1|Edge::e2, Edge::none, Edge::none, Edge::none}, // 245
+	{Edge::e0|Edge::e2|Edge::e8|Edge::e11, Edge::none, Edge::none, Edge::none}, // 246
+	{Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none, Edge::none}, // 247
+	{Edge::e3|Edge::e2|Edge::e8|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 248
+	{Edge::e0|Edge::e2|Edge::e9|Edge::e10, Edge::none, Edge::none, Edge::none}, // 249
+	{Edge::e8|Edge::e0|Edge::e3|Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none, Edge::none}, // 250
+	{Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none, Edge::none}, // 251
+	{Edge::e1|Edge::e3|Edge::e8|Edge::e9, Edge::none, Edge::none, Edge::none}, // 252
+	{Edge::e0|Edge::e1|Edge::e9, Edge::none, Edge::none, Edge::none}, // 253
+	{Edge::e0|Edge::e3|Edge::e8, Edge::none, Edge::none, Edge::none}, // 254
+	{Edge::none, Edge::none, Edge::none, Edge::none} // 255
 };

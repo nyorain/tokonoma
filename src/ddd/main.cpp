@@ -779,28 +779,27 @@ public:
 		return false;
 	}
 
+	// doing this multiple times can be used for light bounces
 	void refreshLightProbes() {
-		dlg_warn("TODO");
+		probe_.refresh = true;
 	}
 
-	void addLightProbe() {
+	void setupLightProbeRendering(u32 i, Vec3f pos) {
 		auto map = probe_.comp.ubo.memoryMap();
 		auto span = map.span();
-		doi::write(span, camera_.pos); // probe position
-		doi::write(span, u32(lightProbes_.size())); // probe tex coord
+		doi::write(span, pos);
+		doi::write(span, i);
 		map.flush();
 		map = {};
-
-		lightProbes_.push_back(camera_.pos);
 
 		// update ubo for camera
 		for(auto i = 0u; i < 6u; ++i) {
 			auto map = probe_.faces[i].ubo.memoryMap();
 			auto span = map.span();
 
-			auto mat = doi::cubeProjectionVP(camera_.pos, i);
+			auto mat = doi::cubeProjectionVP(pos, i);
 			doi::write(span, mat);
-			doi::write(span, camera_.pos);
+			doi::write(span, pos);
 			doi::write(span, 0.01f); // near
 			doi::write(span, 30.f); // far
 			map.flush();
@@ -811,7 +810,11 @@ public:
 			doi::write(envSpan, doi::cubeProjectionVP({}, i));
 			envMap.flush();
 		}
+	}
 
+	void addLightProbe() {
+		setupLightProbeRendering(lightProbes_.size(), camera_.pos);
+		lightProbes_.push_back(camera_.pos);
 		probe_.pending = true;
 		updateAOParams_ = true;
 	}
@@ -878,7 +881,21 @@ public:
 			auto& qs = vulkanDevice().queueSubmitter();
 			qs.wait(qs.add(probe_.cb));
 			probe_.pending = false;
-			dlg_info("probe count: {}", lightProbes_.size());
+		}
+
+		// TODO: THE STALLING HERE IS HORRIBLE
+		// the correct way is to allocate one ubo/ds etc (per face...)
+		// per light probe and render them all at once. then, copying
+		// tmpShTex once in the end is enough as well...
+		// Then remove the reset/clear hack in shProj.comp as well
+		if(probe_.refresh) {
+			for(auto i = 0u; i < lightProbes_.size(); ++i) {
+				setupLightProbeRendering(i, lightProbes_[i]);
+				auto& qs = vulkanDevice().queueSubmitter();
+				qs.wait(qs.add(probe_.cb));
+			}
+			probe_.refresh = false;
+			dlg_info("refreshed");
 		}
 
 		if(updateAOParams_) {
@@ -952,6 +969,7 @@ protected:
 		vpp::Pipeline pipe;
 
 		bool pending {};
+		bool refresh {};
 		vpp::CommandBuffer cb;
 
 		// compute

@@ -25,6 +25,10 @@
 #include <shaders/stage.color.frag.h>
 #include <shaders/cloth.cloth.comp.h>
 
+// TODO: benchmark different work group sizes
+// TODO: will probably more efficient to use textures for the nodes
+//   instead of a buffer due to neighbor access.
+
 using namespace doi::types;
 using nytl::Vec3f;
 
@@ -35,7 +39,7 @@ public:
 		nytl::Vec4f vel;
 	};
 
-	static constexpr auto workGroupSize = 8u;
+	static constexpr auto workGroupSize = 16u;
 
 public:
 	bool init(nytl::Span<const char*> args) override {

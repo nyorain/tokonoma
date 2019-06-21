@@ -65,7 +65,7 @@ vec4 readTex(MaterialTex tex) {
 // and then computing polynoms for normal. For all the light probes
 // we sample from
 // TODO: use better attenuation function here
-vec3 lightProbe(vec3 pos, vec3 nrm, float coord, inout float total) {
+vec3 lightProbe(vec3 pos, vec3 nrm, float coord, inout float total, inout float fmax) {
 	vec4 coeffs[3];
 	coeffs[0] = texture(irradiance, vec2(coord, 0));
 	coeffs[1] = texture(irradiance, vec2(coord, 1));
@@ -84,11 +84,13 @@ vec3 lightProbe(vec3 pos, vec3 nrm, float coord, inout float total) {
 
 	vec3 res = vec3(0.0);
 	// float fac = 1 / (1 + dist + 10 * params.maxProbeDist * (dist * dist));
+	// float fac = 1 / (1 + params.maxProbeDist * (dist * dist));
 	float fac = exp(-params.maxProbeDist * dist);
-	if(fac < 0.001) {
-		return res;
-	}
+	// if(fac < 0.01 && fac < fmax / 2) {
+	// 	return res;
+	// }
 
+	fmax = max(fmax, fac);
 	res += sh0(nrm) * coeffs[0].xyz;
 	res += sh1(nrm) * coeffs[1].xyz;
 	res += sh2(nrm) * coeffs[2].xyz;
@@ -171,9 +173,10 @@ void main() {
 	if(bool(params.mode & modeIrradiance)) {
 		vec3 acolor = vec3(0.0);
 		float total = 0.0;
+		float fmax = 0.0;
 		for(uint i = 0u; i < params.probeCount; ++i) {
 			float texCoord = float(i + 0.5f) / textureSize(irradiance, 0).x;
-			acolor += lightProbe(inPos, normal, texCoord, total);
+			acolor += lightProbe(inPos, normal, texCoord, total, fmax);
 		}
 
 		if(total > 0.001) {
@@ -196,5 +199,6 @@ void main() {
 		outCol.a = 1.f;
 	}
 
-	// TODO: tonemap?
+	// tonemap
+	outCol.rgb = 1.0 - exp(-outCol.rgb);
 }

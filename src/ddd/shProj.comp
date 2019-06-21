@@ -25,12 +25,13 @@ layout(push_constant) uniform PC {
 const uint size = gl_WorkGroupSize.x; // == gl_WorkGroupSize.y
 shared vec3 coeffs[size][size][9];
 
+// TODO: not sure, y flipping
 vec3 cubeCoords(uint face, vec2 uv) {
 	switch(face) {
 		case 0: return vec3(1.f, uv.y, -uv.x);
 		case 1: return vec3(-1.f, uv.y, uv.x);
-		case 2: return vec3(uv.x, -1.f, uv.y);
-		case 3: return vec3(uv.x, 1.f, -uv.y);
+		case 2: return vec3(uv.x, 1.f, -uv.y);
+		case 3: return vec3(uv.x, -1.f, uv.y);
 		case 4: return vec3(uv.x, uv.y, 1.f);
 		case 5: return vec3(-uv.x, uv.y, -1.f);
 	}
@@ -79,7 +80,6 @@ void main() {
 
 	// normalize coeffs
 	// factor the same for all sampled pixels (approx)
-	// TODO: re-check normalization, might be off
 	coeffs[l.x][l.y][0] *= 0.282095f;
 	coeffs[l.x][l.y][1] *= 0.488603f;
 	coeffs[l.x][l.y][2] *= 0.488603f;
@@ -108,7 +108,10 @@ void main() {
 	if(l.x == 0 && l.y == 0) {
 		for(uint i = 0u; i < 9; ++i) {
 			float w = i < 3 ? ubo.pos[i] : 0.0;
-			vec3 prev = imageLoad(outCoeffs, ivec2(ubo.coord, i)).rgb;
+			vec3 prev = vec3(0.0);
+			if(pc.face != 0) {
+				prev = imageLoad(outCoeffs, ivec2(ubo.coord, i)).rgb;
+			}
 			imageStore(outCoeffs, ivec2(ubo.coord, i),
 				vec4(prev + coeffs[0][0][i], w));
 		}

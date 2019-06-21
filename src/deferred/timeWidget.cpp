@@ -26,13 +26,15 @@ void TimeWidget::updateDevice() {
 		return;
 	}
 
+	dlg_assert(entries_.size() <= maxCount);
+	dlg_assert(id_ <= maxCount);
+
 	auto& dev = rvgContext().device();
 	updateCounter_ = 0;
 
 	std::uint32_t queries[maxCount + 1];
 	vk::getQueryPoolResults(dev, pool_, 0, maxCount + 1,
-		sizeof(queries), queries, 4,
-		vk::QueryResultBits::withAvailability);
+		sizeof(queries), queries, 4, {});
 
 	auto last = queries[0] & bits_;
 	for(auto i = 0u; i < entries_.size(); ++i) {
