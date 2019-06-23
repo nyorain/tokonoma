@@ -1,3 +1,7 @@
+// TODO: implement dual marching cubes. Table already in tables.hpp
+// TODO: maybe use flat normals for normal marching cubes? looks
+//   not good with current approach
+
 #include "tables.hpp"
 
 #include <stage/app.hpp>
@@ -354,7 +358,7 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
 		vk::cmdBindVertexBuffers(cb, 0,
-			{{positions_.buffer(), normals_.buffer()}},
+			{{positions_.buffer().vkHandle(), normals_.buffer().vkHandle()}},
 			{{positions_.offset(), normals_.offset()}});
 		vk::cmdBindIndexBuffer(cb, indices_.buffer(), indices_.offset(),
 			vk::IndexType::uint32);

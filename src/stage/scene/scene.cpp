@@ -397,7 +397,12 @@ void Scene::loadNode(InitData& data, const WorkBatcher& wb,
 		auto name = mesh.name.empty() ?  mesh.name : "'" + mesh.name + "'";
 		dlg_info("  Loading mesh {}", name);
 		for(auto& primitive : mesh.primitives) {
-			loadPrimitive(data, wb, model, primitive, matrix);
+			// TODO
+			try {
+				loadPrimitive(data, wb, model, primitive, matrix);
+			} catch(const std::exception& err) {
+				dlg_error("Omitting primitive: {}", err.what());
+			}
 		}
 	}
 }
@@ -421,10 +426,14 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 	auto itc0 = primitive.attributes.find("TEXCOORD_0");
 	auto itc1 = primitive.attributes.find("TEXCOORD_1");
 
+	if(ip == primitive.attributes.end()) {
+		throw std::runtime_error("primitve doesn't have POSITION");
+	}
+
 	// TODO: we could manually compute normals, flat normals are good
 	// enough in this case. But we could also an algorith smooth normals
-	if(ip == primitive.attributes.end() || in == primitive.attributes.end()) {
-		throw std::runtime_error("primitve doesn't have POSITION or NORMAL");
+	if(in == primitive.attributes.end()) {
+		throw std::runtime_error("primitve doesn't have NORMAL");
 	}
 
 	auto& pa = model.accessors[ip->second];

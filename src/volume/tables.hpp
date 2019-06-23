@@ -55,7 +55,7 @@ enum class Edge {
 };
 
 using EdgeFlags = nytl::Flags<Edge>;
-NYTL_FLAG_OPS(Edge);
+NYTL_FLAG_OPS(Edge)
 
 // indexed by edge
 constexpr struct {
@@ -415,8 +415,8 @@ EdgeFlags dualPointsList[256][4] = {
 	{Edge::e1|Edge::e3|Edge::e4|Edge::e5|Edge::e8, Edge::none, Edge::none, Edge::none}, // 35
 	{Edge::e4|Edge::e5|Edge::e9, Edge::e1|Edge::e2|Edge::e10, Edge::none, Edge::none}, // 36
 	{Edge::e4|Edge::e5|Edge::e9, Edge::e1|Edge::e2|Edge::e10, Edge::e0|Edge::e3|Edge::e8, Edge::none}, // 37
-	{Edge::e0|Edge::e2|Edge::e4|Edge::e5|Edge::e10,0, Edge::none, Edge::none}, // 38
-	{Edge::e2|Edge::e3|Edge::e4|Edge::e5|Edge::e8|Edge::e10,0, Edge::none, Edge::none}, // 39
+	{Edge::e0|Edge::e2|Edge::e4|Edge::e5|Edge::e10, Edge::none, Edge::none, Edge::none}, // 38
+	{Edge::e2|Edge::e3|Edge::e4|Edge::e5|Edge::e8|Edge::e10, Edge::none, Edge::none, Edge::none}, // 39
 	{Edge::e4|Edge::e5|Edge::e9,Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 40
 	{Edge::e0|Edge::e2|Edge::e8|Edge::e11, Edge::e4|Edge::e5|Edge::e9, Edge::none, Edge::none}, // 41
 	{Edge::e0|Edge::e1|Edge::e4|Edge::e5, Edge::e2|Edge::e3|Edge::e11, Edge::none, Edge::none}, // 42

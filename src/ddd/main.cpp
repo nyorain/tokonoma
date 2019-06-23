@@ -261,7 +261,7 @@ public:
 		// light_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
 		light_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
 		light_.data.dir = {5.8f, -12.0f, 4.f};
-		light_.data.color = {1.f, 1.f, 1.f};
+		light_.data.color = {5.f, 5.f, 5.f};
 		// light_.data.position = {0.f, 5.0f, 0.f};
 		updateLight_ = true;
 
@@ -352,7 +352,7 @@ public:
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		adsu.imageSampler({{{}, shTex_.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.uniform({{aoUbo_}});
+		adsu.uniform({{{aoUbo_}}});
 		adsu.apply();
 
 		initProbePipe(batch);
