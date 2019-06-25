@@ -15,8 +15,8 @@ public:
 		((void) cb);
 	}
 
-	void update(double delta) override {
-		App::update(delta);
+	void update(double dt) override {
+		App::update(dt);
 	}
 
 	const char* name() const override { return "dummy"; }

@@ -248,6 +248,7 @@ public:
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
 			doi::write(span, fixedMatrix(camera_));
+			map.flush();
 		}
 
 		if(recreateView_) {

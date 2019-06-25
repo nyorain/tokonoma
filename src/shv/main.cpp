@@ -4,6 +4,7 @@
 #include <stage/camera.hpp>
 #include <stage/bits.hpp>
 #include <stage/scene/environment.hpp>
+#include <stage/scene/shape.hpp>
 
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/commandAllocator.hpp>
@@ -25,6 +26,7 @@
 #include <fstream>
 #include <shaders/stage.skybox.vert.h>
 #include <shaders/shv.shv.frag.h>
+#include <shaders/shv.sphere.vert.h>
 
 class SHView : public doi::App {
 public:
@@ -33,6 +35,7 @@ public:
 			return false;
 		}
 
+		// TODO: better pack coeffs (as vec4) in uniform buffer
 		auto& dev = vulkanDevice();
 		auto bindings = {
 			vpp::descriptorBinding(
@@ -46,30 +49,17 @@ public:
 		dsLayout_ = {dev, bindings};
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 
-		// pipeline
-		vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);
-		vpp::ShaderModule fragShader(dev, shv_shv_frag_data);
-
-		vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
-			{vertShader, vk::ShaderStageBits::vertex},
-			{fragShader, vk::ShaderStageBits::fragment},
-		}}});
-
-		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
-		pipe_ = {dev, gpi.info()};
-
 		// data
 		auto& qs = dev.queueSubmitter();
 		auto cb = dev.commandAllocator().get(qs.queue().family());
 		vk::beginCommandBuffer(cb, {});
 
-		// indices
-		auto usage = vk::BufferUsageBits::indexBuffer |
-			vk::BufferUsageBits::transferDst;
-		auto inds = doi::boxInsideIndices;
-		boxIndices_ = {dev.bufferAllocator(), sizeof(inds),
-			usage, dev.deviceMemoryTypes(), 4u};
-		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, inds);
+		std::array<vpp::SubBuffer, 2> stages;
+		if(skybox_) {
+			stages[0] = initSkyPipe(cb);
+		} else {
+			stages = initSpherePipe(cb);
+		}
 
 		// ubo
 		auto camUboSize = sizeof(nytl::Mat4f);
@@ -106,12 +96,100 @@ public:
 		return true;
 	}
 
+	[[nodiscard]] vpp::SubBuffer initSkyPipe(vk::CommandBuffer cb) {
+		auto& dev = vulkanDevice();
+
+		// pipeline
+		vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);
+		vpp::ShaderModule fragShader(dev, shv_shv_frag_data);
+
+		vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
+			{vertShader, vk::ShaderStageBits::vertex},
+			{fragShader, vk::ShaderStageBits::fragment},
+		}}}, 0, samples());
+
+		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+		pipe_ = {dev, gpi.info()};
+
+		// indices
+		auto usage = vk::BufferUsageBits::indexBuffer |
+			vk::BufferUsageBits::transferDst;
+		auto inds = doi::boxInsideIndices;
+		indices_ = {dev.bufferAllocator(), sizeof(inds),
+			usage, dev.deviceMemoryTypes(), 4u};
+		auto boxIndicesStage = vpp::fillStaging(cb, indices_, inds);
+		indexCount_ = 36;
+		return boxIndicesStage;
+	}
+
+	[[nodiscard]] std::array<vpp::SubBuffer, 2>
+	initSpherePipe(vk::CommandBuffer cb) {
+		auto& dev = vulkanDevice();
+		auto sphere = doi::Sphere{{0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}};
+		auto shape = doi::generateUV(sphere);
+
+		// pipeline
+		vpp::ShaderModule vertShader(dev, shv_sphere_vert_data);
+		vpp::ShaderModule fragShader(dev, shv_shv_frag_data);
+
+		vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
+			{vertShader, vk::ShaderStageBits::vertex},
+			{fragShader, vk::ShaderStageBits::fragment},
+		}}}, 0, samples());
+
+		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+		gpi.depthStencil.depthTestEnable = true;
+		gpi.depthStencil.depthWriteEnable = true;
+		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+
+		vk::VertexInputAttributeDescription attrib;
+		attrib.format = vk::Format::r32g32b32Sfloat;
+
+		vk::VertexInputBindingDescription binding;
+		binding.stride = sizeof(nytl::Vec3f);
+		binding.inputRate = vk::VertexInputRate::vertex;
+
+		gpi.vertex.pVertexAttributeDescriptions = &attrib;
+		gpi.vertex.vertexAttributeDescriptionCount = 1;
+		gpi.vertex.vertexBindingDescriptionCount = 1;
+		gpi.vertex.pVertexBindingDescriptions = &binding;
+
+		pipe_ = {dev, gpi.info()};
+
+		// indices
+		auto usage = vk::BufferUsageBits::indexBuffer |
+			vk::BufferUsageBits::transferDst;
+		auto inds = doi::bytes(shape.indices);
+		indices_ = {dev.bufferAllocator(), std::size_t(inds.size()),
+			usage, dev.deviceMemoryTypes(), 4u};
+		auto indStage = vpp::fillStaging(cb, indices_, inds);
+		indexCount_ = shape.indices.size();
+
+		usage = vk::BufferUsageBits::vertexBuffer |
+			vk::BufferUsageBits::transferDst;
+		auto poss = doi::bytes(shape.positions);
+		spherePositions_ = {dev.bufferAllocator(), std::size_t(poss.size()),
+			usage, dev.deviceMemoryTypes(), 4u};
+		auto posStage = vpp::fillStaging(cb, spherePositions_, poss);
+
+		indexCount_ = shape.indices.size();
+		camera_.pos.z += 2.f;
+		return {std::move(indStage), std::move(posStage)};
+	}
+
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
-		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
-			boxIndices_.offset(), vk::IndexType::uint16);
-		vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
+		if(skybox_) {
+			vk::cmdBindIndexBuffer(cb, indices_.buffer(),
+				indices_.offset(), vk::IndexType::uint16);
+		} else {
+			vk::cmdBindVertexBuffers(cb, 0, {{spherePositions_.buffer()}},
+				{{spherePositions_.offset()}});
+			vk::cmdBindIndexBuffer(cb, indices_.buffer(),
+				indices_.offset(), vk::IndexType::uint32);
+		}
+		vk::cmdDrawIndexed(cb, indexCount_, 1, 0, 0, 0);
 	}
 
 	void update(double dt) override {
@@ -120,6 +198,8 @@ public:
 		if(kc) {
 			doi::checkMovement(camera_, *kc, dt);
 		}
+
+		App::scheduleRedraw();
 	}
 
 	void updateDevice() override {
@@ -129,7 +209,8 @@ public:
 			camera_.update = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			doi::write(span, fixedMatrix(camera_));
+			doi::write(span, skybox_ ? fixedMatrix(camera_) : matrix(camera_));
+			map.flush();
 		}
 	}
 
@@ -154,7 +235,14 @@ public:
 		return false;
 	}
 
+	void resize(const ny::SizeEvent& ev) override {
+		App::resize(ev);
+		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+		camera_.update = true;
+	}
+
 	const char* name() const override { return "shview"; }
+	bool needsDepth() const override { return true; }
 
 protected:
 	vpp::TrDsLayout dsLayout_;
@@ -163,8 +251,11 @@ protected:
 	vpp::TrDs ds_;
 	vpp::SubBuffer coeffs_;
 	vpp::SubBuffer cameraUbo_;
-	vpp::SubBuffer boxIndices_;
+	vpp::SubBuffer indices_;
+	vpp::SubBuffer spherePositions_;
 	bool rotateView_ {};
+	bool skybox_ {false};
+	unsigned indexCount_ {};
 	doi::Camera camera_ {};
 };
 

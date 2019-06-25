@@ -860,9 +860,7 @@ public:
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
 			doi::write(envSpan, fixedMatrix(camera_));
-			if(!envMap.coherent()) {
-				envMap.flush();
-			}
+			envMap.flush();
 
 			scene_.updateDevice(matrix(camera_));
 			updateLight_ = true;

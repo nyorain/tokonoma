@@ -836,10 +836,12 @@ void App::run() {
 	auto& submitter = vulkanDevice().queueSubmitter();
 
 	// initial event poll
-	if(!appContext().pollEvents()) {
-		dlg_info("run initial pollEvents returned false");
-		return;
-	}
+	// if(!appContext().pollEvents()) {
+	// 	dlg_info("run initial pollEvents returned false");
+	// 	return;
+	// }
+
+	callUpdate();
 
 	while(run_) {
 		// - update device data -

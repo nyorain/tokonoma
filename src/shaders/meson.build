@@ -150,6 +150,7 @@ shaders_src = {
 	],
 	'shv': [
 		['shv.frag'],
+		['sphere.vert'],
 	],
 	'cloth': [
 		['cloth.comp'],
@@ -158,6 +159,11 @@ shaders_src = {
 		['volume.vert'],
 		['volume.frag'],
 	],
+	'bezier': [
+		['point.vert'],
+		['point.frag'],
+		['line.frag'],
+	]
 }
 
 # build them
