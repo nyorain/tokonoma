@@ -21,7 +21,7 @@ void getLightParams(vec3 viewPos, vec3 fragPos, out vec3 ldir,
 
 	ldir /= lightDistance;
 	// lcolor = attenuation(lightDistance, light.attenuation) * light.color;
-	lcolor = attenuation(lightDistance, light.radius) * light.color;
+	lcolor = defaultAttenuation(lightDistance, light.radius) * light.color;
 
 	bool shadow = (light.flags & lightShadow) != 0;
 	if(!shadow) { // we don't have to evaluate shadow below

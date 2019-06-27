@@ -54,6 +54,7 @@ nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 		float near, float far) {
 	// y sign flipped everywhere
 	// TODO: not sure why slightly different to pbr.cpp
+	// (positive, negative y swapped), probably bug in pbr shaders
 	constexpr struct CubeFace {
 		nytl::Vec3f x;
 		nytl::Vec3f y;
@@ -140,6 +141,19 @@ nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 
 	return mat * viewMat * doi::translateMat({-pos});
 	*/
+}
+
+Frustum ndcFrustum() {
+	return {{
+		{-1.f, 1.f, 0.f},
+		{1.f, 1.f, 0.f},
+		{1.f, -1.f, 0.f},
+		{-1.f, -1.f, 0.f},
+		{-1.f, 1.f, 1.f},
+		{1.f, 1.f, 1.f},
+		{1.f, -1.f, 1.f},
+		{-1.f, -1.f, 1.f},
+	}};
 }
 
 } // namespace doi

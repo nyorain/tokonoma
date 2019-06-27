@@ -18,25 +18,11 @@
 #include <shaders/stage.shadowmapCube.multiview.vert.h>
 #include <shaders/stage.shadowmapCube.frag.h>
 
-// TODO: some duplication between dir and point light
 // TODO: use allocators from work batcher
 // TODO: directional light: when depth clamp isn't supported, emulate.
 //   see shadowmap.vert
 
 namespace doi {
-
-Frustum ndcFrustum() {
-	return {{
-		{-1.f, 1.f, 0.f},
-		{1.f, 1.f, 0.f},
-		{1.f, -1.f, 0.f},
-		{-1.f, -1.f, 0.f},
-		{-1.f, 1.f, 1.f},
-		{1.f, 1.f, 1.f},
-		{1.f, -1.f, 1.f},
-		{-1.f, -1.f, 1.f},
-	}};
-}
 
 /// Returns a u32 that has the last *count* bits set to 1, all others to 0.
 /// Useful for vulkan masks. count must be < 32.
@@ -189,11 +175,6 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	data.pipe = {dev, gpi.info()};
 
 	// cubemap pipe
-	// TODO: we could alternatively always use a uniform buffer with
-	// dynamic offset for the light view projection... but then we
-	// might have to pad that buffer (since vulkan has an alignment
-	// requirement there) which adds complexity as well.
-	// We don't need the matrices when reading the shadow map though
 	vpp::ShaderModule cubeVertShader;
 	if(multiview) {
 		cubeVertShader = {dev, stage_shadowmapCube_multiview_vert_data};
@@ -289,11 +270,6 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	vk::ClearValue clearValue {};
 	clearValue.depthStencil = {1.f, 0u};
 
-	// TODO: fine tune depth bias
-	// should be scene dependent, configurable!
-	// also dependent on shadow map size (the larger the shadow map, the
-	// smaller are the values we need)
-
 	// render into shadow map
 	if(data.multiview) {
 		vk::cmdBeginRenderPass(cb, {
@@ -306,7 +282,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
 
-		vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
+		vk::cmdSetDepthBias(cb, data.depthBias, 0.f, data.depthBiasSlope);
 
 		auto pl = data.pl.vkHandle();
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
@@ -320,7 +296,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
 
-		vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
+		vk::cmdSetDepthBias(cb, data.depthBias, 0.f, data.depthBiasSlope);
 
 		auto pl = data.pl.vkHandle();
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
@@ -342,11 +318,9 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	}
 }
 
-/*
-nytl::Mat4f DirLight::lightBallMatrix(nytl::Vec3f viewPos) const {
-	return translateMat(viewPos - 5.f * nytl::normalized(this->data.dir));
-}
-*/
+// nytl::Mat4f DirLight::lightBallMatrix(nytl::Vec3f viewPos) const {
+// 	return translateMat(viewPos - 5.f * nytl::normalized(this->data.dir));
+// }
 
 // TODO: calculate stuff in update, not updateDevice
 void DirLight::updateDevice(const Camera& camera) {
@@ -354,7 +328,7 @@ void DirLight::updateDevice(const Camera& camera) {
 
 	// calculate split depths
 	// https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
-	constexpr auto splitLambda = 0.65f; // higher: nearer at log split scheme
+	constexpr auto splitLambda = 0.2f; // higher: nearer at log split scheme
 	const auto near = camera.perspective.near;
 	const auto far = camera.perspective.far;
 
@@ -398,21 +372,34 @@ void DirLight::updateDevice(const Camera& camera) {
 			radius = std::max(radius, length(p - frustCenter));
 		}
 
-		// quantization
+		// quantization to get stable shadow maps
+		// this makes sure that even when moving the camera the shadows
+		// stay the same.
+		// FIXME: something here seems to not work correctly (maybe just
+		// some kind of numerical error though?) since we still get
+		// minimal flickering on individual pixels. Not too bad though
+
+		// q: the size of on shadow map texel in view/world space
+		// size_.x - 1 is (theoretically?) important to make sure we
+		// really cover all space and there isn't space between the shadow
+		// maps that is not covered now due to the quantization move
 		auto q = (2.f * radius) / (size_.x - 1);
 
 		auto viewMat = lookAtRH({}, data.dir, {0.f, 1.f, 0.f});
 		frustCenter = multPos(viewMat, frustCenter);
 
+		// Quantatizing in z is not really needed since that only
+		// quantatizes the depth (not their projection onto the shadow
+		// map) which isn't relaly important
 		auto min = frustCenter - nytl::Vec3f{radius, radius, radius};
 		min.x -= std::fmod(min.x, q);
 		min.y -= std::fmod(min.y, q);
-		min.z -= std::fmod(min.z, q);
+		// min.z -= std::fmod(min.z, q);
 
 		auto max = frustCenter + nytl::Vec3f{radius, radius, radius};
 		max.x -= std::fmod(max.x, q);
 		max.y -= std::fmod(max.y, q);
-		max.z -= std::fmod(max.z, q);
+		// max.z -= std::fmod(max.z, q);
 
 		auto projMat = ortho3(min.x, max.x, max.y, min.y, -max.z, -min.z);
 		projs[i] = projMat * viewMat;
@@ -432,14 +419,6 @@ void DirLight::updateDevice(const Camera& camera) {
 }
 
 // PointLight
-// implementors NOTE: this way of rendering the shadow map seemed *really*
-// inefficient to me first (6 seperate render passes with copies in between)
-// but it probably is the best we can get with vulkan... We can't create a
-// render pass with 6 subpasses (one for each surface) since which subpassIndex
-// specify in the depth pipeline then? we'd need 6 pipelines which seems
-// unrealistic. For rendering directly into the cube map we'd need 6
-// framebuffers which may also waste resources (but that may be an alternative
-// worth investigating... we'd still need 6 seperate renderpasses though)
 PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 		const vpp::TrDsLayout&, const ShadowData& data,
 		unsigned, vk::ImageView noShadowMap) {
@@ -507,18 +486,11 @@ PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 }
 
 nytl::Mat4f PointLight::lightBallMatrix() const {
-	// slight offset since otherwise we end up in ball after
-	// setting it to current position
 	return translateMat(this->data.position);
 }
 
 void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		const Scene& scene) {
-	// TODO: fine tune these values!
-	// maybe they should be scene dependent? dependent on size/scale?
-	// TODO: not sure if this has an effect here. Read up in vulkan spec
-	// if applied even when fragment shader sets gl_FragDepth manually
-	vk::cmdSetDepthBias(cb, 1.0, 0.f, 8.0);
 	vk::ClearValue clearValue {};
 	clearValue.depthStencil = {1.f, 0u};
 
@@ -529,11 +501,10 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 			1, &clearValue
 		}, {});
 
+		vk::cmdSetDepthBias(cb, data.depthBias, 0.f, data.depthBiasSlope);
 		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
-
-		// vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
 
 		auto pl = data.pl.vkHandle();
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipeCube);
@@ -547,9 +518,8 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
 
-		// vk::cmdSetDepthBias(cb, 2.0, 0.f, 8.0);
-
 		auto pl = data.pl.vkHandle();
+		vk::cmdSetDepthBias(cb, data.depthBias, 0.f, data.depthBiasSlope);
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipeCube);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pl, 0, {{ds_.vkHandle()}}, {});

@@ -22,9 +22,7 @@
 //   matrices (and with that model/material id) per instance.
 //   but then we require the drawIndirectFirstInstance vulkan features
 // TODO: sorting primitives by how they are layed out in the vertex
-//   buffers? could improve cache locality
-// TODO: de-interleave normals and postions, makes e.g. for more
-//   efficient shadow map rendering
+//   buffers (when there are no other creteria)? could improve cache locality
 
 namespace doi {
 namespace gltf = tinygltf;
@@ -70,7 +68,7 @@ struct Sampler {
 
 class Scene {
 public:
-	static constexpr auto imageCount = 268u;
+	static constexpr auto imageCount = 96u;
 	static constexpr auto samplerCount = 8u;
 	using Index = u32; // for indices
 	using ModelID = u32;
@@ -101,27 +99,28 @@ public:
 		unsigned tc1Count {};
 	};
 
-	struct Primitive {
-		unsigned indexCount;
-		unsigned vertexCount;
-		unsigned firstIndex;
-		unsigned vertexOffset;
-		unsigned id;
+	struct Instance {
 		nytl::Mat4f matrix;
-		unsigned material;
+		u32 materialID;
+		u32 modelID; // just for picking, not related to Primitive
+	};
 
+	struct Primitive {
+		unsigned indexCount; // number of indices to draw
+		unsigned vertexCount; // total number of vertices
+		unsigned firstIndex; // first index in scenes index buffer
+		unsigned vertexOffset; // first vertex in scenes vertex buffer
+
+		// bounds in model space
 		nytl::Vec3f min;
 		nytl::Vec3f max;
 
-		struct Vertex {
-			nytl::Vec3f pos;
-			nytl::Vec3f normal;
-		};
-
 		std::vector<u32> indices;
-		std::vector<Vertex> vertices;
+		std::vector<nytl::Vec3f> positions;
+		std::vector<nytl::Vec3f> normals;
 		std::vector<nytl::Vec2f> texCoords0;
 		std::vector<nytl::Vec2f> texCoords1;
+		std::vector<Instance> instances;
 	};
 
 	static const vk::PipelineVertexInputStateCreateInfo& vertexInfo();
@@ -134,7 +133,10 @@ public:
 	void init(InitData&, const WorkBatcher&, vk::ImageView dummyTex);
 	void createImage(unsigned id, bool srgb);
 
-	void updateDevice(nytl::Mat4f proj);
+	// optionally returns semaphore that should be waited upon before
+	// doing any rendering involding the scene. In that case a
+	// re-record is needed additionally.
+	vk::Semaphore updateDevice(nytl::Mat4f proj);
 	void render(vk::CommandBuffer, vk::PipelineLayout, bool blend) const;
 
 	auto& primitives() { return primitives_; }
@@ -149,8 +151,17 @@ public:
 	auto& defaultSampler() const { return defaultSampler_; }
 	auto& dsLayout() const { return dsLayout_; }
 
+	u32 addPrimitive(std::vector<nytl::Vec3f> positions,
+		std::vector<nytl::Vec3f> normals,
+		std::vector<u32> indices,
+		std::vector<nytl::Vec2f> texCoords1 = {},
+		std::vector<nytl::Vec2f> texCoords2 = {});
+	u32 addMaterial(const Material&);
+	u32 addInstance(const Primitive&, nytl::Mat4f matrix, u32 matID);
+
 	nytl::Vec3f min() const { return min_; }
 	nytl::Vec3f max() const { return max_; }
+	const vpp::Device& device() const { return defaultSampler_.device(); }
 
 protected:
 	void loadNode(InitData&, const WorkBatcher&, const gltf::Model&,
@@ -167,6 +178,12 @@ protected:
 	std::vector<Material> materials_;
 	std::vector<Primitive> primitives_;
 	unsigned defaultMaterialID_ {};
+	unsigned instanceID_ {};
+
+	// for updateDevice
+	unsigned newPrimitives_ {};
+	unsigned newMats_ {};
+	unsigned newInis_ {};
 
 	nytl::Vec3f min_;
 	nytl::Vec3f max_;
@@ -175,21 +192,42 @@ protected:
 	vpp::TrDs ds_;
 	vpp::TrDs blendDs_;
 
-	vpp::SubBuffer modelsBuf_;
+	vpp::SubBuffer instanceBuf_; // matrices, material link
 	vpp::SubBuffer materialsBuf_;
 
 	unsigned opaqueCount_ {}; // number of opaque primitives
-	vpp::SubBuffer cmds_; // opque
+	vpp::SubBuffer cmds_; // opqque commands
 	vpp::SubBuffer modelIDs_;
 
 	unsigned blendCount_ {}; // number of blend primitives
-	vpp::SubBuffer blendCmds_; // transparent
+	vpp::SubBuffer blendCmds_; // transparent commands
 	vpp::SubBuffer blendModelIDs_;
 
 	vpp::SubBuffer indices_;
-	vpp::SubBuffer vertices_; // tc0, tc1, position + normal
-	unsigned tc0Offset_;
-	unsigned vertexOffset_;
+	vpp::SubBuffer vertices_; // order: tc1, tc0, position + normal
+	unsigned tc0Offset_; // where tc0 starts in vertices_
+	unsigned posOffset_; // where positions starts in vertices_
+	unsigned normalOffset_; // where normals start in vertices_
+
+	vpp::Semaphore uploadSemaphore_;
+	vpp::CommandBuffer uploadCb_;
+
+	// keep-alive during copying
+	struct {
+		// hwne an instance is added
+		vpp::SubBuffer instances;
+		vpp::SubBuffer cmds;
+		vpp::SubBuffer modelIDs;
+		vpp::SubBuffer blendCmds;
+		vpp::SubBuffer blendModelIDs;
+
+		// when a material is added
+		vpp::SubBuffer materials;
+
+		// when a primitive is added
+		vpp::SubBuffer indices;
+		vpp::SubBuffer vertices;
+	} old_;
 };
 
 // Tries to parse the given string as path or filename of a gltf/gltb file

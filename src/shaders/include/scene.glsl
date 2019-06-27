@@ -2,18 +2,18 @@
 #include "noise.glsl"
 
 // Light.flags
-const uint lightDir = (1u << 0); // otherwise point
-const uint lightPcf = (1u << 1); // use pcf
-const uint lightShadow = (1u << 2); // use shadow
+const uint lightPcf = (1u << 0); // use pcf
+const uint lightShadow = (1u << 1); // use shadow
 
 // MaterialPcr.flags
 const uint normalMap = (1u << 0);
 const uint doubleSided = (1u << 1);
 
-const uint imageCount = 268u;
+const uint imageCount = 96u;
 const uint samplerCount = 8u;
 
-// TODO: don't hardcode. Instead pass per spec constant
+// TODO: don't hardcode.
+// Instead pass per spec constant
 const uint dirLightCascades = 4;
 
 struct DirLight {
@@ -33,6 +33,10 @@ struct PointLight {
 	float _;
 	vec3 attenuation;
 	float radius;
+	// NOTE: these matrices are relatively trivial (and not needed
+	// when reading the shadowmap!) we could just compute them
+	// in the cubemap shadow vertex shader when needed based
+	// on light position, radius and face index
 	mat4 proj[6]; // global -> cubemap [side i] light space
 };
 
@@ -230,17 +234,13 @@ float dirShadow(DirLight light, sampler2DArrayShadow shadowMap, vec3 worldPos,
 
 // Calculates the light attentuation based on the distance d and the
 // light attenuation parameters
-// float attenuation(float d, vec3 params) {
-float attenuation(float d, float radius) {
-	// return 1.f / (params.x + params.y * d + params.z * (d * d));
-	
-	// TODO
-	// hardcoded, normalized attenuation
-	// at the outer border of the light (when d / radius = 1), the
-	// light will have an attenuation of below 0.01, so at normal
-	// exposure there will be no edge
-	d /= radius;
-	return 1.f / (1 + 8 * d + 96 * (d * d));
+float attenuation(float d, vec3 params) {
+	return 1.f / (params.x + params.y * d + params.z * (d * d));
+}
+
+float defaultAttenuation(float d, float radius) {
+	float a = max(1 - pow(d / radius, 4), 0);
+	return a * a / (1 + d * d); 
 }
 
 // from https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows

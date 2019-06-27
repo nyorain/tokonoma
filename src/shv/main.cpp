@@ -5,6 +5,7 @@
 #include <stage/bits.hpp>
 #include <stage/scene/environment.hpp>
 #include <stage/scene/shape.hpp>
+#include <argagg.hpp>
 
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/commandAllocator.hpp>
@@ -67,16 +68,17 @@ public:
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 		// coeffs, ssbo
-		auto cf = std::ifstream("sh.bin");
+		auto cf = std::ifstream(file_);
 		if(!cf.is_open()) {
-			dlg_fatal("Can't open sh.bin");
+			dlg_fatal("Can't open {}", file_);
 			return false;
 		}
 
 		std::array<nytl::Vec3f, 9> coeffs;
 		cf.read(reinterpret_cast<char*>(&coeffs), sizeof(coeffs));
+		dlg_info("Spherical Harmonics coefficients:");
 		for(auto i = 0u; i < coeffs.size(); ++i) {
-			dlg_info("coeffs[{}]: {}", i, coeffs[i]);
+			dlg_info("  coeffs[{}]: {}", i, coeffs[i]);
 		}
 
 		coeffs_ = {dev.bufferAllocator(), sizeof(coeffs),
@@ -241,8 +243,32 @@ public:
 		camera_.update = true;
 	}
 
+	argagg::parser argParser() const override {
+		auto parser = App::argParser();
+		parser.definitions.push_back({
+			"sphere", {"--sphere"},
+			"Visualize as sphere instead of cubemap", 0});
+		return parser;
+	}
+
+	bool handleArgs(const argagg::parser_results& result) override {
+		if(!App::handleArgs(result)) {
+			return false;
+		}
+
+		skybox_ = !result.has_option("sphere");
+		if(result.pos.empty()) {
+			dlg_fatal("No file argument given");
+			return false;
+		}
+
+		file_ = result.pos[0];
+		return true;
+	}
+
 	const char* name() const override { return "shview"; }
-	bool needsDepth() const override { return true; }
+	bool needsDepth() const override { return true; } // for sphere
+	const char* usageParams() const override { return "file [options]"; }
 
 protected:
 	vpp::TrDsLayout dsLayout_;
@@ -254,8 +280,9 @@ protected:
 	vpp::SubBuffer indices_;
 	vpp::SubBuffer spherePositions_;
 	bool rotateView_ {};
-	bool skybox_ {false};
+	bool skybox_ {};
 	unsigned indexCount_ {};
+	const char* file_ {};
 	doi::Camera camera_ {};
 };
 

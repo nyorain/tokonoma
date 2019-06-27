@@ -1,6 +1,8 @@
 #pragma once
 
+#include <stage/types.hpp>
 #include <nytl/vec.hpp>
+#include <nytl/span.hpp>
 #include <vector>
 
 namespace doi {

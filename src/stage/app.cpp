@@ -232,7 +232,7 @@ bool App::init(nytl::Span<const char*> args) {
 	// arguments
 	if(!args.empty()) {
 		auto parser = argParser();
-		auto usage = std::string("Usage: ") + args[0] + " [options]\n\n";
+		auto usage = std::string("Usage: ") + args[0] + " " + usageParams() + "\n\n";
 		argagg::parser_results result;
 		try {
 			result = parser.parse(args.size(), args.data());

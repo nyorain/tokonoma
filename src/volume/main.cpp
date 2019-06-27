@@ -1,6 +1,10 @@
 // TODO: implement dual marching cubes. Table already in tables.hpp
 // TODO: maybe use flat normals for normal marching cubes? looks
 //   not good with current approach
+// TODO: implement grid-based normals
+//   (and some other stuff fixed in gdv project but not yet here)
+// TODO: add vec and mat hashing to nytl. Check first what the license/
+//   permissions on it is
 
 #include "tables.hpp"
 
@@ -40,7 +44,8 @@ struct Triangle {
 	std::array<Vec3f, 3> pos;
 };
 
-// vec hashing taken from glm
+// vec hashing taken from glm (licensed MIT)
+// https://glm.g-truc.net
 inline void hash_combine(size_t &seed, size_t hash) {
 	hash += 0x9e3779b9 + (seed << 6) + (seed >> 2);
 	seed ^= hash;

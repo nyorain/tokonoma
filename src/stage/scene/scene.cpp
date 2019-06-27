@@ -1,5 +1,6 @@
 #include <stage/scene/scene.hpp>
 #include <stage/quaternion.hpp>
+#include <stage/types.hpp>
 #include <stage/image.hpp>
 #include <stage/gltf.hpp>
 #include <stage/bits.hpp>
@@ -10,7 +11,15 @@
 #include <vpp/vk.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/image.hpp>
+#include <vpp/bufferOps.hpp>
+#include <vpp/submit.hpp>
 #include <dlg/dlg.hpp>
+#include <numeric>
+
+// NOTE: we can't use instanced rendering since multiple instance might
+// have completely different transform matrices and we therefore couldn't
+// order them correctly. Could use it for different transparency
+// approaches (order independent; stoachastic)
 
 namespace doi {
 namespace {
@@ -64,9 +73,8 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
 	auto& dev = wb.dev;
 	multiDrawIndirect_ = ri.multiDrawIndirect;
-
-	// TODO: can implement fallback, see gbuf.vert
-	dlg_assert(ri.multiDrawIndirect);
+	dlg_assertm(multiDrawIndirect_, "Emulating multi draw indirect not yet "
+		"implemented, see deferred/gbuf.vert");
 
 	if(model.images.size() > imageCount) {
 		auto msg = dlg::format("Model has {} images, only {} supported",
@@ -167,12 +175,13 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	blendCount_ = 0u;
 	opaqueCount_ = 0u;
 	for(auto& p : primitives_) {
-		dlg_assert(p.material < materials_.size());
-		if(materials_[p.material].blend()) {
-			dlg_trace("blend primitive {} {}", p.id, p.material);
-			++blendCount_;
-		} else {
-			++opaqueCount_;
+		for(auto& ini : p.instances) {
+			dlg_assert(ini.materialID < materials_.size());
+			if(materials_[ini.materialID].blend()) {
+				++blendCount_;
+			} else {
+				++opaqueCount_;
+			}
 		}
 	}
 
@@ -184,7 +193,7 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	auto pcount = blendCount_ + opaqueCount_;
 	auto size = pcount * sizeof(nytl::Mat4f) * 2;
 	stageSize += size;
-	modelsBuf_ = {data.initModels, wb.alloc.bufHost, size,
+	instanceBuf_ = {data.initModels, wb.alloc.bufHost, size,
 		vk::BufferUsageBits::storageBuffer |
 		vk::BufferUsageBits::transferDst,
 		devMem};
@@ -196,11 +205,14 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 		vk::BufferUsageBits::indexBuffer |
 		vk::BufferUsageBits::transferDst, devMem};
 
-	size = data.tc1Count * sizeof(nytl::Vec2f);
+	size = data.tc1Count * sizeof(Vec2f);
 	tc0Offset_ = size;
-	size += data.tc0Count * sizeof(nytl::Vec2f);
-	vertexOffset_ = size;
-	size += data.vertexCount * sizeof(Primitive::Vertex);
+	size += data.tc0Count * sizeof(Vec2f);
+	posOffset_ = size;
+	size += data.vertexCount * sizeof(Vec3f);
+	normalOffset_ = size;
+	size += data.vertexCount * sizeof(Vec3f);
+
 	stageSize += size;
 	vertices_ = {data.initVertices, wb.alloc.bufDevice, size,
 		vk::BufferUsageBits::vertexBuffer |
@@ -214,8 +226,8 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 		vk::BufferUsageBits::transferDst, devMem};
 
 	// cmds buffer
-	// TODO: i guess opaque cmds and model ids are pretty static,
-	// use devMem for that?
+	// TODO: i guess opaque model ids are pretty static, use devMem for that?
+	// opaque cmds are not so static when we implement culling etc
 	size = std::max<u32>(opaqueCount_ * sizeof(vk::DrawIndexedIndirectCommand), 4u);
 	cmds_ = {data.initCmds, wb.alloc.bufHost, size,
 		vk::BufferUsageBits::indirectBuffer, hostMem};
@@ -417,33 +429,93 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 		mat = defaultMaterialID_;
 	}
 
-	p.material = mat;
-	p.id = primitives_.size();
-	p.matrix = matrix;
+	// supporting other modes requires custom pipelines, means that
+	// we can't render the scene with a single pipe.
+	// theoretically possible but a lot of complexity, really not
+	// worth it for now
+	if(primitive.mode != TINYGLTF_MODE_TRIANGLES) {
+		dlg_error("Unsupported primitive mode: {}", primitive.mode);
+		throw std::runtime_error("Unsupported primitive.mode");
+	}
 
 	auto ip = primitive.attributes.find("POSITION");
 	auto in = primitive.attributes.find("NORMAL");
 	auto itc0 = primitive.attributes.find("TEXCOORD_0");
 	auto itc1 = primitive.attributes.find("TEXCOORD_1");
 
+	// positions
+	// a model *must* have this property, we can't get that anywhere else/
+	// just guess something
 	if(ip == primitive.attributes.end()) {
 		throw std::runtime_error("primitve doesn't have POSITION");
 	}
 
-	// TODO: we could manually compute normals, flat normals are good
-	// enough in this case. But we could also an algorith smooth normals
-	if(in == primitive.attributes.end()) {
-		throw std::runtime_error("primitve doesn't have NORMAL");
-	}
-
 	auto& pa = model.accessors[ip->second];
-	auto& na = model.accessors[in->second];
+	p.vertexCount = pa.count;
 
-	// TODO: could fix that by inserting simple dummy indices
-	if(primitive.indices < 0) {
-		throw std::runtime_error("Only models with indices supported");
+	// PERF: we could use the gltf-supplied min-max values
+	auto inf = std::numeric_limits<float>::infinity();
+	p.min = nytl::Vec3f{inf, inf, inf};
+	p.max = nytl::Vec3f{-inf, -inf, -inf};
+
+	p.positions.reserve(pa.count);
+	for(const auto& pos : range<3, float>(model, pa)) {
+		p.min = nytl::vec::cw::min(p.min, pos);
+		p.max = nytl::vec::cw::max(p.max, pos);
+		p.positions.push_back(pos);
 	}
-	auto& ia = model.accessors[primitive.indices];
+
+	// indices
+	if(primitive.indices < 0) {
+		dlg_info("Primitive has no indices, using simple iota indices");
+		p.indexCount = pa.count;
+		p.indices.resize(p.indexCount);
+		std::iota(p.indices.begin(), p.indices.end(), u32(0u));
+	} else {
+		auto& ia = model.accessors[primitive.indices];
+		p.indexCount = ia.count;
+		p.indices.resize(p.indexCount);
+
+		auto iit = p.indices.begin();
+		for(auto idx : doi::range<1, std::uint32_t>(model, ia)) {
+			dlg_assert(idx < p.vertexCount);
+			*(iit++) = idx;
+		}
+	}
+
+	// normals
+	if(in == primitive.attributes.end()) {
+		dlg_info("Primitive has no normals, generating simple normals");
+		dlg_assertm(p.indices.size() % 3 == 0,
+			"Triangle mode primitive index count not multiple of 3");
+
+		// generate normals weighted by triangle area
+		p.normals.resize(p.vertexCount, Vec3f{0.f, 0.f, 0.f});
+		for(auto i = 0u; i < p.indices.size(); i += 3) {
+			auto& p1 = p.positions[p.indices[i + 0]];
+			auto& p2 = p.positions[p.indices[i + 1]];
+			auto& p3 = p.positions[p.indices[i + 2]];
+			auto e1 = p2 - p1;
+			auto e2 = p3 - p1;
+			auto n = nytl::cross(e1, e2); // length proportional to tri area
+			p.normals[p.indices[i + 0]] += n;
+			p.normals[p.indices[i + 1]] += n;
+			p.normals[p.indices[i + 2]] += n;
+		}
+
+		// normalize normals
+		for(auto& n : p.normals) {
+			normalize(n);
+		}
+	} else {
+		auto& na = model.accessors[in->second];
+		dlg_assert(na.count == pa.count);
+
+		p.normals.reserve(na.count);
+		for(const auto& normal : range<3, float>(model, na)) {
+			p.normals.push_back(normal);
+		}
+	}
 
 	auto* tc0a = itc0 == primitive.attributes.end() ?
 		nullptr : &model.accessors[itc0->second];
@@ -452,43 +524,12 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 
 	// compute total buffer size
 	auto size = 0u;
-	size += ia.count * sizeof(uint32_t); // indices
-	size += na.count * sizeof(nytl::Vec3f); // normals
-	size += pa.count * sizeof(nytl::Vec3f); // positions
-	dlg_assert(na.count == pa.count);
-
-	p.indexCount = ia.count;
-	p.vertexCount = na.count;
+	size += p.indexCount * sizeof(u32); // indices
+	size += p.vertexCount * sizeof(nytl::Vec3f); // normals
+	size += p.vertexCount * sizeof(nytl::Vec3f); // positions
 
 	data.indexCount += p.indexCount;
 	data.vertexCount += p.vertexCount;
-
-	// write indices
-	// TODO: in optimal cases we might be able to directly memcpy
-	p.indices.resize(ia.count);
-	auto iit = p.indices.begin();
-	for(auto idx : doi::range<1, std::uint32_t>(model, ia)) {
-		dlg_assert(idx < p.vertexCount);
-		*(iit++) = idx;
-	}
-
-	// write vertices and normals
-	// TODO: we could use the gltf-supplied min-max values
-	auto inf = std::numeric_limits<float>::infinity();
-	p.min = nytl::Vec3f{inf, inf, inf};
-	p.max = nytl::Vec3f{-inf, -inf, -inf};
-
-	p.vertices.resize(pa.count);
-	auto vit = p.vertices.begin();
-	auto pr = doi::range<3, float>(model, pa);
-	auto nr = doi::range<3, float>(model, na);
-	for(auto pit = pr.begin(), nit = nr.begin();
-			pit != pr.end() && nit != nr.end();
-			++nit, ++pit) {
-		p.min = nytl::vec::cw::min(p.min, *pit);
-		p.max = nytl::vec::cw::max(p.max, *pit);
-		*(vit++) = {*pit, *nit};
-	}
 
 	if(tc0a) {
 		dlg_assert(tc0a->count == pa.count);
@@ -500,9 +541,6 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 			*(tc0it++) = uv;
 		}
 		data.tc0Count += tc0a->count;
-	} else if(materials_[p.material].needsTexCoord0()) {
-		throw std::runtime_error("material uses texCoords0 but primitive "
-			"doesn't provide them");
 	}
 
 	if(tc1a) {
@@ -515,13 +553,26 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 			*(tc1it++) = uv;
 		}
 		data.tc1Count += tc1a->count;
-	} else if(materials_[p.material].needsTexCoord1()) {
-		throw std::runtime_error("material uses texCoords1 but primitive "
-			"doesn't provide them");
 	}
 
 	min_ = nytl::vec::cw::min(min_, multPos(matrix, p.min));
 	max_ = nytl::vec::cw::max(max_, multPos(matrix, p.max));
+
+	Instance ini;
+	ini.matrix = matrix;
+	ini.materialID = mat;
+	ini.modelID = ++instanceID_;
+
+	if(!tc0a && materials_[ini.materialID].needsTexCoord0()) {
+		throw std::runtime_error("material uses texCoords0 but primitive "
+			"doesn't provide them");
+	}
+	if(!tc1a && materials_[ini.materialID].needsTexCoord1()) {
+		throw std::runtime_error("material uses texCoords1 but primitive "
+			"doesn't provide them");
+	}
+
+	p.instances.push_back(ini);
 }
 
 void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView) {
@@ -529,7 +580,7 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 
 	data.stage.init(data.initStage);
 	materialsBuf_.init(data.initMaterials);
-	modelsBuf_.init(data.initModels);
+	instanceBuf_.init(data.initModels);
 	cmds_.init(data.initCmds);
 	modelIDs_.init(data.initModelIDs);
 	blendCmds_.init(data.initBlendCmds);
@@ -567,19 +618,21 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 	auto tc1Span = span;
 	skip(tc1Span, sizeof(Index) * data.indexCount);
 	auto tc1Off = tc1Span.data() - stageMap.ptr();
-
 	auto tc0Span = tc1Span;
 	skip(tc0Span, sizeof(nytl::Vec2f) * data.tc1Count);
-	auto vertexSpan = tc0Span;;
-	skip(vertexSpan, sizeof(nytl::Vec2f) * data.tc0Count);
+	auto posSpan = tc0Span;
+	skip(posSpan, sizeof(nytl::Vec2f) * data.tc0Count);
+	auto normalSpan = posSpan;
+	skip(normalSpan, sizeof(nytl::Vec3f) * data.vertexCount);
 
 	auto vertexCount = 0u;
 	auto indexCount = 0u;
 	auto uploadPrimitive = [&](Primitive& primitive) {
-		doi::write(tc0Span, nytl::as_bytes(nytl::span(primitive.texCoords0)));
-		doi::write(tc1Span, nytl::as_bytes(nytl::span(primitive.texCoords1)));
-		doi::write(vertexSpan, nytl::as_bytes(nytl::span(primitive.vertices)));
-		doi::write(indexSpan, nytl::as_bytes(nytl::span(primitive.indices)));
+		doi::write(tc0Span, bytes(primitive.texCoords0));
+		doi::write(tc1Span, bytes(primitive.texCoords1));
+		doi::write(posSpan, bytes(primitive.positions));
+		doi::write(normalSpan, bytes(primitive.normals));
+		doi::write(indexSpan, bytes(primitive.indices));
 
 		primitive.firstIndex = indexCount;
 		primitive.vertexOffset = vertexCount;
@@ -615,12 +668,14 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 		}
 	}
 
+	// indices
 	copy.srcOffset = data.stage.offset() + indexOff;
 	copy.dstOffset = indices_.offset();
 	copy.size = indices_.size();
 	vk::cmdCopyBuffer(wb.cb, data.stage.buffer(),
 		indices_.buffer(), {{copy}});
 
+	// all vertex data (pos, normal, tex coords)
 	copy.srcOffset = data.stage.offset() + tc1Off;
 	copy.dstOffset = vertices_.offset();
 	copy.size = vertices_.size();
@@ -628,20 +683,22 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 		vertices_.buffer(), {{copy}});
 
 	// upload matrices for all primitives to modelsBuf
-	span = vertexSpan; // last offset
-	copy.srcOffset = data.stage.offset() + vertexSpan.data() - stageMap.ptr();
+	span = normalSpan; // last offset
+	copy.srcOffset = data.stage.offset() + normalSpan.data() - stageMap.ptr();
 	for(auto& primitive : primitives_) {
-		write(span, primitive.matrix);
-		auto normalMatrix = nytl::Mat4f(transpose(inverse(primitive.matrix)));
-		normalMatrix[3][0] = primitive.material;
-		normalMatrix[3][1] = primitive.id;
-		write(span, normalMatrix);
+		for(auto& ini : primitive.instances) {
+			write(span, ini.matrix);
+			auto normalMatrix = nytl::Mat4f(transpose(inverse(ini.matrix)));
+			normalMatrix[3][0] = ini.materialID;
+			normalMatrix[3][1] = ini.modelID;
+			write(span, normalMatrix);
+		}
 	}
 
-	copy.dstOffset = modelsBuf_.offset();
-	copy.size = modelsBuf_.size();
+	copy.dstOffset = instanceBuf_.offset();
+	copy.size = instanceBuf_.size();
 	vk::cmdCopyBuffer(wb.cb, data.stage.buffer(),
-		modelsBuf_.buffer(), {{copy}});
+		instanceBuf_.buffer(), {{copy}});
 
 	stageMap.flush();
 
@@ -653,19 +710,24 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 	auto cmdspan = cmdmap.span();
 	for(auto i = 0u; i < primitives_.size(); ++i) {
 		auto& p = primitives_[i];
-		if(materials_[p.material].blend()) { // not opaque
-			continue;
+		for(auto& ini : p.instances) {
+			if(materials_[ini.materialID].blend()) { // not opaque
+				continue;
+			}
+
+			// HACK: not sure if logical ids used as rendering indirection
+			// should be connected to picking-releated model ids
+			// same in updateDevice for transparent objects
+			doi::write(idspan, u32(ini.modelID - 1));
+
+			vk::DrawIndexedIndirectCommand cmd;
+			cmd.indexCount = p.indexCount;
+			cmd.vertexOffset = p.vertexOffset;
+			cmd.instanceCount = 1;
+			cmd.firstInstance = 0;
+			cmd.firstIndex = p.firstIndex;
+			doi::write(cmdspan, cmd);
 		}
-
-		doi::write(idspan, u32(i));
-
-		vk::DrawIndexedIndirectCommand cmd;
-		cmd.indexCount = p.indexCount;
-		cmd.vertexOffset = p.vertexOffset;
-		cmd.instanceCount = 1;
-		cmd.firstInstance = 0;
-		cmd.firstIndex = p.firstIndex;
-		doi::write(cmdspan, cmd);
 	}
 
 	idmap.flush();
@@ -696,14 +758,14 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 
 	vpp::DescriptorSetUpdate dsu(ds_);
 	dsu.storage({{{modelIDs_}}});
-	dsu.storage({{{modelsBuf_}}});
+	dsu.storage({{{instanceBuf_}}});
 	dsu.storage({{{materialsBuf_}}});
 	dsu.image(images);
 	dsu.sampler(samplers);
 
 	vpp::DescriptorSetUpdate bdsu(blendDs_);
 	bdsu.storage({{{blendModelIDs_}}});
-	bdsu.storage({{{modelsBuf_}}});
+	bdsu.storage({{{instanceBuf_}}});
 	bdsu.storage({{{materialsBuf_}}});
 	bdsu.image(images);
 	bdsu.sampler(samplers);
@@ -719,25 +781,81 @@ void Scene::createImage(unsigned id, bool srgb) {
 	images_[id].needed = true;
 }
 
-void Scene::updateDevice(nytl::Mat4f proj) {
-	if(!blendCount_) {
-		return;
+vk::Semaphore Scene::updateDevice(nytl::Mat4f proj) {
+	auto ret = vk::Semaphore{};
+	auto cbStarted = [&]() -> vk::CommandBuffer {
+		if(!ret) {
+			ret = uploadSemaphore_;
+			vk::beginCommandBuffer(uploadCb_, {});
+		}
+
+		return uploadCb_;
+	};
+
+	auto split = [](vpp::BufferSpan span, vk::DeviceSize off)
+			-> std::array<vpp::BufferSpan, 2> {
+		dlg_assert(off < span.size());
+		auto size2 = span.size() - off;
+		auto a = vpp::BufferSpan(span.buffer(), off);
+		auto b = vpp::BufferSpan(span.buffer(), size2, off);
+		return {a, b};
+	};
+
+	auto devMem = device().deviceMemoryTypes();
+	if(newMats_) {
+		auto cb = cbStarted();
+		old_.materials = std::move(materialsBuf_);
+
+		auto size = sizeof(Material) * materials_.size();
+		materialsBuf_ = {device().bufferAllocator(), size,
+			vk::BufferUsageBits::storageBuffer |
+			vk::BufferUsageBits::transferSrc |
+			vk::BufferUsageBits::transferDst, devMem};
+
+		auto [oldb, newb] = split(materialsBuf_, old_.materials.size());
+		doi::cmdCopyBuffer(cb, old_.materials, oldb);
+		auto span = nytl::span(materials_).last(newMats_);
+		vpp::fillDirect(cb, newb, nytl::as_bytes(span));
 	}
 
-	// TODO: whole method rather inefficient atm
-	std::vector<const Primitive*> blendPrims;
+	if(ret) {
+		vk::endCommandBuffer(uploadCb_);
+
+		vk::SubmitInfo si;
+		si.pCommandBuffers = &uploadCb_.vkHandle();
+		si.commandBufferCount = 1;
+		si.signalSemaphoreCount = 1;
+		si.pSignalSemaphores = &uploadSemaphore_.vkHandle();
+
+		device().queueSubmitter().add(si);
+	}
+
+	// sort blended primitives
+	if(!blendCount_) {
+		return ret;
+	}
+
+	struct Prim {
+		const Primitive* primitive;
+		const Instance* instance;
+		float depth;
+	};
+
+	std::vector<Prim> blendPrims;
 	for(auto& p : primitives_) {
-		if(materials_[p.material].blend()) {
-			blendPrims.push_back(&p);
+		for(auto& ini : p.instances) {
+			if(materials_[ini.materialID].blend()) {
+				auto c = multPos(ini.matrix, 0.5f * (p.min + p.max));
+				auto z = multPos(proj, c).z;
+				blendPrims.push_back({&p, &ini, z});
+			}
 		}
 	}
 	dlg_assert(blendPrims.size() == blendCount_);
 
 	// sort in z-descending order
-	auto cmp = [&](const Primitive* p1, const Primitive* p2) {
-		auto c1 = multPos(p1->matrix, 0.5f * (p1->min + p1->max));
-		auto c2 = multPos(p2->matrix, 0.5f * (p2->min + p2->max));
-		return multPos(proj, c1).z > multPos(proj, c2).z;
+	auto cmp = [&](const Prim& p1, const Prim& p2) {
+		return p1.depth > p2.depth;
 	};
 	std::sort(blendPrims.begin(), blendPrims.end(), cmp);
 
@@ -745,22 +863,23 @@ void Scene::updateDevice(nytl::Mat4f proj) {
 	auto idspan = idmap.span();
 	auto cmdmap = blendCmds_.memoryMap();
 	auto cmdspan = cmdmap.span();
-	for(auto* pp : blendPrims) {
-		auto& p = *pp;
-		// TODO: using id - 1 is a more of a hack i guess...
-		doi::write(idspan, u32(p.id - 1));
+	for(auto& p : blendPrims) {
+		// HACK: logical rendering ids shouldn't be connected to picking ids
+		// see same hack in init for opaque primitives
+		doi::write(idspan, u32(p.instance->modelID - 1));
 
 		vk::DrawIndexedIndirectCommand cmd;
-		cmd.indexCount = p.indexCount;
-		cmd.vertexOffset = p.vertexOffset;
+		cmd.indexCount = p.primitive->indexCount;
+		cmd.vertexOffset = p.primitive->vertexOffset;
 		cmd.instanceCount = 1;
 		cmd.firstInstance = 0;
-		cmd.firstIndex = p.firstIndex;
+		cmd.firstIndex = p.primitive->firstIndex;
 		doi::write(cmdspan, cmd);
 	}
 
 	idmap.flush();
 	cmdmap.flush();
+	return ret;
 }
 
 void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl, bool blend) const {
@@ -773,12 +892,14 @@ void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl, bool blend) cons
 		vk::IndexType::uint32);
 
 	auto bufs = {
-		vertices_.buffer().vkHandle(), // pos+normal
+		vertices_.buffer().vkHandle(), // pos
+		vertices_.buffer().vkHandle(), // normal
 		vertices_.buffer().vkHandle(), // tc0
 		vertices_.buffer().vkHandle(), // tc1
 	};
 	auto offsets = {
-		vertices_.offset() + vertexOffset_, // pos+normal
+		vertices_.offset() + posOffset_, // pos
+		vertices_.offset() + normalOffset_, // normal
 		vertices_.offset() + tc0Offset_, // tc0
 		vertices_.offset(), // tc1
 	};
@@ -801,22 +922,25 @@ void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl, bool blend) cons
 }
 
 const vk::PipelineVertexInputStateCreateInfo& Scene::vertexInfo() {
-	static constexpr auto stride = sizeof(Primitive::Vertex);
-	static constexpr vk::VertexInputBindingDescription bindings[3] = {
-		{0, stride, vk::VertexInputRate::vertex},
-		{1, sizeof(float) * 2, vk::VertexInputRate::vertex}, // texCoords0
-		{2, sizeof(float) * 2, vk::VertexInputRate::vertex}, // texCoords1
+	// Deinterleave all data (even positions and normals which are
+	// always given) since e.g. for shadow maps normals are not
+	// needed. Texture coordinates might not be given
+	static constexpr vk::VertexInputBindingDescription bindings[] = {
+		{0, sizeof(Vec3f), vk::VertexInputRate::vertex}, // positions
+		{1, sizeof(Vec3f), vk::VertexInputRate::vertex}, // normals
+		{2, sizeof(Vec2f), vk::VertexInputRate::vertex}, // texCoords0
+		{3, sizeof(Vec2f), vk::VertexInputRate::vertex}, // texCoords1
 	};
 
-	static constexpr vk::VertexInputAttributeDescription attributes[4] = {
+	static constexpr vk::VertexInputAttributeDescription attributes[] = {
 		{0, 0, vk::Format::r32g32b32a32Sfloat, 0}, // pos
-		{1, 0, vk::Format::r32g32b32a32Sfloat, sizeof(float) * 3}, // normal
-		{2, 1, vk::Format::r32g32Sfloat, 0}, // texCoord0
-		{3, 2, vk::Format::r32g32Sfloat, 0}, // texCoord1
+		{1, 1, vk::Format::r32g32b32a32Sfloat, 0}, // normal
+		{2, 2, vk::Format::r32g32Sfloat, 0}, // texCoords0
+		{3, 3, vk::Format::r32g32Sfloat, 0}, // texCoords1
 	};
 
 	static const vk::PipelineVertexInputStateCreateInfo ret = {{},
-		3, bindings,
+		4, bindings,
 		4, attributes
 	};
 

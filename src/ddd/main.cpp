@@ -1,10 +1,12 @@
 // Simple forward renderer mainly as reference for other rendering
-// concepts.
-// TODO: re-add point light support (mainly in shader, needs way to
-//   differentiate light types, aliasing is undefined behavior)
-//   probably best to just have an array of both descriptors and
-//   pass `numDirLights`, `numPointLights`
-// TODO: fix/remove light visualization
+// concepts. Only supports one point and one directional light.
+// TODO:
+// - fix/remove light visualization
+//   fix light construction and stuff in general...
+
+// ideas:
+// - allow visualization of GI probes via spheres as in shv
+// - add ability to save the rendered probes to file
 
 #include <stage/camera.hpp>
 #include <stage/app.hpp>
@@ -61,7 +63,7 @@ public:
 	static constexpr auto maxLightSize = 8u;
 	static constexpr auto probeSize = vk::Extent2D {128, 128};
 	static constexpr auto probeFaceSize = probeSize.width * probeSize.height * 8;
-	static constexpr auto maxProbeCount = 64u;
+	static constexpr auto maxProbeCount = 32u;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -69,8 +71,8 @@ public:
 			return false;
 		}
 
-		// renderer already queried the best supported depth format
-		camera_.perspective.far = 100.f;
+		camera_.perspective.near = 0.01f;
+		camera_.perspective.far = 10.f;
 
 		// === Init pipeline ===
 		auto& dev = vulkanDevice();
@@ -102,9 +104,9 @@ public:
 		sci.addressModeW = vk::SamplerAddressMode::repeat;
 		sci.magFilter = vk::Filter::linear;
 		sci.minFilter = vk::Filter::linear;
-		sci.minLod = 0.0;
-		sci.maxLod = 0.25;
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
+		sci.minLod = 0.0;
+		sci.maxLod = 100;
 		sampler_ = {dev, sci};
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
@@ -150,10 +152,10 @@ public:
 		// per light
 		// TODO: statically use shadow data sampler here?
 		auto lightBindings = {
-			vpp::descriptorBinding(
+			vpp::descriptorBinding( // ubo
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
-			vpp::descriptorBinding(
+			vpp::descriptorBinding( // shadowmap
 				vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment),
 		};
@@ -183,6 +185,7 @@ public:
 		pipeLayout_ = {dev, {{
 			cameraDsLayout_.vkHandle(),
 			scene_.dsLayout().vkHandle(),
+			lightDsLayout_.vkHandle(),
 			lightDsLayout_.vkHandle(),
 			aoDsLayout_.vkHandle(),
 		}}, {}};
@@ -258,12 +261,21 @@ public:
 		// example light
 		shadowData_ = doi::initShadowData(dev, depthFormat(),
 			lightDsLayout_, scene_.dsLayout(), multiview_, depthClamp_);
-		// light_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
-		light_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
-		light_.data.dir = {5.8f, -12.0f, 4.f};
-		light_.data.color = {5.f, 5.f, 5.f};
-		// light_.data.position = {0.f, 5.0f, 0.f};
+
+		dirLight_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
+		dirLight_.data.dir = {5.8f, -12.0f, 4.f};
+		dirLight_.data.color = {5.f, 5.f, 5.f};
+
+		pointLight_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
+		pointLight_.data.position = {0.f, 5.0f, 0.f};
+		pointLight_.data.radius = 2.f;
+		pointLight_.data.attenuation = {1.f, 0.1f, 0.05f};
+
 		updateLight_ = true;
+
+		// bring lights initially into correct layout and stuff
+		dirLight_.render(cb, shadowData_, scene_);
+		pointLight_.render(cb, shadowData_, scene_);
 
 		// spherical harmonics coeffs texture for ao
 		auto shFormat = vk::Format::r16g16b16a16Sfloat;
@@ -331,7 +343,7 @@ public:
 			{}, {}, {}, {{barrierTSH}});
 
 
-		auto aoUboSize = 16u;
+		auto aoUboSize = 5 * 4u;
 		aoUbo_ = {dev.bufferAllocator(), aoUboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 		aoDs_ = {dev.descriptorAllocator(), aoDsLayout_};
@@ -470,9 +482,12 @@ public:
 				std::uint32_t(cv.size()), cv.data()
 			}, {});
 
+			// almost the same as the default output, we just have to
+			// use a different pipe and descriptor set
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, probe_.pipe);
 			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {light_.ds(), aoDs_});
+			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+				dirLight_.ds(), pointLight_.ds(), aoDs_});
 
 			scene_.render(cb, pipeLayout_, false); // opaque
 			scene_.render(cb, pipeLayout_, true); // transparent/blend
@@ -621,12 +636,14 @@ public:
 			dlg_warn("DepthClamp not supported");
 		}
 
+		/*
 		if(supported.base.features.multiDrawIndirect) {
 			multiDrawIndirect_ = true;
 			enable.base.features.multiDrawIndirect = true;
 		} else {
 			dlg_warn("multiDrawIndirect not supported");
 		}
+		*/
 
 		return true;
 	}
@@ -661,13 +678,19 @@ public:
 
 	void beforeRender(vk::CommandBuffer cb) override {
 		App::beforeRender(cb);
-		light_.render(cb, shadowData_, scene_);
+		if(mode_ & modeDirLight) {
+			dirLight_.render(cb, shadowData_, scene_);
+		}
+		if(mode_ & modePointLight) {
+			pointLight_.render(cb, shadowData_, scene_);
+		}
 	}
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {light_.ds(), aoDs_});
+		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+			dirLight_.ds(), pointLight_.ds(), aoDs_});
 
 		scene_.render(cb, pipeLayout_, false); // opaque
 		scene_.render(cb, pipeLayout_, true); // transparent/blend
@@ -693,13 +716,14 @@ public:
 		}
 
 		if(moveLight_) {
-			light_.data.dir.x = 7.0 * std::cos(0.2 * time_);
-			light_.data.dir.z = 7.0 * std::sin(0.2 * time_);
-			// light_.data.position.x = 7.0 * std::cos(0.2 * time_);
-			// light_.data.position.z = 7.0 * std::sin(0.2 * time_);
+			dirLight_.data.dir.x = 7.0 * std::cos(0.2 * time_);
+			dirLight_.data.dir.z = 7.0 * std::sin(0.2 * time_);
+			// pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
+			// pointLight_.data.position.z = 7.0 * std::sin(0.2 * time_);
 			updateLight_ = true;
 		}
 
+		// NOTE: we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
 		// 	App::scheduleRedraw();
 		// }
@@ -719,15 +743,20 @@ public:
 		switch(ev.keycode) {
 			case ny::Keycode::m: // move light here
 				moveLight_ = false;
-				light_.data.dir = -camera_.pos;
-				// light_.data.position = camera_.pos;
+				dirLight_.data.dir = -camera_.pos;
 				updateLight_ = true;
+				return true;
+			case ny::Keycode::n: // move light here
+				moveLight_ = false;
+				updateLight_ = true;
+				pointLight_.data.position = camera_.pos;
 				return true;
 			case ny::Keycode::l:
 				moveLight_ ^= true;
 				return true;
 			case ny::Keycode::p:
-				light_.data.flags ^= doi::lightFlagPcf;
+				dirLight_.data.flags ^= doi::lightFlagPcf;
+				pointLight_.data.flags ^= doi::lightFlagPcf;
 				updateLight_ = true;
 				return true;
 			case ny::Keycode::r: // refresh all light probes
@@ -736,41 +765,57 @@ public:
 			case ny::Keycode::t: // add light probe
 				addLightProbe();
 				return true;
-			case ny::Keycode::up: // add light probe
+			case ny::Keycode::up:
 				aoFac_ *= 1.1;
 				updateAOParams_ = true;
+				dlg_info("ao factor: {}", aoFac_);
 				return true;
-			case ny::Keycode::down: // add light probe
+			case ny::Keycode::down:
 				aoFac_ /= 1.1;
 				updateAOParams_ = true;
+				dlg_info("ao factor: {}", aoFac_);
 				return true;
-			case ny::Keycode::left: // add light probe
+			case ny::Keycode::left:
 				maxProbeDist_ *= 1.1;
 				updateAOParams_ = true;
+				dlg_info("maxProbeDist: {}", maxProbeDist_);
 				return true;
-			case ny::Keycode::right: // add light probe
+			case ny::Keycode::right:
 				maxProbeDist_ /= 1.1;
 				updateAOParams_ = true;
+				dlg_info("maxProbeDist: {}", maxProbeDist_);
 				return true;
-			case ny::Keycode::k1: // add light probe
-				mode_ ^= modeLight;
+			case ny::Keycode::k1:
+				mode_ ^= modeDirLight;
 				updateAOParams_ = true;
+				App::scheduleRerecord();
+				dlg_info("dir light: {}", bool(mode_ & modeDirLight));
 				return true;
-			case ny::Keycode::k2: // add light probe
+			case ny::Keycode::k2:
+				mode_ ^= modePointLight;
+				updateAOParams_ = true;
+				App::scheduleRerecord();
+				dlg_info("point light: {}", bool(mode_ & modePointLight));
+				return true;
+			case ny::Keycode::k3:
 				mode_ ^= modeSpecularIBL;
+				dlg_info("specular IBL: {}", bool(mode_ & modeSpecularIBL));
 				updateAOParams_ = true;
 				return true;
-			case ny::Keycode::k3: // add light probe
+			case ny::Keycode::k4:
 				mode_ ^= modeIrradiance;
 				updateAOParams_ = true;
+				dlg_info("Irradiance: {}", bool(mode_ & modeIrradiance));
 				return true;
-			case ny::Keycode::k4: // add light probe
+			case ny::Keycode::k5:
 				mode_ ^= modeStaticAO;
 				updateAOParams_ = true;
+				dlg_info("Static AO: {}", bool(mode_ & modeStaticAO));
 				return true;
-			case ny::Keycode::k5: // add light probe
+			case ny::Keycode::k6:
 				mode_ ^= modeAOAlbedo;
 				updateAOParams_ = true;
+				dlg_info("AO Albedo: {}", bool(mode_ & modeAOAlbedo));
 				return true;
 			default:
 				break;
@@ -813,6 +858,11 @@ public:
 	}
 
 	void addLightProbe() {
+		if(lightProbes_.size() == maxProbeCount) {
+			dlg_error("Maximum number of light probes reached");
+			return;
+		}
+
 		setupLightProbeRendering(lightProbes_.size(), camera_.pos);
 		lightProbes_.push_back(camera_.pos);
 		probe_.pending = true;
@@ -867,8 +917,13 @@ public:
 		}
 
 		if(updateLight_) {
-			// light_.updateDevice(camera_.pos);
-			light_.updateDevice(camera_);
+			if(mode_ & modeDirLight) {
+				dirLight_.updateDevice(camera_);
+			}
+			if(mode_ & modePointLight) {
+				pointLight_.updateDevice();
+			}
+
 			updateLight_ = false;
 		}
 
@@ -904,6 +959,7 @@ public:
 			doi::write(span, u32(lightProbes_.size()));
 			doi::write(span, aoFac_);
 			doi::write(span, maxProbeDist_);
+			doi::write(span, u32(env_.convolutionMipmaps()));
 			map.flush();
 		}
 	}
@@ -949,12 +1005,13 @@ protected:
 	vpp::ViewableImage shTex_; // spherical harmonics coeffs
 	vpp::ViewableImage tmpShTex_; // when updating the coeffs
 
-	static constexpr u32 modeLight = (1u << 0);
-	static constexpr u32 modeSpecularIBL = (1u << 1);
-	static constexpr u32 modeIrradiance = (1u << 2);
-	static constexpr u32 modeStaticAO = (1u << 3);
-	static constexpr u32 modeAOAlbedo = (1u << 4);
-	u32 mode_ {modeLight | modeIrradiance | modeStaticAO | modeAOAlbedo};
+	static constexpr u32 modeDirLight = (1u << 0);
+	static constexpr u32 modePointLight = (1u << 1);
+	static constexpr u32 modeSpecularIBL = (1u << 2);
+	static constexpr u32 modeIrradiance = (1u << 3);
+	static constexpr u32 modeStaticAO = (1u << 4);
+	static constexpr u32 modeAOAlbedo = (1u << 5);
+	u32 mode_ {modePointLight | modeIrradiance | modeStaticAO | modeAOAlbedo | modeSpecularIBL};
 	float aoFac_ {0.1f};
 	float maxProbeDist_ {1.f};
 	bool updateAOParams_ {true};
@@ -1006,10 +1063,10 @@ protected:
 
 	// light and shadow
 	doi::ShadowData shadowData_;
-	doi::DirLight light_;
-	// doi::PointLight light_;
+	doi::DirLight dirLight_;
+	doi::PointLight pointLight_;
 	bool updateLight_ {true};
-	// light ball
+	// light ball for visualization
 	// std::optional<doi::Material> lightMaterial_;
 
 	doi::Environment env_;

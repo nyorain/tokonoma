@@ -83,6 +83,8 @@ protected:
 	// for each render/subpass).
 	virtual std::pair<vk::RenderPass, unsigned> rvgPass() const;
 
+	virtual const char* usageParams() const { return "[options]"; }
+
 
 	// argument parsing
 	virtual argagg::parser argParser() const;

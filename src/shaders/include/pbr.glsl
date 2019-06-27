@@ -121,7 +121,8 @@ vec3 ao(uint flags, vec3 viewDir, vec3 normal, vec3 albedo, float metallic,
 	}
 
 	// apply ao
-	vec3 f0 = vec3(0.04); // NOTE: good enough, could be made material property
+	// NOTE: good enough, could be made material property though
+	vec3 f0 = vec3(0.04);
 	f0 = mix(f0, albedo, metallic);
 
 	float cosTheta = max(dot(normal, -viewDir), 0.0);
@@ -129,6 +130,9 @@ vec3 ao(uint flags, vec3 viewDir, vec3 normal, vec3 albedo, float metallic,
 	vec3 kD = 1.0 - kS;
 	kD *= 1.0 - metallic;
 
+	// when diffuse/specular ibl is not enabled we use simple uniform
+	// ambient occlusion instead to have a result with roughly equally
+	// bright colors
 	// ambient irradiance
 	vec3 ambient = vec3(0.0);
 	if((flags & flagDiffuseIBL) != 0) {

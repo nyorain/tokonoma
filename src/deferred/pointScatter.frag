@@ -81,7 +81,7 @@ void main() {
 		vec4 projpl = scene.invProj * vec4(suv, mappedLightPos.z, 1.0);
 		projpl.xyz /= projpl.w;
 		float dist = distance(light.pos, projpl.xyz);
+		scatter *= defaultAttenuation(dist, light.radius);
 		// scatter *= attenuation(dist, light.attenuation);
-		scatter *= attenuation(dist, light.radius);
 	}
 }

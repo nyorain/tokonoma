@@ -26,6 +26,17 @@ void cmdBindComputeDescriptors(vk::CommandBuffer cb, vk::PipelineLayout pl,
 		pl, first, {ds}, {off});
 }
 
+void cmdCopyBuffer(vk::CommandBuffer cb, vpp::BufferSpan src,
+		vpp::BufferSpan dst) {
+	dlg_assert(src.size() == dst.size());
+
+	vk::BufferCopy copy;
+	copy.srcOffset = dst.offset();
+	copy.dstOffset = dst.offset();
+	copy.size = src.size();
+	vk::cmdCopyBuffer(cb, src.buffer(), dst.buffer(), {{copy}});
+}
+
 // Returns a PipelineColorBlendAttachmentState that disabled blending
 // but allows all components to be written.
 const vk::PipelineColorBlendAttachmentState& noBlendAttachment() {

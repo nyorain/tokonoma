@@ -29,58 +29,65 @@ layout(set = 1, binding = 2, std430) buffer Materials {
 layout(set = 1, binding = 3) uniform texture2D textures[imageCount];
 layout(set = 1, binding = 4) uniform sampler samplers[samplerCount];
 
-layout(set = 2, binding = 0, row_major) uniform LightBuf {
+// this simple forward renderer only supports one point and one
+// dir light (optionally)
+// directional light
+layout(set = 2, binding = 0, row_major) uniform DirLightBuf {
 	DirLight dirLight;
 };
 
 layout(set = 2, binding = 1) uniform sampler2DArrayShadow shadowMap;
-// layout(set = 2, binding = 1) uniform samplerCubeShadow shadowCube;
 
-layout(set = 3, binding = 0) uniform samplerCube envMap;
-layout(set = 3, binding = 1) uniform sampler2D brdfLut;
+// point light
+layout(set = 3, binding = 0, row_major) uniform PointLightBuf {
+	PointLight pointLight;
+};
+layout(set = 3, binding = 1) uniform samplerCubeShadow shadowCube;
+
+layout(set = 4, binding = 0) uniform samplerCube envMap;
+layout(set = 4, binding = 1) uniform sampler2D brdfLut;
 // 9 layers, each layer contains one spherical harmonics paremter
 // for all probes. rgbaf format, the alpha component of the
 // first 3 layers contains the position of the probe
-layout(set = 3, binding = 2) uniform sampler1DArray irradiance;
+layout(set = 4, binding = 2) uniform sampler1DArray irradiance;
 
-layout(set = 3, binding = 3) uniform Params {
+layout(set = 4, binding = 3) uniform Params {
 	uint mode;
 	uint probeCount;
 	float aoFac;
 	float maxProbeDist;
+	uint envLods;
 } params;
 
-const uint modeLight = (1u << 0);
-const uint modeSpecularIBL = (1u << 1);
-const uint modeIrradiance = (1u << 2);
-const uint modeStaticAO = (1u << 3);
-const uint modelAOAlbedo = (1u << 4);
+const uint modeDirLight = (1u << 0);
+const uint modePointLight = (1u << 1);
+const uint modeSpecularIBL = (1u << 2);
+const uint modeIrradiance = (1u << 3);
+const uint modeStaticAO = (1u << 4);
+const uint modelAOAlbedo = (1u << 5);
 
 vec4 readTex(MaterialTex tex) {
 	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
 	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
 }
 
-// TODO: can be optimized by first summing up all coefficients (weighted)
+// TODO(perf): can be optimized by first summing up all coefficients (weighted)
 // and then computing polynoms for normal. For all the light probes
 // we sample from
-// TODO: use better attenuation function here
 vec3 lightProbe(vec3 pos, vec3 nrm, float coord, inout float total, inout float fmax) {
 	vec4 coeffs[3];
 	coeffs[0] = texture(irradiance, vec2(coord, 0));
 	coeffs[1] = texture(irradiance, vec2(coord, 1));
 	coeffs[2] = texture(irradiance, vec2(coord, 2));
 
+	// TODO: use better attenuation function here
 	vec3 probePos = vec3(coeffs[0].w, coeffs[1].w, coeffs[2].w);
 	float dist = length(pos - probePos);
-	/*
-	float fac = 1.0 - dist / params.maxProbeDist;
-	if(fac < 0) {
-		return vec3(0.0);
-	}
-
-	fac = pow(fac, 2.0);
-	*/
+	// float fac = 1.0 - dist / params.maxProbeDist;
+	// if(fac < 0) {
+	// 	return vec3(0.0);
+	// }
+	// fac = pow(fac, 2.0);
 
 	vec3 res = vec3(0.0);
 	// float fac = 1 / (1 + dist + 10 * params.maxProbeDist * (dist * dist));
@@ -131,15 +138,12 @@ void main() {
 	}
 
 	vec3 color = vec3(0.0);
-	if(bool(params.mode & modeLight)) {
-		vec4 mr = readTex(material.metalRough);
-		float metalness = material.metallicFac * mr.b;
-		float roughness = material.roughnessFac * mr.g;
 
-		float shadow;
-		vec3 ldir;
-
-		// NOTE: dir light hardcoded atm
+	vec3 viewDir = normalize(inPos - scene.viewPos);
+	vec4 mr = readTex(material.metalRough);
+	float metalness = material.metallicFac * mr.b;
+	float roughness = material.roughnessFac * mr.g;
+	if(bool(params.mode & modeDirLight)) {
 		float between;
 		float linearz = depthtoz(gl_FragCoord.z, scene.near, scene.far);
 		uint index = getCascadeIndex(dirLight, linearz, between);
@@ -153,23 +157,63 @@ void main() {
 		// 	default: lcolor = vec3(1, 1, 1); break;
 		// };
 
-		bool pcf = (dirLight.flags & lightPcf) != 0;
-		shadow = dirShadowIndex(dirLight, shadowMap, inPos, index, int(pcf));
-		ldir = normalize(dirLight.dir);
+		bool pcf = bool(dirLight.flags & lightPcf);
+		float shadow = dirShadowIndex(dirLight, shadowMap, inPos, index, int(pcf));
+		vec3 ldir = normalize(dirLight.dir);
 
-
-		vec3 v = normalize(scene.viewPos - inPos);
-		vec3 light = cookTorrance(normal, -ldir, v, roughness, metalness,
-			albedo.xyz);
+		vec3 light = cookTorrance(normal, -ldir, -viewDir, roughness,
+			metalness, albedo.xyz);
 		light *= shadow;
-		color.rgb += dirLight.color * clamp(light, 0, 1);
+		color.rgb += dirLight.color * light;
 	}
 
-	if(bool(params.mode & modeSpecularIBL)) {
-		// TODO
+	if(bool(params.mode & modePointLight)) {
+		vec3 ldir = inPos - pointLight.pos;
+		float lightDist = length(ldir);
+		if(lightDist < pointLight.radius) {
+			ldir /= lightDist;	
+			// TODO(perf): we could probably re-use some of the values
+			// from the directional light shading, just do them once
+			vec3 light = cookTorrance(normal, -ldir, -viewDir, roughness,
+				metalness, albedo.xyz);
+			light *= defaultAttenuation(lightDist, pointLight.radius);
+			// light *= attenuation(lightDist, pointLight.attenuation);
+			if(bool(pointLight.flags & lightPcf)) {
+				// TODO: make radius parameters configurable,
+				float viewDistance = length(scene.viewPos - inPos);
+				float radius = (1.0 + (viewDistance / 30.0)) / 100.0;  
+				light *= pointShadowSmooth(shadowCube, pointLight.pos,
+					pointLight.radius, inPos, radius);
+			} else {
+				light *= pointShadow(shadowCube, pointLight.pos,
+					pointLight.radius, inPos);
+			}
+
+			color.rgb += pointLight.color * light;
+		}
 	}
 
+	vec3 f0 = vec3(0.04);
+	f0 = mix(f0, albedo.rgb, metalness);
 	float ambientFac = params.aoFac * readTex(material.occlusion).r;
+
+	// NOTE: when specular IBL isn't enabled we could put all the
+	// energy into diffuse IBL or the other way around. Would look
+	// somewhat weird though probably
+	float cosTheta = max(dot(normal, -viewDir), 0.0);
+	vec3 kS = fresnelSchlickRoughness(cosTheta, f0, roughness);
+	vec3 kD = 1.0 - kS;
+	kD *= 1.0 - metalness;
+	if(bool(params.mode & modeSpecularIBL)) {
+		vec3 R = reflect(viewDir, normal);
+		float lod = roughness * params.envLods;
+		vec3 filtered = textureLod(envMap, R, lod).rgb;
+		vec2 brdfParams = vec2(cosTheta, roughness);
+		vec2 brdf = texture(brdfLut, brdfParams).rg;
+		vec3 specular = filtered * (kS * brdf.x + brdf.y);
+		color.rgb += ambientFac * specular;
+	}
+
 	if(bool(params.mode & modeIrradiance)) {
 		vec3 acolor = vec3(0.0);
 		float total = 0.0;
@@ -179,15 +223,16 @@ void main() {
 			acolor += lightProbe(inPos, normal, texCoord, total, fmax);
 		}
 
-		if(total > 0.001) {
+		if(total > 0.0) {
 			acolor /= total;
 		}
 
-		vec3 a = ambientFac * acolor;
+		vec3 diffuse = kD * acolor;
 		if(bool(params.mode & modelAOAlbedo)) {
-			a *= albedo.rgb;
+			diffuse *= albedo.rgb;
 		}
-		color.rgb += a;
+
+		color.rgb += ambientFac * diffuse;
 	}
 
 	if(bool(params.mode & modeStaticAO)) {

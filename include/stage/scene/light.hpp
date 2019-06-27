@@ -9,16 +9,13 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 
-// TODO: overall way too much duct tape here
-// TODO: we currently have a hardcoded depth bias guess
 // TODO: allow to configure dir light view frustum size
-// TODO: allow to configure/change size_
-//  probably based on light radius
+// TODO: allow to configure/change shadowmap sizes
 
 namespace doi {
 
 class Scene;
-class Camera;
+struct Camera;
 
 struct ShadowData {
 	vk::Format depthFormat;
@@ -29,30 +26,26 @@ struct ShadowData {
 	vpp::Pipeline pipe;
 	vpp::Pipeline pipeCube;
 	bool multiview;
+
+	// TODO: fine tune depth bias
+	// should be scene dependent, configurable!
+	// also dependent on shadow map size (the larger the shadow map, the
+	// smaller are the values we need)
+	float depthBias {1.f};
+	float depthBiasSlope {8.f};
 };
 
-// TODO: enum or something?
-constexpr std::uint32_t lightFlagDir = (1u << 0);
-constexpr std::uint32_t lightFlagPcf = (1u << 1);
-constexpr std::uint32_t lightFlagShadow = (1u << 2);
-
-// TODO: doesn't really belong here
-// move all frustum stuff to transfrom.hpp?
-//
-// order:
-// front (topleft, topright, bottomleft, bottomright)
-// back (topleft, topright, bottomleft, bottomright)
-using Frustum = std::array<nytl::Vec3f, 8>;
-Frustum ndcFrustum(); // frustum in ndc space, i.e. [-1, 1]^3
+constexpr std::uint32_t lightFlagPcf = (1u << 0);
+constexpr std::uint32_t lightFlagShadow = (1u << 1);
 
 class DirLight {
 public:
-	// TODO: make variable
+	// TODO: make variable? could be useful in some cases
 	static constexpr u32 cascadeCount = 4u;
 
 	struct {
 		nytl::Vec3f color {1.f, 1.f, 1.f};
-		std::uint32_t flags {lightFlagDir | lightFlagPcf};
+		std::uint32_t flags {lightFlagPcf | lightFlagShadow};
 		nytl::Vec3f dir {1.f, 1.f, 1.f};
 		float _ {}; // padding
 	} data;
@@ -66,9 +59,9 @@ public:
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
 	void updateDevice(const Camera& camera);
-	// nytl::Mat4f lightBallMatrix(nytl::Vec3f viewPos) const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
+	// nytl::Mat4f lightBallMatrix(nytl::Vec3f viewPos) const;
 	// const Primitive& lightBall() const { return lightBall_; }
 
 protected:
@@ -91,19 +84,18 @@ class PointLight {
 public:
 	struct {
 		nytl::Vec3f color {1.f, 1.f, 1.f};
-		std::uint32_t flags {0};
+		std::uint32_t flags {lightFlagPcf};
 		nytl::Vec3f position {1.f, 1.f, 1.f};
 		float _; // padding
-		// TODO: params.x (constant term) is basically always 1.f, get rid
-		// of that everywhere?
-		// TODO: always automatically calculate attenuation from radius?
+		// TODO: not really needed anymore in default pbr pipeline, using
+		// only the radius. Might be useful for artistic effects though
 		nytl::Vec3f attenuation {1.f, 4, 8};
 		float radius {2.f};
 	} data;
 
 public:
 	PointLight() = default;
-	PointLight(const WorkBatcher&, const vpp::TrDsLayout& matLayout,
+	PointLight(const WorkBatcher&, const vpp::TrDsLayout& lightLayout,
 		const vpp::TrDsLayout& primitiveLayout, const ShadowData& data,
 		unsigned id, vk::ImageView noShadowMap = {});
 
@@ -118,7 +110,6 @@ public:
 
 protected:
 	nytl::Vec2ui size_ {256u, 256u}; // per side
-	// vpp::ViewableImage target_; // normal depth buffer for rendering
 	vpp::ViewableImage shadowMap_; // cube map
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;

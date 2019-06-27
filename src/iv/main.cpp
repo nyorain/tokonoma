@@ -337,6 +337,7 @@ public:
 	}
 
 	const char* name() const override { return "iv"; }
+	const char* usageParams() const override { return "file [options]"; }
 
 protected:
 	std::string file_;

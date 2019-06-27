@@ -62,4 +62,10 @@ bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt);
 nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 	float near = 0.01f, float far = 30.f);
 
+// order:
+// front (topleft, topright, bottomleft, bottomright)
+// back (topleft, topright, bottomleft, bottomright)
+using Frustum = std::array<nytl::Vec3f, 8>;
+Frustum ndcFrustum(); // frustum in ndc space, i.e. [-1, 1]^3
+
 } // namespace doi
