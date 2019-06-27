@@ -31,7 +31,7 @@ void cmdCopyBuffer(vk::CommandBuffer cb, vpp::BufferSpan src,
 	dlg_assert(src.size() == dst.size());
 
 	vk::BufferCopy copy;
-	copy.srcOffset = dst.offset();
+	copy.srcOffset = src.offset();
 	copy.dstOffset = dst.offset();
 	copy.size = src.size();
 	vk::cmdCopyBuffer(cb, src.buffer(), dst.buffer(), {{copy}});

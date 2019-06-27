@@ -18,10 +18,6 @@
 #include <shaders/stage.shadowmapCube.multiview.vert.h>
 #include <shaders/stage.shadowmapCube.frag.h>
 
-// TODO: use allocators from work batcher
-// TODO: directional light: when depth clamp isn't supported, emulate.
-//   see shadowmap.vert
-
 namespace doi {
 
 /// Returns a u32 that has the last *count* bits set to 1, all others to 0.
@@ -97,7 +93,8 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		rpm.pViewMasks = &viewMask;
 		data.rpPoint = {dev, rpi};
 	} else {
-		// TODO: could be optimized i guess
+		// TODO: could be optimized i guess, both render passes
+		// are the same here
 		data.rpDir = {dev, rpi};
 		data.rpPoint = {dev, rpi};
 	}
@@ -203,7 +200,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 
 // DirLight
 DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
-		const vpp::TrDsLayout&, const ShadowData& data, unsigned) {
+		const ShadowData& data) {
 	auto& dev = wb.dev;
 
 	// target
@@ -215,7 +212,7 @@ DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	info.view.subresourceRange.layerCount = cascadeCount;
 	info.view.viewType = vk::ImageViewType::e2dArray;
 	dlg_assert(vpp::supported(dev, info.img));
-	target_ = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
+	target_ = {wb.alloc.memDevice, info, dev.deviceMemoryTypes()};
 
 	// framebuffer
 	vk::FramebufferCreateInfo fbi {};
@@ -246,8 +243,8 @@ DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	auto lightUboSize = sizeof(this->data) +
 		sizeof(nytl::Mat4f) * cascadeCount +
 		sizeof(float) * vpp::align(cascadeCount, 4u);
-	ds_ = {dev.descriptorAllocator(), dsLayout};
-	ubo_ = {dev.bufferAllocator(), lightUboSize,
+	ds_ = {wb.alloc.ds, dsLayout};
+	ubo_ = {wb.alloc.bufHost, lightUboSize,
 		vk::BufferUsageBits::uniformBuffer, hostMem};
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
@@ -255,14 +252,6 @@ DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	ldsu.imageSampler({{data.sampler, shadowMap(),
 		vk::ImageLayout::depthStencilReadOnlyOptimal}});
 	ldsu.apply();
-
-	// light ball
-	// auto cube = doi::Cube{{}, {0.2f, 0.2f, 0.2f}};
-	// auto shape = doi::generate(cube);
-	// lightBall_ = {wb, shape, primitiveDsLayout, 0u,
-	// 	lightBallMatrix(viewPos), id};
-
-	// updateDevice(viewPos);
 }
 
 void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
@@ -317,10 +306,6 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		}
 	}
 }
-
-// nytl::Mat4f DirLight::lightBallMatrix(nytl::Vec3f viewPos) const {
-// 	return translateMat(viewPos - 5.f * nytl::normalized(this->data.dir));
-// }
 
 // TODO: calculate stuff in update, not updateDevice
 void DirLight::updateDevice(const Camera& camera) {
@@ -413,15 +398,11 @@ void DirLight::updateDevice(const Camera& camera) {
 	doi::write(span, this->data);
 	doi::write(span, projs);
 	doi::write(span, splits);
-
-	// lightBall_.matrix = lightBallMatrix(viewPos);
-	// lightBall_.updateDevice();
 }
 
 // PointLight
 PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
-		const vpp::TrDsLayout&, const ShadowData& data,
-		unsigned, vk::ImageView noShadowMap) {
+		const ShadowData& data, vk::ImageView noShadowMap) {
 	auto& dev = wb.dev;
 	if(!noShadowMap) {
 		this->data.flags |= lightFlagShadow;
@@ -436,7 +417,7 @@ PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 		targetInfo.view.subresourceRange.layerCount = 6u;
 		targetInfo.view.viewType = vk::ImageViewType::cube;
 		dlg_assert(vpp::supported(dev, targetInfo.img));
-		shadowMap_ = {dev.devMemAllocator(), targetInfo, dev.deviceMemoryTypes()};
+		shadowMap_ = {wb.alloc.memDevice, targetInfo, dev.deviceMemoryTypes()};
 
 		// framebuffer
 		vk::FramebufferCreateInfo fbi {};
@@ -467,26 +448,17 @@ PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	auto hostMem = dev.hostMemoryTypes();
 	auto lightUboSize = 6 * sizeof(nytl::Mat4f) + // 6 * projection;view
 		sizeof(this->data);
-	ds_ = {dev.descriptorAllocator(), dsLayout};
-	ubo_ = {dev.bufferAllocator(), lightUboSize,
+	ds_ = {wb.alloc.ds, dsLayout};
+	ubo_ = {wb.alloc.bufHost, lightUboSize,
 		vk::BufferUsageBits::uniformBuffer, hostMem};
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
-	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+	ldsu.uniform({{{ubo_}}});
 	ldsu.imageSampler({{data.sampler, hasShadowMap() ? shadowMap() : noShadowMap,
 		vk::ImageLayout::depthStencilReadOnlyOptimal}});
 	ldsu.apply();
 
-	// primitive
-	// auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
-	// auto shape = doi::generateUV(sphere);
-	// lightBall_ = {wb, shape, primitiveDsLayout, 0u, lightBallMatrix(), id};
-
 	updateDevice();
-}
-
-nytl::Mat4f PointLight::lightBallMatrix() const {
-	return translateMat(this->data.position);
 }
 
 void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
@@ -550,9 +522,6 @@ void PointLight::updateDevice() {
 		auto mat = doi::cubeProjectionVP(this->data.position, i, np, fp);
 		doi::write(span, mat);
 	}
-
-	// lightBall_.matrix = lightBallMatrix();
-	// lightBall_.updateDevice();
 }
 
 } // namespace doi

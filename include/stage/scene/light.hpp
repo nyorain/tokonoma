@@ -11,6 +11,9 @@
 
 // TODO: allow to configure dir light view frustum size (lambda)
 // TODO: allow to configure/change shadowmap sizes
+// TODO: directional light: when depth clamp isn't supported, emulate.
+//   see shadowmap.vert. Pass via specialization constant
+// PERF: deferred constructors
 
 namespace doi {
 
@@ -96,7 +99,6 @@ public:
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
 	void updateDevice();
-	nytl::Mat4f lightBallMatrix() const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return shadowMap_.vkImageView(); }
 	bool hasShadowMap() const { return data.flags & lightFlagShadow; }

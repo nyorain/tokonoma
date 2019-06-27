@@ -23,6 +23,7 @@
 //   but then we require the drawIndirectFirstInstance vulkan features
 // TODO: sorting primitives by how they are layed out in the vertex
 //   buffers (when there are no other creteria)? could improve cache locality
+// TODO: update min_,max_ when matrix is changed, new primitive added?
 
 namespace doi {
 namespace gltf = tinygltf;
@@ -93,6 +94,7 @@ public:
 		vpp::SubBuffer::InitData initStage;
 
 		// tmp accum
+		// TODO: remove, just use the members instead
 		unsigned indexCount {};
 		unsigned vertexCount {};
 		unsigned tc0Count {};
@@ -107,8 +109,6 @@ public:
 	};
 
 	struct Primitive {
-		unsigned indexCount; // number of indices to draw
-		unsigned vertexCount; // total number of vertices
 		unsigned firstIndex; // first index in scenes index buffer
 		unsigned vertexOffset; // first vertex in scenes vertex buffer
 
@@ -155,10 +155,13 @@ public:
 	u32 addPrimitive(std::vector<nytl::Vec3f> positions,
 		std::vector<nytl::Vec3f> normals,
 		std::vector<u32> indices,
-		std::vector<nytl::Vec2f> texCoords1 = {},
-		std::vector<nytl::Vec2f> texCoords2 = {});
+		std::vector<nytl::Vec2f> texCoords0 = {},
+		std::vector<nytl::Vec2f> texCoords1 = {});
 	u32 addMaterial(const Material&);
 	u32 addInstance(const Primitive&, nytl::Mat4f matrix, u32 matID);
+	u32 addInstance(u32 primivieID, nytl::Mat4f matrix, u32 matID);
+
+	void updatedInstance(u32 ini) { updateInis_.push_back(ini); }
 
 	nytl::Vec3f min() const { return min_; }
 	nytl::Vec3f max() const { return max_; }
@@ -184,11 +187,14 @@ protected:
 	std::vector<Instance> instances_;
 	unsigned defaultMaterialID_ {};
 	unsigned instanceID_ {};
+	unsigned indexCount_ {}; // total
+	unsigned vertexCount_ {}; // total
 
 	// for updateDevice
 	unsigned newPrimitives_ {};
 	unsigned newMats_ {};
 	unsigned newInis_ {};
+	std::vector<u32> updateInis_;
 
 	nytl::Vec3f min_;
 	nytl::Vec3f max_;
@@ -220,9 +226,6 @@ protected:
 	// keep-alive during copying
 	struct {
 		vpp::SubBuffer stage;
-
-		// when an instance is added
-		vpp::SubBuffer instances;
 
 		// when a material is added
 		vpp::SubBuffer materials;

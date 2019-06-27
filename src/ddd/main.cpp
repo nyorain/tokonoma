@@ -1,8 +1,7 @@
 // Simple forward renderer mainly as reference for other rendering
 // concepts. Only supports one point and one directional light.
-// TODO:
-// - fix/remove light visualization
-//   fix light construction and stuff in general...
+// Currently contains first light probe -> spherical harmonics
+// implementation (not optimized).
 
 // ideas:
 // - allow visualization of GI probes via spheres as in shv
@@ -220,9 +219,12 @@ public:
 		// backface culling for effects (e.g. outlines). See model.frag
 		gpi.rasterization.cullMode = vk::CullModeBits::none;
 		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
-
 		pipe_ = {dev, gpi.info()};
 
+		gpi.depthStencil.depthWriteEnable = false;
+		blendPipe_ = {dev, gpi.info()};
+
+		gpi.depthStencil.depthWriteEnable = true;
 		gpi.rasterization.frontFace = vk::FrontFace::clockwise;
 		probe_.pipe = {dev, gpi.info()};
 
@@ -266,7 +268,7 @@ public:
 		dirLight_.data.dir = {5.8f, -12.0f, 4.f};
 		dirLight_.data.color = {5.f, 5.f, 5.f};
 
-		pointLight_ = {batch, cameraDsLayout_, shadowData_};
+		pointLight_ = {batch, lightDsLayout_, shadowData_};
 		pointLight_.data.position = {0.f, 5.0f, 0.f};
 		pointLight_.data.radius = 2.f;
 		pointLight_.data.attenuation = {1.f, 0.1f, 0.05f};
@@ -371,16 +373,36 @@ public:
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 
-		// PERF: do this in scene initialization
-		auto cube = doi::Cube{{}, {0.2f, 0.2f, 0.2f}};
+		// PERF: do this in scene initialization to avoid additional
+		// data upload
+		auto cube = doi::Cube{{}, {0.01f, 0.01f, 0.01f}};
 		auto shape = doi::generate(cube);
 		cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
-		auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
+		auto sphere = doi::Sphere{{}, {0.01f, 0.01f, 0.01f}};
 		shape = doi::generateUV(sphere);
 		spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
+
+		doi::Material lmat;
+
+		lmat.emissionFac = dirLight_.data.color;
+		lmat.albedoFac = Vec4f(dirLight_.data.color);
+		lmat.albedoFac[3] = 1.f;
+		// HACK: make sure it doesn't write to depth buffer and isn't
+		// rendered into shadow map
+		lmat.flags |= doi::Material::Bit::blend;
+		dirLight_.materialID = scene_.addMaterial(lmat);
+		dirLight_.instanceID = scene_.addInstance(cubePrimitiveID_,
+			dirLightObjMatrix(), dirLight_.materialID);
+
+		lmat.emissionFac = pointLight_.data.color;
+		lmat.albedoFac = Vec4f(pointLight_.data.color);
+		lmat.albedoFac[3] = 1.f;
+		pointLight_.materialID = scene_.addMaterial(lmat);
+		pointLight_.instanceID = scene_.addInstance(spherePrimitiveID_,
+			pointLightObjMatrix(), pointLight_.materialID);
 
 		return true;
 	}
@@ -499,15 +521,20 @@ public:
 			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
 			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
 				dirLight_.ds(), pointLight_.ds(), aoDs_});
-
 			scene_.render(cb, pipeLayout_, false); // opaque
-			scene_.render(cb, pipeLayout_, true); // transparent/blend
 
 			vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 				boxIndices_.offset(), vk::IndexType::uint16);
 			doi::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
 				{face.envDs});
 			env_.render(cb);
+
+			// TODO: we need a probe_.blendPipe here
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, probe_.pipe);
+			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
+			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+				dirLight_.ds(), pointLight_.ds(), aoDs_});
+			scene_.render(cb, pipeLayout_, true); // transparent/blend
 
 			vk::cmdEndRenderPass(cb);
 
@@ -700,18 +727,20 @@ public:
 		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
 		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
 			dirLight_.ds(), pointLight_.ds(), aoDs_});
-
 		scene_.render(cb, pipeLayout_, false); // opaque
-		scene_.render(cb, pipeLayout_, true); // transparent/blend
-
-		// lightMaterial_->bind(cb, pipeLayout_);
-		// light_.lightBall().render(cb, pipeLayout_);
 
 		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 			boxIndices_.offset(), vk::IndexType::uint16);
 		doi::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
 			{envCameraDs_});
 		env_.render(cb);
+
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
+		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
+		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+			dirLight_.ds(), pointLight_.ds(), aoDs_});
+		scene_.render(cb, pipeLayout_, true); // transparent/blend
+
 	}
 
 	void update(double dt) override {
@@ -724,13 +753,13 @@ public:
 			doi::checkMovement(camera_, *kc, dt);
 		}
 
-		if(moveLight_) {
-			dirLight_.data.dir.x = 7.0 * std::cos(0.2 * time_);
-			dirLight_.data.dir.z = 7.0 * std::sin(0.2 * time_);
-			// pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
-			// pointLight_.data.position.z = 7.0 * std::sin(0.2 * time_);
-			updateLight_ = true;
-		}
+		// if(moveLight_) {
+		// 	dirLight_.data.dir.x = 7.0 * std::cos(0.2 * time_);
+		// 	dirLight_.data.dir.z = 7.0 * std::sin(0.2 * time_);
+		// 	// pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
+		// 	// pointLight_.data.position.z = 7.0 * std::sin(0.2 * time_);
+		// 	updateLight_ = true;
+		// }
 
 		// NOTE: we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
@@ -753,12 +782,16 @@ public:
 			case ny::Keycode::m: // move light here
 				moveLight_ = false;
 				dirLight_.data.dir = -camera_.pos;
+				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
+				scene_.updatedInstance(dirLight_.instanceID);
 				updateLight_ = true;
 				return true;
 			case ny::Keycode::n: // move light here
 				moveLight_ = false;
 				updateLight_ = true;
 				pointLight_.data.position = camera_.pos;
+				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
+				scene_.updatedInstance(pointLight_.instanceID);
 				return true;
 			case ny::Keycode::l:
 				moveLight_ ^= true;
@@ -921,11 +954,13 @@ public:
 			doi::write(envSpan, fixedMatrix(camera_));
 			envMap.flush();
 
-			auto semaphore = scene_.updateDevice(matrix(camera_));
-			if(semaphore) {
-				addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
-			}
 			updateLight_ = true;
+		}
+
+		auto semaphore = scene_.updateDevice(matrix(camera_));
+		if(semaphore) {
+			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
+			App::scheduleRerecord();
 		}
 
 		if(updateLight_) {
@@ -976,6 +1011,15 @@ public:
 		}
 	}
 
+	// only for visualizing the box/sphere
+	nytl::Mat4f dirLightObjMatrix() {
+		return doi::translateMat(-dirLight_.data.dir);
+	}
+
+	nytl::Mat4f pointLightObjMatrix() {
+		return doi::translateMat(pointLight_.data.position);
+	}
+
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
 		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
@@ -1010,6 +1054,7 @@ protected:
 	vpp::SubBuffer envCameraUbo_;
 	vpp::TrDs envCameraDs_;
 	vpp::Pipeline pipe_;
+	vpp::Pipeline blendPipe_; // no depth write
 
 	vpp::TrDsLayout aoDsLayout_;
 	vpp::TrDs aoDs_;
@@ -1093,8 +1138,6 @@ protected:
 	DirLight dirLight_;
 	PointLight pointLight_;
 	bool updateLight_ {true};
-	// light ball for visualization
-	// std::optional<doi::Material> lightMaterial_;
 
 	doi::Environment env_;
 	doi::Texture brdfLut_;

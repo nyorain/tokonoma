@@ -231,11 +231,8 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	// models buffer
 	auto pcount = blendCount_ + opaqueCount_;
 	auto size = pcount * sizeof(nytl::Mat4f) * 2;
-	stageSize += size;
 	instanceBuf_ = {data.initModels, wb.alloc.bufHost, size,
-		vk::BufferUsageBits::storageBuffer |
-		vk::BufferUsageBits::transferDst,
-		devMem};
+		vk::BufferUsageBits::storageBuffer, hostMem};
 
 	// primitive buffers
 	size = data.indexCount * sizeof(Index);
@@ -275,14 +272,14 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 		vk::BufferUsageBits::indirectBuffer, hostMem};
 	size = std::max<u32>(opaqueCount_ * sizeof(ModelID), 4u);
 	modelIDs_ = {data.initModelIDs, wb.alloc.bufHost, size,
-		vk::BufferUsageBits::storageTexelBuffer, hostMem};
+		vk::BufferUsageBits::storageBuffer, hostMem};
 
 	size = std::max<u32>(blendCount_ * sizeof(vk::DrawIndexedIndirectCommand), 4u);
 	blendCmds_ = {data.initBlendCmds, wb.alloc.bufHost, size,
 		vk::BufferUsageBits::indirectBuffer, hostMem};
 	size = std::max<u32>(blendCount_ * sizeof(ModelID), 4u);
 	blendModelIDs_ = {data.initBlendModelIDs, wb.alloc.bufHost, size,
-		vk::BufferUsageBits::storageTexelBuffer, hostMem};
+		vk::BufferUsageBits::storageBuffer, hostMem};
 
 	// stage
 	data.stage = {data.initStage, wb.alloc.bufHost, stageSize,
@@ -497,7 +494,6 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 	}
 
 	auto& pa = model.accessors[ip->second];
-	p.vertexCount = pa.count;
 
 	// PERF: we could use the gltf-supplied min-max values
 	auto inf = std::numeric_limits<float>::infinity();
@@ -514,17 +510,15 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 	// indices
 	if(primitive.indices < 0) {
 		dlg_info("Primitive has no indices, using simple iota indices");
-		p.indexCount = pa.count;
-		p.indices.resize(p.indexCount);
+		p.indices.resize(pa.count);
 		std::iota(p.indices.begin(), p.indices.end(), u32(0u));
 	} else {
 		auto& ia = model.accessors[primitive.indices];
-		p.indexCount = ia.count;
-		p.indices.resize(p.indexCount);
+		p.indices.resize(ia.count);
 
 		auto iit = p.indices.begin();
 		for(auto idx : doi::range<1, std::uint32_t>(model, ia)) {
-			dlg_assert(idx < p.vertexCount);
+			dlg_assertm(idx < p.positions.size(), "Index out of range");
 			*(iit++) = idx;
 		}
 	}
@@ -536,7 +530,7 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 			"Triangle mode primitive index count not multiple of 3");
 
 		// generate normals weighted by triangle area
-		p.normals.resize(p.vertexCount, Vec3f{0.f, 0.f, 0.f});
+		p.normals.resize(p.positions.size(), Vec3f{0.f, 0.f, 0.f});
 		for(auto i = 0u; i < p.indices.size(); i += 3) {
 			auto& p1 = p.positions[p.indices[i + 0]];
 			auto& p2 = p.positions[p.indices[i + 1]];
@@ -570,12 +564,12 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 
 	// compute total buffer size
 	auto size = 0u;
-	size += p.indexCount * sizeof(u32); // indices
-	size += p.vertexCount * sizeof(nytl::Vec3f); // normals
-	size += p.vertexCount * sizeof(nytl::Vec3f); // positions
+	size += p.indices.size() * sizeof(u32); // indices
+	size += p.positions.size() * sizeof(nytl::Vec3f); // normals
+	size += p.normals.size() * sizeof(nytl::Vec3f); // positions
 
-	data.indexCount += p.indexCount;
-	data.vertexCount += p.vertexCount;
+	data.indexCount += p.indices.size();
+	data.vertexCount += p.positions.size();
 
 	if(tc0a) {
 		dlg_assert(tc0a->count == pa.count);
@@ -683,8 +677,8 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 
 		primitive.firstIndex = indexCount;
 		primitive.vertexOffset = vertexCount;
-		indexCount += primitive.indexCount;
-		vertexCount += primitive.vertexCount;
+		indexCount += primitive.indices.size();
+		vertexCount += primitive.positions.size();
 	};
 
 	// the ordering of primitives in the buffer like this allows us to
@@ -731,36 +725,35 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 
 	// upload matrices for all primitives to modelsBuf
 	span = normalSpan; // last offset
-	copy.srcOffset = data.stage.offset() + normalSpan.data() - stageMap.ptr();
-	for(auto& ini : instances_) {
-		write(span, ini.matrix);
-		auto normalMatrix = nytl::Mat4f(transpose(inverse(ini.matrix)));
-		normalMatrix[3][0] = ini.materialID;
-		normalMatrix[3][1] = ini.modelID;
-		write(span, normalMatrix);
-	}
-
-	copy.dstOffset = instanceBuf_.offset();
-	copy.size = instanceBuf_.size();
-	vk::cmdCopyBuffer(wb.cb, data.stage.buffer(),
-		instanceBuf_.buffer(), {{copy}});
-
 	stageMap.flush();
 
+	vertexCount_ = data.vertexCount;
+	indexCount_ = data.indexCount;
+
 	// upload opaque draw commands
-	// TODO: should be done in updateDevice/at runtime; support culling
+	// TODO: cmd/models should be done in updateDevice/at runtime;
+	// support culling
 	auto idmap = modelIDs_.memoryMap();
 	auto idspan = idmap.span();
 	auto cmdmap = cmds_.memoryMap();
 	auto cmdspan = cmdmap.span();
+	auto iniMap = instanceBuf_.memoryMap();
+	auto iniSpan = iniMap.span();
 	for(auto& ini : instances_) {
 		if(!materials_[ini.materialID].blend()) { // not opaque
 			writeInstance(ini, idspan, cmdspan);
 		}
+
+		write(iniSpan, ini.matrix);
+		auto normalMatrix = nytl::Mat4f(transpose(inverse(ini.matrix)));
+		normalMatrix[3][0] = ini.materialID;
+		normalMatrix[3][1] = ini.modelID;
+		write(iniSpan, normalMatrix);
 	}
 
 	idmap.flush();
 	cmdmap.flush();
+	iniMap.flush();
 
 	// descriptors
 	std::vector<vk::DescriptorImageInfo> images;
@@ -818,7 +811,7 @@ void Scene::writeInstance(const Instance& ini, nytl::Span<std::byte>& ids,
 
 	auto& p = primitives_[ini.primitiveID];
 	vk::DrawIndexedIndirectCommand cmd;
-	cmd.indexCount = p.indexCount;
+	cmd.indexCount = p.indices.size();
 	cmd.vertexOffset = p.vertexOffset;
 	cmd.instanceCount = 1;
 	cmd.firstInstance = 0;
@@ -828,28 +821,97 @@ void Scene::writeInstance(const Instance& ini, nytl::Span<std::byte>& ids,
 
 vk::Semaphore Scene::upload() {
 	auto& dev = device();
-	auto ret = vk::Semaphore{};
 
 	// reset from previoius upload
 	upload_.indices = {};
 	upload_.materials = {};
 	upload_.vertices = {};
-	upload_.instances = {};
 
-	if(!newMats_ && !newPrimitives_ && !newInis_) {
-		return ret;
-	}
-
-	// utility
-	auto cbStarted = [&]() -> vk::CommandBuffer {
-		if(!ret) {
-			ret = uploadSemaphore_;
-			vk::beginCommandBuffer(uploadCb_, {});
+	auto updateDs = false;
+	if(newInis_ || !updateInis_.empty()) {
+		// recound blend/opaque
+		auto nblendCount = 0u;
+		auto nopaqueCount = 0u;
+		for(auto& ini : instances_) {
+			dlg_assert(ini.materialID < materials_.size());
+			if(materials_[ini.materialID].blend()) {
+				++nblendCount;
+			} else {
+				++nopaqueCount;
+			}
 		}
 
-		return uploadCb_;
-	};
+		// recreate buffers as needed
+		u32 size;
+		if(nblendCount != blendCount_) {
+			blendCount_ = nblendCount;
+			size = std::max<u32>(blendCount_ * sizeof(vk::DrawIndexedIndirectCommand), 4u);
+			blendCmds_ = {dev.bufferAllocator(), size,
+				vk::BufferUsageBits::indirectBuffer, dev.hostMemoryTypes()};
+			size = std::max<u32>(blendCount_ * sizeof(ModelID), 4u);
+			blendModelIDs_ = {dev.bufferAllocator(), size,
+				vk::BufferUsageBits::storageBuffer, dev.hostMemoryTypes()};
+			updateDs = true;
+		}
 
+		if(nopaqueCount != opaqueCount_) {
+			opaqueCount_ = nopaqueCount;
+			size = std::max<u32>(opaqueCount_ *
+				sizeof(vk::DrawIndexedIndirectCommand), 4u);
+			cmds_ = {dev.bufferAllocator(), size,
+				vk::BufferUsageBits::indirectBuffer, dev.hostMemoryTypes()};
+			size = std::max<u32>(opaqueCount_ * sizeof(ModelID), 4u);
+			modelIDs_ = {dev.bufferAllocator(), size,
+				vk::BufferUsageBits::storageBuffer, dev.hostMemoryTypes()};
+			updateDs = true;
+		}
+
+		if(newInis_) {
+			auto pcount = blendCount_ + opaqueCount_;
+			auto size = pcount * sizeof(nytl::Mat4f) * 2;
+			instanceBuf_ = {dev.bufferAllocator(), size,
+				vk::BufferUsageBits::storageBuffer , dev.hostMemoryTypes()};
+			updateDs = true;
+		}
+
+		// upload new ids, commands for opaque instances
+		// for blend instances they are written after sort in updateDevice
+		auto idmap = modelIDs_.memoryMap();
+		auto idspan = idmap.span();
+		auto cmdmap = cmds_.memoryMap();
+		auto cmdspan = cmdmap.span();
+		auto iniMap = instanceBuf_.memoryMap();
+		auto iniSpan = iniMap.span();
+
+		// TODO: don't write all, only changed ones
+		for(auto& ini : instances_) {
+			if(!materials_[ini.materialID].blend()) { // opaque
+				writeInstance(ini, idspan, cmdspan);
+			}
+
+			write(iniSpan, ini.matrix);
+			auto normalMatrix = nytl::Mat4f(transpose(inverse(ini.matrix)));
+			normalMatrix[3][0] = ini.materialID;
+			normalMatrix[3][1] = ini.modelID;
+			write(iniSpan, normalMatrix);
+		}
+
+		idmap.flush();
+		cmdmap.flush();
+		iniMap.flush();
+
+		newInis_ = {};
+		updateInis_.clear();
+	}
+
+	if(!newMats_ && !newPrimitives_) {
+		return {};
+	}
+
+	vk::CommandBuffer cb = uploadCb_;
+	vk::beginCommandBuffer(uploadCb_, {});
+
+	// utility
 	auto subspan = [](vpp::BufferSpan span, vk::DeviceSize off,
 			vk::DeviceSize size) {
 		return vpp::BufferSpan(span.buffer(), size, span.offset() + off);
@@ -857,10 +919,11 @@ vk::Semaphore Scene::upload() {
 
 	auto split = [](vpp::BufferSpan span, vk::DeviceSize off)
 			-> std::array<vpp::BufferSpan, 2> {
-		dlg_assert(off < span.size());
+		dlg_assert(off <= span.size());
+		auto size1 = off;
 		auto size2 = span.size() - off;
-		auto a = vpp::BufferSpan(span.buffer(), off);
-		auto b = vpp::BufferSpan(span.buffer(), size2, off);
+		auto a = vpp::BufferSpan(span.buffer(), size1, span.offset());
+		auto b = vpp::BufferSpan(span.buffer(), size2, span.offset() + off);
 		return {a, b};
 	};
 
@@ -871,26 +934,6 @@ vk::Semaphore Scene::upload() {
 		stageSize += bytes(p.texCoords0).size();
 		stageSize += bytes(p.texCoords1).size();
 		stageSize += bytes(p.indices).size();
-	}
-
-	// upload new ids, commands for opaque instances
-	// for blend instances it's done below
-	if(newInis_) {
-		auto idmap = modelIDs_.memoryMap();
-		auto idspan = idmap.span();
-		auto cmdmap = cmds_.memoryMap();
-		auto cmdspan = cmdmap.span();
-		for(auto& ini : nytl::span(instances_).last(newInis_)) {
-			if(!materials_[ini.materialID].blend()) {
-				writeInstance(ini, idspan, cmdspan);
-			}
-
-			// for the instances buffer
-			stageSize += 2 * sizeof(nytl::Mat4f);
-		}
-
-		idmap.flush();
-		cmdmap.flush();
 	}
 
 	// create stage buffer
@@ -905,7 +948,7 @@ vk::Semaphore Scene::upload() {
 
 	auto devMem = device().deviceMemoryTypes();
 	if(newMats_) {
-		auto cb = cbStarted();
+		updateDs = true;
 		upload_.materials = std::move(materialsBuf_);
 
 		auto size = sizeof(Material) * materials_.size();
@@ -927,7 +970,7 @@ vk::Semaphore Scene::upload() {
 	}
 
 	if(newPrimitives_) {
-		auto cb = cbStarted();
+		updateDs = true;
 		auto off0 = stageSpan.data() - stageMap.ptr();
 
 		upload_.vertices = std::move(vertices_);
@@ -950,15 +993,12 @@ vk::Semaphore Scene::upload() {
 
 		auto normalsSize = 0u;
 		for(auto& p : nytl::span(primitives_).last(newPrimitives_)) {
-			normalsSize = write(stageSpan, bytes(p.normals));
+			normalsSize += write(stageSpan, bytes(p.normals));
 		}
 
 		dlg_assert(posSize == normalsSize);
-		tc0Offset_ += tc1Size;
-		posOffset_ += posSize;
-		normalOffset_ += normalsSize;
-
-		auto newVSize = tc1Size + tc0Size + posSize + normalsSize;
+		auto addSize = tc1Size + tc0Size + posSize + normalsSize;
+		auto newVSize = upload_.vertices.size() + addSize;
 		vertices_ = {device().bufferAllocator(), newVSize,
 			vk::BufferUsageBits::vertexBuffer |
 			vk::BufferUsageBits::transferSrc |
@@ -969,6 +1009,7 @@ vk::Semaphore Scene::upload() {
 		auto oldtc0 = posOffset_ - tc0Offset_;
 		auto oldpos = normalOffset_ - posOffset_;
 		auto oldnormals = oldpos;
+		dlg_assert(oldnormals == upload_.vertices.size() - normalOffset_);
 
 		BufferCopier oldVCopies{upload_.vertices, vertices_};
 		oldVCopies.copy(oldtc1);
@@ -994,6 +1035,10 @@ vk::Semaphore Scene::upload() {
 		vk::cmdCopyBuffer(cb, upload_.stage.buffer(), vertices_.buffer(),
 			newVCopies.copies);
 
+		tc0Offset_ += tc1Size;
+		posOffset_ += tc0Size + tc1Size;
+		normalOffset_ += tc0Size + tc1Size + posSize;
+
 		// copy indices
 		off0 = stageSpan.data() - stageMap.ptr();
 		auto indicesSize = 0u;
@@ -1001,7 +1046,8 @@ vk::Semaphore Scene::upload() {
 			indicesSize += write(stageSpan, bytes(p.indices));
 		}
 
-		indices_ = {device().bufferAllocator(), indicesSize,
+		auto newISize = upload_.indices.size() + indicesSize;
+		indices_ = {device().bufferAllocator(), newISize,
 			vk::BufferUsageBits::indexBuffer |
 			vk::BufferUsageBits::transferSrc |
 			vk::BufferUsageBits::transferDst, devMem};
@@ -1013,48 +1059,32 @@ vk::Semaphore Scene::upload() {
 		newPrimitives_ = 0;
 	}
 
-	if(newInis_) {
-		auto cb = cbStarted();
+	dlg_assert(stageSpan.size() == 0); // all used
+	stageMap.flush();
+	stageMap = {};
 
-		auto nsize = instances_.size() * sizeof(nytl::Mat4f) * 2;
-		instanceBuf_ = {device().bufferAllocator(), nsize,
-			vk::BufferUsageBits::storageBuffer |
-			vk::BufferUsageBits::transferSrc |
-			vk::BufferUsageBits::transferDst, devMem};
+	vk::endCommandBuffer(uploadCb_);
 
-		upload_.instances = std::move(instanceBuf_);
-		auto [oldi, newi] = split(instanceBuf_, upload_.instances.size());
-		doi::cmdCopyBuffer(cb, upload_.instances, oldi);
+	vk::SubmitInfo si;
+	si.pCommandBuffers = &uploadCb_.vkHandle();
+	si.commandBufferCount = 1;
+	si.signalSemaphoreCount = 1;
+	si.pSignalSemaphores = &uploadSemaphore_.vkHandle();
 
-		auto soff = stageSpan.data() - stageMap.ptr();
-		auto ssize = 0u;
-		for(auto& ini : nytl::span(instances_).last(newInis_)) {
-			ssize += write(stageSpan, ini.matrix);
-			auto normalMatrix = nytl::Mat4f(transpose(inverse(ini.matrix)));
-			normalMatrix[3][0] = ini.materialID;
-			normalMatrix[3][1] = ini.modelID;
-			ssize += write(stageSpan, normalMatrix);
-		}
+	device().queueSubmitter().add(si);
+	if(updateDs) {
+		vpp::DescriptorSetUpdate dsu(ds_);
+		dsu.storage({{{modelIDs_}}});
+		dsu.storage({{{instanceBuf_}}});
+		dsu.storage({{{materialsBuf_}}});
 
-		auto srcInis = subspan(upload_.stage, soff, ssize);
-		doi::cmdCopyBuffer(cb, srcInis, newi);
-
-		newInis_ = 0;
+		vpp::DescriptorSetUpdate bdsu(blendDs_);
+		bdsu.storage({{{blendModelIDs_}}});
+		bdsu.storage({{{instanceBuf_}}});
+		bdsu.storage({{{materialsBuf_}}});
 	}
 
-	if(ret) {
-		vk::endCommandBuffer(uploadCb_);
-
-		vk::SubmitInfo si;
-		si.pCommandBuffers = &uploadCb_.vkHandle();
-		si.commandBufferCount = 1;
-		si.signalSemaphoreCount = 1;
-		si.pSignalSemaphores = &uploadSemaphore_.vkHandle();
-
-		device().queueSubmitter().add(si);
-	}
-
-	return ret;
+	return uploadSemaphore_;
 }
 
 vk::Semaphore Scene::updateDevice(nytl::Mat4f proj) {
@@ -1137,6 +1167,50 @@ void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl, bool blend) cons
 			off += sizeof(vk::DrawIndexedIndirectCommand);
 		}
 	}
+}
+
+u32 Scene::addPrimitive(std::vector<nytl::Vec3f> positions,
+		std::vector<nytl::Vec3f> normals,
+		std::vector<u32> indices,
+		std::vector<nytl::Vec2f> texCoords0,
+		std::vector<nytl::Vec2f> texCoords1) {
+	++newPrimitives_;
+	dlg_assert(normals.size() == positions.size());
+
+	auto& p = primitives_.emplace_back();
+	p.positions = std::move(positions);
+	p.normals = std::move(normals);
+	p.indices = std::move(indices);
+	p.texCoords0 = std::move(texCoords0);
+	p.texCoords1 = std::move(texCoords1);
+	p.firstIndex = indexCount_;
+	p.vertexOffset = vertexCount_;
+	indexCount_ += p.indices.size();
+	vertexCount_ += p.positions.size();
+	return primitives_.size() - 1;
+}
+
+u32 Scene::addMaterial(const Material& mat) {
+	materials_.push_back(mat);
+	++newMats_;
+	return materials_.size() - 1;
+}
+
+u32 Scene::addInstance(u32 primitiveID, nytl::Mat4f matrix, u32 matID) {
+	auto& ini = instances_.emplace_back();
+	ini.materialID = matID;
+	ini.matrix = matrix;
+	ini.modelID = ++instanceID_;
+	ini.primitiveID = primitiveID;
+	++newInis_;
+	return instances_.size() - 1;
+}
+
+u32 Scene::addInstance(const Primitive& prim, nytl::Mat4f matrix, u32 matID) {
+	auto it = std::find_if(primitives_.begin(), primitives_.end(),
+		[&](auto& p) { return &p == &prim; });
+	dlg_assert(it != primitives_.end());
+	return addInstance(it - primitives_.begin(), matrix, matID);
 }
 
 const vk::PipelineVertexInputStateCreateInfo& Scene::vertexInfo() {

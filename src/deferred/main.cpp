@@ -1016,8 +1016,7 @@ void ViewApp::initRenderData() {
 	// TODO: defer creation
 	// TODO: cameraDsLayout dummy
 	if(pointLight) {
-		auto& l = pointLights_.emplace_back(batch, lightDsLayout_,
-			cameraDsLayout_, shadowData_, currentID_++);
+		auto& l = pointLights_.emplace_back(batch, lightDsLayout_, shadowData_);
 		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
@@ -1027,8 +1026,7 @@ void ViewApp::initRenderData() {
 		l.updateDevice();
 		// pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
-		auto& l = dirLights_.emplace_back(batch, lightDsLayout_,
-			cameraDsLayout_, shadowData_, currentID_++);
+		auto& l = dirLights_.emplace_back(batch, lightDsLayout_, shadowData_);
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
@@ -1757,6 +1755,7 @@ void ViewApp::updateDevice() {
 			auto semaphore = scene_.updateDevice(mat);
 			if(semaphore) {
 				addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
+				App::scheduleRerecord();
 			}
 		}
 

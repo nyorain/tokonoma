@@ -245,5 +245,5 @@ void main() {
 	}
 
 	// tonemap
-	outCol.rgb = 1.0 - exp(-outCol.rgb);
+	// outCol.rgb = 1.0 - exp(-outCol.rgb);
 }
