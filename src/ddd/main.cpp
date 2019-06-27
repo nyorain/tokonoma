@@ -636,14 +636,12 @@ public:
 			dlg_warn("DepthClamp not supported");
 		}
 
-		/*
 		if(supported.base.features.multiDrawIndirect) {
 			multiDrawIndirect_ = true;
 			enable.base.features.multiDrawIndirect = true;
 		} else {
 			dlg_warn("multiDrawIndirect not supported");
 		}
-		*/
 
 		return true;
 	}

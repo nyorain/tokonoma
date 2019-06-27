@@ -781,58 +781,10 @@ void Scene::createImage(unsigned id, bool srgb) {
 	images_[id].needed = true;
 }
 
-vk::Semaphore Scene::updateDevice(nytl::Mat4f proj) {
-	auto ret = vk::Semaphore{};
-	auto cbStarted = [&]() -> vk::CommandBuffer {
-		if(!ret) {
-			ret = uploadSemaphore_;
-			vk::beginCommandBuffer(uploadCb_, {});
-		}
-
-		return uploadCb_;
-	};
-
-	auto split = [](vpp::BufferSpan span, vk::DeviceSize off)
-			-> std::array<vpp::BufferSpan, 2> {
-		dlg_assert(off < span.size());
-		auto size2 = span.size() - off;
-		auto a = vpp::BufferSpan(span.buffer(), off);
-		auto b = vpp::BufferSpan(span.buffer(), size2, off);
-		return {a, b};
-	};
-
-	auto devMem = device().deviceMemoryTypes();
-	if(newMats_) {
-		auto cb = cbStarted();
-		old_.materials = std::move(materialsBuf_);
-
-		auto size = sizeof(Material) * materials_.size();
-		materialsBuf_ = {device().bufferAllocator(), size,
-			vk::BufferUsageBits::storageBuffer |
-			vk::BufferUsageBits::transferSrc |
-			vk::BufferUsageBits::transferDst, devMem};
-
-		auto [oldb, newb] = split(materialsBuf_, old_.materials.size());
-		doi::cmdCopyBuffer(cb, old_.materials, oldb);
-		auto span = nytl::span(materials_).last(newMats_);
-		vpp::fillDirect(cb, newb, nytl::as_bytes(span));
-	}
-
-	if(ret) {
-		vk::endCommandBuffer(uploadCb_);
-
-		vk::SubmitInfo si;
-		si.pCommandBuffers = &uploadCb_.vkHandle();
-		si.commandBufferCount = 1;
-		si.signalSemaphoreCount = 1;
-		si.pSignalSemaphores = &uploadSemaphore_.vkHandle();
-
-		device().queueSubmitter().add(si);
-	}
-
+void Scene::updateDevice(nytl::Mat4f proj) {
 	// sort blended primitives
 	if(!blendCount_) {
-		return ret;
+		return;
 	}
 
 	struct Prim {
@@ -879,7 +831,6 @@ vk::Semaphore Scene::updateDevice(nytl::Mat4f proj) {
 
 	idmap.flush();
 	cmdmap.flush();
-	return ret;
 }
 
 void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl, bool blend) const {
