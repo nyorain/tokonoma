@@ -262,11 +262,11 @@ public:
 		shadowData_ = doi::initShadowData(dev, depthFormat(),
 			lightDsLayout_, scene_.dsLayout(), multiview_, depthClamp_);
 
-		dirLight_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
+		dirLight_ = {batch, lightDsLayout_, shadowData_};
 		dirLight_.data.dir = {5.8f, -12.0f, 4.f};
 		dirLight_.data.color = {5.f, 5.f, 5.f};
 
-		pointLight_ = {batch, lightDsLayout_, cameraDsLayout_, shadowData_, 0u};
+		pointLight_ = {batch, cameraDsLayout_, shadowData_};
 		pointLight_.data.position = {0.f, 5.0f, 0.f};
 		pointLight_.data.radius = 2.f;
 		pointLight_.data.attenuation = {1.f, 0.1f, 0.05f};
@@ -371,6 +371,17 @@ public:
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 
+		// PERF: do this in scene initialization
+		auto cube = doi::Cube{{}, {0.2f, 0.2f, 0.2f}};
+		auto shape = doi::generate(cube);
+		cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
+			std::move(shape.normals), std::move(shape.indices));
+
+		auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
+		shape = doi::generateUV(sphere);
+		spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
+			std::move(shape.normals), std::move(shape.indices));
+
 		return true;
 	}
 
@@ -379,7 +390,7 @@ public:
 
 		// faces, ubo, ds
 		// TODO: duplication with cameraUbo_ and cameraDs_
-		// TODO(perf): defer initialization for buffers
+		// PERF: defer initialization for buffers
 		auto camUboSize = sizeof(nytl::Mat4f) // proj matrix
 			+ sizeof(nytl::Vec3f) // viewPos
 			+ 2 * sizeof(float); // near, far plane
@@ -910,7 +921,10 @@ public:
 			doi::write(envSpan, fixedMatrix(camera_));
 			envMap.flush();
 
-			scene_.updateDevice(matrix(camera_));
+			auto semaphore = scene_.updateDevice(matrix(camera_));
+			if(semaphore) {
+				addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
+			}
 			updateLight_ = true;
 		}
 
@@ -1059,10 +1073,25 @@ protected:
 	doi::Scene scene_; // no default constructor
 	doi::Camera camera_ {};
 
+	struct DirLight : public doi::DirLight {
+		using doi::DirLight::DirLight;
+		u32 instanceID;
+		u32 materialID;
+	};
+
+	struct PointLight : public doi::PointLight {
+		using doi::PointLight::PointLight;
+		u32 instanceID;
+		u32 materialID;
+	};
+
+	u32 cubePrimitiveID_ {};
+	u32 spherePrimitiveID_ {};
+
 	// light and shadow
 	doi::ShadowData shadowData_;
-	doi::DirLight dirLight_;
-	doi::PointLight pointLight_;
+	DirLight dirLight_;
+	PointLight pointLight_;
 	bool updateLight_ {true};
 	// light ball for visualization
 	// std::optional<doi::Material> lightMaterial_;

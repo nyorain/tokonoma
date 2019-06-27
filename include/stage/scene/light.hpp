@@ -9,7 +9,7 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 
-// TODO: allow to configure dir light view frustum size
+// TODO: allow to configure dir light view frustum size (lambda)
 // TODO: allow to configure/change shadowmap sizes
 
 namespace doi {
@@ -31,8 +31,8 @@ struct ShadowData {
 	// should be scene dependent, configurable!
 	// also dependent on shadow map size (the larger the shadow map, the
 	// smaller are the values we need)
-	float depthBias {1.f};
-	float depthBiasSlope {8.f};
+	float depthBias {0.5f};
+	float depthBiasSlope {5.f};
 };
 
 constexpr std::uint32_t lightFlagPcf = (1u << 0);
@@ -40,7 +40,6 @@ constexpr std::uint32_t lightFlagShadow = (1u << 1);
 
 class DirLight {
 public:
-	// TODO: make variable? could be useful in some cases
 	static constexpr u32 cascadeCount = 4u;
 
 	struct {
@@ -53,16 +52,13 @@ public:
 public:
 	DirLight() = default;
 	DirLight(const WorkBatcher&, const vpp::TrDsLayout& matDsLayout,
-		const vpp::TrDsLayout& primitiveDsLayout, const ShadowData& data,
-		unsigned id);
+		const ShadowData& data);
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
 	void updateDevice(const Camera& camera);
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
-	// nytl::Mat4f lightBallMatrix(nytl::Vec3f viewPos) const;
-	// const Primitive& lightBall() const { return lightBall_; }
 
 protected:
 	nytl::Vec2ui size_ {1024, 1024};
@@ -70,7 +66,6 @@ protected:
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
 	vpp::TrDs ds_;
-	// Primitive lightBall_;
 
 	// non-multiview
 	struct Cascade {
@@ -96,8 +91,7 @@ public:
 public:
 	PointLight() = default;
 	PointLight(const WorkBatcher&, const vpp::TrDsLayout& lightLayout,
-		const vpp::TrDsLayout& primitiveLayout, const ShadowData& data,
-		unsigned id, vk::ImageView noShadowMap = {});
+		const ShadowData& data, vk::ImageView noShadowMap = {});
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
@@ -105,7 +99,6 @@ public:
 	nytl::Mat4f lightBallMatrix() const;
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return shadowMap_.vkImageView(); }
-	// const Primitive& lightBall() const { return lightBall_; }
 	bool hasShadowMap() const { return data.flags & lightFlagShadow; }
 
 protected:
@@ -114,7 +107,6 @@ protected:
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
 	vpp::TrDs ds_;
-	// Primitive lightBall_;
 
 	// non-multiview
 	struct Face {

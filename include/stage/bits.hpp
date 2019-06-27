@@ -43,22 +43,25 @@ T& refRead(nytl::Span<std::byte>& span) {
 	return *reinterpret_cast<T*>(data);
 }
 
-inline void write(nytl::Span<std::byte>& span, const std::byte* ptr,
+inline std::size_t write(nytl::Span<std::byte>& span, const std::byte* ptr,
 		std::size_t size) {
 	dlg_assert(std::size_t(span.size()) >= size);
 	std::memcpy(span.data(), ptr, size);
 	span = span.last(span.size() - size);
+	return size;
 }
 
-inline void write(nytl::Span<std::byte>& dst, nytl::Span<const std::byte> src) {
+inline std::size_t write(nytl::Span<std::byte>& dst,
+		nytl::Span<const std::byte> src) {
 	dlg_assert(dst.size() >= src.size());
 	std::memcpy(dst.data(), src.data(), src.size());
 	dst = dst.last(dst.size() - src.size());
+	return src.size();
 }
 
 template<typename T>
-void write(nytl::Span<std::byte>& span, T&& data) {
-	write(span, reinterpret_cast<const std::byte*>(&data), sizeof(data));
+std::size_t write(nytl::Span<std::byte>& span, T&& data) {
+	return write(span, reinterpret_cast<const std::byte*>(&data), sizeof(data));
 }
 
 inline void skip(nytl::Span<std::byte>& span, std::size_t bytes) {

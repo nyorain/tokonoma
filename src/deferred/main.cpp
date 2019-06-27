@@ -966,10 +966,8 @@ void ViewApp::initRenderData() {
 		0, 0, 0, 1
 	};
 
-	for(auto& primitive : scene_.primitives()) {
-		for(auto& ini : primitive.instances) {
-			ini.matrix = mat * ini.matrix;
-		}
+	for(auto& ini : scene_.instances()) {
+		ini.matrix = mat * ini.matrix;
 	}
 
 	shadowData_ = doi::initShadowData(dev, depthFormat(),
@@ -1756,7 +1754,10 @@ void ViewApp::updateDevice() {
 		}
 
 		if(updateScene_) {
-			scene_.updateDevice(mat);
+			auto semaphore = scene_.updateDevice(mat);
+			if(semaphore) {
+				addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
+			}
 		}
 
 		// depend on camera position

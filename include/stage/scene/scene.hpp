@@ -101,6 +101,7 @@ public:
 
 	struct Instance {
 		nytl::Mat4f matrix;
+		u32 primitiveID;
 		u32 materialID;
 		u32 modelID; // just for picking, not related to Primitive
 	};
@@ -120,7 +121,6 @@ public:
 		std::vector<nytl::Vec3f> normals;
 		std::vector<nytl::Vec2f> texCoords0;
 		std::vector<nytl::Vec2f> texCoords1;
-		std::vector<Instance> instances;
 	};
 
 	static const vk::PipelineVertexInputStateCreateInfo& vertexInfo();
@@ -133,10 +133,14 @@ public:
 	void init(InitData&, const WorkBatcher&, vk::ImageView dummyTex);
 	void createImage(unsigned id, bool srgb);
 
-	void updateDevice(nytl::Mat4f proj);
+	// optionally returns semaphore that should be waited upon before
+	// doing any rendering involding the scene. In that case a
+	// re-record is needed additionally.
+	vk::Semaphore updateDevice(nytl::Mat4f proj);
 	void render(vk::CommandBuffer, vk::PipelineLayout, bool blend) const;
 
 	auto& primitives() { return primitives_; }
+	auto& instances() { return instances_; }
 	auto& materials() { return materials_; }
 	auto& images() { return images_; }
 	auto& samplers() { return samplers_; }
@@ -147,6 +151,14 @@ public:
 	auto& samplers() const { return samplers_; }
 	auto& defaultSampler() const { return defaultSampler_; }
 	auto& dsLayout() const { return dsLayout_; }
+
+	u32 addPrimitive(std::vector<nytl::Vec3f> positions,
+		std::vector<nytl::Vec3f> normals,
+		std::vector<u32> indices,
+		std::vector<nytl::Vec2f> texCoords1 = {},
+		std::vector<nytl::Vec2f> texCoords2 = {});
+	u32 addMaterial(const Material&);
+	u32 addInstance(const Primitive&, nytl::Mat4f matrix, u32 matID);
 
 	nytl::Vec3f min() const { return min_; }
 	nytl::Vec3f max() const { return max_; }
@@ -159,6 +171,9 @@ protected:
 		const gltf::Material&, const SceneRenderInfo&);
 	void loadPrimitive(InitData&, const WorkBatcher&, const gltf::Model&,
 		const gltf::Primitive&, nytl::Mat4f matrix);
+	void writeInstance(const Instance& ini, nytl::Span<std::byte>& ids,
+		nytl::Span<std::byte>& cmds);
+	vk::Semaphore upload();
 
 	bool multiDrawIndirect_ {};
 	vpp::Sampler defaultSampler_;
@@ -166,8 +181,14 @@ protected:
 	std::vector<SceneImage> images_;
 	std::vector<Material> materials_;
 	std::vector<Primitive> primitives_;
+	std::vector<Instance> instances_;
 	unsigned defaultMaterialID_ {};
 	unsigned instanceID_ {};
+
+	// for updateDevice
+	unsigned newPrimitives_ {};
+	unsigned newMats_ {};
+	unsigned newInis_ {};
 
 	nytl::Vec3f min_;
 	nytl::Vec3f max_;
@@ -195,6 +216,21 @@ protected:
 
 	vpp::Semaphore uploadSemaphore_;
 	vpp::CommandBuffer uploadCb_;
+
+	// keep-alive during copying
+	struct {
+		vpp::SubBuffer stage;
+
+		// when an instance is added
+		vpp::SubBuffer instances;
+
+		// when a material is added
+		vpp::SubBuffer materials;
+
+		// when a primitive is added
+		vpp::SubBuffer indices;
+		vpp::SubBuffer vertices;
+	} upload_;
 };
 
 // Tries to parse the given string as path or filename of a gltf/gltb file
