@@ -1,7 +1,7 @@
 #pragma once
 
-#include <stage/scene/primitive.hpp>
 #include <stage/types.hpp>
+#include <stage/defer.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/mat.hpp>
 #include <vpp/handles.hpp>
@@ -9,10 +9,10 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 
-// TODO: allow to configure dir light view frustum size (lambda)
-// TODO: allow to configure/change shadowmap sizes
 // TODO: directional light: when depth clamp isn't supported, emulate.
 //   see shadowmap.vert. Pass via specialization constant
+// TODO: allow to configure dir light view frustum size (lambda)
+// TODO: allow to configure/change shadowmap sizes
 // PERF: deferred constructors
 
 namespace doi {
@@ -22,6 +22,7 @@ struct Camera;
 
 struct ShadowData {
 	vk::Format depthFormat;
+	vpp::TrDsLayout dsLayout;
 	vpp::Sampler sampler;
 	vpp::RenderPass rpPoint;
 	vpp::RenderPass rpDir;
@@ -54,8 +55,7 @@ public:
 
 public:
 	DirLight() = default;
-	DirLight(const WorkBatcher&, const vpp::TrDsLayout& matDsLayout,
-		const ShadowData& data);
+	DirLight(const WorkBatcher&, const ShadowData& data);
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
@@ -87,14 +87,15 @@ public:
 		float _; // padding
 		// TODO: not really needed anymore in default pbr pipeline, using
 		// only the radius. Might be useful for artistic effects though
+		// maybe configure via flag?
 		nytl::Vec3f attenuation {1.f, 4, 8};
 		float radius {2.f};
 	} data;
 
 public:
 	PointLight() = default;
-	PointLight(const WorkBatcher&, const vpp::TrDsLayout& lightLayout,
-		const ShadowData& data, vk::ImageView noShadowMap = {});
+	PointLight(const WorkBatcher&, const ShadowData& data,
+		vk::ImageView noShadowMap = {});
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
@@ -119,7 +120,6 @@ protected:
 };
 
 ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,
-	vk::DescriptorSetLayout lightDsLayout, vk::DescriptorSetLayout sceneDsLayout,
-	bool multiview, bool depthClamp);
+	vk::DescriptorSetLayout sceneDsLayout, bool multiview, bool depthClamp);
 
 } // namespace doi

@@ -31,9 +31,7 @@ constexpr u32 nlastbits(u32 count) {
 }
 
 ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
-		vk::DescriptorSetLayout lightDsLayout,
-		vk::DescriptorSetLayout sceneDsLayout,
-		bool multiview, bool depthClamp) {
+		vk::DescriptorSetLayout sceneDsLayout, bool multiview, bool depthClamp) {
 	ShadowData data;
 	data.depthFormat = depthFormat;
 	data.multiview = multiview;
@@ -66,7 +64,6 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	dependency.srcSubpass = 0u; // last
 	dependency.srcStageMask = vk::PipelineStageBits::allGraphics;
 	dependency.srcAccessMask =
-		vk::AccessBits::memoryWrite |
 		vk::AccessBits::depthStencilAttachmentWrite |
 		vk::AccessBits::depthStencilAttachmentRead;
 	dependency.dstSubpass = vk::subpassExternal;
@@ -117,6 +114,17 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	// sci.minFilter = vk::Filter::nearest;
 	data.sampler = {dev, sci};
 
+	auto lightBindings = {
+		vpp::descriptorBinding( // ubo
+			vk::DescriptorType::uniformBuffer,
+			vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
+		vpp::descriptorBinding( // shadowmap
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &data.sampler.vkHandle()),
+	};
+
+	data.dsLayout = {dev, lightBindings};
+
 	// pipeline layout
 	if(!multiview) {
 		vk::PushConstantRange facePcr;
@@ -124,9 +132,9 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		facePcr.stageFlags = vk::ShaderStageBits::vertex;
 		facePcr.size = 4u;
 
-		data.pl = {dev, {{lightDsLayout, sceneDsLayout}}, {{facePcr}}};
+		data.pl = {dev, {{data.dsLayout.vkHandle(), sceneDsLayout}}, {{facePcr}}};
 	} else {
-		data.pl = {dev, {{lightDsLayout, sceneDsLayout}}, {}};
+		data.pl = {dev, {{data.dsLayout.vkHandle(), sceneDsLayout}}, {}};
 	}
 
 	// pipeline
@@ -199,8 +207,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 }
 
 // DirLight
-DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
-		const ShadowData& data) {
+DirLight::DirLight(const WorkBatcher& wb, const ShadowData& data) {
 	auto& dev = wb.dev;
 
 	// target
@@ -243,13 +250,13 @@ DirLight::DirLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	auto lightUboSize = sizeof(this->data) +
 		sizeof(nytl::Mat4f) * cascadeCount +
 		sizeof(float) * vpp::align(cascadeCount, 4u);
-	ds_ = {wb.alloc.ds, dsLayout};
+	ds_ = {wb.alloc.ds, data.dsLayout};
 	ubo_ = {wb.alloc.bufHost, lightUboSize,
 		vk::BufferUsageBits::uniformBuffer, hostMem};
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
-	ldsu.imageSampler({{data.sampler, shadowMap(),
+	ldsu.imageSampler({{{}, shadowMap(),
 		vk::ImageLayout::depthStencilReadOnlyOptimal}});
 	ldsu.apply();
 }
@@ -401,8 +408,8 @@ void DirLight::updateDevice(const Camera& camera) {
 }
 
 // PointLight
-PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
-		const ShadowData& data, vk::ImageView noShadowMap) {
+PointLight::PointLight(const WorkBatcher& wb, const ShadowData& data,
+		vk::ImageView noShadowMap) {
 	auto& dev = wb.dev;
 	if(!noShadowMap) {
 		this->data.flags |= lightFlagShadow;
@@ -448,13 +455,14 @@ PointLight::PointLight(const WorkBatcher& wb, const vpp::TrDsLayout& dsLayout,
 	auto hostMem = dev.hostMemoryTypes();
 	auto lightUboSize = 6 * sizeof(nytl::Mat4f) + // 6 * projection;view
 		sizeof(this->data);
-	ds_ = {wb.alloc.ds, dsLayout};
+	ds_ = {wb.alloc.ds, data.dsLayout};
 	ubo_ = {wb.alloc.bufHost, lightUboSize,
 		vk::BufferUsageBits::uniformBuffer, hostMem};
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{{ubo_}}});
-	ldsu.imageSampler({{data.sampler, hasShadowMap() ? shadowMap() : noShadowMap,
+	ldsu.imageSampler({{{},
+		hasShadowMap() ? shadowMap() : noShadowMap,
 		vk::ImageLayout::depthStencilReadOnlyOptimal}});
 	ldsu.apply();
 

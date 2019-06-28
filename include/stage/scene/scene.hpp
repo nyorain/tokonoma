@@ -14,23 +14,19 @@
 #include <tinygltf.hpp>
 #include <vector>
 
-// TODO: support basic AABB culling, always use indirect commands
-//   could do it on the gpu, even more efficiently with khr_draw_indirect_count
+// TODO: fix updateDs returning in upload
 // TODO: dont require multidraw support, see gbuf.vert
-// TODO: support instanced drawing, detect it from gltf structure
-//   we can't rely on gl_DrawID then, we should probably pass
-//   matrices (and with that model/material id) per instance.
-//   but then we require the drawIndirectFirstInstance vulkan features
-// TODO: sorting primitives by how they are layed out in the vertex
-//   buffers (when there are no other creteria)? could improve cache locality
 // TODO: update min_,max_ when matrix is changed, new primitive added?
+// IDEA: decouple scene and gltf loading, support .obj and other open formats
+// PERF: sorting primitives by how they are layed out in the vertex
+//   buffers (when there are no other creteria)? could improve cache locality
+// PERF: support basic AABB culling, always use indirect commands
+//   could do it on the gpu, even more efficiently with khr_draw_indirect_count
 
 namespace doi {
 namespace gltf = tinygltf;
 
 struct SceneRenderInfo {
-	// const vpp::TrDsLayout& materialDsLayout;
-	// const vpp::TrDsLayout& primitiveDsLayout;
 	vk::ImageView dummyTex; // 1 pixel rgba white
 	float samplerAnisotropy;
 
@@ -67,6 +63,8 @@ struct Sampler {
 	Sampler(const vpp::Device&, const gltf::Sampler&, float maxAnisotropy);
 };
 
+/// Manages all geometry and material buffers as well as the instances
+/// that use them.
 class Scene {
 public:
 	static constexpr auto imageCount = 96u;
@@ -94,20 +92,13 @@ public:
 		vpp::SubBuffer::InitData initStage;
 
 		// tmp accum
-		// TODO: remove, just use the members instead
-		unsigned indexCount {};
-		unsigned vertexCount {};
 		unsigned tc0Count {};
 		unsigned tc1Count {};
 	};
 
-	struct Instance {
-		nytl::Mat4f matrix;
-		u32 primitiveID;
-		u32 materialID;
-		u32 modelID; // just for picking, not related to Primitive
-	};
-
+	/// Raw geometry data for a primitive.
+	/// Can be rendered multiple time (by multiple instances)
+	/// with different materials and transform matrices.
 	struct Primitive {
 		unsigned firstIndex; // first index in scenes index buffer
 		unsigned vertexOffset; // first vertex in scenes vertex buffer
@@ -121,6 +112,15 @@ public:
 		std::vector<nytl::Vec3f> normals;
 		std::vector<nytl::Vec2f> texCoords0;
 		std::vector<nytl::Vec2f> texCoords1;
+	};
+
+	/// Connects a Primitive to a Material and defined its transform.
+	/// Instances are what is rendered in the end.
+	struct Instance {
+		nytl::Mat4f matrix;
+		u32 primitiveID;
+		u32 materialID;
+		u32 modelID; // just for picking, not related to Primitive
 	};
 
 	static const vk::PipelineVertexInputStateCreateInfo& vertexInfo();

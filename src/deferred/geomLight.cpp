@@ -2,7 +2,6 @@
 
 #include <stage/scene/environment.hpp>
 #include <stage/scene/material.hpp>
-#include <stage/scene/primitive.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/shader.hpp>
 #include <vpp/formats.hpp>
@@ -532,21 +531,6 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 			time->add("geometry");
 		}
 	}
-
-	// render light balls with emission material
-	// NOTE: rendering them messes with light scattering since
-	// then the light source is *inside* something (small).
-	// disabled for now, although it shows bloom nicely.
-	// Probably best to render it in the last pass, together
-	// with the skybox. Should use the depth buffer correctly though!
-	//
-	// lightMaterial_->bind(cb, gpass_.pipeLayout);
-	// for(auto& l : pointLights_) {
-	// 	l.lightBall().render(cb, gpass_.pipeLayout);
-	// }
-	// for(auto& l : dirLights_) {
-	// 	l.lightBall().render(cb, gpass_.pipeLayout);
-	// }
 
 	vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
 

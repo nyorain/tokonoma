@@ -21,6 +21,8 @@
 // have completely different transform matrices and we therefore couldn't
 // order them correctly. Could use it for different transparency
 // approaches (order independent; stoachastic)
+// might bring performance improvement, could e.g. be detected from
+// gltf structure
 
 // TODO: move this small utility somewhere more general (doi/render?)
 // it proves quite useful here for complex buffers with many
@@ -235,7 +237,7 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 		vk::BufferUsageBits::storageBuffer, hostMem};
 
 	// primitive buffers
-	size = data.indexCount * sizeof(Index);
+	size = indexCount_ * sizeof(Index);
 	stageSize += size;
 	indices_ = {data.initIndices, wb.alloc.bufDevice, size,
 		vk::BufferUsageBits::indexBuffer |
@@ -246,9 +248,9 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	tc0Offset_ = size;
 	size += data.tc0Count * sizeof(Vec2f);
 	posOffset_ = size;
-	size += data.vertexCount * sizeof(Vec3f);
+	size += vertexCount_ * sizeof(Vec3f);
 	normalOffset_ = size;
-	size += data.vertexCount * sizeof(Vec3f);
+	size += vertexCount_ * sizeof(Vec3f);
 
 	stageSize += size;
 	vertices_ = {data.initVertices, wb.alloc.bufDevice, size,
@@ -377,7 +379,6 @@ void Scene::loadMaterial(InitData&, const WorkBatcher&,
 		auto& alphaMode = am->second.string_value;
 		dlg_assert(!alphaMode.empty());
 		if(alphaMode == "BLEND") {
-			dlg_trace("BLEND alpha mode");
 			m.flags |= Material::Bit::blend;
 			m.alphaCutoff = 0.0;
 		} else if(alphaMode == "MASK") {
@@ -568,8 +569,8 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 	size += p.positions.size() * sizeof(nytl::Vec3f); // normals
 	size += p.normals.size() * sizeof(nytl::Vec3f); // positions
 
-	data.indexCount += p.indices.size();
-	data.vertexCount += p.positions.size();
+	indexCount_ += p.indices.size();
+	vertexCount_ += p.positions.size();
 
 	if(tc0a) {
 		dlg_assert(tc0a->count == pa.count);
@@ -657,14 +658,14 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 	auto indexSpan = span;
 
 	auto tc1Span = span;
-	skip(tc1Span, sizeof(Index) * data.indexCount);
+	skip(tc1Span, sizeof(Index) * indexCount_);
 	auto tc1Off = tc1Span.data() - stageMap.ptr();
 	auto tc0Span = tc1Span;
 	skip(tc0Span, sizeof(nytl::Vec2f) * data.tc1Count);
 	auto posSpan = tc0Span;
 	skip(posSpan, sizeof(nytl::Vec2f) * data.tc0Count);
 	auto normalSpan = posSpan;
-	skip(normalSpan, sizeof(nytl::Vec3f) * data.vertexCount);
+	skip(normalSpan, sizeof(nytl::Vec3f) * vertexCount_);
 
 	auto vertexCount = 0u;
 	auto indexCount = 0u;
@@ -726,9 +727,6 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 	// upload matrices for all primitives to modelsBuf
 	span = normalSpan; // last offset
 	stageMap.flush();
-
-	vertexCount_ = data.vertexCount;
-	indexCount_ = data.indexCount;
 
 	// upload opaque draw commands
 	// TODO: cmd/models should be done in updateDevice/at runtime;
@@ -819,6 +817,8 @@ void Scene::writeInstance(const Instance& ini, nytl::Span<std::byte>& ids,
 	doi::write(cmds, cmd);
 }
 
+// TODO: when updateDs is set to true, a rerecord is needed
+// not necessarily coupled to semaphore...
 vk::Semaphore Scene::upload() {
 	auto& dev = device();
 
@@ -1176,6 +1176,9 @@ u32 Scene::addPrimitive(std::vector<nytl::Vec3f> positions,
 		std::vector<nytl::Vec2f> texCoords1) {
 	++newPrimitives_;
 	dlg_assert(normals.size() == positions.size());
+	for(auto& i : indices) {
+		dlg_assert(i < positions.size());
+	}
 
 	auto& p = primitives_.emplace_back();
 	p.positions = std::move(positions);
@@ -1225,8 +1228,8 @@ const vk::PipelineVertexInputStateCreateInfo& Scene::vertexInfo() {
 	};
 
 	static constexpr vk::VertexInputAttributeDescription attributes[] = {
-		{0, 0, vk::Format::r32g32b32a32Sfloat, 0}, // pos
-		{1, 1, vk::Format::r32g32b32a32Sfloat, 0}, // normal
+		{0, 0, vk::Format::r32g32b32Sfloat, 0}, // pos
+		{1, 1, vk::Format::r32g32b32Sfloat, 0}, // normal
 		{2, 2, vk::Format::r32g32Sfloat, 0}, // texCoords0
 		{3, 3, vk::Format::r32g32Sfloat, 0}, // texCoords1
 	};

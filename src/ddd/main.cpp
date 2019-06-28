@@ -19,11 +19,9 @@
 #include <stage/scene/shape.hpp>
 #include <stage/scene/scene.hpp>
 #include <stage/scene/light.hpp>
+#include <stage/scene/scene.hpp>
 #include <stage/scene/environment.hpp>
 #include <argagg.hpp>
-
-#include <stage/scene/scene.hpp>
-#include <stage/scene/primitive.hpp>
 
 #include <ny/key.hpp>
 #include <ny/keyboardContext.hpp>
@@ -38,6 +36,7 @@
 #include <vpp/commandAllocator.hpp>
 #include <vpp/formats.hpp>
 #include <vpp/pipeline.hpp>
+#include <vpp/shader.hpp>
 #include <vpp/bufferOps.hpp>
 #include <vpp/imageOps.hpp>
 
@@ -73,7 +72,7 @@ public:
 		camera_.perspective.near = 0.01f;
 		camera_.perspective.far = 10.f;
 
-		// === Init pipeline ===
+		// init pipeline
 		auto& dev = vulkanDevice();
 		auto hostMem = dev.hostMemoryTypes();
 		vpp::DeviceMemoryAllocator memStage(dev);
@@ -139,6 +138,9 @@ public:
 			model, sc, mat, ri);
 		initScene.init(batch, dummyTex_.vkImageView());
 
+		shadowData_ = doi::initShadowData(dev, depthFormat(),
+			scene_.dsLayout(), multiview_, depthClamp_);
+
 		// view + projection matrix
 		auto cameraBindings = {
 			vpp::descriptorBinding(
@@ -147,19 +149,6 @@ public:
 		};
 
 		cameraDsLayout_ = {dev, cameraBindings};
-
-		// per light
-		// TODO: statically use shadow data sampler here?
-		auto lightBindings = {
-			vpp::descriptorBinding( // ubo
-				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
-			vpp::descriptorBinding( // shadowmap
-				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment),
-		};
-
-		lightDsLayout_ = {dev, lightBindings};
 
 		doi::Environment::InitData initEnv;
 		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", sampler_);
@@ -184,8 +173,8 @@ public:
 		pipeLayout_ = {dev, {{
 			cameraDsLayout_.vkHandle(),
 			scene_.dsLayout().vkHandle(),
-			lightDsLayout_.vkHandle(),
-			lightDsLayout_.vkHandle(),
+			shadowData_.dsLayout.vkHandle(),
+			shadowData_.dsLayout.vkHandle(),
 			aoDsLayout_.vkHandle(),
 		}}, {}};
 
@@ -244,12 +233,7 @@ public:
 			dev.deviceMemoryTypes(), 4u};
 		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
 
-		// add light primitive
-		// lightMaterial_.emplace(materialDsLayout_,
-		// 	dummyTex_.vkImageView(), scene_->defaultSampler(),
-		// 	nytl::Vec{1.f, 1.f, 0.4f, 1.f});
-
-		// == ubo and stuff ==
+		// camera
 		auto cameraUboSize = sizeof(nytl::Mat4f) // proj matrix
 			+ sizeof(nytl::Vec3f) + sizeof(float) * 2; // viewPos, near, far
 		cameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
@@ -261,14 +245,11 @@ public:
 		envCameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
 
 		// example light
-		shadowData_ = doi::initShadowData(dev, depthFormat(),
-			lightDsLayout_, scene_.dsLayout(), multiview_, depthClamp_);
-
-		dirLight_ = {batch, lightDsLayout_, shadowData_};
+		dirLight_ = {batch, shadowData_};
 		dirLight_.data.dir = {5.8f, -12.0f, 4.f};
 		dirLight_.data.color = {5.f, 5.f, 5.f};
 
-		pointLight_ = {batch, lightDsLayout_, shadowData_};
+		pointLight_ = {batch, shadowData_};
 		pointLight_.data.position = {0.f, 5.0f, 0.f};
 		pointLight_.data.radius = 2.f;
 		pointLight_.data.attenuation = {1.f, 0.1f, 0.05f};
@@ -375,16 +356,17 @@ public:
 
 		// PERF: do this in scene initialization to avoid additional
 		// data upload
-		auto cube = doi::Cube{{}, {0.01f, 0.01f, 0.01f}};
+		auto cube = doi::Cube{{}, {0.05f, 0.05f, 0.05f}};
 		auto shape = doi::generate(cube);
 		cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
-		auto sphere = doi::Sphere{{}, {0.01f, 0.01f, 0.01f}};
+		auto sphere = doi::Sphere{{}, {0.05f, 0.05f, 0.05f}};
 		shape = doi::generateUV(sphere);
 		spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
+		// init light visualizations
 		doi::Material lmat;
 
 		lmat.emissionFac = dirLight_.data.color;
@@ -407,6 +389,11 @@ public:
 		return true;
 	}
 
+	// TODO: probe pipes currently don't work for directional light,
+	// since their shadow mapping depend on the camera (i.e. not
+	// guaranteed to work for anything behind current camera).
+	// we would somehow have to refresh the shadow map projection
+	// (and re-render all cascades) for *each face* we render here.
 	void initProbePipe(const doi::WorkBatcher&) {
 		auto& dev = vulkanDevice();
 
@@ -753,15 +740,22 @@ public:
 			doi::checkMovement(camera_, *kc, dt);
 		}
 
-		// if(moveLight_) {
-		// 	dirLight_.data.dir.x = 7.0 * std::cos(0.2 * time_);
-		// 	dirLight_.data.dir.z = 7.0 * std::sin(0.2 * time_);
-		// 	// pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
-		// 	// pointLight_.data.position.z = 7.0 * std::sin(0.2 * time_);
-		// 	updateLight_ = true;
-		// }
+		if(moveLight_) {
+			if(mode_ & modePointLight) {
+				pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
+				pointLight_.data.position.z = 7.0 * std::sin(0.2 * time_);
+				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
+				scene_.updatedInstance(pointLight_.instanceID);
+			} else if(mode_ & modeDirLight) {
+				dirLight_.data.dir.x = 7.0 * std::cos(0.2 * time_);
+				dirLight_.data.dir.z = 7.0 * std::sin(0.2 * time_);
+				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
+				scene_.updatedInstance(dirLight_.instanceID);
+			}
+			updateLight_ = true;
+		}
 
-		// NOTE: we currently always redraw to see consistent fps
+		// we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
 		// 	App::scheduleRedraw();
 		// }
@@ -1046,7 +1040,6 @@ protected:
 
 	vpp::Sampler sampler_;
 	vpp::TrDsLayout cameraDsLayout_;
-	vpp::TrDsLayout lightDsLayout_;
 	vpp::PipelineLayout pipeLayout_;
 
 	vpp::SubBuffer cameraUbo_;

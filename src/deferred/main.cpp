@@ -122,9 +122,7 @@ protected:
 	};
 
 	std::optional<Alloc> alloc;
-
 	vpp::TrDsLayout cameraDsLayout_;
-	vpp::TrDsLayout lightDsLayout_;
 
 	// light and shadow
 	doi::ShadowData shadowData_;
@@ -480,7 +478,7 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		depthFormat(), {
 			cameraDsLayout_,
 			scene_.dsLayout(),
-			lightDsLayout_,
+			shadowData_.dsLayout,
 		}, {
 			linearSampler_,
 			nearestSampler_,
@@ -835,21 +833,6 @@ void ViewApp::initRenderData() {
 	};
 	cameraDsLayout_ = {dev, sceneBindings};
 
-	// TODO: shouldn't that be in stage/scene/light.cpp, initShadowData?
-	//   their shaders depend on it...
-	// TODO: use shadow sampler statically here?
-	// there is no real reason not to... expect maybe dir and point
-	// lights using different samplers? look into that
-	auto lightBindings = {
-		vpp::descriptorBinding(
-			vk::DescriptorType::uniformBuffer,
-			vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
-		vpp::descriptorBinding(
-			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment),
-	};
-	lightDsLayout_ = {dev, lightBindings};
-
 	// dummy texture for materials that don't have a texture
 	// TODO: we could just create the dummy cube and make the dummy
 	// texture just a view into one of the dummy cube faces...
@@ -971,8 +954,7 @@ void ViewApp::initRenderData() {
 	}
 
 	shadowData_ = doi::initShadowData(dev, depthFormat(),
-		lightDsLayout_, scene_.dsLayout(),
-		multiview_, depthClamp_);
+		scene_.dsLayout(), multiview_, depthClamp_);
 
 	initPasses(batch);
 
@@ -1016,7 +998,7 @@ void ViewApp::initRenderData() {
 	// TODO: defer creation
 	// TODO: cameraDsLayout dummy
 	if(pointLight) {
-		auto& l = pointLights_.emplace_back(batch, lightDsLayout_, shadowData_);
+		auto& l = pointLights_.emplace_back(batch, shadowData_);
 		l.data.position = {-1.8f, 6.0f, -2.f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
@@ -1026,7 +1008,7 @@ void ViewApp::initRenderData() {
 		l.updateDevice();
 		// pp_.params.scatterLightColor = 0.1f * l.data.color;
 	} else {
-		auto& l = dirLights_.emplace_back(batch, lightDsLayout_, shadowData_);
+		auto& l = dirLights_.emplace_back(batch, shadowData_);
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
@@ -1433,7 +1415,7 @@ void ViewApp::screenshot() {
 			depthFormat(), {
 				cameraDsLayout_,
 				scene_.dsLayout(),
-				lightDsLayout_,
+				shadowData_.dsLayout,
 			}, {
 				linearSampler_,
 				nearestSampler_,

@@ -46,7 +46,6 @@ stage_src = [
 
 	'scene/scene.cpp',
 	'scene/material.cpp',
-	'scene/primitive.cpp',
 	'scene/shape.cpp',
 	'scene/light.cpp',
 	'scene/environment.cpp',
