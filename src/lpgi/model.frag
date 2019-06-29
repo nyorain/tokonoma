@@ -200,7 +200,7 @@ void main() {
 	// NOTE: when specular IBL isn't enabled we could put all the
 	// energy into diffuse IBL or the other way around. Would look
 	// somewhat weird though probably
-	float cosTheta = max(dot(normal, -viewDir), 0.0);
+	float cosTheta = clamp(dot(normal, -viewDir), 0, 1);
 	vec3 kS = fresnelSchlickRoughness(cosTheta, f0, roughness);
 	vec3 kD = 1.0 - kS;
 	kD *= 1.0 - metalness;

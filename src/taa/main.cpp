@@ -94,9 +94,9 @@ public:
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
-		sci.addressModeU = vk::SamplerAddressMode::repeat;
-		sci.addressModeV = vk::SamplerAddressMode::repeat;
-		sci.addressModeW = vk::SamplerAddressMode::repeat;
+		sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
+		sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
+		sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
 		sci.magFilter = vk::Filter::linear;
 		sci.minFilter = vk::Filter::linear;
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
@@ -186,7 +186,7 @@ public:
 		attachments[0].samples = vk::SampleCountBits::e1;
 
 		attachments[1].initialLayout = vk::ImageLayout::undefined;
-		attachments[1].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		attachments[1].finalLayout = vk::ImageLayout::depthStencilReadOnlyOptimal;
 		attachments[1].format = depthFormat();
 		attachments[1].loadOp = vk::AttachmentLoadOp::clear;
 		attachments[1].storeOp = vk::AttachmentStoreOp::store;
@@ -428,13 +428,13 @@ public:
 			// NOTE: not sure if linear or nearest sampler is better for access
 			// into history
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
+				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
+				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
+				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::compute),
 		};
@@ -452,7 +452,7 @@ public:
 
 		taa_.pipe = {dev, cpi};
 
-		auto uboSize = sizeof(nytl::Mat4f) * 2 + sizeof(float) * 2;
+		auto uboSize = sizeof(nytl::Mat4f) * 2 + sizeof(float) * 6;
 		taa_.ubo = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 	}
@@ -504,7 +504,7 @@ public:
 		tdsu.imageSampler({{{}, offscreen_.target.vkImageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		tdsu.imageSampler({{{}, depthTarget().vkImageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
+			vk::ImageLayout::depthStencilReadOnlyOptimal}});
 		tdsu.uniform({{{taa_.ubo}}});
 
 		vpp::DescriptorSetUpdate pdsu(pp_.ds);
@@ -522,16 +522,27 @@ public:
 		// The stalling below is not nice
 		vk::beginCommandBuffer(cbInitLayouts_, {});
 
-		// TODO: also clear image to value or blit from old history
-		// if there is any... We currently get undefined content
 		vk::ImageMemoryBarrier barrier;
 		barrier.image = taa_.inHistory.image();
 		barrier.oldLayout = vk::ImageLayout::undefined;
-		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		barrier.dstAccessMask = vk::AccessBits::shaderRead;
+		barrier.newLayout = vk::ImageLayout::transferDstOptimal;
+		barrier.dstAccessMask = vk::AccessBits::transferWrite;
 		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
 		vk::cmdPipelineBarrier(cbInitLayouts_,
 			vk::PipelineStageBits::topOfPipe,
+			vk::PipelineStageBits::transfer,
+			{}, {}, {}, {{barrier}});
+		vk::ClearColorValue cv {0.f, 0.f, 0.f, 0.f};
+		vk::ImageSubresourceRange range{vk::ImageAspectBits::color, 0, 1, 0, 1};
+		vk::cmdClearColorImage(cbInitLayouts_, taa_.inHistory.image(),
+			vk::ImageLayout::transferDstOptimal, cv, {{range}});
+
+		barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
+		barrier.srcAccessMask = vk::AccessBits::transferWrite;
+		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		barrier.dstAccessMask = vk::AccessBits::shaderRead;
+		vk::cmdPipelineBarrier(cbInitLayouts_,
+			vk::PipelineStageBits::transfer,
 			vk::PipelineStageBits::computeShader,
 			{}, {}, {}, {{barrier}});
 
@@ -870,25 +881,33 @@ public:
 			// sample sequence from
 			// community.arm.com/developer/tools-software/graphics/b/blog/posts/temporal-anti-aliasing
 			auto [width, height] = swapchainInfo().imageExtent;
-			auto sampleFac = 1.f / 8.f;
 			static const std::array samples {
-				Vec2f{-7.0f, 1.0f},
-				Vec2f{-5.0f, -5.0f},
-				Vec2f{-1.0f, -3.0f},
-				Vec2f{3.0f, -7.0f},
-				Vec2f{5.0f, -1.0f},
-				Vec2f{7.0f, 7.0f},
-				Vec2f{1.0f, 3.0f},
-				Vec2f{-3.0f, 5.0f},
+				// ARM
+				// Vec2f{-7.0f / 8.f, 1.0f / 8.f},
+				// Vec2f{-5.0f / 8.f, -5.0f / 8.f},
+				// Vec2f{-1.0f / 8.f, -3.0f / 8.f},
+				// Vec2f{3.0f / 8,f, -7.0f / 8.f},
+				// Vec2f{5.0f / 8.f, -1.0f / 8.f},
+				// Vec2f{7.0f / 8.f, 7.0f / 8.f},
+				// Vec2f{1.0f / 8.f, 3.0f / 8.f},
+				// Vec2f{-3.0f / 8.f, 5.0f / 8.f},
+
+				// uniform4
+				Vec2f{-0.25f, -0.25f},
+				Vec2f{0.25f, 0.25f},
+				Vec2f{0.25f, -0.25f},
+				Vec2f{-0.25f, 0.25f},
 			};
 
 			using namespace nytl::vec::cw::operators;
 			taa_.sampleID = (taa_.sampleID + 1) % samples.size();
 			auto pixSize = Vec2f{1.f / width, 1.f / height};
 			// range [-0.5f, 0.5f] pixel
-			auto off = 0.5f * sampleFac * samples[taa_.sampleID] * pixSize;
+			// we don't jitter one whole pixel, only half
+			auto off = samples[taa_.sampleID] * pixSize;
 			auto proj = matrix(camera_);
-			auto jproj = doi::translateMat({off.x, off.y, 0.f}) * proj;
+			auto jitterMat = doi::translateMat({off.x, off.y, 0.f});
+			auto jproj = jitterMat * proj;
 
 			doi::write(span, jproj);
 			doi::write(span, camera_.pos);
@@ -899,18 +918,21 @@ public:
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
-			doi::write(envSpan, fixedMatrix(camera_));
+			doi::write(envSpan, jitterMat * fixedMatrix(camera_));
 			envMap.flush();
 
 			auto taaMap = taa_.ubo.memoryMap();
 			auto taaSpan = taaMap.span();
 			doi::write(taaSpan, nytl::Mat4f(nytl::inverse(proj)));
 			doi::write(taaSpan, taa_.lastProj);
+			doi::write(taaSpan, off);
+			doi::write(taaSpan, taa_.lastJitter);
 			doi::write(taaSpan, camera_.perspective.near);
 			doi::write(taaSpan, camera_.perspective.far);
 			taaMap.flush();
 
 			taa_.lastProj = proj;
+			taa_.lastJitter = off;
 		}
 
 		auto semaphore = scene_.updateDevice(matrix(camera_));
@@ -1021,6 +1043,7 @@ protected:
 		vpp::SubBuffer ubo;
 		unsigned sampleID {0};
 		nytl::Mat4f lastProj = nytl::identity<4, float>();
+		nytl::Vec2f lastJitter;
 	} taa_;
 
 	struct {

@@ -14,30 +14,74 @@ layout(set = 0, binding = 3) uniform sampler2D depthTex; // non-linear, [0, 1]
 layout(set = 0, binding = 4, row_major) uniform UBO {
 	mat4 invProj;
 	mat4 lastProj;
+	vec2 jitter;
+	vec2 lastJitter;
 	float near, far;
-	// TODO: vec2 jitter
 } ubo;
-
-// TODO: make both variable to see effect
-const float depthThreshold = 1.0;
-const float factor = 0.05;
 
 uvec2 size = imageSize(outHistory);
 vec2 pixelSize = 1.f / size;
 
-// using tap4
-void localMinMax(vec2 uv, out vec3 minc, out vec3 maxc) {
-	vec2 off01 = vec2(-1, 1) * pixelSize;
-	vec2 off11 = vec2(1, 1) * pixelSize;
+// Luninance vector. dot(light.rgb, luminance) will be used to
+// calculate the luminance. Must rerecord when changed.
+// See https://stackoverflow.com/questions/596216 for a discussion
+// about different conventions.
+const vec3 luminanceFac = vec3(0.25, 0.65, 0.1);
 
-	vec3 c00 = texture(renderedTex, uv - off11).rgb;
-	vec3 c10 = texture(renderedTex, uv - off01).rgb;
-	vec3 c01 = texture(renderedTex, uv + off01).rgb;
-	vec3 c11 = texture(renderedTex, uv + off11).rgb;
+#if 0
+vec3 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec4 p, vec4 q) {
+	const float eps = 0.00000001f;
 
-	minc = min(c00, min(c10, min(c01, c11)));
-	maxc = max(c00, max(c10, max(c01, c11)));
+	// note: only clips towards aabb center (but fast!)
+	vec3 p_clip = 0.5 * (aabb_max + aabb_min);
+	vec3 e_clip = 0.5 * (aabb_max - aabb_min) + eps;
+
+	vec3 v_clip = q - float4(p_clip, p.w);
+	vec3 v_unit = v_clip.xyz / e_clip;
+	vec3 a_unit = abs(v_unit);
+	float ma_unit = max(a_unit.x, max(a_unit.y, a_unit.z));
+
+	if (ma_unit > 1.0) {
+		return float4(p_clip, p.w) + v_clip / ma_unit;
+	} else {
+		return q;// point inside aabb
+	}
 }
+
+#else
+vec3 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec3 p, vec3 q) {
+	vec3 r = q - p;
+	vec3 rmax = aabb_max - p.xyz;
+	vec3 rmin = aabb_min - p.xyz;
+
+	const float eps = 0.00000001f;
+
+	// NOPE
+	// r *= clamp(rmax.x / r.x, 0, 1);
+	// r *= clamp(rmax.y / r.y, 0, 1);
+	// r *= clamp(rmax.z / r.z, 0, 1);
+	// r *= clamp(r.x / rmin.x, 0, 1);
+	// r *= clamp(r.y / rmin.y, 0, 1);
+	// r *= clamp(r.z / rmin.z, 0, 1);
+
+	if (r.x > rmax.x + eps)
+		r *= (rmax.x / r.x);
+	if (r.y > rmax.y + eps)
+		r *= (rmax.y / r.y);
+	if (r.z > rmax.z + eps)
+		r *= (rmax.z / r.z);
+
+	if (r.x < rmin.x - eps)
+		r *= (rmin.x / r.x);
+	if (r.y < rmin.y - eps)
+		r *= (rmin.y / r.y);
+	if (r.z < rmin.z - eps)
+		r *= (rmin.z / r.z);
+
+	return p + r;
+}
+
+#endif
 
 void main() {
 	// get pixel this invocation is responsible for
@@ -51,53 +95,150 @@ void main() {
 	// reconstruct world space using the depth buffer
 	vec2 uv = (pixel + 0.5) * pixelSize; // center of pixel
 
-	float depth = texture(depthTex, uv).r;
-	vec3 world = reconstructWorldPos(uv, ubo.invProj, depth);
-	float z = depthtoz(depth, ubo.near, ubo.far);
-
 	// read rendered pixel 
-	vec3 color = texture(renderedTex, uv).rgb;
+	vec2 j = 0.5 * ubo.jitter;
+	j.y *= -1;
+	vec2 juv = uv + j;
+	float depth = texture(depthTex, juv).r;
+
+	vec2 suv = 2 * uv - 1;
+	// suv -= ubo.jitter;
+	suv.y *= -1.f; // flip y, different directions in screen/world space
+	vec4 pos4 = ubo.invProj * vec4(suv, depth, 1.0);
+	vec3 world = pos4.xyz / pos4.w;
+
+	vec3 color = texture(renderedTex, juv).rgb;
+	// vec3 color = world;
 
 	// try to find a matching pixel in the history buffer
 	vec3 proj = multPos(ubo.lastProj, world);
 	proj.y *= -1.f;
+	// proj.xy += ubo.lastJitter;
 	vec2 tc = 0.5 + 0.5 * proj.xy;
+
 	if(tc == clamp(tc, 0, 1)) { // also skip for depth == 1.0?
-		float projZ = depthtoz(proj.z, ubo.near, ubo.far);
+		vec4 hist = texture(inHistory, tc);
 
 		/*
-		// find best fit in 3x3 neighborhood
-		vec4 best;
-		float bestDist = 9999; // high
-		// tc = floor(tc * size) / size;
-		for(int x = -1; x <= 1; ++x) {
-			for(int y = -1; y <= 1; ++y) {
-				vec4 prev = texture(inHistory, tc + vec2(x, y) * pixelSize);
-				float dist = abs(prev.w - projZ);
-				if(dist < bestDist) {
-					bestDist = dist;
-					best = prev;
-				}
-			}
-		}
+		// using tap4
+		const ivec2 off01 = ivec2(0, 1);
+		const ivec2 off11 = ivec2(1, 0);
+
+		vec3 c00 = textureOffset(renderedTex, juv, -off11).rgb;
+		vec3 c10 = textureOffset(renderedTex, juv, -off01).rgb;
+		vec3 c01 = textureOffset(renderedTex, juv, +off01).rgb;
+		vec3 c11 = textureOffset(renderedTex, juv, +off11).rgb;
+		// vec3 c2 = textureOffset(renderedTex, juv, +off11 + off01).rgb;
+		// vec3 c3 = textureOffset(renderedTex, juv, -off11 - off01).rgb;
+
+		vec3 cmin = min(color, min(c00, min(c10, min(c01, c11))));
+		vec3 cmax = max(color, max(c00, max(c10, max(c01, c11))));
+		// vec3 cmin = min(color, min(c00, min(c10, min(c01, min(c11, min(c2, c3))))));
+		// vec3 cmax = max(color, max(c00, max(c10, max(c01, max(c11, max(c2, c3))))));
+		// vec3 cavg = 0.25 * (c00 + c10 + c01 + c11);
+		// vec3 cavg = (color + c00 + c10 + c01 + c11 + c2 + c3) / 7;
+		vec3 cavg = (color + c00 + c10 + c01 + c11) / 5;
+
+		// hist.rgb = clamp(hist.rgb, cmin, cmax);
+		// hist.rgb = clip_aabb(cmin, cmax, clamp(cavg, cmin, cmax), hist.rgb);
+		hist.rgb = clip_aabb(cmin,  cmax, cavg, hist.rgb);
+
+		// NOTE: psych!
+		// hist.rgb = clip_aabb(2 * cmin, 2 * cmax, cavg, hist.rgb);
 		*/
 
-		vec4 best = texture(inHistory, tc);
-		float bestDist = abs(best.w - projZ);
-		// if(bestDist < depthThreshold) {
-			// merge history pixel and rendered pixel
-			color = mix(best.rgb, color, factor);
-		// }
-		/*
+		// ---
+		float thresh = 0.1;
+		float projZ = depthtoz(proj.z, ubo.near, ubo.far); // the z we want
+		float correctness = 1;
+		if(projZ > hist.w + thresh) {
+			correctness = 0;
+		}
+
+#if 0
+		const ivec2 offx = ivec2(1, 0);
+		const ivec2 offy = ivec2(0, 1);
+		float zc = hist.w;
+		float z0 = textureOffset(inHistory, tc, -offx).w;
+		float z1 = textureOffset(inHistory, tc, offx).w;
+		float z2 = textureOffset(inHistory, tc, -offy).w;
+		float z3 = textureOffset(inHistory, tc, offy).w;
+		float zmin = min(zc, min(z0, min(z1, min(z2, z3))));
+		float zmax = max(zc, max(z0, max(z1, max(z2, z3))));
+		// float zsum = z0 + z1 + z2 + z3;
+
+		z0 = textureOffset(inHistory, tc, offx - offy).w;
+		z1 = textureOffset(inHistory, tc, offx + offy).w;
+		z2 = textureOffset(inHistory, tc, -offx + offy).w;
+		z3 = textureOffset(inHistory, tc, -offx - offy).w;
+		zmin = min(zmin, min(z0, min(z1, min(z2, z3))));
+		zmax = max(zmax, max(z0, max(z1, max(z2, z3))));
+		// zsum += z0 + z1 + z2 + z3;
+		// float zavg = zsum / 8;
+
+		if(projZ < zmin - thresh || projZ > zmax + thresh) {
+			/*
+			const ivec2 off01 = ivec2(0, 1);
+			const ivec2 off11 = ivec2(1, 0);
+
+			vec3 c00 = textureOffset(renderedTex, juv, -off11).rgb;
+			vec3 c10 = textureOffset(renderedTex, juv, -off01).rgb;
+			vec3 c01 = textureOffset(renderedTex, juv, +off01).rgb;
+			vec3 c11 = textureOffset(renderedTex, juv, +off11).rgb;
+			// vec3 c2 = textureOffset(renderedTex, juv, +off11 + off01).rgb;
+			// vec3 c3 = textureOffset(renderedTex, juv, -off11 - off01).rgb;
+
+			vec3 cmin = min(color, min(c00, min(c10, min(c01, c11))));
+			vec3 cmax = max(color, max(c00, max(c10, max(c01, c11))));
+			// vec3 cmin = min(color, min(c00, min(c10, min(c01, min(c11, min(c2, c3))))));
+			// vec3 cmax = max(color, max(c00, max(c10, max(c01, max(c11, max(c2, c3))))));
+			// vec3 cavg = 0.25 * (c00 + c10 + c01 + c11);
+			// vec3 cavg = (color + c00 + c10 + c01 + c11 + c2 + c3) / 7;
+			vec3 cavg = (color + c00 + c10 + c01 + c11) / 5;
+
+			// hist.rgb = clamp(hist.rgb, cmin, cmax);
+			// hist.rgb = clip_aabb(cmin, cmax, clamp(cavg, cmin, cmax), hist.rgb);
+			hist.rgb = clip_aabb(cmin,  cmax, cavg, hist.rgb);
+			*/
+
+			correctness = 0.0;
+			// correctness =
+			// 	smoothstep(zmin - thresh, zmin, projZ) *
+			// 	(1 - smoothstep(zmax, zmax + thresh, projZ));
+		
+			// TODO: for debugging
+			// color = mix(color, vec3(1, 0, 1), pow(1 - correctness, 16));
+		} else if(projZ < zc) { // one dir influence
+			correctness = smoothstep(zc - thresh, zc, projZ) *
+				(1 - smoothstep(zc, zc + thresh, projZ));
+		}
+#endif
+
+		if(correctness > 0) {
+			const float minFeedback = 0.85;
+			const float maxFeedback = 0.999;
+
+			float lum0 = dot(luminanceFac, color);
+			float lum1 = dot(luminanceFac, hist.rgb);
+			// float lmax = dot(luminanceFac, cmax);
+			// float diff = abs(lum0 - lum1) / (0.001 + max(lum0, max(lum1, lmax)));
+			float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.2)));
+			diff = 1.0 - diff;
+			float weight = correctness * mix(diff * diff, minFeedback, maxFeedback);
+			color = mix(color, hist.rgb, weight);
 		} else {
-			// DEBUG
-			color = vec3(0.0, 1.0, 1.0);
+			// color = vec3(1, 0, 1);
 		}
-		*/
 	} else {
-		color = vec3(1.0, 1.0, 0.0);
+		// color = vec3(1.0, 1.0, 0.0);
 	}
 
+	// debugging was fun.
+	// if(any(isnan(color))) {
+	// 	color = vec3(1.0, 0.0, 1.0);
+	// }
+
 	// write the result into the history buffer
+	float z = depthtoz(depth, ubo.near, ubo.far);
 	imageStore(outHistory, ivec2(pixel), vec4(color, z));
 }

@@ -104,10 +104,10 @@ float ztodepth(float z, float near, float far) {
 // the sampled depth ([0,1]) for this fragment and the scenes inverse viewProj.
 // uv expected to have it's origin topleft, while world coord system has
 // up y axis
-vec3 reconstructWorldPos(vec2 uv, mat4 invViewProj, float depth) {
+vec3 reconstructWorldPos(vec2 uv, mat4 invProj, float depth) {
 	vec2 suv = 2 * uv - 1;
 	suv.y *= -1.f; // flip y, different directions in screen/world space
-	vec4 pos4 = invViewProj * vec4(suv, depth, 1.0);
+	vec4 pos4 = invProj * vec4(suv, depth, 1.0);
 	return pos4.xyz / pos4.w;
 }
 

@@ -125,7 +125,7 @@ vec3 ao(uint flags, vec3 viewDir, vec3 normal, vec3 albedo, float metallic,
 	vec3 f0 = vec3(0.04);
 	f0 = mix(f0, albedo, metallic);
 
-	float cosTheta = max(dot(normal, -viewDir), 0.0);
+	float cosTheta = clamp(dot(normal, -viewDir), 0, 1);
 	vec3 kS = fresnelSchlickRoughness(cosTheta, f0, roughness);
 	vec3 kD = 1.0 - kS;
 	kD *= 1.0 - metallic;
