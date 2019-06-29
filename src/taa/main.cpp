@@ -1,4 +1,4 @@
-// WIP: barely started
+// WIP: playing around, might be in an ugly state
 // Based upon br
 
 #include <stage/camera.hpp>
@@ -253,7 +253,7 @@ public:
 		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 		pipe_ = {dev, gpi.info()};
 
-		gpi.depthStencil.depthWriteEnable = false;
+		// gpi.depthStencil.depthWriteEnable = false;
 		blendPipe_ = {dev, gpi.info()};
 
 		doi::Environment::InitData initEnv;
@@ -452,7 +452,7 @@ public:
 
 		taa_.pipe = {dev, cpi};
 
-		auto uboSize = sizeof(nytl::Mat4f) * 2 + sizeof(float) * 6;
+		auto uboSize = sizeof(nytl::Mat4f) * 2 + sizeof(float) * 8;
 		taa_.ubo = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 	}
@@ -532,7 +532,7 @@ public:
 			vk::PipelineStageBits::topOfPipe,
 			vk::PipelineStageBits::transfer,
 			{}, {}, {}, {{barrier}});
-		vk::ClearColorValue cv {0.f, 0.f, 0.f, 0.f};
+		vk::ClearColorValue cv {0.f, 0.f, 0.f, 1.f};
 		vk::ImageSubresourceRange range{vk::ImageAspectBits::color, 0, 1, 0, 1};
 		vk::cmdClearColorImage(cbInitLayouts_, taa_.inHistory.image(),
 			vk::ImageLayout::transferDstOptimal, cv, {{range}});
@@ -839,6 +839,17 @@ public:
 				updateAOParams_ = true;
 				dlg_info("Static AO: {}", bool(mode_ & modeIrradiance));
 				return true;
+			case ny::Keycode::k5: // toggle TAA
+				if(taa_.minFac > 0.0) {
+					dlg_info("Disabled TAA");
+					taa_.minFac = 0.0;
+					taa_.maxFac = 0.0;
+				} else {
+					dlg_info("Enabled TAA");
+					taa_.minFac = 0.7;
+					taa_.maxFac = 0.95;
+				}
+				break;
 			default:
 				break;
 		}
@@ -904,7 +915,11 @@ public:
 			auto pixSize = Vec2f{1.f / width, 1.f / height};
 			// range [-0.5f, 0.5f] pixel
 			// we don't jitter one whole pixel, only half
-			auto off = samples[taa_.sampleID] * pixSize;
+			auto off = 2 * samples[taa_.sampleID] * pixSize;
+			if(taa_.minFac == 0.0) { // disabed
+				off = {0.f, 0.f};
+			}
+
 			auto proj = matrix(camera_);
 			auto jitterMat = doi::translateMat({off.x, off.y, 0.f});
 			auto jproj = jitterMat * proj;
@@ -918,6 +933,7 @@ public:
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
+			// TODO: not sure about using jitterMat here
 			doi::write(envSpan, jitterMat * fixedMatrix(camera_));
 			envMap.flush();
 
@@ -929,6 +945,8 @@ public:
 			doi::write(taaSpan, taa_.lastJitter);
 			doi::write(taaSpan, camera_.perspective.near);
 			doi::write(taaSpan, camera_.perspective.far);
+			doi::write(taaSpan, taa_.minFac);
+			doi::write(taaSpan, taa_.maxFac);
 			taaMap.flush();
 
 			taa_.lastProj = proj;
@@ -1044,6 +1062,9 @@ protected:
 		unsigned sampleID {0};
 		nytl::Mat4f lastProj = nytl::identity<4, float>();
 		nytl::Vec2f lastJitter;
+
+		float minFac {0.8};
+		float maxFac {0.999};
 	} taa_;
 
 	struct {

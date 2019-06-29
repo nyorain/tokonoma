@@ -17,6 +17,8 @@ layout(set = 0, binding = 4, row_major) uniform UBO {
 	vec2 jitter;
 	vec2 lastJitter;
 	float near, far;
+	float minFac;
+	float maxFac;
 } ubo;
 
 uvec2 size = imageSize(outHistory);
@@ -28,41 +30,12 @@ vec2 pixelSize = 1.f / size;
 // about different conventions.
 const vec3 luminanceFac = vec3(0.25, 0.65, 0.1);
 
-#if 0
-vec3 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec4 p, vec4 q) {
-	const float eps = 0.00000001f;
-
-	// note: only clips towards aabb center (but fast!)
-	vec3 p_clip = 0.5 * (aabb_max + aabb_min);
-	vec3 e_clip = 0.5 * (aabb_max - aabb_min) + eps;
-
-	vec3 v_clip = q - float4(p_clip, p.w);
-	vec3 v_unit = v_clip.xyz / e_clip;
-	vec3 a_unit = abs(v_unit);
-	float ma_unit = max(a_unit.x, max(a_unit.y, a_unit.z));
-
-	if (ma_unit > 1.0) {
-		return float4(p_clip, p.w) + v_clip / ma_unit;
-	} else {
-		return q;// point inside aabb
-	}
-}
-
-#else
 vec3 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec3 p, vec3 q) {
 	vec3 r = q - p;
 	vec3 rmax = aabb_max - p.xyz;
 	vec3 rmin = aabb_min - p.xyz;
 
 	const float eps = 0.00000001f;
-
-	// NOPE
-	// r *= clamp(rmax.x / r.x, 0, 1);
-	// r *= clamp(rmax.y / r.y, 0, 1);
-	// r *= clamp(rmax.z / r.z, 0, 1);
-	// r *= clamp(r.x / rmin.x, 0, 1);
-	// r *= clamp(r.y / rmin.y, 0, 1);
-	// r *= clamp(r.z / rmin.z, 0, 1);
 
 	if (r.x > rmax.x + eps)
 		r *= (rmax.x / r.x);
@@ -81,7 +54,23 @@ vec3 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec3 p, vec3 q) {
 	return p + r;
 }
 
-#endif
+vec3 reproject(vec2 uv, float depth) {
+	vec3 world = reconstructWorldPos(uv, ubo.invProj, depth);
+	vec3 proj = multPos(ubo.lastProj, world);
+	proj.y *= -1.f;
+	proj.xy = 0.5 + 0.5 * proj.xy;
+	return proj;
+}
+
+vec3 reproject(vec2 uv) {
+	float depth = texture(depthTex, uv).r;
+	return reproject(uv, depth);
+}
+
+vec3 reproject(vec2 uv, vec2 juv, vec2 off) {
+	float depth = texture(depthTex, juv + off).r;
+	return reproject(uv + off, depth);
+}
 
 void main() {
 	// get pixel this invocation is responsible for
@@ -100,28 +89,21 @@ void main() {
 	j.y *= -1;
 	vec2 juv = uv + j;
 	float depth = texture(depthTex, juv).r;
+	float z = depthtoz(depth, ubo.near, ubo.far);
 
-	vec2 suv = 2 * uv - 1;
-	// suv -= ubo.jitter;
-	suv.y *= -1.f; // flip y, different directions in screen/world space
-	vec4 pos4 = ubo.invProj * vec4(suv, depth, 1.0);
-	vec3 world = pos4.xyz / pos4.w;
-
+	vec3 world = reconstructWorldPos(uv, ubo.invProj, depth);
 	vec3 color = texture(renderedTex, juv).rgb;
 	// vec3 color = world;
 
-	// try to find a matching pixel in the history buffer
 	vec3 proj = multPos(ubo.lastProj, world);
-	proj.y *= -1.f;
-	// proj.xy += ubo.lastJitter;
-	vec2 tc = 0.5 + 0.5 * proj.xy;
-
+	vec2 tc = 0.5 + 0.5 * vec2(proj.x, -proj.y);
 	if(tc == clamp(tc, 0, 1)) { // also skip for depth == 1.0?
 		vec4 hist = texture(inHistory, tc);
+		float projZ = depthtoz(proj.z, ubo.near, ubo.far); // the z we want
 
-		// using tap4
-		const ivec2 off01 = ivec2(0, 1);
-		const ivec2 off11 = ivec2(1, 0);
+		/*
+		const ivec2 off01 = ivec2(-2, 2);
+		const ivec2 off11 = ivec2(2, 2);
 
 		vec3 c00 = textureOffset(renderedTex, juv, -off11).rgb;
 		vec3 c10 = textureOffset(renderedTex, juv, -off01).rgb;
@@ -140,36 +122,73 @@ void main() {
 
 		// hist.rgb = clamp(hist.rgb, cmin, cmax);
 		// hist.rgb = clip_aabb(cmin, cmax, clamp(cavg, cmin, cmax), hist.rgb);
-		hist.rgb = clip_aabb(cmin, cmax, cavg, hist.rgb);
+		// hist.rgb = clip_aabb(cmin, cmax, cavg, hist.rgb);
+		*/
 
-		// NOTE: psych!
-		// hist.rgb = clip_aabb(2 * cmin, 2 * cmax, cavg, hist.rgb);
+		const ivec2 offx = ivec2(1, 0);
+		const ivec2 offy = ivec2(0, 1);
+		// TODO: juv or uv?
+		// we use uv for world reconstruction but juv for depth above...
+		// PERF: we don't really need the whole matrix mult for the z value
+		float z0 = depthtoz(reproject(uv, juv, +pixelSize * offx).z, ubo.near, ubo.far);
+		float z1 = depthtoz(reproject(uv, juv, -pixelSize * offx).z, ubo.near, ubo.far);
+		float z2 = depthtoz(reproject(uv, juv, +pixelSize * offy).z, ubo.near, ubo.far);
+		float z3 = depthtoz(reproject(uv, juv, -pixelSize * offy).z, ubo.near, ubo.far);
+		float zmin = min(projZ, min(z0, min(z1, min(z2, z3))));
+		float zmax = max(projZ, max(z0, max(z1, max(z2, z3))));
 
-		const float minFeedback = 0.85;
-		const float maxFeedback = 0.9999;
+		z0 = depthtoz(reproject(uv, juv, pixelSize * (offx + offy)).z, ubo.near, ubo.far);
+		z1 = depthtoz(reproject(uv, juv, pixelSize * (offx - offy)).z, ubo.near, ubo.far);
+		z2 = depthtoz(reproject(uv, juv, pixelSize * (-offx + offy)).z, ubo.near, ubo.far);
+		z3 = depthtoz(reproject(uv, juv, pixelSize * (-offx - offy)).z, ubo.near, ubo.far);
+		zmin = min(zmin, min(z0, min(z1, min(z2, z3))));
+		zmax = max(zmax, max(z0, max(z1, max(z2, z3))));
 
-		float lum0 = dot(luminanceFac, color);
-		float lum1 = dot(luminanceFac, hist.rgb);
-		// float lmax = dot(luminanceFac, cmax);
-		// float diff = abs(lum0 - lum1) / (0.001 + max(lum0, max(lum1, lmax)));
-		float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.2)));
-		diff = 1.0 - diff;
-		float weight = mix(diff * diff, minFeedback, maxFeedback);
+		float th = 0.01;
+		float correctness = 1.f;
+		if(hist.w < zmin - th || hist.w > zmax + th) {
+			// TODO: smooth
+			correctness = 0.f;
+			// color = vec3(1, 0, 1);
+		}
 
-		// float weight = 1 - 0.01 * distance(cavg, color);
+		// weighing
+		float weight = ubo.maxFac * correctness;
+
+		// float lum0 = dot(luminanceFac, color);
+		// float lum1 = dot(luminanceFac, hist.rgb);
+		// // float lmax = dot(luminanceFac, cmax);
+		// // float diff = abs(lum0 - lum1) / (0.001 + max(lum0, max(lum1, lmax)));
+		// float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.2)));
+		// diff = 1.0 - diff;
+		// float weight = correctness * mix(diff * diff, ubo.minFac, ubo.maxFac);
+
+		// weight *= 1 - 0.05 * distance(hist.rgb, color);
 		// float weight = 1 - 0.1 * distance(hist.rgb, color);
-		// float weight = 0.9;
+
+		// float weight = ubo.maxFac;
 		color = mix(color, hist.rgb, weight);
-	} else {
-		// color = vec3(1.0, 1.0, 0.0);
+
+		// z = mix(z, hist.w, weight);
+		// z = mix(z, hist.w, 0.5 * correctness);
+
+		// reproejct old linear depth to new projection
+		// TODO: probably best to pass proj and invLastProj
+		// otoh we just need depth...
+		vec3 ndc = vec3(proj.xy, ztodepth(hist.w, ubo.near, ubo.far));
+		vec3 world = multPos(inverse(ubo.lastProj), ndc);
+		float npz = depthtoz(multPos(inverse(ubo.invProj), world).z, ubo.near, ubo.far);
+
+		z = mix(z, npz, weight);
 	}
 
 	// debugging was fun.
-	// if(any(isnan(color))) {
-	// 	color = vec3(1.0, 0.0, 1.0);
-	// }
+	// TODO: there still seems to be a nan case in the pbr pipeline...
+	// debug and fix it! then this can be removed
+	if(any(isnan(color))) {
+		color = vec3(5.0, 5.0, 5.0);
+	}
 
 	// write the result into the history buffer
-	float z = depthtoz(depth, ubo.near, ubo.far);
 	imageStore(outHistory, ivec2(pixel), vec4(color, z));
 }

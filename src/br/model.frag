@@ -63,6 +63,10 @@ vec4 readTex(MaterialTex tex) {
 	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
 }
 
+float dither17(vec2 pos, vec2 FrameIndexMod4) {
+	return fract(dot(vec3(pos.xy, FrameIndexMod4), uvec3(2, 7, 23) / 17.0f));
+}
+
 void main() {
 	Material material = materials[inMatID];
 
@@ -175,6 +179,23 @@ void main() {
 	if(material.alphaCutoff == -1.f) { // alphaMode opque
 		outCol.a = 1.f;
 	}
+
+	/*
+	// TODO WIP stochastic transparency
+	// only really useful for TAA
+	if(material.alphaCutoff == 0.f) { // alphaMode blend 
+		// TODO: use blue noise/dither pattern
+		// if(random(10 * inPos - 5 * outCol.rgb) > outCol.a) {
+		// 	discard;
+		// }
+		vec2 xy = gl_FragCoord.xy + 4 * random2(1529 * inPos.xy);
+		if(dither17(xy, mod(xy, vec2(4))) - albedo.a < 0) {
+			discard;
+		}
+
+		outCol.a = 1.f;
+	}
+	*/
 
 	// tonemap
 	// outCol.rgb = 1.0 - exp(-outCol.rgb);

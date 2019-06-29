@@ -30,7 +30,7 @@ public:
 	nytl::Flags<Bit> flags {};
 	float roughnessFac {1.f};
 	float metalnessFac {1.f};
-	float alphaCutoff {0.f};
+	float alphaCutoff {-1.f};
 	Tex albedo {};
 	Tex normals {};
 	Tex emission {};

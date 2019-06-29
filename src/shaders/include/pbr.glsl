@@ -8,7 +8,8 @@ const float pi = 3.1415926535897932;
 
 // Approximation of the fresnel equation.
 // Returns how reflective the surface is (rgb tuple); in [0, 1]
-// - cosTheta: dot(h, v)
+// - cosTheta: dot(h, v). Always make sure that this is not negative,
+//   unless this might return nan's
 // - f0 depends on the material (and optionally surface color)
 vec3 fresnelSchlick(float cosTheta, vec3 f0) {
 	return f0 + (1.0 - f0) * pow(1.0 - cosTheta, 5.0);
@@ -33,7 +34,7 @@ float distributionGGX(vec3 n, vec3 h, float roughness) {
 	float ndh = max(dot(n, h), 0.0);
 	float ndh2 = ndh * ndh;
 
-	float denom = ndh2 * (a2 - 1.0) + 1.0;
+	float denom = max(ndh2 * (a2 - 1.0) + 1.0, 0.01);
 	denom = pi * denom * denom;
 	return a2 / denom;
 }
