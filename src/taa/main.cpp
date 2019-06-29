@@ -883,20 +883,20 @@ public:
 			auto [width, height] = swapchainInfo().imageExtent;
 			static const std::array samples {
 				// ARM
-				// Vec2f{-7.0f / 8.f, 1.0f / 8.f},
-				// Vec2f{-5.0f / 8.f, -5.0f / 8.f},
-				// Vec2f{-1.0f / 8.f, -3.0f / 8.f},
-				// Vec2f{3.0f / 8,f, -7.0f / 8.f},
-				// Vec2f{5.0f / 8.f, -1.0f / 8.f},
-				// Vec2f{7.0f / 8.f, 7.0f / 8.f},
-				// Vec2f{1.0f / 8.f, 3.0f / 8.f},
-				// Vec2f{-3.0f / 8.f, 5.0f / 8.f},
+				Vec2f{-7.0f / 8.f, 1.0f / 8.f},
+				Vec2f{-5.0f / 8.f, -5.0f / 8.f},
+				Vec2f{-1.0f / 8.f, -3.0f / 8.f},
+				Vec2f{3.0f / 8.f, -7.0f / 8.f},
+				Vec2f{5.0f / 8.f, -1.0f / 8.f},
+				Vec2f{7.0f / 8.f, 7.0f / 8.f},
+				Vec2f{1.0f / 8.f, 3.0f / 8.f},
+				Vec2f{-3.0f / 8.f, 5.0f / 8.f},
 
 				// uniform4
-				Vec2f{-0.25f, -0.25f},
-				Vec2f{0.25f, 0.25f},
-				Vec2f{0.25f, -0.25f},
-				Vec2f{-0.25f, 0.25f},
+				// Vec2f{-0.25f, -0.25f},
+				// Vec2f{0.25f, 0.25f},
+				// Vec2f{0.25f, -0.25f},
+				// Vec2f{-0.25f, 0.25f},
 			};
 
 			using namespace nytl::vec::cw::operators;

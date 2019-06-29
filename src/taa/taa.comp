@@ -119,7 +119,6 @@ void main() {
 	if(tc == clamp(tc, 0, 1)) { // also skip for depth == 1.0?
 		vec4 hist = texture(inHistory, tc);
 
-		/*
 		// using tap4
 		const ivec2 off01 = ivec2(0, 1);
 		const ivec2 off11 = ivec2(1, 0);
@@ -141,94 +140,26 @@ void main() {
 
 		// hist.rgb = clamp(hist.rgb, cmin, cmax);
 		// hist.rgb = clip_aabb(cmin, cmax, clamp(cavg, cmin, cmax), hist.rgb);
-		hist.rgb = clip_aabb(cmin,  cmax, cavg, hist.rgb);
+		hist.rgb = clip_aabb(cmin, cmax, cavg, hist.rgb);
 
 		// NOTE: psych!
 		// hist.rgb = clip_aabb(2 * cmin, 2 * cmax, cavg, hist.rgb);
-		*/
 
-		// ---
-		float thresh = 0.1;
-		float projZ = depthtoz(proj.z, ubo.near, ubo.far); // the z we want
-		float correctness = 1;
-		if(projZ > hist.w + thresh) {
-			correctness = 0;
-		}
+		const float minFeedback = 0.85;
+		const float maxFeedback = 0.9999;
 
-#if 0
-		const ivec2 offx = ivec2(1, 0);
-		const ivec2 offy = ivec2(0, 1);
-		float zc = hist.w;
-		float z0 = textureOffset(inHistory, tc, -offx).w;
-		float z1 = textureOffset(inHistory, tc, offx).w;
-		float z2 = textureOffset(inHistory, tc, -offy).w;
-		float z3 = textureOffset(inHistory, tc, offy).w;
-		float zmin = min(zc, min(z0, min(z1, min(z2, z3))));
-		float zmax = max(zc, max(z0, max(z1, max(z2, z3))));
-		// float zsum = z0 + z1 + z2 + z3;
+		float lum0 = dot(luminanceFac, color);
+		float lum1 = dot(luminanceFac, hist.rgb);
+		// float lmax = dot(luminanceFac, cmax);
+		// float diff = abs(lum0 - lum1) / (0.001 + max(lum0, max(lum1, lmax)));
+		float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.2)));
+		diff = 1.0 - diff;
+		float weight = mix(diff * diff, minFeedback, maxFeedback);
 
-		z0 = textureOffset(inHistory, tc, offx - offy).w;
-		z1 = textureOffset(inHistory, tc, offx + offy).w;
-		z2 = textureOffset(inHistory, tc, -offx + offy).w;
-		z3 = textureOffset(inHistory, tc, -offx - offy).w;
-		zmin = min(zmin, min(z0, min(z1, min(z2, z3))));
-		zmax = max(zmax, max(z0, max(z1, max(z2, z3))));
-		// zsum += z0 + z1 + z2 + z3;
-		// float zavg = zsum / 8;
-
-		if(projZ < zmin - thresh || projZ > zmax + thresh) {
-			/*
-			const ivec2 off01 = ivec2(0, 1);
-			const ivec2 off11 = ivec2(1, 0);
-
-			vec3 c00 = textureOffset(renderedTex, juv, -off11).rgb;
-			vec3 c10 = textureOffset(renderedTex, juv, -off01).rgb;
-			vec3 c01 = textureOffset(renderedTex, juv, +off01).rgb;
-			vec3 c11 = textureOffset(renderedTex, juv, +off11).rgb;
-			// vec3 c2 = textureOffset(renderedTex, juv, +off11 + off01).rgb;
-			// vec3 c3 = textureOffset(renderedTex, juv, -off11 - off01).rgb;
-
-			vec3 cmin = min(color, min(c00, min(c10, min(c01, c11))));
-			vec3 cmax = max(color, max(c00, max(c10, max(c01, c11))));
-			// vec3 cmin = min(color, min(c00, min(c10, min(c01, min(c11, min(c2, c3))))));
-			// vec3 cmax = max(color, max(c00, max(c10, max(c01, max(c11, max(c2, c3))))));
-			// vec3 cavg = 0.25 * (c00 + c10 + c01 + c11);
-			// vec3 cavg = (color + c00 + c10 + c01 + c11 + c2 + c3) / 7;
-			vec3 cavg = (color + c00 + c10 + c01 + c11) / 5;
-
-			// hist.rgb = clamp(hist.rgb, cmin, cmax);
-			// hist.rgb = clip_aabb(cmin, cmax, clamp(cavg, cmin, cmax), hist.rgb);
-			hist.rgb = clip_aabb(cmin,  cmax, cavg, hist.rgb);
-			*/
-
-			correctness = 0.0;
-			// correctness =
-			// 	smoothstep(zmin - thresh, zmin, projZ) *
-			// 	(1 - smoothstep(zmax, zmax + thresh, projZ));
-		
-			// TODO: for debugging
-			// color = mix(color, vec3(1, 0, 1), pow(1 - correctness, 16));
-		} else if(projZ < zc) { // one dir influence
-			correctness = smoothstep(zc - thresh, zc, projZ) *
-				(1 - smoothstep(zc, zc + thresh, projZ));
-		}
-#endif
-
-		if(correctness > 0) {
-			const float minFeedback = 0.85;
-			const float maxFeedback = 0.999;
-
-			float lum0 = dot(luminanceFac, color);
-			float lum1 = dot(luminanceFac, hist.rgb);
-			// float lmax = dot(luminanceFac, cmax);
-			// float diff = abs(lum0 - lum1) / (0.001 + max(lum0, max(lum1, lmax)));
-			float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.2)));
-			diff = 1.0 - diff;
-			float weight = correctness * mix(diff * diff, minFeedback, maxFeedback);
-			color = mix(color, hist.rgb, weight);
-		} else {
-			// color = vec3(1, 0, 1);
-		}
+		// float weight = 1 - 0.01 * distance(cavg, color);
+		// float weight = 1 - 0.1 * distance(hist.rgb, color);
+		// float weight = 0.9;
+		color = mix(color, hist.rgb, weight);
 	} else {
 		// color = vec3(1.0, 1.0, 0.0);
 	}
