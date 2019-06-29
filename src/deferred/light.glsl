@@ -47,8 +47,7 @@ void main() {
 	// reconstruct position from frag coord (uv) and depth
 	vec2 suv = 2 * uv - 1; // projected suv
 	suv.y *= -1.f; // flip y
-	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
-	vec3 fragPos = pos4.xyz / pos4.w;
+	vec3 fragPos = multPos(scene.invPoj, vec3(suv, depth));
 
 	vec3 lcolor;
 	vec3 ldir;

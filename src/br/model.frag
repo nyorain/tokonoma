@@ -3,7 +3,6 @@
 #extension GL_GOOGLE_include_directive : enable
 #include "pbr.glsl"
 #include "scene.glsl"
-#include "spharm.glsl"
 #include "scene.frag.glsl"
 
 layout(location = 0) in vec3 inPos;
@@ -46,16 +45,11 @@ layout(set = 3, binding = 1) uniform samplerCubeShadow shadowCube;
 
 layout(set = 4, binding = 0) uniform samplerCube envMap;
 layout(set = 4, binding = 1) uniform sampler2D brdfLut;
-// 9 layers, each layer contains one spherical harmonics paremter
-// for all probes. rgbaf format, the alpha component of the
-// first 3 layers contains the position of the probe
-layout(set = 4, binding = 2) uniform sampler1DArray irradiance;
+layout(set = 4, binding = 2) uniform samplerCube irradianceMap;
 
 layout(set = 4, binding = 3) uniform Params {
 	uint mode;
-	uint probeCount;
 	float aoFac;
-	float maxProbeDist;
 	uint envLods;
 } params;
 
@@ -63,54 +57,10 @@ const uint modeDirLight = (1u << 0);
 const uint modePointLight = (1u << 1);
 const uint modeSpecularIBL = (1u << 2);
 const uint modeIrradiance = (1u << 3);
-const uint modeStaticAO = (1u << 4);
-const uint modelAOAlbedo = (1u << 5);
 
 vec4 readTex(MaterialTex tex) {
 	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
 	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
-}
-
-// TODO(perf): can be optimized by first summing up all coefficients (weighted)
-// and then computing polynoms for normal. For all the light probes
-// we sample from
-vec3 lightProbe(vec3 pos, vec3 nrm, float coord, inout float total, inout float fmax) {
-	vec4 coeffs[3];
-	coeffs[0] = texture(irradiance, vec2(coord, 0));
-	coeffs[1] = texture(irradiance, vec2(coord, 1));
-	coeffs[2] = texture(irradiance, vec2(coord, 2));
-
-	// TODO: use better attenuation function here
-	vec3 probePos = vec3(coeffs[0].w, coeffs[1].w, coeffs[2].w);
-	float dist = length(pos - probePos);
-	// float fac = 1.0 - dist / params.maxProbeDist;
-	// if(fac < 0) {
-	// 	return vec3(0.0);
-	// }
-	// fac = pow(fac, 2.0);
-
-	vec3 res = vec3(0.0);
-	// float fac = 1 / (1 + dist + 10 * params.maxProbeDist * (dist * dist));
-	// float fac = 1 / (1 + params.maxProbeDist * (dist * dist));
-	float fac = exp(-params.maxProbeDist * dist);
-	// if(fac < 0.01 && fac < fmax / 2) {
-	// 	return res;
-	// }
-
-	fmax = max(fmax, fac);
-	res += sh0(nrm) * coeffs[0].xyz;
-	res += sh1(nrm) * coeffs[1].xyz;
-	res += sh2(nrm) * coeffs[2].xyz;
-
-	res += sh3(nrm) * texture(irradiance, vec2(coord, 3)).rgb;
-	res += sh4(nrm) * texture(irradiance, vec2(coord, 4)).rgb;
-	res += sh5(nrm) * texture(irradiance, vec2(coord, 5)).rgb;
-	res += sh6(nrm) * texture(irradiance, vec2(coord, 6)).rgb;
-	res += sh7(nrm) * texture(irradiance, vec2(coord, 7)).rgb;
-	res += sh8(nrm) * texture(irradiance, vec2(coord, 8)).rgb;
-
-	total += fac;
-	return oneOverPi * fac * res;
 }
 
 void main() {
@@ -215,28 +165,9 @@ void main() {
 	}
 
 	if(bool(params.mode & modeIrradiance)) {
-		vec3 acolor = vec3(0.0);
-		float total = 0.0;
-		float fmax = 0.0;
-		for(uint i = 0u; i < params.probeCount; ++i) {
-			float texCoord = float(i + 0.5f) / textureSize(irradiance, 0).x;
-			acolor += lightProbe(inPos, normal, texCoord, total, fmax);
-		}
-
-		if(total > 0.0) {
-			acolor /= total;
-		}
-
-		vec3 diffuse = kD * acolor;
-		if(bool(params.mode & modelAOAlbedo)) {
-			diffuse *= albedo.rgb;
-		}
-
+		vec3 irradiance = texture(irradianceMap, normal).rgb;
+		vec3 diffuse = kD * irradiance * albedo.rgb;
 		color.rgb += ambientFac * diffuse;
-	}
-
-	if(bool(params.mode & modeStaticAO)) {
-		color.rgb += ambientFac * albedo.rgb;
 	}
 
 	outCol = vec4(color, albedo.a);

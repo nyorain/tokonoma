@@ -1,6 +1,7 @@
-executable('ddd', [
+executable('lpgi', [
 		'main.cpp',
-		ddd_shaders,
+		lpgi_shaders,
+		br_shaders,
 	], dependencies: [
 		stage_dep,
 		gltf_dep,

@@ -102,10 +102,19 @@ shaders_src = {
 		['sss_shadow.vert'],
 		['sss_shadow.frag'],
 	],
-	'ddd': [
+	'br': [
 		['model.vert', scene_glsl],
 		['model.frag', scene_glsl],
+	],
+	'lpgi': [
+		# model.vert from br
+		['model.frag', scene_glsl],
 		['shProj.comp', scene_glsl],
+	],
+	'taa': [
+		# ['model.vert', scene_glsl],
+		['pp.frag'],
+		['taa.comp', scene_glsl],
 	],
 	'iro': [
 		['iro.vert', include_glsl],

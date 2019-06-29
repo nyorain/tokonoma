@@ -1,7 +1,9 @@
-// Simple forward renderer mainly as reference for other rendering
-// concepts. Only supports one point and one directional light.
-// Currently contains first light probe -> spherical harmonics
-// implementation (not optimized).
+// Light probe and spherical harmonics based simple global illumination
+// Only first sketch of an implementation, not optimized. Still has
+// quite some issues (see TODOs, some of them would be quite
+// hard to fix, e.g. correct directional shadow).
+// Real version should be implemented in deferred renderer.
+// Based upon br
 
 // ideas:
 // - allow visualization of GI probes via spheres as in shv
@@ -46,9 +48,9 @@
 
 #include <tinygltf.hpp>
 
-#include <shaders/ddd.model.vert.h>
-#include <shaders/ddd.model.frag.h>
-#include <shaders/ddd.shProj.comp.h>
+#include <shaders/br.model.vert.h>
+#include <shaders/lpgi.model.frag.h>
+#include <shaders/lpgi.shProj.comp.h>
 
 #include <optional>
 #include <vector>
@@ -58,7 +60,6 @@ using namespace doi::types;
 
 class ViewApp : public doi::App {
 public:
-	static constexpr auto maxLightSize = 8u;
 	static constexpr auto probeSize = vk::Extent2D {128, 128};
 	static constexpr auto probeFaceSize = probeSize.width * probeSize.height * 8;
 	static constexpr auto maxProbeCount = 32u;
@@ -178,20 +179,11 @@ public:
 			aoDsLayout_.vkHandle(),
 		}}, {}};
 
-		vk::SpecializationMapEntry maxLightsEntry;
-		maxLightsEntry.size = sizeof(std::uint32_t);
-
-		vk::SpecializationInfo fragSpec;
-		fragSpec.dataSize = sizeof(std::uint32_t);
-		fragSpec.pData = &maxLightSize;
-		fragSpec.mapEntryCount = 1;
-		fragSpec.pMapEntries = &maxLightsEntry;
-
-		vpp::ShaderModule vertShader(dev, ddd_model_vert_data);
-		vpp::ShaderModule fragShader(dev, ddd_model_frag_data);
+		vpp::ShaderModule vertShader(dev, br_model_vert_data);
+		vpp::ShaderModule fragShader(dev, lpgi_model_frag_data);
 		vpp::GraphicsPipelineInfo gpi {renderPass(), pipeLayout_, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
-			{fragShader, vk::ShaderStageBits::fragment, &fragSpec},
+			{fragShader, vk::ShaderStageBits::fragment},
 		}}}, 0, samples()};
 
 		gpi.vertex = doi::Scene::vertexInfo();
@@ -459,7 +451,7 @@ public:
 		probe_.comp.pipeLayout = {dev, {{probe_.comp.dsLayout.vkHandle()}},
 			{{pcr}}};
 
-		vpp::ShaderModule compShader(device(), ddd_shProj_comp_data);
+		vpp::ShaderModule compShader(device(), lpgi_shProj_comp_data);
 		vk::ComputePipelineCreateInfo cpi;
 		cpi.layout = probe_.comp.pipeLayout;
 		cpi.stage.module = compShader;
@@ -823,12 +815,14 @@ public:
 				return true;
 			case ny::Keycode::k1:
 				mode_ ^= modeDirLight;
+				updateLight_ = true;
 				updateAOParams_ = true;
 				App::scheduleRerecord();
 				dlg_info("dir light: {}", bool(mode_ & modeDirLight));
 				return true;
 			case ny::Keycode::k2:
 				mode_ ^= modePointLight;
+				updateLight_ = true;
 				updateAOParams_ = true;
 				App::scheduleRerecord();
 				dlg_info("point light: {}", bool(mode_ & modePointLight));
@@ -939,9 +933,7 @@ public:
 			doi::write(span, camera_.pos);
 			doi::write(span, camera_.perspective.near);
 			doi::write(span, camera_.perspective.far);
-			if(!map.coherent()) {
-				map.flush();
-			}
+			map.flush();
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
@@ -1021,7 +1013,7 @@ public:
 	}
 
 	bool needsDepth() const override { return true; }
-	const char* name() const override { return "3D Forward renderer"; }
+	const char* name() const override { return "Light probe GI"; }
 
 protected:
 	struct Alloc {

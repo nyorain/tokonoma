@@ -1,0 +1,103 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+#include "scene.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// alpha value of history is the linear depth
+layout(set = 0, binding = 0) uniform sampler2D inHistory;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outHistory;
+layout(set = 0, binding = 2) uniform sampler2D renderedTex;
+layout(set = 0, binding = 3) uniform sampler2D depthTex; // non-linear, [0, 1]
+
+layout(set = 0, binding = 4, row_major) uniform UBO {
+	mat4 invProj;
+	mat4 lastProj;
+	float near, far;
+	// TODO: vec2 jitter
+} ubo;
+
+// TODO: make both variable to see effect
+const float depthThreshold = 1.0;
+const float factor = 0.05;
+
+uvec2 size = imageSize(outHistory);
+vec2 pixelSize = 1.f / size;
+
+// using tap4
+void localMinMax(vec2 uv, out vec3 minc, out vec3 maxc) {
+	vec2 off01 = vec2(-1, 1) * pixelSize;
+	vec2 off11 = vec2(1, 1) * pixelSize;
+
+	vec3 c00 = texture(renderedTex, uv - off11).rgb;
+	vec3 c10 = texture(renderedTex, uv - off01).rgb;
+	vec3 c01 = texture(renderedTex, uv + off01).rgb;
+	vec3 c11 = texture(renderedTex, uv + off11).rgb;
+
+	minc = min(c00, min(c10, min(c01, c11)));
+	maxc = max(c00, max(c10, max(c01, c11)));
+}
+
+void main() {
+	// get pixel this invocation is responsible for
+	// out of bounds can happen when image size isn't multiple of
+	// work group size
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	// reconstruct world space using the depth buffer
+	vec2 uv = (pixel + 0.5) * pixelSize; // center of pixel
+
+	float depth = texture(depthTex, uv).r;
+	vec3 world = reconstructWorldPos(uv, ubo.invProj, depth);
+	float z = depthtoz(depth, ubo.near, ubo.far);
+
+	// read rendered pixel 
+	vec3 color = texture(renderedTex, uv).rgb;
+
+	// try to find a matching pixel in the history buffer
+	vec3 proj = multPos(ubo.lastProj, world);
+	proj.y *= -1.f;
+	vec2 tc = 0.5 + 0.5 * proj.xy;
+	if(tc == clamp(tc, 0, 1)) { // also skip for depth == 1.0?
+		float projZ = depthtoz(proj.z, ubo.near, ubo.far);
+
+		/*
+		// find best fit in 3x3 neighborhood
+		vec4 best;
+		float bestDist = 9999; // high
+		// tc = floor(tc * size) / size;
+		for(int x = -1; x <= 1; ++x) {
+			for(int y = -1; y <= 1; ++y) {
+				vec4 prev = texture(inHistory, tc + vec2(x, y) * pixelSize);
+				float dist = abs(prev.w - projZ);
+				if(dist < bestDist) {
+					bestDist = dist;
+					best = prev;
+				}
+			}
+		}
+		*/
+
+		vec4 best = texture(inHistory, tc);
+		float bestDist = abs(best.w - projZ);
+		// if(bestDist < depthThreshold) {
+			// merge history pixel and rendered pixel
+			color = mix(best.rgb, color, factor);
+		// }
+		/*
+		} else {
+			// DEBUG
+			color = vec3(0.0, 1.0, 1.0);
+		}
+		*/
+	} else {
+		color = vec3(1.0, 1.0, 0.0);
+	}
+
+	// write the result into the history buffer
+	imageStore(outHistory, ivec2(pixel), vec4(color, z));
+}

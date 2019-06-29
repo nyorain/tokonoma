@@ -446,8 +446,8 @@ bool App::init(nytl::Span<const char*> args) {
 		}
 	}
 
-	initRenderData();
 	impl_->renderPass = createRenderPass();
+	initRenderData();
 	impl_->renderer.emplace(*this, *presentQueue, impl_->scInfo);
 
 	// additional stuff
@@ -756,7 +756,6 @@ vpp::RenderPass App::createRenderPass() {
 	// deps
 	std::vector<vk::SubpassDependency> dependencies;
 
-	// TODO: do we really need this? isn't this detected by default?
 	if(msaa) {
 		dependencies.resize(2);
 
@@ -792,7 +791,8 @@ vpp::RenderPass App::createRenderPass() {
 		subpass.pResolveAttachments = &resolveReference;
 	}
 
-	// most general dependency
+	// TODO: should probably not be that general, might impact performance
+	// currently pretty general dependency
 	// should cover almost all cases of external access to data that
 	// is read during a render pass (host, transfer, compute shader)
 	vk::SubpassDependency dependency;
