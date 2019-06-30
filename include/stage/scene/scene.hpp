@@ -67,6 +67,8 @@ struct Sampler {
 /// that use them.
 class Scene {
 public:
+	// NOTE: this is important for TAA but causes worse result without it
+	static constexpr auto mipLodBias = -1.f;
 	static constexpr auto imageCount = 96u;
 	static constexpr auto samplerCount = 8u;
 	using Index = u32; // for indices

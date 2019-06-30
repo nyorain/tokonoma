@@ -169,6 +169,7 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	sci.addressModeW = vk::SamplerAddressMode::repeat;
 	sci.magFilter = vk::Filter::linear;
 	sci.minFilter = vk::Filter::linear;
+	sci.mipLodBias = Scene::mipLodBias;
 	sci.mipmapMode = vk::SamplerMipmapMode::linear;
 	sci.minLod = 0.0;
 	sci.maxLod = 100.f; // use all mipmap levels
@@ -1411,6 +1412,7 @@ Sampler::Sampler(const vpp::Device& dev, const gltf::Sampler& sampler,
 	sci.magFilter = info.magFilter;
 	sci.mipmapMode = info.mipmapMode;
 	sci.minLod = 0.f;
+	sci.mipLodBias = Scene::mipLodBias;
 	sci.maxLod = 100.f; // all levels
 	sci.anisotropyEnable = maxAnisotropy != 1.f;
 	sci.maxAnisotropy = maxAnisotropy;

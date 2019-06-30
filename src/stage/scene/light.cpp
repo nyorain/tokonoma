@@ -320,7 +320,7 @@ void DirLight::updateDevice(const Camera& camera) {
 
 	// calculate split depths
 	// https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
-	constexpr auto splitLambda = 0.2f; // higher: nearer at log split scheme
+	constexpr auto splitLambda = 0.5f; // higher: nearer at log split scheme
 	const auto near = camera.perspective.near;
 	const auto far = camera.perspective.far;
 

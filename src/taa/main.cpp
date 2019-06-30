@@ -63,7 +63,7 @@ public:
 			return false;
 		}
 
-		camera_.perspective.near = 0.01f;
+		camera_.perspective.near = 0.05f;
 		camera_.perspective.far = 10.f;
 		return true;
 	}
@@ -452,9 +452,55 @@ public:
 
 		taa_.pipe = {dev, cpi};
 
-		auto uboSize = sizeof(nytl::Mat4f) * 2 + sizeof(float) * 8;
+		auto uboSize = sizeof(nytl::Mat4f) * 4 + sizeof(float) * 9;
 		taa_.ubo = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+
+		// samples
+#if 0 // Simple sample sequences
+		taa_.samples = {
+			// ARM
+			Vec2f{-7.0f / 8.f, 1.0f / 8.f},
+			Vec2f{-5.0f / 8.f, -5.0f / 8.f},
+			Vec2f{-1.0f / 8.f, -3.0f / 8.f},
+			Vec2f{3.0f / 8.f, -7.0f / 8.f},
+			Vec2f{5.0f / 8.f, -1.0f / 8.f},
+			Vec2f{7.0f / 8.f, 7.0f / 8.f},
+			Vec2f{1.0f / 8.f, 3.0f / 8.f},
+			Vec2f{-3.0f / 8.f, 5.0f / 8.f},
+
+			// uniform4
+			// Vec2f{-0.25f, -0.25f},
+			// Vec2f{0.25f, 0.25f},
+			// Vec2f{0.25f, -0.25f},
+			// Vec2f{-0.25f, 0.25f},
+		};
+#endif
+
+		// halton 16x
+		constexpr auto len = 16;
+		taa_.samples.resize(len);
+
+		// http://en.wikipedia.org/wiki/Halton_sequence
+		// index not zero based
+		auto halton = [](int prime, int index = 1){
+			float r = 0.0f;
+			float f = 1.0f;
+			int i = index;
+			while (i > 0) {
+				f /= prime;
+				r += f * (i % prime);
+				i = std::floor(i / (float)prime);
+			}
+			return r;
+		};
+
+		for (auto i = 0; i < len; i++) {
+            float u = 2 * (halton(2, i + 1) - 0.5f);
+            float v = 2 * (halton(3, i + 1) - 0.5f);
+            taa_.samples[i] = {u, v};
+			dlg_info("sample {}: {}", i, taa_.samples[i]);
+        }
 	}
 
 	void initBuffers(const vk::Extent2D& size,
@@ -840,15 +886,7 @@ public:
 				dlg_info("Static AO: {}", bool(mode_ & modeIrradiance));
 				return true;
 			case ny::Keycode::k5: // toggle TAA
-				if(taa_.minFac > 0.0) {
-					dlg_info("Disabled TAA");
-					taa_.minFac = 0.0;
-					taa_.maxFac = 0.0;
-				} else {
-					dlg_info("Enabled TAA");
-					taa_.minFac = 0.7;
-					taa_.maxFac = 0.95;
-				}
+				taa_.mode = (taa_.mode + 1) % 3;
 				break;
 			default:
 				break;
@@ -892,31 +930,15 @@ public:
 			// sample sequence from
 			// community.arm.com/developer/tools-software/graphics/b/blog/posts/temporal-anti-aliasing
 			auto [width, height] = swapchainInfo().imageExtent;
-			static const std::array samples {
-				// ARM
-				Vec2f{-7.0f / 8.f, 1.0f / 8.f},
-				Vec2f{-5.0f / 8.f, -5.0f / 8.f},
-				Vec2f{-1.0f / 8.f, -3.0f / 8.f},
-				Vec2f{3.0f / 8.f, -7.0f / 8.f},
-				Vec2f{5.0f / 8.f, -1.0f / 8.f},
-				Vec2f{7.0f / 8.f, 7.0f / 8.f},
-				Vec2f{1.0f / 8.f, 3.0f / 8.f},
-				Vec2f{-3.0f / 8.f, 5.0f / 8.f},
-
-				// uniform4
-				// Vec2f{-0.25f, -0.25f},
-				// Vec2f{0.25f, 0.25f},
-				// Vec2f{0.25f, -0.25f},
-				// Vec2f{-0.25f, 0.25f},
-			};
 
 			using namespace nytl::vec::cw::operators;
-			taa_.sampleID = (taa_.sampleID + 1) % samples.size();
+			taa_.sampleID = (taa_.sampleID + 1) % taa_.samples.size();
 			auto pixSize = Vec2f{1.f / width, 1.f / height};
 			// range [-0.5f, 0.5f] pixel
 			// we don't jitter one whole pixel, only half
-			auto off = 2 * samples[taa_.sampleID] * pixSize;
-			if(taa_.minFac == 0.0) { // disabed
+			auto off = taa_.samples[taa_.sampleID] * pixSize;
+			// auto off = 2 * samples[taa_.sampleID] * pixSize;
+			if(taa_.mode == taaModePassthrough) { // disabed
 				off = {0.f, 0.f};
 			}
 
@@ -941,12 +963,15 @@ public:
 			auto taaSpan = taaMap.span();
 			doi::write(taaSpan, nytl::Mat4f(nytl::inverse(proj)));
 			doi::write(taaSpan, taa_.lastProj);
+			doi::write(taaSpan, proj);
+			doi::write(taaSpan, nytl::Mat4f(nytl::inverse(taa_.lastProj)));
 			doi::write(taaSpan, off);
 			doi::write(taaSpan, taa_.lastJitter);
 			doi::write(taaSpan, camera_.perspective.near);
 			doi::write(taaSpan, camera_.perspective.far);
 			doi::write(taaSpan, taa_.minFac);
 			doi::write(taaSpan, taa_.maxFac);
+			doi::write(taaSpan, taa_.mode);
 			taaMap.flush();
 
 			taa_.lastProj = proj;
@@ -1051,6 +1076,10 @@ protected:
 		vpp::Framebuffer fb;
 	} offscreen_;
 
+	static constexpr u32 taaModePassthrough = 0u;
+	static constexpr u32 taaModeClipColor = 1u;
+	static constexpr u32 taaModeReprDepthRej = 2u;
+
 	struct {
 		vpp::ViewableImage inHistory;
 		vpp::ViewableImage outHistory;
@@ -1063,8 +1092,11 @@ protected:
 		nytl::Mat4f lastProj = nytl::identity<4, float>();
 		nytl::Vec2f lastJitter;
 
-		float minFac {0.8};
-		float maxFac {0.999};
+		float minFac {0.85};
+		float maxFac {0.98};
+		u32 mode {taaModePassthrough};
+
+		std::vector<nytl::Vec2f> samples;
 	} taa_;
 
 	struct {

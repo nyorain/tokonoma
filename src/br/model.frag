@@ -67,6 +67,11 @@ float dither17(vec2 pos, vec2 FrameIndexMod4) {
 	return fract(dot(vec3(pos.xy, FrameIndexMod4), uvec3(2, 7, 23) / 17.0f));
 }
 
+float mrandom(vec4 seed4) {
+	float dot_product = dot(seed4, vec4(12.9898,78.233,45.164,94.673));
+	return fract(sin(dot_product) * 43758.5453);
+}
+
 void main() {
 	Material material = materials[inMatID];
 
@@ -111,10 +116,30 @@ void main() {
 		// 	default: lcolor = vec3(1, 1, 1); break;
 		// };
 
-		bool pcf = bool(dirLight.flags & lightPcf);
-		float shadow = dirShadowIndex(dirLight, shadowMap, inPos, index, int(pcf));
-		vec3 ldir = normalize(dirLight.dir);
+		// bool pcf = bool(dirLight.flags & lightPcf);
+		// float shadow = dirShadowIndex(dirLight, shadowMap, inPos, index, int(pcf));
 
+		// NOTE: custom wip shadow sampling, mainly for TAA
+		float shadow = 0.0;
+		vec3 spos = sceneMap(dirLight.cascadeProjs[index], inPos);
+		if(spos.z > 0.0 && spos.z < 1.0) {
+			const vec2 poissonDisk[4] = vec2[](
+			  vec2( -0.94201624, -0.39906216 ),
+			  vec2( 0.94558609, -0.76890725 ),
+			  vec2( -0.094184101, -0.92938870 ),
+			  vec2( 0.34495938, 0.29387760 )
+			);
+
+			for (int i=0;i<4;i++){
+				float len = 8 * mrandom(vec4(gl_FragCoord.xyy + 100 * inPos.xyz, i));
+				float rid = mrandom(vec4(0.1 * gl_FragCoord.yxy - 32 * inPos.yzx, i));
+				int id = int(16.0 * rid) % 16;
+				vec2 off = len * poissonDisk[id] / textureSize(shadowMap, 0).xy;
+				shadow += 0.25 * texture(shadowMap, vec4(spos.xy + off, index, spos.z)).r;
+			}
+		}
+
+		vec3 ldir = normalize(dirLight.dir);
 		vec3 light = cookTorrance(normal, -ldir, -viewDir, roughness,
 			metalness, albedo.xyz);
 		light *= shadow;
