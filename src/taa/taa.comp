@@ -14,6 +14,7 @@ layout(set = 0, binding = 3) uniform sampler2D depthTex; // non-linear, [0, 1]
 const uint modePassthrough = 0u;
 const uint modeClipColor = 1u;
 const uint modeReprDepthRej = 2u;
+const uint modeCombined = 3u;
 
 layout(set = 0, binding = 4, row_major) uniform UBO {
 	mat4 invProj;
@@ -82,6 +83,66 @@ float reprojectDepth(vec2 uv, vec2 juv, vec2 off) {
 	return reprojectDepth(uv + off, depth);
 }
 
+// inverse reproject depth rejection
+// returns the correctenss
+float irdr(vec2 uv, vec2 juv, float projZ, float histZ) {
+	const ivec2 offx = ivec2(2, 0);
+	const ivec2 offy = ivec2(0, 2);
+	// TODO: juv or uv?
+	// we use uv for world reconstruction but juv for depth above...
+	// PERF: we don't really need the whole matrix mult for the z value
+	float z0 = depthtoz(reprojectDepth(uv, juv, +pixelSize * offx), ubo.near, ubo.far);
+	float z1 = depthtoz(reprojectDepth(uv, juv, -pixelSize * offx), ubo.near, ubo.far);
+	float z2 = depthtoz(reprojectDepth(uv, juv, +pixelSize * offy), ubo.near, ubo.far);
+	float z3 = depthtoz(reprojectDepth(uv, juv, -pixelSize * offy), ubo.near, ubo.far);
+	float zmin = min(projZ, min(z0, min(z1, min(z2, z3))));
+	float zmax = max(projZ, max(z0, max(z1, max(z2, z3))));
+
+	z0 = depthtoz(reprojectDepth(uv, juv, pixelSize * (offx + offy)), ubo.near, ubo.far);
+	z1 = depthtoz(reprojectDepth(uv, juv, pixelSize * (offx - offy)), ubo.near, ubo.far);
+	z2 = depthtoz(reprojectDepth(uv, juv, pixelSize * (-offx + offy)), ubo.near, ubo.far);
+	z3 = depthtoz(reprojectDepth(uv, juv, pixelSize * (-offx - offy)), ubo.near, ubo.far);
+	zmin = min(zmin, min(z0, min(z1, min(z2, z3))));
+	zmax = max(zmax, max(z0, max(z1, max(z2, z3))));
+
+	// float thl = 0.01 * (projZ - zmin);
+	// float thh = 0.01 * (zmax - projZ);
+	float thl = 0.02;
+	float thh = 0.02;
+
+	// IDEA: we could also apply the color clamping as fallback here
+	// when we reject the depth (linearly interpolate between results).
+	// see previous commits, already implemented it.
+	float correctness = smoothstep(zmin - 2 * thl, zmin - thl, histZ) *
+		(1 - smoothstep(zmax + thh, zmax + 2 * thh, histZ));
+
+	return correctness;
+}
+
+vec3 colorClip(vec2 juv, vec3 color, vec3 hist) {
+	const ivec2 off01 = ivec2(-1, 1);
+	const ivec2 off11 = ivec2(1, 1);
+
+	vec3 c00 = textureOffset(renderedTex, juv, -off11).rgb;
+	vec3 c10 = textureOffset(renderedTex, juv, -off01).rgb;
+	vec3 c01 = textureOffset(renderedTex, juv, +off01).rgb;
+	vec3 c11 = textureOffset(renderedTex, juv, +off11).rgb;
+	// vec3 c2 = textureOffset(renderedTex, juv, +off11 + off01).rgb;
+	// vec3 c3 = textureOffset(renderedTex, juv, -off11 - off01).rgb;
+
+	vec3 cmin = min(color, min(c00, min(c10, min(c01, c11))));
+	vec3 cmax = max(color, max(c00, max(c10, max(c01, c11))));
+	// vec3 cmin = min(color, min(c00, min(c10, min(c01, min(c11, min(c2, c3))))));
+	// vec3 cmax = max(color, max(c00, max(c10, max(c01, max(c11, max(c2, c3))))));
+	// vec3 cavg = 0.25 * (c00 + c10 + c01 + c11);
+	// vec3 cavg = (color + c00 + c10 + c01 + c11 + c2 + c3) / 7;
+	vec3 cavg = (color + c00 + c10 + c01 + c11) / 5;
+
+	// hist.rgb = clamp(hist.rgb, cmin, cmax);
+	hist.rgb = clip_aabb(cmin, cmax, clamp(cavg, cmin, cmax), hist.rgb);
+	return hist.rgb;
+}
+
 void main() {
 	// get pixel this invocation is responsible for
 	// out of bounds can happen when image size isn't multiple of
@@ -119,82 +180,35 @@ void main() {
 
 		float weight = 0.0;
 		if(ubo.mode == modeClipColor) {
-			const ivec2 off01 = ivec2(-1, 1);
-			const ivec2 off11 = ivec2(1, 1);
-
-			vec3 c00 = textureOffset(renderedTex, juv, -off11).rgb;
-			vec3 c10 = textureOffset(renderedTex, juv, -off01).rgb;
-			vec3 c01 = textureOffset(renderedTex, juv, +off01).rgb;
-			vec3 c11 = textureOffset(renderedTex, juv, +off11).rgb;
-			// vec3 c2 = textureOffset(renderedTex, juv, +off11 + off01).rgb;
-			// vec3 c3 = textureOffset(renderedTex, juv, -off11 - off01).rgb;
-
-			vec3 cmin = min(color, min(c00, min(c10, min(c01, c11))));
-			vec3 cmax = max(color, max(c00, max(c10, max(c01, c11))));
-			// vec3 cmin = min(color, min(c00, min(c10, min(c01, min(c11, min(c2, c3))))));
-			// vec3 cmax = max(color, max(c00, max(c10, max(c01, max(c11, max(c2, c3))))));
-			// vec3 cavg = 0.25 * (c00 + c10 + c01 + c11);
-			// vec3 cavg = (color + c00 + c10 + c01 + c11 + c2 + c3) / 7;
-			vec3 cavg = (color + c00 + c10 + c01 + c11) / 5;
-
-			// hist.rgb = clamp(hist.rgb, cmin, cmax);
-			hist.rgb = clip_aabb(cmin, cmax, clamp(cavg, cmin, cmax), hist.rgb);
-			// hist.rgb = clip_aabb(cmin, cmax, cavg, hist.rgb);
-
+			hist.rgb = colorClip(juv, color, hist.rgb);
 			weight = 1.f;
 			z = -1.f;
 		} else if(ubo.mode == modeReprDepthRej) {
 			float projZ = depthtoz(proj.z, ubo.near, ubo.far); // the z we want
+			weight = irdr(uv, juv, projZ, hist.w);
 
-			const ivec2 offx = ivec2(2, 0);
-			const ivec2 offy = ivec2(0, 2);
-			// TODO: juv or uv?
-			// we use uv for world reconstruction but juv for depth above...
-			// PERF: we don't really need the whole matrix mult for the z value
-			float z0 = depthtoz(reprojectDepth(uv, juv, +pixelSize * offx), ubo.near, ubo.far);
-			float z1 = depthtoz(reprojectDepth(uv, juv, -pixelSize * offx), ubo.near, ubo.far);
-			float z2 = depthtoz(reprojectDepth(uv, juv, +pixelSize * offy), ubo.near, ubo.far);
-			float z3 = depthtoz(reprojectDepth(uv, juv, -pixelSize * offy), ubo.near, ubo.far);
-			float zmin = min(projZ, min(z0, min(z1, min(z2, z3))));
-			float zmax = max(projZ, max(z0, max(z1, max(z2, z3))));
+			// reproejct old linear depth to new projection
+			// PERF: can probably be optimized as we only need depth
+			vec3 ndc = vec3(proj.xy, ztodepth(hist.w, ubo.near, ubo.far));
+			vec3 world = multPos(ubo.invLastProj, ndc);
+			float npz = depthtoz(multPos(ubo.proj, world).z, ubo.near, ubo.far);
+			z = mix(z, npz, weight);
+		} else if(ubo.mode == modeCombined) {
+			float projZ = depthtoz(proj.z, ubo.near, ubo.far); // the z we want
+			float dweight = irdr(uv, juv, projZ, hist.w);
+			vec3 dcol = colorClip(juv, color, hist.rgb);
+			// debugging
+			// dcol = vec3(1, 0, 1);
 
-			z0 = depthtoz(reprojectDepth(uv, juv, pixelSize * (offx + offy)), ubo.near, ubo.far);
-			z1 = depthtoz(reprojectDepth(uv, juv, pixelSize * (offx - offy)), ubo.near, ubo.far);
-			z2 = depthtoz(reprojectDepth(uv, juv, pixelSize * (-offx + offy)), ubo.near, ubo.far);
-			z3 = depthtoz(reprojectDepth(uv, juv, pixelSize * (-offx - offy)), ubo.near, ubo.far);
-			zmin = min(zmin, min(z0, min(z1, min(z2, z3))));
-			zmax = max(zmax, max(z0, max(z1, max(z2, z3))));
+			// TODO: uv or juv?
+			// uv is probably better since we reconstruct the world position
+			// (and tc) based on uv and therefore if the projection doesn't
+			// change, tc will be the same as uv (ubo matrices don't
+			// contain jitter)
+			float fac = smoothstep(0.0, 2.0, length(vec3(tc * size, projZ) - vec3(uv * size, z)));
 
-			// float thl = 0.01 * (projZ - zmin);
-			// float thh = 0.01 * (zmax - projZ);
-			float thl = 0.02;
-			float thh = 0.02;
-			float correctness = 1.f;
-			if(hist.w < zmin || hist.w > zmax) {
-				correctness = smoothstep(zmin - 2 * thl, zmin - thl, hist.w) *
-					(1 - smoothstep(zmax + thh, zmax + 2 * thh, hist.w));
-
-				// IDEA: we could also apply the color clamping as fallback here
-				// we could also reduce correctness factor based on how much
-				// the clamped/clipped color differs
-				const ivec2 off01 = ivec2(-1, 1);
-				const ivec2 off11 = ivec2(1, 1);
-				vec3 c00 = textureOffset(renderedTex, juv, -off11).rgb;
-				vec3 c10 = textureOffset(renderedTex, juv, -off01).rgb;
-				vec3 c01 = textureOffset(renderedTex, juv, +off01).rgb;
-				vec3 c11 = textureOffset(renderedTex, juv, +off11).rgb;
-				vec3 cmin = min(color, min(c00, min(c10, min(c01, c11))));
-				vec3 cmax = max(color, max(c00, max(c10, max(c01, c11))));
-				vec3 cavg = (color + c00 + c10 + c01 + c11) / 5;
-				vec3 clipped = clip_aabb(cmin, cmax, clamp(cavg, cmin, cmax), hist.rgb);
-				hist.rgb = mix(clipped, hist.rgb, correctness);
-
-				// for debugging
-				// color = mix(vec3(1, 0, 1), color, correctness);
-			}
-
-			// weighing
-			weight = correctness;
+			hist.rgb = mix(hist.rgb, dcol, fac);
+			weight = mix(dweight, 1.f, fac);
 
 			// reproejct old linear depth to new projection
 			// PERF: can probably be optimized as we only need depth

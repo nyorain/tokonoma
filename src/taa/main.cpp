@@ -886,7 +886,7 @@ public:
 				dlg_info("Static AO: {}", bool(mode_ & modeIrradiance));
 				return true;
 			case ny::Keycode::k5: // toggle TAA
-				taa_.mode = (taa_.mode + 1) % 3;
+				taa_.mode = (taa_.mode + 1) % 4;
 				break;
 			default:
 				break;
@@ -1059,7 +1059,7 @@ protected:
 	vpp::TrDs aoDs_;
 	vpp::SubBuffer aoUbo_;
 	bool updateAOParams_ {true};
-	float aoFac_ {0.1f};
+	float aoFac_ {0.05f};
 
 	static constexpr u32 modeDirLight = (1u << 0);
 	static constexpr u32 modePointLight = (1u << 1);
@@ -1079,6 +1079,7 @@ protected:
 	static constexpr u32 taaModePassthrough = 0u;
 	static constexpr u32 taaModeClipColor = 1u;
 	static constexpr u32 taaModeReprDepthRej = 2u;
+	static constexpr u32 taaModeCombined = 3u;
 
 	struct {
 		vpp::ViewableImage inHistory;
