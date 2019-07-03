@@ -8,23 +8,27 @@
 namespace doi {
 
 struct Cube {
-	nytl::Vec3f pos;
-	nytl::Vec3f size; // total size
+	Vec3f pos;
+	Vec3f size; // total size
 };
 
 struct Sphere {
-	nytl::Vec3f pos;
-	nytl::Vec3f radius;
+	Vec3f pos;
+	Vec3f radius;
 };
 
 struct Shape {
-	std::vector<nytl::Vec3f> positions;
-	std::vector<nytl::Vec3f> normals;
-	std::vector<std::uint32_t> indices;
+	std::vector<Vec3f> positions;
+	std::vector<Vec3f> normals;
+	std::vector<u32> indices;
 };
 
 Shape generate(const Cube& cube);
 Shape generateUV(const Sphere& sphere, unsigned stackCount = 64,
 	unsigned sectorCount = 64);
+
+// generate smooth normals weighted by triangle area
+std::vector<Vec3f> areaSmoothNormals(nytl::Span<const Vec3f> positions,
+	nytl::Span<const u32> indices);
 
 } // namespace doi

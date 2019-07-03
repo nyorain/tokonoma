@@ -84,17 +84,26 @@ void Environment::createPipe(const vpp::Device& dev,
 	// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 	// TODO: not sure whether we need blending here, probably not?
-	vk::PipelineColorBlendAttachmentState blendAttachment;
-	blendAttachment.blendEnable = true;
-	blendAttachment.colorBlendOp = vk::BlendOp::add;
-	blendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
-	blendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
-	blendAttachment.colorWriteMask =
-			vk::ColorComponentBits::r |
-			vk::ColorComponentBits::g |
-			vk::ColorComponentBits::b |
-			vk::ColorComponentBits::a;
-	gpi.blend.pAttachments = &blendAttachment;
+	// vk::PipelineColorBlendAttachmentState blendAttachment;
+	// blendAttachment.blendEnable = true;
+	// blendAttachment.colorBlendOp = vk::BlendOp::add;
+	// blendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
+	// blendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
+	// blendAttachment.colorWriteMask =
+	// 		vk::ColorComponentBits::r |
+	// 		vk::ColorComponentBits::g |
+	// 		vk::ColorComponentBits::b |
+	// 		vk::ColorComponentBits::a;
+	// gpi.blend.pAttachments = &blendAttachment;
+
+	std::array battachments = {
+		doi::noBlendAttachment(),
+		doi::noBlendAttachment(),
+	};
+	battachments[1].colorWriteMask = {}; // ignore
+
+	gpi.blend.attachmentCount = battachments.size();
+	gpi.blend.pAttachments = battachments.begin();
 
 	pipe_ = {dev, gpi.info()};
 }

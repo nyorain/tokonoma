@@ -120,6 +120,7 @@ public:
 	/// Instances are what is rendered in the end.
 	struct Instance {
 		nytl::Mat4f matrix;
+		nytl::Mat4f lastMatrix;
 		u32 primitiveID;
 		u32 materialID;
 		u32 modelID; // just for picking, not related to Primitive
@@ -153,6 +154,7 @@ public:
 	auto& samplers() const { return samplers_; }
 	auto& defaultSampler() const { return defaultSampler_; }
 	auto& dsLayout() const { return dsLayout_; }
+	auto defaultMaterialID() const { return defaultMaterialID_; }
 
 	u32 addPrimitive(std::vector<nytl::Vec3f> positions,
 		std::vector<nytl::Vec3f> normals,

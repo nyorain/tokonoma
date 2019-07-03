@@ -112,7 +112,8 @@ shaders_src = {
 		['shProj.comp', scene_glsl],
 	],
 	'taa': [
-		# ['model.vert', scene_glsl],
+		['model.vert', scene_glsl],
+		['model.frag', scene_glsl],
 		['pp.frag'],
 		['taa.comp', scene_glsl],
 	],

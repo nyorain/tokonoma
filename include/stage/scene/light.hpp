@@ -35,7 +35,7 @@ struct ShadowData {
 	// should be scene dependent, configurable!
 	// also dependent on shadow map size (the larger the shadow map, the
 	// smaller are the values we need)
-	float depthBias {0.5f};
+	float depthBias {2.f};
 	float depthBiasSlope {5.f};
 };
 

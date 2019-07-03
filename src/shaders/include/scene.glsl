@@ -43,6 +43,7 @@ struct PointLight {
 struct ModelData {
 	mat4 matrix;
 	mat4 normal; // [3]: {materialID, modelID, unused, unused}
+	mat4 lastmatrix;
 };
 
 struct MaterialTex {

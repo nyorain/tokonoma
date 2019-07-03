@@ -174,7 +174,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		vk::DynamicState::scissor
 	};
 	gpi.dynamic.pDynamicStates = dynamicStates.begin();
-	gpi.dynamic.dynamicStateCount = dynamicStates.end() - dynamicStates.begin();
+	gpi.dynamic.dynamicStateCount = dynamicStates.size();
 
 	gpi.blend.attachmentCount = 0;
 	data.pipe = {dev, gpi.info()};

@@ -5,18 +5,21 @@
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
+const uint modePassthrough = 0u;
+const uint modeClipColor = 1u;
+const uint modeReprDepthRej = 2u;
+const uint modeCombined = 3u;
+const uint debugModeVelocity = 4u;
+const uint modePass = 5u;
+
 // alpha value of history is the linear depth
 layout(set = 0, binding = 0) uniform sampler2D inHistory;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outHistory;
 layout(set = 0, binding = 2) uniform sampler2D renderedTex;
 layout(set = 0, binding = 3) uniform sampler2D depthTex; // non-linear, [0, 1]
+layout(set = 0, binding = 4) uniform sampler2D velocityTex;
 
-const uint modePassthrough = 0u;
-const uint modeClipColor = 1u;
-const uint modeReprDepthRej = 2u;
-const uint modeCombined = 3u;
-
-layout(set = 0, binding = 4, row_major) uniform UBO {
+layout(set = 0, binding = 5, row_major) uniform UBO {
 	mat4 invProj;
 	mat4 lastProj;
 	mat4 proj;
@@ -37,6 +40,41 @@ vec2 pixelSize = 1.f / size;
 // See https://stackoverflow.com/questions/596216 for a discussion
 // about different conventions.
 const vec3 luminanceFac = vec3(0.25, 0.65, 0.1);
+
+vec3 find_closest_fragment_3x3(vec2 uv) {
+	vec2 dd = pixelSize;
+	vec2 du = vec2(dd.x, 0.0);
+	vec2 dv = vec2(0.0, dd.y);
+
+	// TODO: use textureOffset
+	vec3 dtl = vec3(-1, -1, texture(depthTex, uv - dv - du).x);
+	vec3 dtc = vec3( 0, -1, texture(depthTex, uv - dv).x);
+	vec3 dtr = vec3( 1, -1, texture(depthTex, uv - dv + du).x);
+
+	vec3 dml = vec3(-1, 0, texture(depthTex, uv - du).x);
+	vec3 dmc = vec3( 0, 0, texture(depthTex, uv).x);
+	vec3 dmr = vec3( 1, 0, texture(depthTex, uv + du).x);
+
+	vec3 dbl = vec3(-1, 1, texture(depthTex, uv + dv - du).x);
+	vec3 dbc = vec3( 0, 1, texture(depthTex, uv + dv).x);
+	vec3 dbr = vec3( 1, 1, texture(depthTex, uv + dv + du).x);
+
+	vec3 dmin = dtl;
+#define ZCMP_GT(a, b) (a > b)
+	if (ZCMP_GT(dmin.z, dtc.z)) dmin = dtc;
+	if (ZCMP_GT(dmin.z, dtr.z)) dmin = dtr;
+
+	if (ZCMP_GT(dmin.z, dml.z)) dmin = dml;
+	if (ZCMP_GT(dmin.z, dmc.z)) dmin = dmc;
+	if (ZCMP_GT(dmin.z, dmr.z)) dmin = dmr;
+
+	if (ZCMP_GT(dmin.z, dbl.z)) dmin = dbl;
+	if (ZCMP_GT(dmin.z, dbc.z)) dmin = dbc;
+	if (ZCMP_GT(dmin.z, dbr.z)) dmin = dbr;
+
+	return vec3(uv + dd.xy * dmin.xy, dmin.z);
+#undef ZCMP_GT
+}
 
 vec3 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec3 p, vec3 q) {
 	vec3 r = q - p;
@@ -62,59 +100,48 @@ vec3 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec3 p, vec3 q) {
 	return p + r;
 }
 
-float reprojectDepth(vec2 uv, float depth) {
-	vec3 world = reconstructWorldPos(uv, ubo.invProj, depth);
-	return multPos(ubo.lastProj, world).z;
-	// return vec4(ubo.lastProj[0][3], ubo.lastProj[0 ...
-
-	// vec3 proj = multPos(ubo.lastProj, world);
-	// proj.y *= -1.f;
-	// proj.xy = 0.5 + 0.5 * proj.xy;
-	// return proj;
-}
-
-float reprojectDepth(vec2 uv) {
-	float depth = texture(depthTex, uv).r;
-	return reprojectDepth(uv, depth);
-}
-
-float reprojectDepth(vec2 uv, vec2 juv, vec2 off) {
-	float depth = texture(depthTex, juv + off).r;
-	return reprojectDepth(uv + off, depth);
-}
-
 // inverse reproject depth rejection
 // returns the correctenss
-float irdr(vec2 uv, vec2 juv, float projZ, float histZ) {
-	const ivec2 offx = ivec2(2, 0);
-	const ivec2 offy = ivec2(0, 2);
-	// TODO: juv or uv?
-	// we use uv for world reconstruction but juv for depth above...
-	// PERF: we don't really need the whole matrix mult for the z value
-	float z0 = depthtoz(reprojectDepth(uv, juv, +pixelSize * offx), ubo.near, ubo.far);
-	float z1 = depthtoz(reprojectDepth(uv, juv, -pixelSize * offx), ubo.near, ubo.far);
-	float z2 = depthtoz(reprojectDepth(uv, juv, +pixelSize * offy), ubo.near, ubo.far);
-	float z3 = depthtoz(reprojectDepth(uv, juv, -pixelSize * offy), ubo.near, ubo.far);
+// float irdr(vec2 uv, vec2 juv, float projZ, float histZ) {
+float irdr(vec2 uv, float velZ, float projZ, float histZ) {
+	const ivec2 offx = ivec2(1, 0);
+	const ivec2 offy = ivec2(0, 1);
+
+	// TODO: not sure whether to sample velocity for each as well
+#define RZ(_o) \
+	depthtoz(textureOffset(depthTex, uv, _o).r, ubo.near, ubo.far) - velZ
+	// depthtoz(textureOffset(depthTex, uv, _o).r, ubo.near, ubo.far) \
+	// 	- textureOffset(velocityTex, uv, _o).z
+
+	float z0 = RZ(+offx);
+	float z1 = RZ(-offx);
+	float z2 = RZ(+offy);
+	float z3 = RZ(-offy);
 	float zmin = min(projZ, min(z0, min(z1, min(z2, z3))));
 	float zmax = max(projZ, max(z0, max(z1, max(z2, z3))));
 
-	z0 = depthtoz(reprojectDepth(uv, juv, pixelSize * (offx + offy)), ubo.near, ubo.far);
-	z1 = depthtoz(reprojectDepth(uv, juv, pixelSize * (offx - offy)), ubo.near, ubo.far);
-	z2 = depthtoz(reprojectDepth(uv, juv, pixelSize * (-offx + offy)), ubo.near, ubo.far);
-	z3 = depthtoz(reprojectDepth(uv, juv, pixelSize * (-offx - offy)), ubo.near, ubo.far);
+	z0 = RZ(+offx + offy);
+	z1 = RZ(+offx - offy);
+	z2 = RZ(-offx + offy);
+	z3 = RZ(-offx - offy);
 	zmin = min(zmin, min(z0, min(z1, min(z2, z3))));
 	zmax = max(zmax, max(z0, max(z1, max(z2, z3))));
 
+#undef RZ
+
 	// float thl = 0.01 * (projZ - zmin);
 	// float thh = 0.01 * (zmax - projZ);
-	float thl = 0.02;
-	float thh = 0.02;
+	float thl = 0.05;
+	float thh = 0.05;
 
 	// IDEA: we could also apply the color clamping as fallback here
 	// when we reject the depth (linearly interpolate between results).
 	// see previous commits, already implemented it.
-	float correctness = smoothstep(zmin - 2 * thl, zmin - thl, histZ) *
-		(1 - smoothstep(zmax + thh, zmax + 2 * thh, histZ));
+	// float correctness = smoothstep(zmin - 2 * thl, zmin - thl, histZ) *
+	// 	(1 - smoothstep(zmax + thh, zmax + 2 * thh, histZ));
+	float correctness = smoothstep(zmin - thl, zmin, histZ) *
+		(1 - smoothstep(zmax, zmax + thh, histZ));
+	// float correctness = step(zmin, histZ) * (1 - step(zmax, histZ));
 
 	return correctness;
 }
@@ -160,82 +187,113 @@ void main() {
 		vec3 color = texture(renderedTex, uv).rgb;
 		imageStore(outHistory, ivec2(pixel), vec4(color, -1.f));
 		return;
+	} else if(ubo.mode == debugModeVelocity) {
+		vec3 vel = texture(velocityTex, uv).rgb;
+		imageStore(outHistory, ivec2(pixel), vec4(abs(10 * vel.xyz), -1.f));
+		return;
 	}
 
 	// read rendered pixel 
-	vec2 j = 0.5 * ubo.jitter;
-	j.y *= -1;
-	vec2 juv = uv + j;
-	float depth = texture(depthTex, juv).r;
+	// vec2 j = 0.5 * ubo.jitter;
+	// j.y *= -1;
+	// vec2 juv = uv + j;
+	float depth = texture(depthTex, uv).r;
 	float z = depthtoz(depth, ubo.near, ubo.far);
 
-	vec3 world = reconstructWorldPos(uv, ubo.invProj, depth);
-	vec3 color = texture(renderedTex, juv).rgb;
+	vec2 vuv = find_closest_fragment_3x3(uv).xy;
+	vec3 vel = texture(velocityTex, vuv).xyz;
+	// vec3 vel = texture(velocityTex, uv).xyz;
+	vel.xy += 0.5f * (ubo.lastJitter - ubo.jitter);
+	vel.y *= -1.f;
+
+	// vec3 world = reconstructWorldPos(uv, ubo.invProj, depth);
+	vec3 color = texture(renderedTex, uv).rgb;
 	// vec3 color = world;
 
-	vec3 proj = multPos(ubo.lastProj, world);
-	vec2 tc = 0.5 + 0.5 * vec2(proj.x, -proj.y);
-	if(tc == clamp(tc, 0, 1)) { // also skip for depth == 1.0?
-		vec4 hist = texture(inHistory, tc);
+	// vec3 proj = multPos(ubo.lastProj, world);
+	// vec2 tc = 0.5 + 0.5 * vec2(proj.x, -proj.y);
+	// vec3 tc = vec3(juv, z) - vel;
+	vec3 tc = vec3(uv, z) - vel;
+	// check if history is still in screen
+	if(tc.xy == clamp(tc.xy, 0, 1)) { // also skip for depth == 1.0?
+		vec4 hist = texture(inHistory, tc.xy);
 
 		float weight = 0.0;
 		if(ubo.mode == modeClipColor) {
-			hist.rgb = colorClip(juv, color, hist.rgb);
+			hist.rgb = colorClip(uv, color, hist.rgb);
 			weight = 1.f;
 			z = -1.f;
 		} else if(ubo.mode == modeReprDepthRej) {
-			float projZ = depthtoz(proj.z, ubo.near, ubo.far); // the z we want
-			weight = irdr(uv, juv, projZ, hist.w);
+			weight = irdr(uv, vel.z, tc.z, hist.w);
+			// if(weight < 0.1) {
+			// color = vec3(0.5 * hist.w, 0, 1);
+			// }
 
 			// reproejct old linear depth to new projection
 			// PERF: can probably be optimized as we only need depth
-			vec3 ndc = vec3(proj.xy, ztodepth(hist.w, ubo.near, ubo.far));
-			vec3 world = multPos(ubo.invLastProj, ndc);
-			float npz = depthtoz(multPos(ubo.proj, world).z, ubo.near, ubo.far);
-			z = mix(z, npz, weight);
+			// vec3 ndc = vec3(proj.xy, ztodepth(hist.w, ubo.near, ubo.far));
+			// vec3 world = multPos(ubo.invLastProj, ndc);
+			// float npz = depthtoz(multPos(ubo.proj, world).z, ubo.near, ubo.far);
+			float npz = hist.w + vel.z;
+			z = mix(z, npz, weight * ubo.maxFac);
 		} else if(ubo.mode == modeCombined) {
-			float projZ = depthtoz(proj.z, ubo.near, ubo.far); // the z we want
-			float dweight = irdr(uv, juv, projZ, hist.w);
-			vec3 dcol = colorClip(juv, color, hist.rgb);
+			float dweight = irdr(uv, vel.z, tc.z, hist.w);
+			vec3 dcol = colorClip(uv, color, hist.rgb);
+
 			// debugging
+			// if(dweight < 0.5) {
+				// color = vec3(0, 1, 1);
+			// }
 			// dcol = vec3(1, 0, 1);
 
-			// TODO: uv or juv?
-			// uv is probably better since we reconstruct the world position
-			// (and tc) based on uv and therefore if the projection doesn't
-			// change, tc will be the same as uv (ubo matrices don't
-			// contain jitter)
-			float fac = smoothstep(0.0, 2.0, length(vec3(tc * size, projZ) - vec3(uv * size, z)));
+			// when moving more than x pixels, fully use color clipping
+			float lerpMax = 8.0;
+			// TODO: not sure about using vel.z here as well...
+			// the factor is rather random as well
+			// vec3 pvel = vec3(vel.xy * size, vel.z * 0.01);
+			vec2 pvel = vel.xy * size;
+			float fac = smoothstep(0.0, lerpMax, length(pvel));
+
+			// maybe better in other color space?
+			// float fac = 0.0;
+			// if(length(dcol - hist.rgb) > 0.1) {
+				// fac = 1.0;	
+			// }
 
 			hist.rgb = mix(hist.rgb, dcol, fac);
-			weight = mix(dweight, 1.f, fac);
+			// weight = mix(dweight, 1.f, fac);
+			weight = dweight;
 
 			// reproejct old linear depth to new projection
 			// PERF: can probably be optimized as we only need depth
-			vec3 ndc = vec3(proj.xy, ztodepth(hist.w, ubo.near, ubo.far));
-			vec3 world = multPos(ubo.invLastProj, ndc);
-			float npz = depthtoz(multPos(ubo.proj, world).z, ubo.near, ubo.far);
-			z = mix(z, npz, weight);
+			// vec3 ndc = vec3(proj.xy, ztodepth(hist.w, ubo.near, ubo.far));
+			// vec3 world = multPos(ubo.invLastProj, ndc);
+			// float npz = depthtoz(multPos(ubo.proj, world).z, ubo.near, ubo.far);
+			float npz = hist.w + vel.z;
+			z = mix(z, npz, weight * ubo.maxFac);
+		} else if(ubo.mode == modePass) {
+			weight = 1.f;
 		}
 
-		float lum0 = dot(luminanceFac, color);
-		float lum1 = dot(luminanceFac, hist.rgb);
-		float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.2)));
-		diff = 1.0 - diff;
-		weight *= mix(diff * diff, ubo.minFac, ubo.maxFac);
-		// weight = mix(weight, ubo.minFac, ubo.maxFac);
+		// float lum0 = dot(luminanceFac, color);
+		// float lum1 = dot(luminanceFac, hist.rgb);
+		// float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.2)));
+		// diff = 1.0 - diff;
+		// weight *= mix(diff * diff, ubo.minFac, ubo.maxFac);
+		// weight *= mix(weight, ubo.minFac, ubo.maxFac);
+		weight *= ubo.maxFac;
 
 		// weight *= 1 - 0.05 * distance(hist.rgb, color);
 		// float weight = 1 - 0.1 * distance(hist.rgb, color);
 
 		color = mix(color, hist.rgb, weight);
-	}
+	} 
 
 	// debugging was fun.
 	// TODO: there still seems to be a nan case in the pbr pipeline...
 	// debug and fix it! then this can be removed
 	if(any(isnan(color))) {
-		color = vec3(5.0, 5.0, 5.0);
+		color = vec3(0.0, 5.0, 0.0);
 	}
 
 	// write the result into the history buffer

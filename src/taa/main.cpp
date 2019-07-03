@@ -41,8 +41,8 @@
 #include <tinygltf.hpp>
 
 #include <shaders/stage.fullscreen.vert.h>
-#include <shaders/br.model.vert.h>
-#include <shaders/br.model.frag.h>
+#include <shaders/taa.model.vert.h>
+#include <shaders/taa.model.frag.h>
 #include <shaders/taa.pp.frag.h>
 #include <shaders/taa.taa.comp.h>
 
@@ -56,6 +56,8 @@ class ViewApp : public doi::App {
 public:
 	static constexpr auto historyFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
+	// TODO: we can probably use a 8-bit buffer here with a proper encoding
+	static constexpr auto velocityFormat = vk::Format::r16g16b16a16Sfloat;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -177,7 +179,7 @@ public:
 		}}, {}};
 
 		// offscreen render pass
-		std::array<vk::AttachmentDescription, 2> attachments;
+		std::array<vk::AttachmentDescription, 3> attachments;
 		attachments[0].initialLayout = vk::ImageLayout::undefined;
 		attachments[0].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 		attachments[0].format = offscreenFormat;
@@ -192,17 +194,26 @@ public:
 		attachments[1].storeOp = vk::AttachmentStoreOp::store;
 		attachments[1].samples = vk::SampleCountBits::e1;
 
-		vk::AttachmentReference colorRef;
-		colorRef.attachment = 0;
-		colorRef.layout = vk::ImageLayout::colorAttachmentOptimal;
+		attachments[2].initialLayout = vk::ImageLayout::undefined;
+		attachments[2].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		attachments[2].format = velocityFormat;
+		attachments[2].loadOp = vk::AttachmentLoadOp::clear;
+		attachments[2].storeOp = vk::AttachmentStoreOp::store;
+		attachments[2].samples = vk::SampleCountBits::e1;
+
+		vk::AttachmentReference colorRefs[2];
+		colorRefs[0].attachment = 0;
+		colorRefs[0].layout = vk::ImageLayout::colorAttachmentOptimal;
+		colorRefs[1].attachment = 2;
+		colorRefs[1].layout = vk::ImageLayout::colorAttachmentOptimal;
 
 		vk::AttachmentReference depthRef;
 		depthRef.attachment = 1;
 		depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
 
 		vk::SubpassDescription subpass;
-		subpass.colorAttachmentCount = 1;
-		subpass.pColorAttachments = &colorRef;
+		subpass.colorAttachmentCount = 2;
+		subpass.pColorAttachments = colorRefs;
 		subpass.pDepthStencilAttachment = &depthRef;
 
 		// make sure color and depth buffer are available afterwards
@@ -230,8 +241,8 @@ public:
 		offscreen_.rp = {dev, rpi};
 
 		// pipeline
-		vpp::ShaderModule vertShader(dev, br_model_vert_data);
-		vpp::ShaderModule fragShader(dev, br_model_frag_data);
+		vpp::ShaderModule vertShader(dev, taa_model_vert_data);
+		vpp::ShaderModule fragShader(dev, taa_model_frag_data);
 		vpp::GraphicsPipelineInfo gpi {offscreen_.rp, pipeLayout_, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
@@ -244,6 +255,13 @@ public:
 		gpi.depthStencil.depthWriteEnable = true;
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 
+		auto battachments = {
+			doi::noBlendAttachment(),
+			doi::noBlendAttachment(),
+		};
+		gpi.blend.attachmentCount = battachments.size();
+		gpi.blend.pAttachments = battachments.begin();
+
 		// NOTE: see the gltf material.doubleSided property. We can't switch
 		// this per material (without requiring two pipelines) so we simply
 		// always render backfaces currently and then dynamically cull in the
@@ -254,7 +272,7 @@ public:
 		pipe_ = {dev, gpi.info()};
 
 		// gpi.depthStencil.depthWriteEnable = false;
-		blendPipe_ = {dev, gpi.info()};
+		// blendPipe_ = {dev, gpi.info()};
 
 		doi::Environment::InitData initEnv;
 		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", linearSampler_);
@@ -278,7 +296,7 @@ public:
 		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
 
 		// camera
-		auto cameraUboSize = sizeof(nytl::Mat4f) // proj matrix
+		auto cameraUboSize = sizeof(nytl::Mat4f) * 2 // proj matrix (+last)
 			+ sizeof(nytl::Vec3f) + sizeof(float) * 2; // viewPos, near, far
 		cameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
 		cameraUbo_ = {dev.bufferAllocator(), cameraUboSize,
@@ -342,6 +360,10 @@ public:
 		shape = doi::generateUV(sphere);
 		spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
+
+		auto sm = nytl::identity<4, float>();
+		movingInstance_ = scene_.addInstance(cubePrimitiveID_, sm,
+			scene_.defaultMaterialID());
 
 		// init light visualizations
 		doi::Material lmat;
@@ -425,12 +447,13 @@ public:
 	void initTAA() {
 		auto& dev = vulkanDevice();
 		auto taaBindings = {
-			// NOTE: not sure if linear or nearest sampler is better for access
-			// into history
+			// linear sampler for history access important
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
@@ -532,9 +555,16 @@ public:
 			vk::ImageUsageBits::sampled);
 		dlg_assert(vpp::supported(dev, info.img));
 		offscreen_.target = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
+
+		info.img.format = velocityFormat;
+		info.view.format = velocityFormat;
+		dlg_assert(vpp::supported(dev, info.img));
+		offscreen_.velTarget = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
+
 		auto attachments = {
 			offscreen_.target.vkImageView(),
 			depthTarget().vkImageView(),
+			offscreen_.velTarget.vkImageView(),
 		};
 		auto fbi = vk::FramebufferCreateInfo({}, offscreen_.rp,
 			attachments.size(), attachments.begin(),
@@ -551,6 +581,8 @@ public:
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		tdsu.imageSampler({{{}, depthTarget().vkImageView(),
 			vk::ImageLayout::depthStencilReadOnlyOptimal}});
+		tdsu.imageSampler({{{}, offscreen_.velTarget.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
 		tdsu.uniform({{{taa_.ubo}}});
 
 		vpp::DescriptorSetUpdate pdsu(pp_.ds);
@@ -686,9 +718,10 @@ public:
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
 		// 1: render offscreeen
-		std::array<vk::ClearValue, 2u> cv {};
+		std::array<vk::ClearValue, 3u> cv {};
 		cv[0] = {{0.f, 0.f, 0.f, 0.f}}; // color
 		cv[1].depthStencil = {1.f, 0u};
+		cv[3] = {{0.f, 0.f, 0.f, 0.f}}; // TODO: not sure...
 		vk::cmdBeginRenderPass(cb, {offscreen_.rp, offscreen_.fb,
 			{0u, 0u, width, height},
 			std::uint32_t(cv.size()), cv.data()}, {});
@@ -705,7 +738,8 @@ public:
 			{envCameraDs_});
 		env_.render(cb);
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
+		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
 		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
 			dirLight_.ds(), pointLight_.ds(), aoDs_});
@@ -800,16 +834,28 @@ public:
 			if(mode_ & modePointLight) {
 				pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
 				pointLight_.data.position.z = 7.0 * std::sin(0.2 * time_);
-				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
+				auto& ini = scene_.instances()[pointLight_.instanceID];
+				ini.lastMatrix = ini.matrix = pointLightObjMatrix();
 				scene_.updatedInstance(pointLight_.instanceID);
 			} else if(mode_ & modeDirLight) {
 				dirLight_.data.dir.x = 7.0 * std::cos(0.2 * time_);
 				dirLight_.data.dir.z = 7.0 * std::sin(0.2 * time_);
-				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
+				auto& ini = scene_.instances()[dirLight_.instanceID];
+				ini.lastMatrix = ini.matrix = dirLightObjMatrix();
 				scene_.updatedInstance(dirLight_.instanceID);
 			}
 			updateLight_ = true;
 		}
+
+		// animate instance (simple moving in x dir)
+		// movingVel_ *= std::pow(0.99, dt);
+		movingVel_.x += 0.1 * dt * std::cos(0.5 * time_);
+		movingPos_ += dt * movingVel_;
+		auto mat = doi::translateMat(movingPos_) * doi::scaleMat({2.f, 2.f, 2.f});
+		auto& ini = scene_.instances()[movingInstance_];
+		ini.lastMatrix = ini.matrix;
+		ini.matrix = mat;
+		scene_.updatedInstance(movingInstance_);
 
 		// we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
@@ -829,21 +875,23 @@ public:
 		}
 
 		switch(ev.keycode) {
-			case ny::Keycode::m: // move light here
+			case ny::Keycode::m: { // move light here
 				moveLight_ = false;
 				dirLight_.data.dir = -camera_.pos;
-				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
+				auto& ini = scene_.instances()[dirLight_.instanceID];
+				ini.lastMatrix = ini.matrix = dirLightObjMatrix();
 				scene_.updatedInstance(dirLight_.instanceID);
 				updateLight_ = true;
 				return true;
-			case ny::Keycode::n: // move light here
+			} case ny::Keycode::n: { // move light here
 				moveLight_ = false;
 				updateLight_ = true;
 				pointLight_.data.position = camera_.pos;
-				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
+				auto& ini = scene_.instances()[pointLight_.instanceID];
+				ini.lastMatrix = ini.matrix = pointLightObjMatrix();
 				scene_.updatedInstance(pointLight_.instanceID);
 				return true;
-			case ny::Keycode::l:
+			} case ny::Keycode::l:
 				moveLight_ ^= true;
 				return true;
 			case ny::Keycode::p:
@@ -886,7 +934,7 @@ public:
 				dlg_info("Static AO: {}", bool(mode_ & modeIrradiance));
 				return true;
 			case ny::Keycode::k5: // toggle TAA
-				taa_.mode = (taa_.mode + 1) % 4;
+				taa_.mode = (taa_.mode + 1) % 6;
 				break;
 			default:
 				break;
@@ -947,6 +995,7 @@ public:
 			auto jproj = jitterMat * proj;
 
 			doi::write(span, jproj);
+			doi::write(span, taa_.lastProj);
 			doi::write(span, camera_.pos);
 			doi::write(span, camera_.perspective.near);
 			doi::write(span, camera_.perspective.far);
@@ -961,9 +1010,9 @@ public:
 
 			auto taaMap = taa_.ubo.memoryMap();
 			auto taaSpan = taaMap.span();
-			doi::write(taaSpan, nytl::Mat4f(nytl::inverse(proj)));
+			doi::write(taaSpan, nytl::Mat4f(nytl::inverse(jproj)));
 			doi::write(taaSpan, taa_.lastProj);
-			doi::write(taaSpan, proj);
+			doi::write(taaSpan, jproj);
 			doi::write(taaSpan, nytl::Mat4f(nytl::inverse(taa_.lastProj)));
 			doi::write(taaSpan, off);
 			doi::write(taaSpan, taa_.lastJitter);
@@ -974,7 +1023,7 @@ public:
 			doi::write(taaSpan, taa_.mode);
 			taaMap.flush();
 
-			taa_.lastProj = proj;
+			taa_.lastProj = jproj;
 			taa_.lastJitter = off;
 		}
 
@@ -1073,6 +1122,7 @@ protected:
 	struct {
 		vpp::RenderPass rp;
 		vpp::ViewableImage target;
+		vpp::ViewableImage velTarget;
 		vpp::Framebuffer fb;
 	} offscreen_;
 
@@ -1080,6 +1130,8 @@ protected:
 	static constexpr u32 taaModeClipColor = 1u;
 	static constexpr u32 taaModeReprDepthRej = 2u;
 	static constexpr u32 taaModeCombined = 3u;
+	static constexpr u32 taaDebugModeVelocity = 4u;
+	static constexpr u32 taaModePass = 5u;
 
 	struct {
 		vpp::ViewableImage inHistory;
@@ -1136,6 +1188,10 @@ protected:
 
 	u32 cubePrimitiveID_ {};
 	u32 spherePrimitiveID_ {};
+
+	u32 movingInstance_ {};
+	nytl::Vec3f movingPos_ {0.f, 1.f, 0.f};
+	nytl::Vec3f movingVel_ {0, 0, 0};
 
 	// light and shadow
 	doi::ShadowData shadowData_;

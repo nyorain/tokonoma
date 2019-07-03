@@ -1,4 +1,5 @@
 #include <stage/scene/scene.hpp>
+#include <stage/scene/shape.hpp>
 #include <stage/quaternion.hpp>
 #include <stage/types.hpp>
 #include <stage/image.hpp>
@@ -233,7 +234,7 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 
 	// models buffer
 	auto pcount = blendCount_ + opaqueCount_;
-	auto size = pcount * sizeof(nytl::Mat4f) * 2;
+	auto size = pcount * sizeof(nytl::Mat4f) * 3;
 	instanceBuf_ = {data.initModels, wb.alloc.bufHost, size,
 		vk::BufferUsageBits::storageBuffer, hostMem};
 
@@ -479,7 +480,7 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 	// theoretically possible but a lot of complexity, really not
 	// worth it for now
 	if(primitive.mode != TINYGLTF_MODE_TRIANGLES) {
-		dlg_error("Unsupported primitive mode: {}", primitive.mode);
+		dlg_error("Unsupported primitive.mode: {}", primitive.mode);
 		throw std::runtime_error("Unsupported primitive.mode");
 	}
 
@@ -531,24 +532,7 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 		dlg_assertm(p.indices.size() % 3 == 0,
 			"Triangle mode primitive index count not multiple of 3");
 
-		// generate normals weighted by triangle area
-		p.normals.resize(p.positions.size(), Vec3f{0.f, 0.f, 0.f});
-		for(auto i = 0u; i < p.indices.size(); i += 3) {
-			auto& p1 = p.positions[p.indices[i + 0]];
-			auto& p2 = p.positions[p.indices[i + 1]];
-			auto& p3 = p.positions[p.indices[i + 2]];
-			auto e1 = p2 - p1;
-			auto e2 = p3 - p1;
-			auto n = nytl::cross(e1, e2); // length proportional to tri area
-			p.normals[p.indices[i + 0]] += n;
-			p.normals[p.indices[i + 1]] += n;
-			p.normals[p.indices[i + 2]] += n;
-		}
-
-		// normalize normals
-		for(auto& n : p.normals) {
-			normalize(n);
-		}
+		p.normals = areaSmoothNormals(p.positions, p.indices);
 	} else {
 		auto& na = model.accessors[in->second];
 		dlg_assert(na.count == pa.count);
@@ -602,6 +586,7 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 
 	Instance ini;
 	ini.matrix = matrix;
+	ini.lastMatrix = matrix;
 	ini.materialID = mat;
 	ini.modelID = ++instanceID_;
 	ini.primitiveID = primitives_.size() - 1;
@@ -748,6 +733,7 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 		normalMatrix[3][0] = ini.materialID;
 		normalMatrix[3][1] = ini.modelID;
 		write(iniSpan, normalMatrix);
+		write(iniSpan, ini.lastMatrix);
 	}
 
 	idmap.flush();
@@ -869,7 +855,7 @@ vk::Semaphore Scene::upload() {
 
 		if(newInis_) {
 			auto pcount = blendCount_ + opaqueCount_;
-			auto size = pcount * sizeof(nytl::Mat4f) * 2;
+			auto size = pcount * sizeof(nytl::Mat4f) * 3;
 			instanceBuf_ = {dev.bufferAllocator(), size,
 				vk::BufferUsageBits::storageBuffer , dev.hostMemoryTypes()};
 			updateDs = true;
@@ -895,6 +881,7 @@ vk::Semaphore Scene::upload() {
 			normalMatrix[3][0] = ini.materialID;
 			normalMatrix[3][1] = ini.modelID;
 			write(iniSpan, normalMatrix);
+			write(iniSpan, ini.lastMatrix);
 		}
 
 		idmap.flush();
@@ -1204,6 +1191,7 @@ u32 Scene::addInstance(u32 primitiveID, nytl::Mat4f matrix, u32 matID) {
 	auto& ini = instances_.emplace_back();
 	ini.materialID = matID;
 	ini.matrix = matrix;
+	ini.lastMatrix = matrix;
 	ini.modelID = ++instanceID_;
 	ini.primitiveID = primitiveID;
 	++newInis_;

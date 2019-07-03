@@ -1,6 +1,4 @@
 // TODO: implement dual marching cubes. Table already in tables.hpp
-// TODO: maybe use flat normals for normal marching cubes? looks
-//   not good with current approach
 // TODO: implement grid-based normals
 //   (and some other stuff fixed in gdv project but not yet here)
 // TODO: add vec and mat hashing to nytl. Check first what the license/
@@ -68,7 +66,12 @@ struct hash<nytl::Vec<I, T>> {
 
 struct Volume {
 	static constexpr auto size = Vec3ui{64, 64, 64};
-	static constexpr auto scale = Vec3f{1.f / size.x, 1.f / size.y, 1.f / size.z};
+	static constexpr auto extent = Vec3f{4, 4, 4};
+	static constexpr auto start = -0.5f * extent;
+	static constexpr auto scale = Vec3f{
+		extent.x / size.x,
+		extent.y / size.y,
+		extent.z / size.z};
 
 	std::vector<float> sdf;
 	std::vector<Vec3f> positions;
@@ -83,34 +86,102 @@ struct Volume {
 		return id(pos.x, pos.y, pos.z);
 	}
 
+	// < 0: outside
+	// > 0: inside
+	float func(float x, float y, float z) {
+		const float w = 1.f;
+		const float r = 0.5 * (1 + std::sqrt(5));
+		auto t = (x * x + y * y + z * z - w * w);
+		auto val = 4 * (r * r * x * x - y * y) *
+			(r * r * y * y - z * z) *
+			(r * r * z * z - x * x) -
+			(1 + 2 * r) * t * t * w * w;
+		return val;
+	}
+
+	Vec3f normal(float x, float y, float z) {
+		const float w = 1.f;
+		const float r = 0.5 * (1 + std::sqrt(5));
+
+		auto d = [w, r](float x, float y, float z) {
+			auto t = (x * x + y * y + z * z - w * w);
+			auto dt = 2 * x;
+			return 4 * (r * r * y * y - z * z)
+				* ((r * r * 2 * x) * (r * r * z * z - x * x) + (r * r * x * x - y * y) * (-2) * x)
+				- (1 + 2 * r) * (2 * dt * t) * w * w;
+		};
+
+		return -1.f * normalized(Vec3f{d(x, y, z), d(y, z, x), d(z, x, y)});
+	}
+
+	Vec3f normal(Vec3f v) { return normal(v.x, v.y, v.z); }
+	float func(Vec3f v) { return func(v.x, v.y, v.z); }
+
+	// ceil
+	// undefined outside of grid
+	Vec3ui posToGrid(Vec3f pos) {
+		using namespace nytl::vec::cw::operators;
+		return Vec3ui((pos - start) / scale);
+
+	}
+
+	Vec3f posToGridf(Vec3f pos) {
+		using namespace nytl::vec::cw::operators;
+		return Vec3f((pos - start) / scale);
+	}
+
+	float value(Vec3f p) {
+		auto gp = nytl::vec::cw::clamp(posToGridf(p), Vec3f{0, 0, 0},
+			Vec3f{size.x - 1.f, size.y - 1.f, size.z - 1.f});
+		Vec3ui id = Vec3ui(gp);
+
+		float fx = gp.x - id.x;
+		float fy = gp.y - id.y;
+		float fz = gp.z - id.z;
+		auto c = cell(id);
+
+		// trilinear interpolation
+		float res = 0.f;
+		res += (1 - fx) * (1 - fy) * (1 - fz) * c.val[0];
+		res += fx * (1 - fy) * (1 - fz) * c.val[1];
+		res += fx * (1 - fy) * fz * c.val[2];
+		res += (1 - fx) * (1 - fy) * fz * c.val[3];
+		res += (1 - fx) * fy * (1 - fz) * c.val[4];
+		res += fx * fy * (1 - fz) * c.val[5];
+		res += fx * fy * fz * c.val[6];
+		res += (1 - fx) * fy * fz * c.val[7];
+
+		return res;
+	}
+
+	Vec3f sdfNormal(Vec3f pos) {
+		auto gid = posToGrid(pos);
+		for(auto i = 0u; i < 3; ++i) {
+			gid[i] = std::min(gid[i], size[i] - 2u);
+		}
+
+		nytl::Vec3f res;
+		for(auto i = 0u; i < 3; ++i) {
+			auto p1 = pos;
+			auto p2 = pos;
+			// central difference
+			p1[i] = p1[i] - scale[i];
+			p2[i] = p2[i] + scale[i];
+			res[i] = (value(p2) - value(p1)) / (2 * scale[i]);
+		}
+
+		return -1.f * normalized(res);
+	}
+
 	void generateSDF() {
 		sdf.resize(size.x * size.y * size.z);
 
-		// < 0: outside
-		// > 0: inside
-		const float w = 1.f;
-		const float r = 0.5 * (1 + std::sqrt(5));
-		auto func = [&](float x, float y, float z){
-			auto t = (x * x + y * y + z * z - w * w);
-			float val = 4 * (r * r * x * x - y * y) *
-				(r * r * y * y - z * z) *
-				(r * r * z * z - x * x) -
-				(1 + 2 * r) * t * t * w * w;
-			return val;
-		};
-
-		// auto func = [&](float x, float y, float z) {
-		// 	return x * x + y * y + z * z - 1;
-		// };
-
-		auto extent = 4.f;
-		float start = -extent / 2.f;
 		for(auto iz = 0u; iz < size.z; ++iz) {
-			auto z = start + extent * (iz / float(size.z));
+			auto z = start.z + (iz / float(size.z)) * extent.z;
 			for(auto iy = 0u; iy < size.y; ++iy) {
-				auto y = start + extent * (iy / float(size.y));
+				auto y = start.y + (iy / float(size.y)) * extent.y;
 				for(auto ix = 0u; ix < size.x; ++ix) {
-					auto x = start + extent * (ix / float(size.x));
+					auto x = start.x + (ix / float(size.x)) * extent.x;
 					sdf[id(ix, iy, iz)] = func(x, y, z);
 				}
 			}
@@ -190,8 +261,8 @@ struct Volume {
 		Cell cell {};
 		for(auto i = 0u; i < 8; ++i) {
 			Vec3ui off = Vec3ui {((i + 1) / 2) % 2, i / 4, (i / 2) % 2};
-			auto p = -0.5f * size + pos + Vec3f(off);
-			cell.pos[i] = nytl::vec::cw::multiply(scale, p);
+			auto p = start + nytl::vec::cw::multiply(scale, pos + Vec3f(off));
+			cell.pos[i] = p;
 			cell.val[i] = sdf[id(pos + off)];
 		}
 		return cell;
@@ -217,6 +288,12 @@ struct Volume {
 						positions.push_back(tri.pos[0]);
 						positions.push_back(tri.pos[1]);
 						positions.push_back(tri.pos[2]);
+						normals.push_back(normal(tri.pos[0]));
+						normals.push_back(normal(tri.pos[1]));
+						normals.push_back(normal(tri.pos[2]));
+						// normals.push_back(sdfNormal(tri.pos[0]));
+						// normals.push_back(sdfNormal(tri.pos[1]));
+						// normals.push_back(sdfNormal(tri.pos[2]));
 						++total;
 					}
 				}
@@ -239,28 +316,13 @@ struct Volume {
 				seen[positions[i]] = write;
 				indices.push_back(write);
 				positions[write] = positions[i];
+				normals[write] = normals[i];
 				++write;
 			}
 		}
 
 		positions.resize(write);
-
-		// smooth normals by area
-		normals.resize(positions.size(), {0.f, 0.f, 0.f});
-		for(auto i = 0u; i < indices.size(); i += 3) {
-			auto e1 = positions[indices[i + 1]] - positions[indices[i + 0]];
-			auto e2 = positions[indices[i + 2]] - positions[indices[i + 0]];
-
-			auto normal = nytl::cross(e1, e2);
-			normals[indices[i + 0]] += normal;
-			normals[indices[i + 1]] += normal;
-			normals[indices[i + 2]] += normal;
-		}
-
-		// normalize all
-		for(auto& n : normals) {
-			normalize(n);
-		}
+		normals.resize(write);
 	}
 };
 

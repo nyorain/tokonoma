@@ -1,5 +1,6 @@
 #include <stage/scene/shape.hpp>
 #include <nytl/vecOps.hpp>
+#include <dlg/dlg.hpp>
 
 namespace doi {
 using namespace nytl::vec::cw;
@@ -125,5 +126,30 @@ Shape generateUV(const Sphere& sphere, unsigned stackCount,
 // TODO
 // Shape generateIco(const Sphere& sphere, unsigned sub) {
 // }
+
+std::vector<Vec3f> areaSmoothNormals(nytl::Span<const Vec3f> positions,
+		nytl::Span<const u32> indices) {
+
+	std::vector<Vec3f> normals;
+	normals.resize(positions.size(), {0.f, 0.f, 0.f});
+	for(auto i = 0u; i < indices.size(); i += 3) {
+		dlg_assert(indices[i + 0] < positions.size());
+		dlg_assert(indices[i + 1] < positions.size());
+		dlg_assert(indices[i + 2] < positions.size());
+		auto e1 = positions[indices[i + 1]] - positions[indices[i + 0]];
+		auto e2 = positions[indices[i + 2]] - positions[indices[i + 0]];
+		auto normal = nytl::cross(e1, e2);
+		normals[indices[i + 0]] += normal;
+		normals[indices[i + 1]] += normal;
+		normals[indices[i + 2]] += normal;
+	}
+
+	// normalize all
+	for(auto& n : normals) {
+		normalize(n);
+	}
+
+	return normals;
+}
 
 } // namespace doi
