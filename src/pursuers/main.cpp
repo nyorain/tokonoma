@@ -1,3 +1,9 @@
+// ideas:
+// - play around with different attraction functions
+// - allow the mouse cursor to be one particle and influence the whole
+//   system like that (interesting to study the effect one individual particle
+//   has on the others over time)
+
 #include <stage/app.hpp>
 #include <stage/window.hpp>
 

@@ -274,9 +274,17 @@ public:
 		// gpi.depthStencil.depthWriteEnable = false;
 		// blendPipe_ = {dev, gpi.info()};
 
+		// we need two blend attachments since this render pass has two
+		// color attachments (color + velocity)
+		// but the environment should simply ignore the velocity buffer
+		auto batts = {
+			doi::defaultBlendAttachment(),
+			doi::disableBlendAttachment(),
+		};
+
 		doi::Environment::InitData initEnv;
 		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", linearSampler_);
-		env_.createPipe(device(), cameraDsLayout_, offscreen_.rp, 0u, samples());
+		env_.createPipe(device(), cameraDsLayout_, offscreen_.rp, 0u, samples(), batts);
 		env_.init(initEnv, batch);
 
 		// box indices

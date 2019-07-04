@@ -20,6 +20,15 @@ void cmdCopyBuffer(vk::CommandBuffer, vpp::BufferSpan src, vpp::BufferSpan dst);
 /// but allows all components to be written.
 const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
 
+/// Returns a PipelineColorBlendAttachmentState with default oneMinusSrcAlpha
+/// blending (and replacing alpha blending) and full write mask.
+const vk::PipelineColorBlendAttachmentState& defaultBlendAttachment();
+
+/// Returns a blend attachment that has blending disabled and the color
+/// write mask set to empty, i.e. it disables all writing to this
+/// attachment
+const vk::PipelineColorBlendAttachmentState& disableBlendAttachment();
+
 /// Returns the size of mipmap level 'i' for an image that has size 'full'
 vk::Extent2D mipmapSize(vk::Extent2D full, unsigned i);
 

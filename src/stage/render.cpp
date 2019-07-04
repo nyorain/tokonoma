@@ -50,6 +50,31 @@ const vk::PipelineColorBlendAttachmentState& noBlendAttachment() {
 	return state;
 }
 
+const vk::PipelineColorBlendAttachmentState& defaultBlendAttachment() {
+	static constexpr vk::PipelineColorBlendAttachmentState state = {
+		true, // blending enabled
+		// color
+		vk::BlendFactor::srcAlpha, // src
+		vk::BlendFactor::oneMinusSrcAlpha, // dst
+		vk::BlendOp::add,
+		// alpha
+		vk::BlendFactor::one,
+		vk::BlendFactor::zero,
+		vk::BlendOp::add,
+		// color write mask
+		vk::ColorComponentBits::r |
+			vk::ColorComponentBits::g |
+			vk::ColorComponentBits::b |
+			vk::ColorComponentBits::a,
+	};
+	return state;
+}
+
+const vk::PipelineColorBlendAttachmentState& disableBlendAttachment() {
+	static constexpr vk::PipelineColorBlendAttachmentState state = {};
+	return state;
+}
+
 // Returns the size of mipmap level 'i' for an image that has size 'full'
 vk::Extent2D mipmapSize(vk::Extent2D full, unsigned i) {
 	vk::Extent2D ret;

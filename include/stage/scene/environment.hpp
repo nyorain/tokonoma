@@ -2,6 +2,7 @@
 
 #include <stage/texture.hpp>
 #include <stage/types.hpp>
+#include <stage/render.hpp>
 #include <vpp/fwd.hpp>
 #include <vpp/image.hpp>
 #include <vpp/sharedBuffer.hpp>
@@ -43,7 +44,9 @@ public:
 		nytl::StringParam irradiancePath, vk::Sampler linear);
 	void init(InitData&, const WorkBatcher&);
 	void createPipe(const vpp::Device&, vk::DescriptorSetLayout camDsLayout,
-		vk::RenderPass rp, unsigned subpass, vk::SampleCountBits samples);
+		vk::RenderPass rp, unsigned subpass, vk::SampleCountBits samples,
+		nytl::Span<const vk::PipelineColorBlendAttachmentState>
+			battachments = {&defaultBlendAttachment(), 1});
 
 	// Requires caller to bind cube index buffer with boxInsideIndices.
 	// Also requires the camera ds to be bound as set 0.

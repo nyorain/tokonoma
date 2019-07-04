@@ -64,7 +64,8 @@ void Environment::init(InitData& data, const WorkBatcher& wb) {
 
 void Environment::createPipe(const vpp::Device& dev,
 		vk::DescriptorSetLayout camDsLayout, vk::RenderPass rp,
-		unsigned subpass, vk::SampleCountBits samples) {
+		unsigned subpass, vk::SampleCountBits samples,
+		nytl::Span<const vk::PipelineColorBlendAttachmentState> battachments) {
 	pipeLayout_ = {dev, {{camDsLayout, dsLayout_.vkHandle()}}, {}};
 
 	vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);
@@ -74,33 +75,15 @@ void Environment::createPipe(const vpp::Device& dev,
 		{fragShader, vk::ShaderStageBits::fragment},
 	}}}, subpass, samples};
 
-	// TODO: some of these rather temporary workarounds for the
-	// deferred renderer
+	// enable depth testing to only write where it's really needed
+	// (where no geometry was rendered yet)
 	gpi.depthStencil.depthTestEnable = true;
 	gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 	gpi.depthStencil.depthWriteEnable = false;
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+	// culling not really needed here
 	// gpi.rasterization.cullMode = vk::CullModeBits::back;
 	// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
-
-	// TODO: not sure whether we need blending here, probably not?
-	// vk::PipelineColorBlendAttachmentState blendAttachment;
-	// blendAttachment.blendEnable = true;
-	// blendAttachment.colorBlendOp = vk::BlendOp::add;
-	// blendAttachment.srcColorBlendFactor = vk::BlendFactor::one;
-	// blendAttachment.dstColorBlendFactor = vk::BlendFactor::one;
-	// blendAttachment.colorWriteMask =
-	// 		vk::ColorComponentBits::r |
-	// 		vk::ColorComponentBits::g |
-	// 		vk::ColorComponentBits::b |
-	// 		vk::ColorComponentBits::a;
-	// gpi.blend.pAttachments = &blendAttachment;
-
-	std::array battachments = {
-		doi::noBlendAttachment(),
-		doi::noBlendAttachment(),
-	};
-	battachments[1].colorWriteMask = {}; // ignore
 
 	gpi.blend.attachmentCount = battachments.size();
 	gpi.blend.pAttachments = battachments.begin();

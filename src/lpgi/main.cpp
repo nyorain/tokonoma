@@ -475,156 +475,7 @@ public:
 		auto& qs = device().queueSubmitter();
 		auto qfam = qs.queue().family();
 		probe_.cb = device().commandAllocator().get(qfam);
-		auto cb = probe_.cb.vkHandle();
-
-		vk::beginCommandBuffer(probe_.cb, {});
-		vk::Viewport vp{0.f, 0.f,
-			(float) probeSize.width, (float) probeSize.height, 0.f, 1.f};
-		vk::cmdSetViewport(cb, 0, 1, vp);
-		vk::cmdSetScissor(cb, 0, 1, {0, 0, probeSize.width, probeSize.height});
-
-		std::array<vk::ClearValue, 6u> cv {};
-		cv[0] = {0.f, 0.f, 0.f, 0.f}; // color
-		cv[1].depthStencil = {1.f, 0u}; // depth
-		for(auto i = 0u; i < 6; ++i) {
-			auto& face = probe_.faces[i];
-
-			vk::cmdBeginRenderPass(cb, {renderPass(), probe_.fb,
-				{0u, 0u, probeSize.width, probeSize.height},
-				std::uint32_t(cv.size()), cv.data()
-			}, {});
-
-			// almost the same as the default output, we just have to
-			// use a different pipe and descriptor set
-			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, probe_.pipe);
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
-				dirLight_.ds(), pointLight_.ds(), aoDs_});
-			scene_.render(cb, pipeLayout_, false); // opaque
-
-			vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
-				boxIndices_.offset(), vk::IndexType::uint16);
-			doi::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
-				{face.envDs});
-			env_.render(cb);
-
-			// TODO: we need a probe_.blendPipe here
-			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, probe_.pipe);
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
-				dirLight_.ds(), pointLight_.ds(), aoDs_});
-			scene_.render(cb, pipeLayout_, true); // transparent/blend
-
-			vk::cmdEndRenderPass(cb);
-
-			// make sure writing to color target has finished
-			// also make sure reading/writing the shTex has finished
-			vk::ImageMemoryBarrier barrierSH;
-			barrierSH.image = tmpShTex_.image();
-			barrierSH.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-			barrierSH.subresourceRange.layerCount = 9;
-			barrierSH.subresourceRange.levelCount = 1;
-			barrierSH.oldLayout = vk::ImageLayout::general;
-			barrierSH.newLayout = vk::ImageLayout::general;
-			barrierSH.srcAccessMask =
-				vk::AccessBits::shaderRead |
-				vk::AccessBits::shaderWrite;
-			barrierSH.dstAccessMask =
-				vk::AccessBits::shaderRead |
-				vk::AccessBits::shaderWrite;
-
-			vk::ImageMemoryBarrier colorBarrier;
-			colorBarrier.image = probe_.color.image();
-			colorBarrier.oldLayout = vk::ImageLayout::presentSrcKHR; // render pass
-			colorBarrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-			colorBarrier.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
-			colorBarrier.dstAccessMask = vk::AccessBits::shaderRead;
-			colorBarrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-			vk::cmdPipelineBarrier(cb,
-				vk::PipelineStageBits::colorAttachmentOutput |
-				vk::PipelineStageBits::computeShader,
-				vk::PipelineStageBits::computeShader,
-				{}, {}, {}, {{colorBarrier, barrierSH}});
-
-			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
-				probe_.comp.pipe);
-			doi::cmdBindComputeDescriptors(cb, probe_.comp.pipeLayout,
-				0, {probe_.comp.ds});
-			u32 iface = i;
-			vk::cmdPushConstants(cb, probe_.comp.pipeLayout,
-				vk::ShaderStageBits::compute, 0, sizeof(u32), &iface);
-			vk::cmdDispatch(cb, 1, 1, 1);
-
-			// make sure compute shader has finished
-			colorBarrier.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-			colorBarrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal; // whatever
-			colorBarrier.srcAccessMask = vk::AccessBits::shaderRead;
-			colorBarrier.dstAccessMask = vk::AccessBits::colorAttachmentWrite;
-			vk::cmdPipelineBarrier(cb,
-				vk::PipelineStageBits::computeShader,
-				vk::PipelineStageBits::colorAttachmentOutput,
-				{}, {}, {}, {{colorBarrier}});
-		}
-
-		vk::ImageMemoryBarrier barrierTSH;
-		barrierTSH.image = tmpShTex_.image();
-		barrierTSH.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-		barrierTSH.subresourceRange.layerCount = 9;
-		barrierTSH.subresourceRange.levelCount = 1;
-		barrierTSH.oldLayout = vk::ImageLayout::general;
-		barrierTSH.newLayout = vk::ImageLayout::transferSrcOptimal;
-		barrierTSH.srcAccessMask =
-			vk::AccessBits::shaderRead |
-			vk::AccessBits::shaderWrite;
-		barrierTSH.dstAccessMask = vk::AccessBits::transferRead;
-
-		vk::ImageMemoryBarrier barrierSH;
-		barrierSH.image = shTex_.image();
-		barrierSH.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-		barrierSH.subresourceRange.layerCount = 9;
-		barrierSH.subresourceRange.levelCount = 1;
-		barrierSH.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		barrierSH.newLayout = vk::ImageLayout::transferDstOptimal;
-		barrierSH.srcAccessMask = vk::AccessBits::shaderRead;
-		barrierSH.dstAccessMask = vk::AccessBits::transferWrite;
-
-		vk::cmdPipelineBarrier(cb,
-			vk::PipelineStageBits::fragmentShader |
-			vk::PipelineStageBits::computeShader,
-			vk::PipelineStageBits::transfer,
-			{}, {}, {}, {{barrierSH, barrierTSH}});
-
-		// apply sh coords
-		vk::ImageCopy copy;
-		copy.extent = {maxProbeCount, 1, 1};
-		copy.dstSubresource.aspectMask = vk::ImageAspectBits::color;
-		copy.dstSubresource.layerCount = 9;
-		copy.srcSubresource.aspectMask = vk::ImageAspectBits::color;
-		copy.srcSubresource.layerCount = 9;
-		vk::cmdCopyImage(cb,
-			tmpShTex_.image(), vk::ImageLayout::transferSrcOptimal,
-			shTex_.image(), vk::ImageLayout::transferDstOptimal,
-			{{copy}});
-
-		barrierSH.oldLayout = vk::ImageLayout::transferDstOptimal;
-		barrierSH.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		barrierSH.srcAccessMask = vk::AccessBits::transferWrite;
-		barrierSH.dstAccessMask = vk::AccessBits::shaderRead;
-
-		barrierTSH.oldLayout = vk::ImageLayout::transferSrcOptimal;
-		barrierTSH.newLayout = vk::ImageLayout::general;
-		barrierTSH.srcAccessMask = vk::AccessBits::transferRead;
-		barrierTSH.dstAccessMask =
-			vk::AccessBits::shaderRead |
-			vk::AccessBits::shaderWrite;
-
-		vk::cmdPipelineBarrier(cb,
-			vk::PipelineStageBits::transfer,
-			vk::PipelineStageBits::computeShader |
-			vk::PipelineStageBits::fragmentShader,
-			{}, {}, {}, {{barrierSH, barrierTSH}});
-
-		vk::endCommandBuffer(probe_.cb);
+		probe_.rerecord = true;
 	}
 
 	bool features(doi::Features& enable, const doi::Features& supported) override {
@@ -920,7 +771,163 @@ public:
 		return false;
 	}
 
+	void recordProbeCb() {
+		auto cb = probe_.cb.vkHandle();
+		vk::beginCommandBuffer(probe_.cb, {});
+		vk::Viewport vp{0.f, 0.f,
+			(float) probeSize.width, (float) probeSize.height, 0.f, 1.f};
+		vk::cmdSetViewport(cb, 0, 1, vp);
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, probeSize.width, probeSize.height});
+
+		std::array<vk::ClearValue, 6u> cv {};
+		cv[0] = {0.f, 0.f, 0.f, 0.f}; // color
+		cv[1].depthStencil = {1.f, 0u}; // depth
+		for(auto i = 0u; i < 6; ++i) {
+			auto& face = probe_.faces[i];
+
+			vk::cmdBeginRenderPass(cb, {renderPass(), probe_.fb,
+				{0u, 0u, probeSize.width, probeSize.height},
+				std::uint32_t(cv.size()), cv.data()
+			}, {});
+
+			// almost the same as the default output, we just have to
+			// use a different pipe and descriptor set
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, probe_.pipe);
+			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
+			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+				dirLight_.ds(), pointLight_.ds(), aoDs_});
+			scene_.render(cb, pipeLayout_, false); // opaque
+
+			vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
+				boxIndices_.offset(), vk::IndexType::uint16);
+			doi::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
+				{face.envDs});
+			env_.render(cb);
+
+			// TODO: we need a probe_.blendPipe here
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, probe_.pipe);
+			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
+			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+				dirLight_.ds(), pointLight_.ds(), aoDs_});
+			scene_.render(cb, pipeLayout_, true); // transparent/blend
+
+			vk::cmdEndRenderPass(cb);
+
+			// make sure writing to color target has finished
+			// also make sure reading/writing the shTex has finished
+			vk::ImageMemoryBarrier barrierSH;
+			barrierSH.image = tmpShTex_.image();
+			barrierSH.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+			barrierSH.subresourceRange.layerCount = 9;
+			barrierSH.subresourceRange.levelCount = 1;
+			barrierSH.oldLayout = vk::ImageLayout::general;
+			barrierSH.newLayout = vk::ImageLayout::general;
+			barrierSH.srcAccessMask =
+				vk::AccessBits::shaderRead |
+				vk::AccessBits::shaderWrite;
+			barrierSH.dstAccessMask =
+				vk::AccessBits::shaderRead |
+				vk::AccessBits::shaderWrite;
+
+			vk::ImageMemoryBarrier colorBarrier;
+			colorBarrier.image = probe_.color.image();
+			colorBarrier.oldLayout = vk::ImageLayout::presentSrcKHR; // render pass
+			colorBarrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+			colorBarrier.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+			colorBarrier.dstAccessMask = vk::AccessBits::shaderRead;
+			colorBarrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+			vk::cmdPipelineBarrier(cb,
+				vk::PipelineStageBits::colorAttachmentOutput |
+				vk::PipelineStageBits::computeShader,
+				vk::PipelineStageBits::computeShader,
+				{}, {}, {}, {{colorBarrier, barrierSH}});
+
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
+				probe_.comp.pipe);
+			doi::cmdBindComputeDescriptors(cb, probe_.comp.pipeLayout,
+				0, {probe_.comp.ds});
+			u32 iface = i;
+			vk::cmdPushConstants(cb, probe_.comp.pipeLayout,
+				vk::ShaderStageBits::compute, 0, sizeof(u32), &iface);
+			vk::cmdDispatch(cb, 1, 1, 1);
+
+			// make sure compute shader has finished
+			colorBarrier.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+			colorBarrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal; // whatever
+			colorBarrier.srcAccessMask = vk::AccessBits::shaderRead;
+			colorBarrier.dstAccessMask = vk::AccessBits::colorAttachmentWrite;
+			vk::cmdPipelineBarrier(cb,
+				vk::PipelineStageBits::computeShader,
+				vk::PipelineStageBits::colorAttachmentOutput,
+				{}, {}, {}, {{colorBarrier}});
+		}
+
+		vk::ImageMemoryBarrier barrierTSH;
+		barrierTSH.image = tmpShTex_.image();
+		barrierTSH.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+		barrierTSH.subresourceRange.layerCount = 9;
+		barrierTSH.subresourceRange.levelCount = 1;
+		barrierTSH.oldLayout = vk::ImageLayout::general;
+		barrierTSH.newLayout = vk::ImageLayout::transferSrcOptimal;
+		barrierTSH.srcAccessMask =
+			vk::AccessBits::shaderRead |
+			vk::AccessBits::shaderWrite;
+		barrierTSH.dstAccessMask = vk::AccessBits::transferRead;
+
+		vk::ImageMemoryBarrier barrierSH;
+		barrierSH.image = shTex_.image();
+		barrierSH.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+		barrierSH.subresourceRange.layerCount = 9;
+		barrierSH.subresourceRange.levelCount = 1;
+		barrierSH.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		barrierSH.newLayout = vk::ImageLayout::transferDstOptimal;
+		barrierSH.srcAccessMask = vk::AccessBits::shaderRead;
+		barrierSH.dstAccessMask = vk::AccessBits::transferWrite;
+
+		vk::cmdPipelineBarrier(cb,
+			vk::PipelineStageBits::fragmentShader |
+			vk::PipelineStageBits::computeShader,
+			vk::PipelineStageBits::transfer,
+			{}, {}, {}, {{barrierSH, barrierTSH}});
+
+		// apply sh coords
+		vk::ImageCopy copy;
+		copy.extent = {maxProbeCount, 1, 1};
+		copy.dstSubresource.aspectMask = vk::ImageAspectBits::color;
+		copy.dstSubresource.layerCount = 9;
+		copy.srcSubresource.aspectMask = vk::ImageAspectBits::color;
+		copy.srcSubresource.layerCount = 9;
+		vk::cmdCopyImage(cb,
+			tmpShTex_.image(), vk::ImageLayout::transferSrcOptimal,
+			shTex_.image(), vk::ImageLayout::transferDstOptimal,
+			{{copy}});
+
+		barrierSH.oldLayout = vk::ImageLayout::transferDstOptimal;
+		barrierSH.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		barrierSH.srcAccessMask = vk::AccessBits::transferWrite;
+		barrierSH.dstAccessMask = vk::AccessBits::shaderRead;
+
+		barrierTSH.oldLayout = vk::ImageLayout::transferSrcOptimal;
+		barrierTSH.newLayout = vk::ImageLayout::general;
+		barrierTSH.srcAccessMask = vk::AccessBits::transferRead;
+		barrierTSH.dstAccessMask =
+			vk::AccessBits::shaderRead |
+			vk::AccessBits::shaderWrite;
+
+		vk::cmdPipelineBarrier(cb,
+			vk::PipelineStageBits::transfer,
+			vk::PipelineStageBits::computeShader |
+			vk::PipelineStageBits::fragmentShader,
+			{}, {}, {}, {{barrierSH, barrierTSH}});
+
+		vk::endCommandBuffer(probe_.cb);
+	}
+
 	void updateDevice() override {
+		if(App::rerecord_) {
+			probe_.rerecord = true;
+		}
+
 		// update scene ubo
 		if(camera_.update) {
 			camera_.update = false;
@@ -961,6 +968,11 @@ public:
 		}
 
 		if(probe_.pending) {
+			if(probe_.rerecord) {
+				recordProbeCb();
+				probe_.rerecord = false;
+			}
+
 			// TODO: don't stall
 			// but we also have to make sure this finishes before the
 			// ao params are updated to include the new probe...
@@ -1067,6 +1079,7 @@ protected:
 
 		bool pending {};
 		bool refresh {};
+		bool rerecord {};
 		vpp::CommandBuffer cb;
 
 		// compute
