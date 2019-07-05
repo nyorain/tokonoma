@@ -50,6 +50,7 @@ List of projects (noninclusive):
 - pendulum: simulation of a simple pendulum
   the challenge is to keep the pendulum standing upwards (unstable stationary
   solution of the underalying differential equation)
+  ![pendulum screenshot](./assets/pics/pendulum1.png)
 - pursuers: small system of particle pursuers resulting in interesting
   patterns
 - sen: first raytracing and path tracing experiments (mainly a cornell-box),
