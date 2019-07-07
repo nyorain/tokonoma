@@ -163,5 +163,5 @@ executable('bezier', [
 	], dependencies: stage_dep)
 
 executable('pg',
-	'src/playground/main4.cpp',
+	'src/playground/main5.cpp',
 	dependencies: stage_dep)
