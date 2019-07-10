@@ -11,7 +11,7 @@ layout(location = 3) in vec2 inTexCoord1;
 // layout(location = 4) in float inLinDepth;
 layout(location = 5) in flat uint inMatID;
 
-layout(location = 0) out vec4 outColor;
+t layout(location = 0) out vec4 outColor;
 
 // material
 layout(set = 1, binding = 2) buffer Materials {

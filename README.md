@@ -42,7 +42,9 @@ List of projects (noninclusive):
   described [here](https://github.com/mattdesl/lwjgl-basics/wiki/ShaderLesson6)
 - particles: extremely simple 2D particle system using the mouse
   as attractor. Built for scalability, can run many million particles
-  even on not high-end hardware. ![particles screenshot](./assets/pics/particles1.png)
+  even on not high-end hardware (the screenshot shows
+  10 million almost transparent particles)
+  ![particles screenshot](./assets/pics/particles1.png)
 - pbr: utility program for stuff required by pbr, like generating cubemaps
   from equirectangular environment maps, baking irradiance maps or
   specular IBL maps and the brdf lookup table for the split-sum approximation.
