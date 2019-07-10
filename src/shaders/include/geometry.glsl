@@ -232,7 +232,7 @@ ShadowVertex smoothShadowVertex(int vertexID, vec2 segA, vec2 segB,
 
 // returns the light strength falloff at the given point (for the given
 // light position and strength).
-// Good source: https://imtknngitwrong.wordpress.com/2011/01/31/light-attenuation/
+// Good source: https://imdoingitwrong.wordpress.com/2011/01/31/light-attenuation/
 float lightFalloff(vec2 lightPos, vec2 point, float radius, float strength,
 		vec3 p, float cutoff, bool constantInner) {
 

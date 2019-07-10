@@ -15,7 +15,7 @@
 
 using namespace tkn::types;
 
-// TODO: move to stage/render.hpp
+// TODO: move to tkn/render.hpp
 // Pipeline specialization info the compute group size.
 struct ComputeGroupSizeSpec {
 	inline ComputeGroupSizeSpec(u32 x, u32 y, u32 idx = 0, u32 idy = 1) {

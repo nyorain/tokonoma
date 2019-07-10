@@ -257,8 +257,8 @@ void BloomPass::record(vk::CommandBuffer cb, vk::Image emission,
 	// of dynamically creating a mipmap chain, we just run addition
 	// blur shaders in between to blur every mipmap level.
 	// Blurring layer for layer (both passes every time)
-	// might have cache advantages over first tknng horizontal
-	// for all and then tknng vertical for all i guess
+	// might have cache advantages over first doing horizontal
+	// for all and then doing vertical for all i guess
 
 	// blit (downscale to 0.5 * size): emission to target mip 0
 	// make tmp target writable for blur passes

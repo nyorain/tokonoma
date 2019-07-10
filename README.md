@@ -2,7 +2,8 @@
 
 Small collection of personal projects related to (mostly real time)
 computer graphics, simulation and animation.
-Written in C++17, uses Vulkan as graphics api (no other backends).
+Written in C++17, uses Vulkan as graphics api (no other backends, no
+huge abstraction layers).
 The goal here isn't to write a full graphics engine (although
 this repo probably contains lots of typical engine functionality
 by now) but rather to develop an environment for extremely quick prototyping
@@ -11,47 +12,48 @@ interested in.
 
 # Projects
 
-Most of the projects are work in progess, they were mainly written for
-the purpose of learning. So while they may be useful as a resource of learning,
+Most of the projects are work in progess and were mainly written for
+the purpose of learning and playing around with.
+So while they may be useful as a resource of learning,
 they usually leave quite some room for improvement. Often, files
 (especially the main file of a project) contains various notes, todos and
-ideas about what could be done next (or what is broken at the moment).
-List of projects (noninclusive):
+ideas about what could be done next though (or what is broken at the moment).
+List of projects with some sample screenshots (noninclusive):
 
 - automaton: experiments with cellular automata (hexagonal grid)
 - bezier: simple playground for bezier curves and anything related to it
-- br: minimal gltf pbr forward renderer (including IBL)
+- br: minimal gltf pbr forward renderer (including IBL).
   Most other 3D (forward) rendering projects are built from this
-- cloth: Simple 2D cloth animation using verlet integration, cpu and
-  gpu variants. ![cloth screenshot](./assets/pics/cloth1.png)
+- cloth: Simple 3D cloth animation using verlet integration, includes cpu and
+  gpu variants.
+  ![cloth screenshot](./assets/pics/cloth1.png)
 - fluids: fluid simulation on the gpu
-  [somewhat outdated, heard a lecture on it since then, to be reworked
-  hopefully sooner than later]
+  (somewhat outdated, heard a lecture on it since then, to be reworked
+  hopefully sooner than later). The screenshot shows the HSV-visualized
+  velocity field.
   ![fluids screenshot](./assets/pics/fluidVel.png)
-- iro: small game idea based on cellular automatas.
+- iro: small game idea based on cellular automata.
   Uses the floating point determinism defined by vulkan spirv shaders
-  to work over networks
+  to serialize/synchronize over a small udp protocol (wip).
   ![iro screenshot](./assets/pics/iro1.png)
-- iv: simple image viewer using the shared image functionality
-  can view default file types as well as supported KTX files
+- iv: simple image viewer using the shared image functionality.
+  Can view default file types as well as supported KTX files
   (with all mipmaps and array layers). Can also visualize cubemaps.
-- lpgi: light probe based global illumination, using spherical harmonics
-  light probes can be set and refreshed at runtime supporting
-  multiple bounces
+- lpgi: light probe based global illumination, using spherical harmonics.
+  Light probes can be set and refreshed at runtime, simulating
+  multiple light bounces
   ![lpgi screenshot](./assets/pics/lpgi2.png)
 - normals: implements the purely 2D normal mapping effect as
   described [here](https://github.com/mattdesl/lwjgl-basics/wiki/ShaderLesson6)
 - particles: extremely simple 2D particle system using the mouse
   as attractor. Built for scalability, can run many million particles
   even on not high-end hardware (the screenshot shows
-  10 million almost transparent particles)
+  10 million transparent particles)
   ![particles screenshot](./assets/pics/particles1.png)
-- pbr: utility program for stuff required by pbr, like generating cubemaps
-  from equirectangular environment maps, baking irradiance maps or
+- pbr: command line utility program for stuff required by the pbr renderer projects,
+  like generating cubemaps from equirectangular environment maps, baking irradiance maps or
   specular IBL maps and the brdf lookup table for the split-sum approximation.
   Can also project a cubemap to spherical harmonics coefficients (9x)
-  (ikr, project may be badly named, not a pbr renderer. Most of the
-  other rendering projects include pbr rendering concepts).
 - pendulum: simulation of a simple pendulum from an exercise in a
   computational engineering and robotics lecture i heard.
   The challenge is to keep the pendulum standing upwards (unstable stationary
@@ -61,16 +63,19 @@ List of projects (noninclusive):
   patterns
   ![pursuers screenshot](./assets/pics/pursuers1.png)
 - sen: first raytracing and path tracing experiments (mainly a cornell-box),
-  done via compute shaders (or similar methods on the gpu)
+  done via compute shaders (or similar methods) on the gpu.
+  Not even physically-based yet, just playing around with the basic concepts.
 - shv: visualize spherical harmonics coefficients
-- smooth_shadow: analytical 2D smooth shadow rendered via shadow maps
-  and shadow polygons ![smooth shadow screenshot](./assets/pics/smooth_shadow1.png)
+- smooth_shadow: analytical 2D smooth shadows via shadow polygons
+  ![smooth shadow screenshot](./assets/pics/smooth_shadow1.png)
 - sss: Comparable to smooth_shadow but uses a subsurface-scattering-like effect
-  to achieve it, i.e. the strength of light is reduced when traveling
+  to achieve smooth shadows, i.e. the strength of light is "reduced" when traveling
   through an object
 - deferred: deferred renderer implementing various (mainly screen space)
   effects. Bloom, SSR, SSAO, Luminance based exposure adaption,
-  light scattering, simple DOF
+  light scattering, simple DOF. HDR pipeline using pbr concepts (for
+  lightning, most screen space algorithms are still roughly approximated
+  to what looks acceptable. Work in progress)
   ![deferred screenshot](./assets/pics/deferred1.png)
 - taa: 3D temporal antialiasing renderer (supporting dynamic scenes)
   playground for different effects that have a synergy with TAA
@@ -90,14 +95,14 @@ subfolder, compiled into `libtkn`.
 
 The gui in all the screenshots uses my (at the time of writing quite
 experimental) vulkan-only and retained-mode gui toolkit [vui](https://github.com/nyorain/vui).
-As you can see in some screenshots, it includes an api roughly modeled after
+As you can see in some screenshots, it includes a component roughly modeled after
 the excellent [dat.gui](https://github.com/dataarts/dat.gui).
 
 ## Licenses
 
 Unless stated otherwise, the code is available under the MIT license (see LICENSE,
 some projects may use GPL, they have their own LICENSE file then).
-Additional external licensed for distributed code:
+Additional external licenses for distributed code/assets:
 
 - `assets/LiberationSans-*.ttf`: [SIL Open Font License 1.1](https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL#5667e9e4)
 - `assets/Roboto-*.ttf`: [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0)

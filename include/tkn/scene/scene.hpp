@@ -137,7 +137,7 @@ public:
 	void createImage(unsigned id, bool srgb);
 
 	// optionally returns semaphore that should be waited upon before
-	// tknng any rendering involding the scene. In that case a
+	// doing any rendering involding the scene. In that case a
 	// re-record is needed additionally.
 	vk::Semaphore updateDevice(nytl::Mat4f proj);
 	void render(vk::CommandBuffer, vk::PipelineLayout, bool blend) const;

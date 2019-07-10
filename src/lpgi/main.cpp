@@ -705,7 +705,7 @@ public:
 		return false;
 	}
 
-	// tknng this multiple times can be used for light bounces
+	// doing this multiple times can be used for light bounces
 	void refreshLightProbes() {
 		probe_.refresh = true;
 	}

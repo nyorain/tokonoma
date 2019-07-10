@@ -6,7 +6,8 @@ project('tokonoma', ['cpp', 'c'],
 		'cpp_std=c++1z',
 		'c_std=c99',
   		'warning_level=3',
-  		'werror=true'])
+		# TODO: re-enable
+  		'werror=false'])
 
 # options
 profiling = get_option('profiling')
