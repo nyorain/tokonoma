@@ -39,7 +39,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	// renderpass
 	vk::AttachmentDescription depth {};
 	depth.initialLayout = vk::ImageLayout::undefined;
-	depth.finalLayout = vk::ImageLayout::depthStencilReadOnlyOptimal;
+	depth.finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 	depth.format = depthFormat;
 	depth.loadOp = vk::AttachmentLoadOp::clear;
 	depth.storeOp = vk::AttachmentStoreOp::store;
@@ -257,7 +257,7 @@ DirLight::DirLight(const WorkBatcher& wb, const ShadowData& data) {
 	vpp::DescriptorSetUpdate ldsu(ds_);
 	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 	ldsu.imageSampler({{{}, shadowMap(),
-		vk::ImageLayout::depthStencilReadOnlyOptimal}});
+		vk::ImageLayout::shaderReadOnlyOptimal}});
 	ldsu.apply();
 }
 
@@ -463,7 +463,7 @@ PointLight::PointLight(const WorkBatcher& wb, const ShadowData& data,
 	ldsu.uniform({{{ubo_}}});
 	ldsu.imageSampler({{{},
 		hasShadowMap() ? shadowMap() : noShadowMap,
-		vk::ImageLayout::depthStencilReadOnlyOptimal}});
+		vk::ImageLayout::shaderReadOnlyOptimal}});
 	ldsu.apply();
 
 	updateDevice();

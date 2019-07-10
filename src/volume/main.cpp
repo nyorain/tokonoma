@@ -65,8 +65,8 @@ struct hash<nytl::Vec<I, T>> {
 }
 
 struct Volume {
-	static constexpr auto size = Vec3ui{64, 64, 64};
-	static constexpr auto extent = Vec3f{4, 4, 4};
+	static constexpr auto size = Vec3ui{128, 128, 128};
+	static constexpr auto extent = Vec3f{3, 3, 3};
 	static constexpr auto start = -0.5f * extent;
 	static constexpr auto scale = Vec3f{
 		extent.x / size.x,

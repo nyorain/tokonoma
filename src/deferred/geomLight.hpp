@@ -80,7 +80,7 @@ public:
 	// If an environment is given, will render the skybox
 	void record(vk::CommandBuffer cb, const vk::Extent2D&,
 		vk::DescriptorSet camDs, const doi::Scene& scene,
-		nytl::Span<doi::PointLight>, nytl::Span<doi::DirLight>,
+		nytl::Span<const doi::PointLight*>, nytl::Span<const doi::DirLight*>,
 		vpp::BufferSpan boxIndices, vk::DescriptorSet envCamDs,
 		const doi::Environment* env, TimeWidget* time);
 	void updateDevice();

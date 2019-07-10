@@ -85,6 +85,8 @@ public:
 	void initRenderData() override;
 	void initPasses(const doi::WorkBatcher&);
 	void screenshot();
+	void addPointLight(nytl::Vec3f pos, nytl::Vec3f color, float radius,
+		bool shadowMap);
 
 	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
@@ -126,8 +128,23 @@ protected:
 
 	// light and shadow
 	doi::ShadowData shadowData_;
-	std::vector<doi::DirLight> dirLights_;
-	std::vector<doi::PointLight> pointLights_;
+
+	struct DirLight : public doi::DirLight {
+		using doi::DirLight::DirLight;
+		u32 instanceID;
+		u32 materialID;
+	};
+
+	struct PointLight : public doi::PointLight {
+		using doi::PointLight::PointLight;
+		u32 instanceID;
+		u32 materialID;
+	};
+
+	std::vector<DirLight> dirLights_;
+	std::vector<PointLight> pointLights_;
+	u32 cubePrimitiveID_ {};
+	u32 spherePrimitiveID_ {};
 
 	vpp::SubBuffer cameraUbo_;
 	vpp::TrDs cameraDs_;
@@ -507,9 +524,15 @@ void ViewApp::initPasses(const doi::WorkBatcher& wb) {
 		geomLight_.ldepthTarget().vkImage());
 	auto& targetLight = passGeomLight.addOut(syncScopeFlex,
 		geomLight_.lightTarget().vkImage());
+
 	passGeomLight.record = [&](const auto& buf) {
-		geomLight_.record(buf.cb, buf.size, cameraDs_, scene_, pointLights_,
-			dirLights_, boxIndices_, envCameraDs_, &env_, &timeWidget_);
+		std::vector<const doi::PointLight*> pl;
+		std::vector<const doi::DirLight*> dl;
+		for(auto& p : pointLights_) pl.push_back(&p);
+		for(auto& l : dirLights_) dl.push_back(&l);
+
+		geomLight_.record(buf.cb, buf.size, cameraDs_, scene_, pl, dl,
+			boxIndices_, envCameraDs_, &env_, &timeWidget_);
 	};
 
 	vpp::InitObject initPP(pp_, passInfo, swapchainInfo().imageFormat);
@@ -996,17 +1019,8 @@ void ViewApp::initRenderData() {
 
 	// add lights
 	// TODO: defer creation
-	// TODO: cameraDsLayout dummy
 	if(pointLight) {
-		auto& l = pointLights_.emplace_back(batch, shadowData_);
-		l.data.position = {-1.8f, 6.0f, -2.f};
-		l.data.color = {2.f, 1.7f, 0.8f};
-		l.data.color *= 2;
-		l.data.attenuation = {1.f, 0.3f, 0.1f};
-		// light radius must be smaller than far plane / 2
-		l.data.radius = 9.f;
-		l.updateDevice();
-		// pp_.params.scatterLightColor = 0.1f * l.data.color;
+		addPointLight({-1.8f, 6.0f, -2.f}, {4.f, 3.f, 2.f}, 9.f, true);
 	} else {
 		auto& l = dirLights_.emplace_back(batch, shadowData_);
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
@@ -1021,6 +1035,18 @@ void ViewApp::initRenderData() {
 	vk::endCommandBuffer(cb);
 	auto id = qs.add(cb);
 	qs.wait(id);
+
+	// PERF: do this in scene initialization to avoid additional
+	// data upload
+	auto cube = doi::Cube{{}, {0.05f, 0.05f, 0.05f}};
+	auto shape = doi::generate(cube);
+	cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
+		std::move(shape.normals), std::move(shape.indices));
+
+	auto sphere = doi::Sphere{{}, {0.02f, 0.02f, 0.02f}};
+	shape = doi::generateUV(sphere);
+	spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
+		std::move(shape.normals), std::move(shape.indices));
 
 	// scene descriptor, used for some pipelines as set 0 for camera
 	// matrix and view position
@@ -1297,6 +1323,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	auto cb = buf.commandBuffer;
 	vk::beginCommandBuffer(cb, {});
 	App::beforeRender(cb);
+	vk::cmdResetQueryPool(cb, timeWidget_.queryPool(), 0, timeWidget_.maxCount);
 
 	auto pos = nytl::Vec2f(window().size());
 	pos.x -= 240;
@@ -1360,6 +1387,33 @@ void ViewApp::update(double dt) {
 	App::scheduleRedraw();
 }
 
+void ViewApp::addPointLight(nytl::Vec3f pos, nytl::Vec3f color, float radius,
+		bool shadowMap) {
+	auto wb = doi::WorkBatcher::createDefault(vulkanDevice());
+	auto& l = pointLights_.emplace_back(wb, shadowData_,
+		shadowMap ? vk::ImageView{} : dummyCube_.vkImageView());
+	std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+	l.data.position = pos;
+	l.data.color = color;
+	l.data.radius = radius;
+	l.updateDevice();
+
+	doi::Material lmat;
+
+	// HACK: make sure it doesn't write to depth buffer and isn't
+	// rendered into shadow map
+	// lmat.flags |= doi::Material::Bit::blend;
+	lmat.emissionFac = l.data.color;
+	lmat.albedoFac = Vec4f(l.data.color);
+	lmat.albedoFac[3] = 1.f;
+	l.materialID = scene_.addMaterial(lmat);
+	l.instanceID = scene_.addInstance(spherePrimitiveID_,
+		doi::translateMat(pos), l.materialID);
+
+	App::scheduleRerecord();
+}
+
+// TODO: command buffer needs to be re-recorded e.g. when lights are added
 // TODO: fix environment (uses the main cameras fixed matrix)
 //   would probably best to just abolish the ubo in environment
 //   and use an externally passed cameraUbo instead, contains
@@ -1457,8 +1511,14 @@ void ViewApp::screenshot() {
 		auto lightImg = probe_.geomLight.lightTarget().vkImage();
 		for(auto i = 0u; i < 6; ++i) {
 			auto& face = probe_.faces[i];
+
+			std::vector<const doi::PointLight*> pl;
+			std::vector<const doi::DirLight*> dl;
+			for(auto& p : pointLights_) pl.push_back(&p);
+			for(auto& l : dirLights_) dl.push_back(&l);
+
 			probe_.geomLight.record(cb, probeSize, face.ds, scene_,
-				pointLights_, dirLights_, boxIndices_, face.envDs, &env_,
+				pl, dl, boxIndices_, face.envDs, &env_,
 				nullptr);
 
 			vk::BufferImageCopy copy;
@@ -1554,35 +1614,15 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 		case ny::Keycode::t: { // screenshot
 			screenshot();
 			return true;
-		}
-
-		// TODO: re-add with work batcher
-		/*
-		case ny::Keycode::comma: {
-			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
-				primitiveDsLayout_, shadowData_, currentID_++);
+		} case ny::Keycode::comma: {
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-			l.data.position = camera_.pos;
-			l.data.color = {dist(rnd), dist(rnd), dist(rnd)};
-			l.data.attenuation = {1.f, 0.6f * dist(rnd), 0.3f * dist(rnd)};
-			l.updateDevice();
-			App::scheduleRerecord();
+			addPointLight(camera_.pos, {dist(rnd), dist(rnd), dist(rnd)}, 0.5, false);
 			break;
 		 } case ny::Keycode::z: {
-			 dlg_assert(dummyCube_.vkImageView());
-			// no shadow map
-			auto& l = pointLights_.emplace_back(vulkanDevice(), lightDsLayout_,
-				primitiveDsLayout_, shadowData_, currentID_++,
-				dummyCube_.vkImageView());
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-			l.data.position = camera_.pos;
-			l.data.color = {dist(rnd), dist(rnd), dist(rnd)};
-			l.data.attenuation = {1.f, 16, 256};
-			l.data.radius = 0.5f;
-			l.updateDevice();
-			App::scheduleRerecord();
+			addPointLight(camera_.pos, {dist(rnd), dist(rnd), dist(rnd)}, 0.5, true);
 			break;
-		} */case ny::Keycode::f: {
+		} case ny::Keycode::f: {
 			// timings_.hide ^= true;
 			// timings_.bg.disable(timings_.hidden);
 			// for(auto& t : timings_.texts) {

@@ -29,6 +29,7 @@ public:
 
 	rvg::Context& rvgContext() const { return *ctx_; }
 	const rvg::Font& font() const { return font_; }
+	const auto& queryPool() const { return pool_; }
 
 protected:
 	rvg::Context* ctx_;

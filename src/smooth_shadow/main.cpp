@@ -53,7 +53,7 @@ public:
 
 		auto& light = lightSystem().addLight();
 		light.position = {4.f, 1.5f};
-		light.color = static_cast<nytl::Vec4f>(blackbody(3700));
+		light.color = static_cast<nytl::Vec4f>(blackbody(4100));
 		light.color[3] = 1.f;
 		light.radius(0.25);
 		light.strength(1.f);

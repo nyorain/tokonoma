@@ -133,7 +133,9 @@ public:
 			pendulum_.avel *= 2.f;
 		};
 
-		panel_->create<Checkbox>("manual").checkbox().onToggle = [&](auto& c){
+		auto& mc = panel_->create<Checkbox>("manual").checkbox();
+		mc.set(manual_);
+		mc.onToggle = [&](auto& c){
 			manual_ = c.checked();
 		};
 

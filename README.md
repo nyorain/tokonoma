@@ -27,9 +27,11 @@ List of projects (noninclusive):
 - fluids: fluid simulation on the gpu
   [somewhat outdated, heard a lecture on it since then, to be reworked
   hopefully sooner than later]
+  ![fluids screenshot](./assets/pics/fluidVel.png)
 - iro: small game idea based on cellular automatas.
   Uses the floating point determinism defined by vulkan spirv shaders
   to work over networks
+  ![iro screenshot](./assets/pics/iro1.png)
 - iv: simple image viewer using the shared image functionality
   can view default file types as well as supported KTX files
   (with all mipmaps and array layers). Can also visualize cubemaps.
@@ -40,7 +42,7 @@ List of projects (noninclusive):
   described [here](https://github.com/mattdesl/lwjgl-basics/wiki/ShaderLesson6)
 - particles: extremely simple 2D particle system using the mouse
   as attractor. Built for scalability, can run many million particles
-  even on not high-end hardware. ![particles screenshot](./assets/pics/particles5.png)
+  even on not high-end hardware. ![particles screenshot](./assets/pics/particles1.png)
 - pbr: utility program for stuff required by pbr, like generating cubemaps
   from equirectangular environment maps, baking irradiance maps or
   specular IBL maps and the brdf lookup table for the split-sum approximation.
@@ -64,12 +66,14 @@ List of projects (noninclusive):
 - deferred: deferred renderer implementing various (mainly screen space)
   effects. Bloom, SSR, SSAO, Luminance based exposure adaption,
   light scattering, simple DOF
+  ![deferred screenshot](./assets/pics/deferred1.png)
 - taa: 3D temporal antialiasing renderer (supporting dynamic scenes)
   playground for different effects that have a synergy with TAA
   (mainly based on noise) like stochastic transparency and noisy shadow
   sampling via a poisson disk
 - volume: volume rendering (mainly of 3D functions, no standard
   3D texture/volume file format supported yet) via marching cubes
+  ![volume screenshot](./assets/pics/volume1.png)
 
 There is some shared code between the projects (like an image loading library,
 gltf scene loading and management, various small rendering and computation
@@ -86,7 +90,8 @@ the excellent [dat.gui](https://github.com/dataarts/dat.gui).
 
 ## Licenses
 
-The code is available under Boost license (see LICENSE).
+Unless stated otherwise, the code is available under the MIT license (see LICENSE,
+some projects may use GPL, they have their own LICENSE file then).
 Additional external licensed for distributed code:
 
 - `assets/LiberationSans-*.ttf`: [SIL Open Font License 1.1](https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL#5667e9e4)

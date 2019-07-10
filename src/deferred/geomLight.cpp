@@ -502,8 +502,8 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 
 void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		vk::DescriptorSet camDs, const doi::Scene& scene,
-		nytl::Span<doi::PointLight> pointLights,
-		nytl::Span<doi::DirLight> dirLights, vpp::BufferSpan boxIndices,
+		nytl::Span<const doi::PointLight*> pointLights,
+		nytl::Span<const doi::DirLight*> dirLights, vpp::BufferSpan boxIndices,
 		vk::DescriptorSet envCamDs, const doi::Environment* env,
 		TimeWidget* time) {
 	vpp::DebugLabel(cb, "GeomLightPass");
@@ -540,15 +540,15 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pointLightPipe_);
 		vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
 			boxIndices.offset(), vk::IndexType::uint16);
-		for(auto& light : pointLights) {
-			doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light.ds()});
+		for(auto* light : pointLights) {
+			doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light->ds()});
 			// vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0); // box
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 		}
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, dirLightPipe_);
-		for(auto& light : dirLights) {
-			doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light.ds()});
+		for(auto* light : dirLights) {
+			doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light->ds()});
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 		}
 

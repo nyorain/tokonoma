@@ -24,8 +24,6 @@ layout(set = 1, binding = 0) uniform ViewLight {
 
 layout(set = 1, binding = 1) uniform sampler2D shadowTex;
 
-// using ideas/tutorial from
-// https://learnopengl.com/Advanced-Lighting/HDR
 void main() {
 	vec3 scene = vec3(1, 1, 1);
 	vec3 lightSum = max(texture(lightTex, inUV).rgb, 0.f);

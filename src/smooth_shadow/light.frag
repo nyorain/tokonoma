@@ -69,6 +69,7 @@ void main() {
 	// TODO: should not be here
 	// work on sss effect
 	// float sssFac = texture(shadowTex, inUV).r - texture(shadowTex, inUV).g;
+	/*
 	const float fac = 1.f;
 	float sssFac = fac * texture(shadowTex, inUV).r;
 	sssFac = clamp(sssFac, 0.0, 1.0);
@@ -82,4 +83,5 @@ void main() {
 	// 		vec3(0, 0.25, 0.5));
 	// outColor.rgb = light.color.rgb * lightFac * ssColor;
 	outColor.a = 1.f;
+	*/
 }
