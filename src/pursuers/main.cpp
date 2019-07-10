@@ -4,8 +4,8 @@
 //   system like that (interesting to study the effect one individual particle
 //   has on the others over time)
 
-#include <stage/app.hpp>
-#include <stage/window.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
 
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/vk.hpp>
@@ -154,10 +154,10 @@ protected:
 	vpp::SubBuffer buf_;
 };
 
-class PursuersApp : public doi::App {
+class PursuersApp : public tkn::App {
 public:
 	bool init(const nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 

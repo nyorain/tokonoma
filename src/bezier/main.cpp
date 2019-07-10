@@ -1,11 +1,11 @@
 #include "util.hpp"
-#include <stage/app.hpp>
-#include <stage/camera.hpp>
-#include <stage/transform.hpp>
-#include <stage/render.hpp>
-#include <stage/bits.hpp>
-#include <stage/window.hpp>
-#include <stage/types.hpp>
+#include <tkn/app.hpp>
+#include <tkn/camera.hpp>
+#include <tkn/transform.hpp>
+#include <tkn/render.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/window.hpp>
+#include <tkn/types.hpp>
 #include <nytl/vecOps.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/pipeline.hpp>
@@ -22,7 +22,7 @@
 #include <shaders/bezier.point.vert.h>
 #include <shaders/bezier.point.frag.h>
 #include <shaders/bezier.line.frag.h>
-#include <shaders/stage.simple3.vert.h>
+#include <shaders/tkn.simple3.vert.h>
 
 // TODO
 // - use indirect drawing (see update)
@@ -37,9 +37,9 @@
 //   (-> also b-spline surfaces)
 // - using triangular bezier curves, implement bezier surfaces
 
-using namespace doi::types;
+using namespace tkn::types;
 
-class BezierApp : public doi::App {
+class BezierApp : public tkn::App {
 public:
 	struct Drag {
 		u32 id;
@@ -48,7 +48,7 @@ public:
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -103,7 +103,7 @@ public:
 		pointPipe_ = {dev, gpi.info()};
 
 		// line pipe
-		vpp::ShaderModule lineVert(dev, stage_simple3_vert_data);
+		vpp::ShaderModule lineVert(dev, tkn_simple3_vert_data);
 		vpp::ShaderModule lineFrag(dev, bezier_line_frag_data);
 
 		gpi = {renderPass(), pipeLayout_, {{{
@@ -144,7 +144,7 @@ public:
 		App::update(dt);
 		auto kc = appContext().keyboardContext();
 		if(kc) {
-			if(doi::checkMovement(camera_, *kc, dt)) {
+			if(tkn::checkMovement(camera_, *kc, dt)) {
 				App::scheduleRedraw();
 			}
 		}
@@ -167,7 +167,7 @@ public:
 			camera_.update = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			doi::write(span, matrix(camera_));
+			tkn::write(span, matrix(camera_));
 			map.flush();
 		}
 
@@ -175,11 +175,11 @@ public:
 			updateVerts_ = false;
 			auto map = pointVerts_.memoryMap();
 			auto span = map.span();
-			auto points = doi::bytes(bezier_.points);
-			doi::write(span, points);
+			auto points = tkn::bytes(bezier_.points);
+			tkn::write(span, points);
 			map.flush();
 
-			points = doi::bytes(flattened_);
+			points = tkn::bytes(flattened_);
 			if(u32(points.size()) > flatVerts_.size()) {
 				u32 size = points.size() * 2;
 				flatVerts_ = {vulkanDevice().bufferAllocator(), size,
@@ -190,14 +190,14 @@ public:
 
 			map = flatVerts_.memoryMap();
 			span = map.span();
-			doi::write(span, points);
+			tkn::write(span, points);
 			map.flush();
 		}
 	}
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pointPipe_);
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
 		vk::cmdBindVertexBuffers(cb, 0, {{pointVerts_.buffer()}},
 			{{pointVerts_.offset()}});
 		vk::cmdDraw(cb, bezier_.points.size(), 1, 0, 0);
@@ -225,7 +225,7 @@ public:
 		// over each other. Not really a sort, just a "best
 		// (optional) candidate" iteration
 		for(auto i = 0u; i < bezier_.points.size(); ++i) {
-			auto ndc = doi::multPos(proj, bezier_.points[i]);
+			auto ndc = tkn::multPos(proj, bezier_.points[i]);
 			ndc.y = -ndc.y;
 			auto xy = 0.5f * nytl::Vec2f{ndc.x + 1, ndc.y + 1};
 			auto screen = window().size() * xy;
@@ -246,14 +246,14 @@ public:
 			auto xy = Vec2f{-1.f + 2 * p.x / s.x, -1.f + 2 * p.y / s.y};
 			xy.y = -xy.y;
 			auto invProj = nytl::Mat4f(nytl::inverse(matrix(camera_)));
-			auto world = doi::multPos(invProj, Vec3f{xy.x, xy.y, drag_->depth});
+			auto world = tkn::multPos(invProj, Vec3f{xy.x, xy.y, drag_->depth});
 			bezier_.points[drag_->id] = world;
 			updateVerts_ = true;
 			return;
 		}
 
 		if(rotateView_) {
-			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 			App::scheduleRedraw();
 		}
 
@@ -316,7 +316,7 @@ public:
 	bool needsDepth() const override { return true; }
 
 protected:
-	doi::Camera camera_;
+	tkn::Camera camera_;
 	Bezier<3> bezier_;
 	bool rotateView_ {};
 	std::vector<Vec3f> flattened_;

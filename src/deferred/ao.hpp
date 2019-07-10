@@ -1,8 +1,8 @@
 #pragma once
 
 #include "pass.hpp"
-#include <stage/render.hpp>
-#include <stage/types.hpp>
+#include <tkn/render.hpp>
+#include <tkn/types.hpp>
 
 /// Pass that applies ambient occlusion and emission to the light target.
 /// Always a compute pipeline, has no targets on its own.

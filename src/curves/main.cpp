@@ -1,19 +1,19 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/geometry.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/geometry.hpp>
 #include <nytl/math.hpp>
 
 #include <rvg/shapes.hpp>
 #include <rvg/paint.hpp>
 #include <rvg/context.hpp>
 
-class CurveApp : public doi::App {
+class CurveApp : public tkn::App {
 public:
 	static constexpr float xoff = 0.1;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -60,7 +60,7 @@ public:
 		using namespace nytl::vec::cw::operators;
 		auto normed = ev.position / nytl::Vec2f(window().size());
 		auto pos = 2 * normed - nytl::Vec{1.f, 1.f};
-		auto dir = b_.center() - a_.center(); auto normal = doi::rhs::rnormal(dir); // lhs::lnomal
+		auto dir = b_.center() - a_.center(); auto normal = tkn::rhs::rnormal(dir); // lhs::lnomal
 		auto diff = a_.center() - pos;
 		a_.change()->center = pos;
 
@@ -75,7 +75,7 @@ public:
 		auto ca = a_.center();
 		auto cb = b_.center();
 		auto dir = cb - ca;
-		auto norm = doi::rhs::rnormal(dir); // rather lhs::lnormal
+		auto norm = tkn::rhs::rnormal(dir); // rather lhs::lnormal
 
 		auto x = 0.f;
 		std::vector<nytl::Vec2f> points;

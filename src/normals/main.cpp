@@ -1,7 +1,7 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/texture.hpp>
-#include <stage/bits.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/texture.hpp>
+#include <tkn/bits.hpp>
 
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/vk.hpp>
@@ -14,13 +14,13 @@
 #include <ny/keyboardContext.hpp>
 #include <ny/appContext.hpp>
 
-#include <shaders/stage.fullscreen.vert.h>
+#include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/normals.texn.frag.h>
 
-class DummyApp : public doi::App {
+class DummyApp : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -30,14 +30,14 @@ public:
 			vk::BufferUsageBits::uniformBuffer, mem};
 
 		// make sure to load the normal map in linear rgb space, *not* srgb
-		doi::TextureCreateParams params;
+		tkn::TextureCreateParams params;
 		params.srgb = true;
-		diffuse_ = std::move(doi::Texture(dev,
-			doi::read("../assets/gravel_color.png"), params).viewableImage());
+		diffuse_ = std::move(tkn::Texture(dev,
+			tkn::read("../assets/gravel_color.png"), params).viewableImage());
 
 		params.srgb = false;
-		normal_ = std::move(doi::Texture(dev,
-			doi::read("../assets/gravel_normal.png"), params).viewableImage());
+		normal_ = std::move(tkn::Texture(dev,
+			tkn::read("../assets/gravel_normal.png"), params).viewableImage());
 
 		// pipe
 		auto info = vk::SamplerCreateInfo {};
@@ -68,7 +68,7 @@ public:
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}},
 			{{{vk::ShaderStageBits::fragment, 0, 4u}}}};
 
-		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
+		vpp::ShaderModule fullscreenShader(dev, tkn_fullscreen_vert_data);
 		vpp::ShaderModule textureShader(dev, normals_texn_frag_data);
 		vpp::GraphicsPipelineInfo pipeInfo(renderPass(), pipeLayout_, {{{
 			{fullscreenShader, vk::ShaderStageBits::vertex},
@@ -136,8 +136,8 @@ public:
 	void updateDevice() override {
 		auto map = ubo_.memoryMap();
 		auto span = map.span();
-		doi::write(span, lightPos_);
-		doi::write(span, time_);
+		tkn::write(span, lightPos_);
+		tkn::write(span, time_);
 	}
 
 	const char* name() const override { return "normals"; }

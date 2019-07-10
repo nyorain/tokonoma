@@ -1,10 +1,10 @@
 #pragma once
 
 #include "pass.hpp"
-#include <stage/render.hpp>
-#include <stage/types.hpp>
+#include <tkn/render.hpp>
+#include <tkn/types.hpp>
 
-using namespace doi::types;
+using namespace tkn::types;
 
 // NOTE: the only reason we are using rgba16f encoding here is that
 // 8 bits for x,y just aren't enough: only 255 pixels can be represented
@@ -64,7 +64,7 @@ public:
 	void create(InitData&, const PassCreateInfo&);
 	void init(InitData&, const PassCreateInfo&);
 
-	void createBuffers(InitBufferData&, const doi::WorkBatcher&, vk::Extent2D);
+	void createBuffers(InitBufferData&, const tkn::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::ImageView ldepth,
 		vk::ImageView normals);
 	vk::ImageView targetView() const { return target_.imageView(); }

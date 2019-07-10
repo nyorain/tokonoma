@@ -1,10 +1,10 @@
 #pragma once
 
 #include "pass.hpp"
-#include <stage/render.hpp>
-#include <stage/types.hpp>
+#include <tkn/render.hpp>
+#include <tkn/types.hpp>
 
-using namespace doi::types;
+using namespace tkn::types;
 
 /// SSAO and blur pass.
 /// Will use a compute pipeline if possible (r8Unorm storage image supported).
@@ -22,7 +22,7 @@ public:
 		vpp::TrDs::InitData initDs;
 		vpp::TrDs::InitData initBlurHDs;
 		vpp::TrDs::InitData initBlurVDs;
-		doi::Texture::InitData initNoise;
+		tkn::Texture::InitData initNoise;
 	};
 
 	struct InitBufferData {
@@ -36,7 +36,7 @@ public:
 	void create(InitData&, const PassCreateInfo&);
 	void init(InitData&, const PassCreateInfo&);
 
-	void createBuffers(InitBufferData&, const doi::WorkBatcher&, vk::Extent2D);
+	void createBuffers(InitBufferData&, const tkn::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::ImageView depth,
 		vk::ImageView normals, vk::Extent2D size);
 	vk::ImageView targetView() const { return target_.imageView(); }
@@ -67,7 +67,7 @@ protected:
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
 	vpp::ViewableImage target_;
-	doi::Texture noise_;
+	tkn::Texture noise_;
 	vpp::SubBuffer samples_;
 
 	struct {

@@ -2,21 +2,21 @@
 
 #include "pass.hpp"
 #include "timeWidget.hpp"
-#include <stage/render.hpp>
-#include <stage/types.hpp>
+#include <tkn/render.hpp>
+#include <tkn/types.hpp>
 
-#include <stage/scene/scene.hpp> // only fwd
-#include <stage/scene/light.hpp> // only fwd
+#include <tkn/scene/scene.hpp> // only fwd
+#include <tkn/scene/light.hpp> // only fwd
 
 // fwd
-namespace doi {
+namespace tkn {
 
 class PointLight;
 class DirLightj;
 class Scene;
 class Environment;
 
-} // namespace doi
+} // namespace tkn
 
 // TODO: optionally re-implement ldepth mip levels, helpful for ssao
 // only add support for creating it with n levels here
@@ -71,7 +71,7 @@ public:
 		bool ao, bool flipCull = false);
 	void init(InitData&);
 
-	void createBuffers(InitBufferData&, const doi::WorkBatcher&, vk::Extent2D);
+	void createBuffers(InitBufferData&, const tkn::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::Extent2D, vk::ImageView depth,
 		// following parameters only required when pass includes ao
 		vk::ImageView irradiance, vk::ImageView filteredEnv,
@@ -79,10 +79,10 @@ public:
 
 	// If an environment is given, will render the skybox
 	void record(vk::CommandBuffer cb, const vk::Extent2D&,
-		vk::DescriptorSet camDs, const doi::Scene& scene,
-		nytl::Span<const doi::PointLight*>, nytl::Span<const doi::DirLight*>,
+		vk::DescriptorSet camDs, const tkn::Scene& scene,
+		nytl::Span<const tkn::PointLight*>, nytl::Span<const tkn::DirLight*>,
 		vpp::BufferSpan boxIndices, vk::DescriptorSet envCamDs,
-		const doi::Environment* env, TimeWidget* time);
+		const tkn::Environment* env, TimeWidget* time);
 	void updateDevice();
 	// SyncScope srcScopeLight() const;
 

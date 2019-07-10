@@ -79,7 +79,7 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 	gpi.depthStencil.depthWriteEnable = false;
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 	gpi.blend.attachmentCount = 1u;
-	gpi.blend.pAttachments = &doi::noBlendAttachment();
+	gpi.blend.pAttachments = &tkn::noBlendAttachment();
 	pipe_ = {dev, gpi.info()};
 	vpp::nameHandle(pipe_, "PostProcessPass:pipe_");
 
@@ -136,7 +136,7 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 	dgpi.depthStencil.depthWriteEnable = false;
 	dgpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 	dgpi.blend.attachmentCount = 1u;
-	dgpi.blend.pAttachments = &doi::noBlendAttachment();
+	dgpi.blend.pAttachments = &tkn::noBlendAttachment();
 	debug_.pipe = {dev, dgpi.info()};
 	vpp::nameHandle(debug_.pipe, "PostProcessPass:debug.pipe");
 
@@ -200,20 +200,20 @@ void PostProcessPass::record(vk::CommandBuffer cb, u32 mode) {
 	vpp::DebugLabel debugLabel(cb, "PostProcessPass");
 	if(mode == modeDefault) {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 	} else {
 		vk::cmdPushConstants(cb, debug_.pipeLayout,
 			vk::ShaderStageBits::fragment, 0, sizeof(mode), &mode);
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, debug_.pipe);
-		doi::cmdBindGraphicsDescriptors(cb, debug_.pipeLayout, 0, {debug_.ds});
+		tkn::cmdBindGraphicsDescriptors(cb, debug_.pipeLayout, 0, {debug_.ds});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 	}
 }
 
 void PostProcessPass::updateDevice() {
 	auto span = uboMap_.span();
-	doi::write(span, params);
+	tkn::write(span, params);
 	uboMap_.flush();
 }
 

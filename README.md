@@ -23,7 +23,7 @@ List of projects (noninclusive):
 - br: minimal gltf pbr forward renderer (including IBL)
   Most other 3D (forward) rendering projects are built from this
 - cloth: Simple 2D cloth animation using verlet integration, cpu and
-  gpu variants. ![cloth screenshot](./assets/pics/cloth3.png)
+  gpu variants. ![cloth screenshot](./assets/pics/cloth1.png)
 - fluids: fluid simulation on the gpu
   [somewhat outdated, heard a lecture on it since then, to be reworked
   hopefully sooner than later]
@@ -38,6 +38,7 @@ List of projects (noninclusive):
 - lpgi: light probe based global illumination, using spherical harmonics
   light probes can be set and refreshed at runtime supporting
   multiple bounces
+  ![lpgi screenshot](./assets/pics/lpgi2.png)
 - normals: implements the purely 2D normal mapping effect as
   described [here](https://github.com/mattdesl/lwjgl-basics/wiki/ShaderLesson6)
 - particles: extremely simple 2D particle system using the mouse
@@ -51,12 +52,14 @@ List of projects (noninclusive):
   Can also project a cubemap to spherical harmonics coefficients (9x)
   (ikr, project may be badly named, not a pbr renderer. Most of the
   other rendering projects include pbr rendering concepts).
-- pendulum: simulation of a simple pendulum
-  the challenge is to keep the pendulum standing upwards (unstable stationary
-  solution of the underalying differential equation)
+- pendulum: simulation of a simple pendulum from an exercise in a
+  computational engineering and robotics lecture i heard.
+  The challenge is to keep the pendulum standing upwards (unstable stationary
+  solution of the underlying differential equation)
   ![pendulum screenshot](./assets/pics/pendulum1.png)
 - pursuers: small system of particle pursuers resulting in interesting
   patterns
+  ![pursuers screenshot](./assets/pics/pursuers1.png)
 - sen: first raytracing and path tracing experiments (mainly a cornell-box),
   done via compute shaders (or similar methods on the gpu)
 - shv: visualize spherical harmonics coefficients

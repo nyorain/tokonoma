@@ -1,20 +1,20 @@
 // WIP: playing around, might be in an ugly state
 // Based upon br
 
-#include <stage/camera.hpp>
-#include <stage/app.hpp>
-#include <stage/render.hpp>
-#include <stage/window.hpp>
-#include <stage/transform.hpp>
-#include <stage/texture.hpp>
-#include <stage/bits.hpp>
-#include <stage/gltf.hpp>
-#include <stage/quaternion.hpp>
-#include <stage/scene/shape.hpp>
-#include <stage/scene/scene.hpp>
-#include <stage/scene/light.hpp>
-#include <stage/scene/scene.hpp>
-#include <stage/scene/environment.hpp>
+#include <tkn/camera.hpp>
+#include <tkn/app.hpp>
+#include <tkn/render.hpp>
+#include <tkn/window.hpp>
+#include <tkn/transform.hpp>
+#include <tkn/texture.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/gltf.hpp>
+#include <tkn/quaternion.hpp>
+#include <tkn/scene/shape.hpp>
+#include <tkn/scene/scene.hpp>
+#include <tkn/scene/light.hpp>
+#include <tkn/scene/scene.hpp>
+#include <tkn/scene/environment.hpp>
 #include <argagg.hpp>
 
 #include <ny/key.hpp>
@@ -40,7 +40,7 @@
 
 #include <tinygltf.hpp>
 
-#include <shaders/stage.fullscreen.vert.h>
+#include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/taa.model.vert.h>
 #include <shaders/taa.model.frag.h>
 #include <shaders/taa.pp.frag.h>
@@ -50,9 +50,9 @@
 #include <vector>
 #include <string>
 
-using namespace doi::types;
+using namespace tkn::types;
 
-class ViewApp : public doi::App {
+class ViewApp : public tkn::App {
 public:
 	static constexpr auto historyFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
@@ -61,7 +61,7 @@ public:
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -84,14 +84,14 @@ public:
 
 		alloc_.emplace(dev);
 		auto& alloc = *this->alloc_;
-		doi::WorkBatcher batch{dev, cb, {
+		tkn::WorkBatcher batch{dev, cb, {
 				alloc.memDevice, alloc.memHost, memStage,
 				alloc.bufDevice, alloc.bufHost, bufStage,
 				dev.descriptorAllocator(),
 			}
 		};
 
-		vpp::Init<doi::Texture> initBrdfLut(batch, doi::read("brdflut.ktx"));
+		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
 		brdfLut_ = initBrdfLut.init(batch);
 
 		// tex sampler
@@ -113,23 +113,23 @@ public:
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
-		auto p = doi::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
-		doi::TextureCreateParams params;
+		auto p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+		tkn::TextureCreateParams params;
 		params.format = vk::Format::r8g8b8a8Unorm;
 		dummyTex_ = {batch, std::move(p), params};
 
 		// Load scene
 		auto s = sceneScale_;
-		auto mat = doi::scaleMat<4, float>({s, s, s});
+		auto mat = tkn::scaleMat<4, float>({s, s, s});
 		auto samplerAnisotropy = 1.f;
 		if(anisotropy_) {
 			samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
 		}
-		auto ri = doi::SceneRenderInfo{
+		auto ri = tkn::SceneRenderInfo{
 			dummyTex_.vkImageView(),
 			samplerAnisotropy, false, multiDrawIndirect_
 		};
-		auto [omodel, path] = doi::loadGltf(modelname_);
+		auto [omodel, path] = tkn::loadGltf(modelname_);
 		if(!omodel) {
 			throw std::runtime_error("Couldn't load gltf file");
 		}
@@ -138,11 +138,11 @@ public:
 		auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
 		auto& sc = model.scenes[scene];
 
-		auto initScene = vpp::InitObject<doi::Scene>(scene_, batch, path,
+		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
 			model, sc, mat, ri);
 		initScene.init(batch, dummyTex_.vkImageView());
 
-		shadowData_ = doi::initShadowData(dev, depthFormat(),
+		shadowData_ = tkn::initShadowData(dev, depthFormat(),
 			scene_.dsLayout(), multiview_, depthClamp_);
 
 		// view + projection matrix
@@ -248,7 +248,7 @@ public:
 			{fragShader, vk::ShaderStageBits::fragment},
 		}}}};
 
-		gpi.vertex = doi::Scene::vertexInfo();
+		gpi.vertex = tkn::Scene::vertexInfo();
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 		gpi.depthStencil.depthTestEnable = true;
@@ -256,8 +256,8 @@ public:
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 
 		auto battachments = {
-			doi::noBlendAttachment(),
-			doi::noBlendAttachment(),
+			tkn::noBlendAttachment(),
+			tkn::noBlendAttachment(),
 		};
 		gpi.blend.attachmentCount = battachments.size();
 		gpi.blend.pAttachments = battachments.begin();
@@ -278,11 +278,11 @@ public:
 		// color attachments (color + velocity)
 		// but the environment should simply ignore the velocity buffer
 		auto batts = {
-			doi::defaultBlendAttachment(),
-			doi::disableBlendAttachment(),
+			tkn::defaultBlendAttachment(),
+			tkn::disableBlendAttachment(),
 		};
 
-		doi::Environment::InitData initEnv;
+		tkn::Environment::InitData initEnv;
 		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", linearSampler_);
 		env_.createPipe(device(), cameraDsLayout_, offscreen_.rp, 0u, samples(), batts);
 		env_.init(initEnv, batch);
@@ -359,13 +359,13 @@ public:
 
 		// PERF: do this in scene initialization to avoid additional
 		// data upload
-		auto cube = doi::Cube{{}, {0.05f, 0.05f, 0.05f}};
-		auto shape = doi::generate(cube);
+		auto cube = tkn::Cube{{}, {0.05f, 0.05f, 0.05f}};
+		auto shape = tkn::generate(cube);
 		cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
-		auto sphere = doi::Sphere{{}, {0.05f, 0.05f, 0.05f}};
-		shape = doi::generateUV(sphere);
+		auto sphere = tkn::Sphere{{}, {0.05f, 0.05f, 0.05f}};
+		shape = tkn::generateUV(sphere);
 		spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
@@ -374,14 +374,14 @@ public:
 			scene_.defaultMaterialID());
 
 		// init light visualizations
-		doi::Material lmat;
+		tkn::Material lmat;
 
 		lmat.emissionFac = dirLight_.data.color;
 		lmat.albedoFac = Vec4f(dirLight_.data.color);
 		lmat.albedoFac[3] = 1.f;
 		// HACK: make sure it doesn't write to depth buffer and isn't
 		// rendered into shadow map
-		lmat.flags |= doi::Material::Bit::blend;
+		lmat.flags |= tkn::Material::Bit::blend;
 		dirLight_.materialID = scene_.addMaterial(lmat);
 		dirLight_.instanceID = scene_.addInstance(cubePrimitiveID_,
 			dirLightObjMatrix(), dirLight_.materialID);
@@ -440,7 +440,7 @@ public:
 		pp_.pipeLayout = {dev, {{pp_.dsLayout.vkHandle()}}, {}};
 		pp_.ds = {dev.descriptorAllocator(), pp_.dsLayout};
 
-		vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
+		vpp::ShaderModule vertShader(dev, tkn_fullscreen_vert_data);
 		vpp::ShaderModule fragShader(dev, taa_pp_frag_data);
 		vpp::GraphicsPipelineInfo gpi {pp_.rp, pp_.pipeLayout, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
@@ -643,7 +643,7 @@ public:
 		qs.wait(qs.add(cbInitLayouts_));
 	}
 
-	bool features(doi::Features& enable, const doi::Features& supported) override {
+	bool features(tkn::Features& enable, const tkn::Features& supported) override {
 		if(!App::features(enable, supported)) {
 			return false;
 		}
@@ -735,21 +735,21 @@ public:
 			std::uint32_t(cv.size()), cv.data()}, {});
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
 			dirLight_.ds(), pointLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, false); // opaque
 
 		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 			boxIndices_.offset(), vk::IndexType::uint16);
-		doi::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
+		tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
 			{envCameraDs_});
 		env_.render(cb);
 
 		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
 			dirLight_.ds(), pointLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, true); // transparent/blend
 
@@ -769,7 +769,7 @@ public:
 		auto cx = (width + 7) >> 3; // ceil(width / 8)
 		auto cy = (height + 7) >> 3; // ceil(height / 8)
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, taa_.pipe);
-		doi::cmdBindComputeDescriptors(cb, taa_.pipeLayout, 0, {taa_.ds});
+		tkn::cmdBindComputeDescriptors(cb, taa_.pipeLayout, 0, {taa_.ds});
 		vk::cmdDispatch(cb, cx, cy, 1);
 
 		// copy from outHistory back to inHistory for next frame
@@ -810,7 +810,7 @@ public:
 		vk::cmdBeginRenderPass(cb, {pp_.rp, buf.framebuffer,
 			{0u, 0u, width, height}, 0u, nullptr}, {});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
-		doi::cmdBindGraphicsDescriptors(cb, pp_.pipeLayout, 0, {pp_.ds});
+		tkn::cmdBindGraphicsDescriptors(cb, pp_.pipeLayout, 0, {pp_.ds});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad triangle fan
 		vk::cmdEndRenderPass(cb);
 
@@ -835,7 +835,7 @@ public:
 		// movement
 		auto kc = appContext().keyboardContext();
 		if(kc) {
-			doi::checkMovement(camera_, *kc, dt);
+			tkn::checkMovement(camera_, *kc, dt);
 		}
 
 		if(moveLight_) {
@@ -859,7 +859,7 @@ public:
 		// movingVel_ *= std::pow(0.99, dt);
 		movingVel_.x += 0.1 * dt * std::cos(0.5 * time_);
 		movingPos_ += dt * movingVel_;
-		auto mat = doi::translateMat(movingPos_) * doi::scaleMat({2.f, 2.f, 2.f});
+		auto mat = tkn::translateMat(movingPos_) * tkn::scaleMat({2.f, 2.f, 2.f});
 		auto& ini = scene_.instances()[movingInstance_];
 		ini.lastMatrix = ini.matrix;
 		ini.matrix = mat;
@@ -903,8 +903,8 @@ public:
 				moveLight_ ^= true;
 				return true;
 			case ny::Keycode::p:
-				dirLight_.data.flags ^= doi::lightFlagPcf;
-				pointLight_.data.flags ^= doi::lightFlagPcf;
+				dirLight_.data.flags ^= tkn::lightFlagPcf;
+				pointLight_.data.flags ^= tkn::lightFlagPcf;
 				updateLight_ = true;
 				return true;
 			case ny::Keycode::up:
@@ -954,7 +954,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 			App::scheduleRedraw();
 		}
 	}
@@ -999,36 +999,36 @@ public:
 			}
 
 			auto proj = matrix(camera_);
-			auto jitterMat = doi::translateMat({off.x, off.y, 0.f});
+			auto jitterMat = tkn::translateMat({off.x, off.y, 0.f});
 			auto jproj = jitterMat * proj;
 
-			doi::write(span, jproj);
-			doi::write(span, taa_.lastProj);
-			doi::write(span, camera_.pos);
-			doi::write(span, camera_.perspective.near);
-			doi::write(span, camera_.perspective.far);
+			tkn::write(span, jproj);
+			tkn::write(span, taa_.lastProj);
+			tkn::write(span, camera_.pos);
+			tkn::write(span, camera_.perspective.near);
+			tkn::write(span, camera_.perspective.far);
 			camera_.update = false;
 			map.flush();
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
 			// TODO: not sure about using jitterMat here
-			doi::write(envSpan, jitterMat * fixedMatrix(camera_));
+			tkn::write(envSpan, jitterMat * fixedMatrix(camera_));
 			envMap.flush();
 
 			auto taaMap = taa_.ubo.memoryMap();
 			auto taaSpan = taaMap.span();
-			doi::write(taaSpan, nytl::Mat4f(nytl::inverse(jproj)));
-			doi::write(taaSpan, taa_.lastProj);
-			doi::write(taaSpan, jproj);
-			doi::write(taaSpan, nytl::Mat4f(nytl::inverse(taa_.lastProj)));
-			doi::write(taaSpan, off);
-			doi::write(taaSpan, taa_.lastJitter);
-			doi::write(taaSpan, camera_.perspective.near);
-			doi::write(taaSpan, camera_.perspective.far);
-			doi::write(taaSpan, taa_.minFac);
-			doi::write(taaSpan, taa_.maxFac);
-			doi::write(taaSpan, taa_.mode);
+			tkn::write(taaSpan, nytl::Mat4f(nytl::inverse(jproj)));
+			tkn::write(taaSpan, taa_.lastProj);
+			tkn::write(taaSpan, jproj);
+			tkn::write(taaSpan, nytl::Mat4f(nytl::inverse(taa_.lastProj)));
+			tkn::write(taaSpan, off);
+			tkn::write(taaSpan, taa_.lastJitter);
+			tkn::write(taaSpan, camera_.perspective.near);
+			tkn::write(taaSpan, camera_.perspective.far);
+			tkn::write(taaSpan, taa_.minFac);
+			tkn::write(taaSpan, taa_.maxFac);
+			tkn::write(taaSpan, taa_.mode);
 			taaMap.flush();
 
 			taa_.lastProj = jproj;
@@ -1056,20 +1056,20 @@ public:
 			updateAOParams_ = false;
 			auto map = aoUbo_.memoryMap();
 			auto span = map.span();
-			doi::write(span, mode_);
-			doi::write(span, aoFac_);
-			doi::write(span, u32(env_.convolutionMipmaps()));
+			tkn::write(span, mode_);
+			tkn::write(span, aoFac_);
+			tkn::write(span, u32(env_.convolutionMipmaps()));
 			map.flush();
 		}
 	}
 
 	// only for visualizing the box/sphere
 	nytl::Mat4f dirLightObjMatrix() {
-		return doi::translateMat(-dirLight_.data.dir);
+		return tkn::translateMat(-dirLight_.data.dir);
 	}
 
 	nytl::Mat4f pointLightObjMatrix() {
-		return doi::translateMat(pointLight_.data.position);
+		return tkn::translateMat(pointLight_.data.position);
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -1124,7 +1124,7 @@ protected:
 	static constexpr u32 modeIrradiance = (1u << 3);
 	u32 mode_ {modePointLight | modeIrradiance | modeSpecularIBL};
 
-	doi::Texture dummyTex_;
+	tkn::Texture dummyTex_;
 	bool moveLight_ {false};
 
 	struct {
@@ -1155,7 +1155,7 @@ protected:
 
 		float minFac {0.85};
 		float maxFac {0.98};
-		u32 mode {taaModePassthrough};
+		u32 mode {taaModeClipColor};
 
 		std::vector<nytl::Vec2f> samples;
 	} taa_;
@@ -1179,17 +1179,17 @@ protected:
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
 
-	doi::Scene scene_; // no default constructor
-	doi::Camera camera_ {};
+	tkn::Scene scene_; // no default constructor
+	tkn::Camera camera_ {};
 
-	struct DirLight : public doi::DirLight {
-		using doi::DirLight::DirLight;
+	struct DirLight : public tkn::DirLight {
+		using tkn::DirLight::DirLight;
 		u32 instanceID;
 		u32 materialID;
 	};
 
-	struct PointLight : public doi::PointLight {
-		using doi::PointLight::PointLight;
+	struct PointLight : public tkn::PointLight {
+		using tkn::PointLight::PointLight;
 		u32 instanceID;
 		u32 materialID;
 	};
@@ -1202,13 +1202,13 @@ protected:
 	nytl::Vec3f movingVel_ {0, 0, 0};
 
 	// light and shadow
-	doi::ShadowData shadowData_;
+	tkn::ShadowData shadowData_;
 	DirLight dirLight_;
 	PointLight pointLight_;
 	bool updateLight_ {true};
 
-	doi::Environment env_;
-	doi::Texture brdfLut_;
+	tkn::Environment env_;
+	tkn::Texture brdfLut_;
 
 	// args
 	std::string modelname_ {};

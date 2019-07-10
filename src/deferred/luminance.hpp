@@ -9,8 +9,8 @@
 #pragma once
 
 #include "pass.hpp"
-#include <stage/render.hpp>
-#include <stage/types.hpp>
+#include <tkn/render.hpp>
+#include <tkn/types.hpp>
 
 /// Gets the average luminance value from the luminance buffer.
 /// If possible, will use a compute shader. Otherwise will use mipmap
@@ -50,7 +50,7 @@ public:
 	LuminancePass() = default;
 	void create(InitData&, const PassCreateInfo&);
 	void init(InitData&, const PassCreateInfo&);
-	void createBuffers(InitBufferData&, const doi::WorkBatcher&, vk::Extent2D);
+	void createBuffers(InitBufferData&, const tkn::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::ImageView light, vk::Extent2D);
 
 	/// Expects log(luminance) to already be stored in the mip level 0

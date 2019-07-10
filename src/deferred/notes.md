@@ -138,7 +138,7 @@ most of these are more of a guess, have to test/benchmark
   something for free there
 - when shaderStorageImageExtendedFormats is supported,
   we can perform pretty much all fullscreen passes (ssao, ssr, combining,
-  ssao blurring) as compute shaders. For doing it with post processing/
+  ssao blurring) as compute shaders. For tknng it with post processing/
   tonemapping we'd also need to create the swapchain with storage image
   caps *and* know that it uses a format that is supported... so probably
   stick with fullscreen render pass there.

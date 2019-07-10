@@ -1,9 +1,9 @@
-#include <stage/app.hpp>
-#include <stage/bits.hpp>
-#include <stage/render.hpp>
-#include <stage/window.hpp>
-#include <stage/camera.hpp>
-#include <stage/types.hpp>
+#include <tkn/app.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/render.hpp>
+#include <tkn/window.hpp>
+#include <tkn/camera.hpp>
+#include <tkn/types.hpp>
 #include <argagg.hpp>
 
 #include <vpp/trackedDescriptor.hpp>
@@ -21,18 +21,18 @@
 #include <vui/dat.hpp>
 #include <vui/gui.hpp>
 
-#include <shaders/stage.simple3.vert.h>
-#include <shaders/stage.color.frag.h>
+#include <shaders/tkn.simple3.vert.h>
+#include <shaders/tkn.color.frag.h>
 #include <shaders/cloth.cloth.comp.h>
 
 // TODO: benchmark different work group sizes
 // TODO: will probably more efficient to use textures for the nodes
 //   instead of a buffer due to neighbor access.
 
-using namespace doi::types;
+using namespace tkn::types;
 using nytl::Vec3f;
 
-class ClothApp : public doi::App {
+class ClothApp : public tkn::App {
 public:
 	struct Node {
 		nytl::Vec4f pos;
@@ -43,7 +43,7 @@ public:
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -139,8 +139,8 @@ public:
 		gfx_.dsLayout = {dev, bindings};
 		gfx_.pipeLayout = {dev, {{gfx_.dsLayout.vkHandle()}}, {}};
 
-		vpp::ShaderModule vertShader{dev, stage_simple3_vert_data};
-		vpp::ShaderModule fragShader{dev, stage_color_frag_data};
+		vpp::ShaderModule vertShader{dev, tkn_simple3_vert_data};
+		vpp::ShaderModule fragShader{dev, tkn_color_frag_data};
 		vpp::GraphicsPipelineInfo gpi {renderPass(), gfx_.pipeLayout, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
@@ -302,13 +302,13 @@ public:
 		barriers[1].dstAccessMask = vk::AccessBits::shaderRead;
 
 		for(auto i = 0u; i < iterations_; ++i) {
-			doi::cmdBindComputeDescriptors(cb, comp_.pipeLayout, 0, {comp_.ds[0]});
+			tkn::cmdBindComputeDescriptors(cb, comp_.pipeLayout, 0, {comp_.ds[0]});
 			vk::cmdDispatch(cb, c, c, 1);
 
 			vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
 				vk::PipelineStageBits::computeShader, {}, {}, barriers, {});
 
-			doi::cmdBindComputeDescriptors(cb, comp_.pipeLayout, 0, {comp_.ds[1]});
+			tkn::cmdBindComputeDescriptors(cb, comp_.pipeLayout, 0, {comp_.ds[1]});
 			vk::cmdDispatch(cb, c, c, 1);
 
 			std::swap(barriers[0].srcAccessMask, barriers[1].srcAccessMask);
@@ -322,7 +322,7 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
-		doi::cmdBindGraphicsDescriptors(cb, gfx_.pipeLayout, 0, {gfx_.ds});
+		tkn::cmdBindGraphicsDescriptors(cb, gfx_.pipeLayout, 0, {gfx_.ds});
 		vk::cmdBindVertexBuffers(cb, 0, {{nodesBuf_.buffer().vkHandle()}},
 			{{nodesBuf_.offset()}});
 		vk::cmdBindIndexBuffer(cb, indexBuf_.buffer(), indexBuf_.offset(),
@@ -336,7 +336,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 			App::scheduleRedraw();
 		}
 	}
@@ -358,7 +358,7 @@ public:
 		App::update(dt);
 		auto kc = appContext().keyboardContext();
 		if(kc) {
-			doi::checkMovement(camera_, *kc, dt);
+			tkn::checkMovement(camera_, *kc, dt);
 		}
 
 		// always redraw
@@ -374,19 +374,19 @@ public:
 			auto span = map.span();
 
 			auto scale = 2.f / gridSize_;
-			auto mat = matrix(camera_) * doi::scaleMat({scale, scale, scale});
-			doi::write(span, mat);
+			auto mat = matrix(camera_) * tkn::scaleMat({scale, scale, scale});
+			tkn::write(span, mat);
 			map.flush();
 		}
 
 		if(updateParams_) {
 			auto map = comp_.ubo.memoryMap();
 			auto span = map.span();
-			doi::write(span, u32(gridSize_));
-			doi::write(span, params_.stepdt);
-			doi::write(span, params_.ks);
-			doi::write(span, params_.kd);
-			doi::write(span, params_.mass);
+			tkn::write(span, u32(gridSize_));
+			tkn::write(span, params_.stepdt);
+			tkn::write(span, params_.ks);
+			tkn::write(span, params_.kd);
+			tkn::write(span, params_.mass);
 
 			u32 corners = 0u;
 			for(auto i = 0u; i < 4u; ++i) {
@@ -395,7 +395,7 @@ public:
 				}
 			}
 
-			doi::write(span, corners);
+			tkn::write(span, corners);
 			map.flush();
 		}
 
@@ -462,7 +462,7 @@ protected:
 		vpp::PipelineLayout pipeLayout;
 	} comp_;
 
-	doi::Camera camera_;
+	tkn::Camera camera_;
 	unsigned gridSize_ {40};
 	vpp::SubBuffer nodesBuf_;
 	vpp::SubBuffer tmpNodesBuf_;

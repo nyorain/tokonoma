@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stage/types.hpp>
+#include <tkn/types.hpp>
 #include <vpp/handles.hpp>
 #include <vpp/vk.hpp>
 #include <rvg/context.hpp>
@@ -8,7 +8,7 @@
 #include <rvg/paint.hpp>
 #include <rvg/shapes.hpp>
 
-using namespace doi::types;
+using namespace tkn::types;
 
 struct TimeWidget {
 public:

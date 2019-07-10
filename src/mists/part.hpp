@@ -1,10 +1,10 @@
 #pragma once
 
-#include <stage/typesafe.hpp>
+#include <tkn/typesafe.hpp>
 #include <typeindex>
 
 struct PartTypeTag;
-using PartType = doi::Typesafe<PartTypeTag, std::type_index>;
+using PartType = tkn::Typesafe<PartTypeTag, std::type_index>;
 
 /// Component of an Entity.
 class Part {

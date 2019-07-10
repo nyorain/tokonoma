@@ -1,9 +1,9 @@
-#include <stage/app.hpp>
-#include <stage/bits.hpp>
-#include <stage/render.hpp>
-#include <stage/window.hpp>
-#include <stage/camera.hpp>
-#include <stage/types.hpp>
+#include <tkn/app.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/render.hpp>
+#include <tkn/window.hpp>
+#include <tkn/camera.hpp>
+#include <tkn/types.hpp>
 #include <argagg.hpp>
 
 #include <vpp/trackedDescriptor.hpp>
@@ -21,8 +21,8 @@
 #include <vui/dat.hpp>
 #include <vui/gui.hpp>
 
-#include <shaders/stage.simple3.vert.h>
-#include <shaders/stage.color.frag.h>
+#include <shaders/tkn.simple3.vert.h>
+#include <shaders/tkn.color.frag.h>
 
 // Simple cloth example, simulation done using verlet integration on
 // the cpu. Currently using OpenMP (pragma should just be ignored
@@ -36,10 +36,10 @@
 // results, due to verlet integration. Solution sketch: when stepdt
 // is changed fix lpos for it based on the velocity
 
-using namespace doi::types;
+using namespace tkn::types;
 using nytl::Vec3f;
 
-class ClothApp : public doi::App {
+class ClothApp : public tkn::App {
 public:
 	struct Node {
 		nytl::Vec3f pos;
@@ -52,7 +52,7 @@ public:
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -70,8 +70,8 @@ public:
 		gfx_.dsLayout = {dev, bindings};
 		gfx_.pipeLayout = {dev, {{gfx_.dsLayout.vkHandle()}}, {}};
 
-		vpp::ShaderModule vertShader{dev, stage_simple3_vert_data};
-		vpp::ShaderModule fragShader{dev, stage_color_frag_data};
+		vpp::ShaderModule vertShader{dev, tkn_simple3_vert_data};
+		vpp::ShaderModule fragShader{dev, tkn_color_frag_data};
 		vpp::GraphicsPipelineInfo gpi {renderPass(), gfx_.pipeLayout, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
@@ -228,7 +228,7 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
-		doi::cmdBindGraphicsDescriptors(cb, gfx_.pipeLayout, 0, {gfx_.ds});
+		tkn::cmdBindGraphicsDescriptors(cb, gfx_.pipeLayout, 0, {gfx_.ds});
 		vk::cmdBindVertexBuffers(cb, 0, {{nodesBuf_.buffer().vkHandle()}},
 			{{nodesBuf_.offset()}});
 		vk::cmdBindIndexBuffer(cb, indexBuf_.buffer(), indexBuf_.offset(),
@@ -242,7 +242,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 			App::scheduleRedraw();
 		}
 	}
@@ -343,7 +343,7 @@ public:
 		App::update(dt);
 		auto kc = appContext().keyboardContext();
 		if(kc) {
-			doi::checkMovement(camera_, *kc, dt);
+			tkn::checkMovement(camera_, *kc, dt);
 		}
 
 		// simulate
@@ -371,8 +371,8 @@ public:
 			camera_.update = false;
 			auto map = gfx_.ubo.memoryMap();
 			auto span = map.span();
-			// doi::write(span, matrix3(camera_));
-			doi::write(span, matrix(camera_));
+			// tkn::write(span, matrix3(camera_));
+			tkn::write(span, matrix(camera_));
 			map.flush();
 		}
 
@@ -385,7 +385,7 @@ public:
 		for(auto y = 0u; y < gridSize_; ++y) {
 			for(auto x = 0u; x < gridSize_; ++x) {
 				auto& n = nodes_[id(x, y)];
-				doi::write(span, nytl::Vec3f(scale * n.pos));
+				tkn::write(span, nytl::Vec3f(scale * n.pos));
 			}
 		}
 
@@ -432,7 +432,7 @@ protected:
 		vpp::Pipeline pipe;
 	} gfx_;
 
-	doi::Camera camera_;
+	tkn::Camera camera_;
 	unsigned gridSize_ {40};
 	std::vector<Node> nodes_;
 	vpp::SubBuffer nodesBuf_;

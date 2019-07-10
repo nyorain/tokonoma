@@ -1,10 +1,10 @@
 #pragma once
 
 #include "pass.hpp"
-#include <stage/render.hpp>
-#include <stage/types.hpp>
+#include <tkn/render.hpp>
+#include <tkn/types.hpp>
 
-using namespace doi::types;
+using namespace tkn::types;
 
 /// Bright-color-pass filter for bloom. Blurs the bloom/emission buffer
 /// on multiple mip map levels.
@@ -64,7 +64,7 @@ public:
 	void create(InitData&, const PassCreateInfo&);
 	void init(InitData&, const PassCreateInfo&);
 
-	void createBuffers(InitBufferData&, const doi::WorkBatcher&,
+	void createBuffers(InitBufferData&, const tkn::WorkBatcher&,
 		const vk::Extent2D&);
 	void initBuffers(InitBufferData&, vk::ImageView lightInput);
 

@@ -13,13 +13,13 @@
 
 #include "network.hpp"
 
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/transform.hpp>
-#include <stage/window.hpp>
-#include <stage/types.hpp>
-#include <stage/bits.hpp>
-#include <stage/texture.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/transform.hpp>
+#include <tkn/window.hpp>
+#include <tkn/types.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/texture.hpp>
 #include <argagg.hpp>
 
 #include <vpp/fwd.hpp>
@@ -49,7 +49,7 @@
 // #include <shaders/iro_outline.frag.h>
 #include <shaders/iro.iro.comp.h>
 
-using namespace doi::types;
+using namespace tkn::types;
 
 // mirrors glsl layout
 struct Player {
@@ -115,13 +115,13 @@ Vec2i neighborPos(Vec2i pos, Field::Side side) {
 	}
 }
 
-class HexApp : public doi::App {
+class HexApp : public tkn::App {
 public:
 	static constexpr auto size = 32u;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -140,8 +140,8 @@ public:
 			"../assets/iro/spawner.png",
 			"../assets/iro/ample.png",
 			"../assets/iro/velocity.png"};
-		auto p = doi::read(images);
-		textures_ = std::move(doi::Texture(dev, std::move(p)).viewableImage());
+		auto p = tkn::read(images);
+		textures_ = std::move(tkn::Texture(dev, std::move(p)).viewableImage());
 
 		vk::SamplerCreateInfo samplerInfo {};
 		samplerInfo.minFilter = vk::Filter::linear;
@@ -236,8 +236,8 @@ public:
 			init.resources = 0u;
 			auto map = playerBuffer_.memoryMap();
 			auto span = map.span();
-			doi::write(span, init);
-			doi::write(span, init);
+			tkn::write(span, init);
+			tkn::write(span, init);
 		}
 
 		// descriptors
@@ -459,10 +459,10 @@ public:
 	}
 
 	void handleMsg(int player, RecvBuf& buf) {
-		auto type = doi::read<MessageType>(buf);
+		auto type = tkn::read<MessageType>(buf);
 		if(type == MessageType::build) {
-			auto field = doi::read<std::uint32_t>(buf);
-			auto type = doi::read<Field::Type>(buf);
+			auto field = tkn::read<std::uint32_t>(buf);
+			auto type = tkn::read<Field::Type>(buf);
 
 			auto needed = Field::prices[u32(type)];
 			if(players_[player].resources < needed) {
@@ -478,8 +478,8 @@ public:
 			dlg_trace("{}: build {} {}", socket_->step(),
 				field, int(type));
 		} else if(type == MessageType::velocity) {
-			auto field = doi::read<std::uint32_t>(buf);
-			auto dir = doi::read<nytl::Vec2f>(buf);
+			auto field = tkn::read<std::uint32_t>(buf);
+			auto dir = tkn::read<nytl::Vec2f>(buf);
 			setVelocity(player, field, dir);
 			dlg_trace("{}: velocity {} {}", socket_->step(),
 				field, dir);
@@ -500,8 +500,8 @@ public:
 		// auto size = sizeof(u32) + sizeof(f32);
 		// dlg_assert(offset + size < stage_.size());
 //
-		// doi::write(uploadPtr_, type);
-		// doi::write(uploadPtr_, 10.f); // strength
+		// tkn::write(uploadPtr_, type);
+		// tkn::write(uploadPtr_, 10.f); // strength
 //
 		// auto off = offsetof(Field, type);
 		// vk::BufferCopy copy;
@@ -523,7 +523,7 @@ public:
 		// auto size = sizeof(nytl::Vec2f);
 		// dlg_assert(offset + size < stage_.size());
 //
-		// doi::write(uploadPtr_, dir);
+		// tkn::write(uploadPtr_, dir);
 //
 		// auto off = offsetof(Field, vel);
 		// vk::BufferCopy copy;
@@ -556,7 +556,7 @@ public:
 			updateTransform_ = false;
 			auto map = gfxUbo_.memoryMap();
 			auto span = map.span();
-			doi::write(span, levelMatrix(view_));
+			tkn::write(span, levelMatrix(view_));
 		}
 
 		if(reloadPipes_) {
@@ -575,7 +575,7 @@ public:
 			cmd.firstVertex = 0u;
 			cmd.instanceCount = 1u;
 			cmd.vertexCount = 8u;
-			doi::write(span, cmd);
+			tkn::write(span, cmd);
 		}
 
 		// sync players
@@ -589,17 +589,17 @@ public:
 			// resources. Relies on the fact that the gpu does never
 			// decrease the resource count
 			for(auto& p : players_) {
-				auto& gained = doi::refRead<u32>(span);
+				auto& gained = tkn::refRead<u32>(span);
 				p.resources += gained;
 				p.netResources += gained; // only needed for player_
 				gained = 0u; // reset for next turn
 
 				// skip padding
-				doi::skip(span, 12);
+				tkn::skip(span, 12);
 			}
 
 			// write step
-			doi::write(span, u32(step_));
+			tkn::write(span, u32(step_));
 
 			if(++outputCounter % 60 == 0) {
 				outputCounter = 0;
@@ -851,7 +851,7 @@ public:
 
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
-		view_.size = doi::levelViewSize(ev.size.x / float(ev.size.y), viewScale_);
+		view_.size = tkn::levelViewSize(ev.size.x / float(ev.size.y), viewScale_);
 		updateTransform_ = true;
 	}
 
@@ -861,8 +861,8 @@ public:
 		vpp::ShaderModule modv, modf;
 
 		if(dynamic) {
-			auto omodv = doi::loadShader(dev, "iro.vert");
-			auto omodf = doi::loadShader(dev, "iro.frag");
+			auto omodv = tkn::loadShader(dev, "iro.vert");
+			auto omodf = tkn::loadShader(dev, "iro.frag");
 			if(!omodv || !omodf) {
 				return false;
 			}
@@ -925,7 +925,7 @@ public:
 		auto& dev = vulkanDevice();
 		vpp::ShaderModule mod;
 		if(dynamic) {
-			auto omod = doi::loadShader(dev, "iro.comp");
+			auto omod = tkn::loadShader(dev, "iro.comp");
 			if(!omod) {
 				return false;
 			}
@@ -997,7 +997,7 @@ protected:
 	bool reloadPipes_ {false};
 	unsigned fieldCount_;
 
-	doi::LevelView view_;
+	tkn::LevelView view_;
 	float viewScale_ {20.f};
 	bool updateTransform_ {true};
 	bool draggingView_ {false};

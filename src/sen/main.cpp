@@ -1,11 +1,11 @@
-#include <stage/app.hpp>
-#include <stage/bits.hpp>
-#include <stage/window.hpp>
-#include <stage/transform.hpp>
-#include <stage/camera.hpp>
+#include <tkn/app.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/window.hpp>
+#include <tkn/transform.hpp>
+#include <tkn/camera.hpp>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stage/stb_image_write.h>
+#include <tkn/stb_image_write.h>
 
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/sharedBuffer.hpp>
@@ -24,7 +24,7 @@
 #include <ny/keyboardContext.hpp>
 #include <ny/appContext.hpp>
 
-#include <shaders/stage.fullscreen.vert.h>
+#include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/sen.sen.frag.h>
 #include <shaders/sen.senpt.frag.h>
 #include <shaders/sen.senr.vert.h>
@@ -37,10 +37,10 @@
 constexpr auto faceWidth = 1024u;
 constexpr auto faceHeight = 1024u;
 
-class SenApp : public doi::App {
+class SenApp : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -69,7 +69,7 @@ public:
 		return true;
 	}
 
-	bool features(doi::Features& enable, const doi::Features& supported) override {
+	bool features(tkn::Features& enable, const tkn::Features& supported) override {
 		if(!App::features(enable, supported)) {
 			return false;
 		}
@@ -130,7 +130,7 @@ public:
 		pt_.dsLayout = {dev, dsBindings};
 		pt_.pipeLayout = {dev, {{pt_.dsLayout.vkHandle()}}, {}};
 
-		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
+		vpp::ShaderModule fullscreenShader(dev, tkn_fullscreen_vert_data);
 		vpp::ShaderModule textureShader(dev, sen_senpt_frag_data);
 		vpp::GraphicsPipelineInfo pipeInfo(renderPass(), pt_.pipeLayout, {{{
 			{fullscreenShader, vk::ShaderStageBits::vertex},
@@ -226,7 +226,7 @@ public:
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}},
 			{{{vk::ShaderStageBits::fragment, 0, 4u}}}};
 
-		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
+		vpp::ShaderModule fullscreenShader(dev, tkn_fullscreen_vert_data);
 		vpp::ShaderModule textureShader(dev, sen_sen_frag_data);
 		vpp::GraphicsPipelineInfo pipeInfo(renderPass(), pipeLayout_, {{{
 			{fullscreenShader, vk::ShaderStageBits::vertex},
@@ -248,8 +248,8 @@ public:
 		auto map = boxesBuf_.memoryMap();
 		auto span = map.span();
 		for(auto& b : boxes_) {
-			doi::write(span, b.box.inv);
-			doi::write(span, b.color);
+			tkn::write(span, b.box.inv);
+			tkn::write(span, b.color);
 
 			auto off = span.begin() - map.span().begin();
 			b.bufOff = off;
@@ -350,13 +350,13 @@ public:
 
 		// write indices
 		for(auto i = 0u; i < 24; i += 4) {
-			doi::write<std::uint32_t>(span, i + 0);
-			doi::write<std::uint32_t>(span, i + 1);
-			doi::write<std::uint32_t>(span, i + 2);
+			tkn::write<std::uint32_t>(span, i + 0);
+			tkn::write<std::uint32_t>(span, i + 1);
+			tkn::write<std::uint32_t>(span, i + 2);
 
-			doi::write<std::uint32_t>(span, i + 0);
-			doi::write<std::uint32_t>(span, i + 2);
-			doi::write<std::uint32_t>(span, i + 3);
+			tkn::write<std::uint32_t>(span, i + 0);
+			tkn::write<std::uint32_t>(span, i + 2);
+			tkn::write<std::uint32_t>(span, i + 3);
 		}
 
 		// write positions and normals
@@ -379,17 +379,17 @@ public:
 				float(i == 1)
 			};
 
-			doi::write(span, n - x + y); doi::write(span, n);
-			doi::write(span, n + x + y); doi::write(span, n);
-			doi::write(span, n + x - y); doi::write(span, n);
-			doi::write(span, n - x - y); doi::write(span, n);
+			tkn::write(span, n - x + y); tkn::write(span, n);
+			tkn::write(span, n + x + y); tkn::write(span, n);
+			tkn::write(span, n + x - y); tkn::write(span, n);
+			tkn::write(span, n - x - y); tkn::write(span, n);
 
 			// other (mirrored) side
 			n *= -1.f;
-			doi::write(span, n - x - y); doi::write(span, n);
-			doi::write(span, n + x - y); doi::write(span, n);
-			doi::write(span, n + x + y); doi::write(span, n);
-			doi::write(span, n - x + y); doi::write(span, n);
+			tkn::write(span, n - x - y); tkn::write(span, n);
+			tkn::write(span, n + x - y); tkn::write(span, n);
+			tkn::write(span, n + x + y); tkn::write(span, n);
+			tkn::write(span, n - x + y); tkn::write(span, n);
 		}
 
 		// upload
@@ -435,11 +435,11 @@ public:
 			{
 				auto map = b.rasterdata.memoryMap();
 				auto span = map.span();
-				doi::write(span, b.box.transform);
+				tkn::write(span, b.box.transform);
 				auto nm = nytl::Mat4f(transpose(b.box.inv));
-				doi::write(span, nm);
-				doi::write(span, b.color);
-				doi::write(span, i);
+				tkn::write(span, nm);
+				tkn::write(span, b.color);
+				tkn::write(span, i);
 			}
 
 			b.ds = {dev.descriptorAllocator(), rasterObjectDsLayout_};
@@ -513,7 +513,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 		}
 	}
 
@@ -618,7 +618,7 @@ public:
 		App::scheduleRedraw(); // TODO: can be optimized
 		time_ += delta;
 
-		doi::checkMovement(camera_, *appContext().keyboardContext(), delta);
+		tkn::checkMovement(camera_, *appContext().keyboardContext(), delta);
 	}
 
 	void updateDevice() override {
@@ -626,16 +626,16 @@ public:
 		auto rmap = ubo_.memoryMap();
 		auto rspan = rmap.span();
 
-		doi::write(rspan, camera_.pos);
-		doi::write(rspan, 0.f); // padding
-		doi::write(rspan, camera_.dir);
-		doi::write(rspan, 0.f); // padding
-		doi::write(rspan, camera_.perspective.fov);
-		doi::write(rspan, camera_.perspective.aspect);
-		doi::write(rspan, float(window().size().x));
-		doi::write(rspan, float(window().size().y));
-		doi::write(rspan, nytl::Vec2f{faceWidth, faceHeight});
-		doi::write(rspan, float(time_));
+		tkn::write(rspan, camera_.pos);
+		tkn::write(rspan, 0.f); // padding
+		tkn::write(rspan, camera_.dir);
+		tkn::write(rspan, 0.f); // padding
+		tkn::write(rspan, camera_.perspective.fov);
+		tkn::write(rspan, camera_.perspective.aspect);
+		tkn::write(rspan, float(window().size().x));
+		tkn::write(rspan, float(window().size().y));
+		tkn::write(rspan, nytl::Vec2f{faceWidth, faceHeight});
+		tkn::write(rspan, float(time_));
 
 		// update scene ubo
 		if(camera_.update) {
@@ -645,32 +645,32 @@ public:
 			{
 				auto map = rasterSceneUbo_.memoryMap();
 				auto span = map.span();
-				doi::write(span, matrix(camera_));
-				doi::write(span, camera_.pos);
-				doi::write(span, showLightTex_);
-				doi::write(span, nytl::Vec2f{faceWidth, faceHeight});
-				doi::write(span, nytl::Vec2f(atlasSize_));
+				tkn::write(span, matrix(camera_));
+				tkn::write(span, camera_.pos);
+				tkn::write(span, showLightTex_);
+				tkn::write(span, nytl::Vec2f{faceWidth, faceHeight});
+				tkn::write(span, nytl::Vec2f(atlasSize_));
 			}
 		}
 
 		// update rotating box
 		auto& b = boxes_[0];
 		float a = 0.5 * time_;
-		auto rot = nytl::Mat3f(doi::rotateMat(nytl::Vec3f{0.f, 1.f, 0.f}, a));
+		auto rot = nytl::Mat3f(tkn::rotateMat(nytl::Vec3f{0.f, 1.f, 0.f}, a));
 		b.box = {{-2.f, -3.f, 0.f}, rot};
 
 		{
 			auto map = boxesBuf_.memoryMap();
 			auto span = map.span();
-			doi::write(span, b.box.inv);
+			tkn::write(span, b.box.inv);
 		}
 
 		{
 			auto map = b.rasterdata.memoryMap();
 			auto span = map.span();
-			doi::write(span, b.box.transform);
+			tkn::write(span, b.box.transform);
 			auto nm = nytl::Mat4f(transpose(b.box.inv));
-			doi::write(span, nm);
+			tkn::write(span, nm);
 		}
 
 		// save texture
@@ -745,7 +745,7 @@ private:
 
 	std::vector<RenderBox> boxes_;
 
-	doi::Camera camera_;
+	tkn::Camera camera_;
 	bool rotateView_ {};
 	float time_ {};
 	std::uint32_t showLightTex_ {0};

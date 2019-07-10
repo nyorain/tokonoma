@@ -32,7 +32,7 @@ deferred_glsl = include_glsl + scene_glsl + files(
 # contains additional arguments for glslangValidator (like defines).
 # The shader will be looked for in '../<groupname>/<shadername>'
 shaders_src = {
-	'stage': [
+	'tkn': [
 		['shaders/shadowmap.vert', scene_glsl],
 		['shaders/shadowmap.vert', scene_glsl, 'shadowmap.multiview.vert', ['-DMULTIVIEW']],
 		['shaders/shadowmap.frag', scene_glsl],
@@ -193,7 +193,7 @@ foreach group, sources : shaders_src
 
 		# replace shaders/ dir if it exists in shader path
 		# allows projects to group shaders in a 'shader/' dir, like
-		# stage itself does it
+		# tkn itself does it
 		name = ''.join(name.split('shaders/'))
 
 		# if we allow additional subfolders in name we could add

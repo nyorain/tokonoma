@@ -2,5 +2,5 @@ executable('sentient',
 	sources: [
 	  'main.cpp',
 	  sentient_shaders,
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 

@@ -110,7 +110,7 @@ void AOPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,
 	dlg_assert(envFilterLods_);
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
-	doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
+	tkn::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
 	vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::compute,
 		0, 4, &envFilterLods_);
 	auto cx = std::ceil(size.width / float(groupDimSize));
@@ -120,7 +120,7 @@ void AOPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,
 
 void AOPass::updateDevice() {
 	auto span = uboMap_.span();
-	doi::write(span, params);
+	tkn::write(span, params);
 	uboMap_.flush();
 }
 

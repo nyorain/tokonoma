@@ -1,10 +1,10 @@
-#include <stage/headless.hpp>
-#include <stage/bits.hpp>
-#include <stage/types.hpp>
-#include <stage/render.hpp>
-#include <stage/image.hpp>
-#include <stage/texture.hpp>
-#include <stage/scene/pbr.hpp>
+#include <tkn/headless.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/types.hpp>
+#include <tkn/render.hpp>
+#include <tkn/image.hpp>
+#include <tkn/texture.hpp>
+#include <tkn/scene/pbr.hpp>
 
 #include <vpp/vk.hpp>
 #include <vpp/formats.hpp>
@@ -22,14 +22,14 @@
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
 
-#include <shaders/stage.brdflut.comp.h>
+#include <shaders/tkn.brdflut.comp.h>
 #include <iostream>
 #include <fstream>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stage/stb_image_write.h>
+#include <tkn/stb_image_write.h>
 
-using namespace doi::types;
+using namespace tkn::types;
 
 // TODO: create normal envmap mipmaps before convolution/irradiance?
 //   should help with bright dots (but didn't for irradiance, strangely)
@@ -46,7 +46,7 @@ void saveSHProj(const char* cubemap, const char* outfile,
 	const vpp::Device& dev);
 
 int main(int argc, const char** argv) {
-	auto parser = doi::HeadlessArgs::defaultParser();
+	auto parser = tkn::HeadlessArgs::defaultParser();
 	parser.definitions.push_back({
 		"brdflut", {"--brdflut"},
 		"Write a brdf specular IBL lookup table to brdflut.ktx", 0});
@@ -84,8 +84,8 @@ int main(int argc, const char** argv) {
 		return 0;
 	}
 
-	auto args = doi::HeadlessArgs(result);
-	auto headless = doi::Headless(args);
+	auto args = tkn::HeadlessArgs(result);
+	auto headless = tkn::Headless(args);
 
 	auto& dev = *headless.device;
 	std::optional<const char*> output;
@@ -175,9 +175,9 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 
 	std::byte constData[12u];
 	auto span = nytl::Span<std::byte>(constData);
-	doi::write(span, u32(groupDimSize));
-	doi::write(span, u32(groupDimSize));
-	doi::write(span, u32(sampleCount));
+	tkn::write(span, u32(groupDimSize));
+	tkn::write(span, u32(groupDimSize));
+	tkn::write(span, u32(sampleCount));
 
 	vk::SpecializationInfo spec;
 	spec.dataSize = sizeof(constData);
@@ -185,7 +185,7 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 	spec.mapEntryCount = entries.size();
 	spec.pMapEntries = entries.data();
 
-	vpp::ShaderModule shader(dev, stage_brdflut_comp_data);
+	vpp::ShaderModule shader(dev, tkn_brdflut_comp_data);
 	vk::ComputePipelineCreateInfo cpi;
 	cpi.layout = pipeLayout;
 	cpi.stage.pSpecializationInfo = &spec;
@@ -247,12 +247,12 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 
 	// auto ptr = reinterpret_cast<float*>(map.ptr());
 	// stbi_write_png(filename, size, size, 4, map.ptr(), size * 4);
-	auto provider = doi::wrap({size, size}, format, map.span());
-	auto res = doi::writeKtx(filename, *provider);
-	dlg_assertm(res == doi::WriteError::none, (int) res);
+	auto provider = tkn::wrap({size, size}, format, map.span());
+	auto res = tkn::writeKtx(filename, *provider);
+	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }
 
-// TODO: might move that to doi
+// TODO: might move that to tkn
 vpp::Sampler linearSampler(const vpp::Device& dev) {
 	vk::SamplerCreateInfo sci;
 	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
@@ -271,13 +271,13 @@ void saveCubemap(const char* equirectPath, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
 	auto size = 1024u;
-	doi::TextureCreateParams params;
+	tkn::TextureCreateParams params;
 	params.format = format;
 	params.mipLevels = 1u;
-	auto equirect = doi::Texture(dev, doi::read(equirectPath, true), params);
+	auto equirect = tkn::Texture(dev, tkn::read(equirectPath, true), params);
 
 	auto sampler = linearSampler(dev);
-	doi::Cubemapper cubemapper;
+	tkn::Cubemapper cubemapper;
 	cubemapper.init(dev.devMemAllocator(), {size, size}, sampler);
 
 	auto& qs = dev.queueSubmitter();
@@ -322,22 +322,22 @@ void saveCubemap(const char* equirectPath, const char* outfile,
 		ptr + 5 * faceSize,
 	};
 
-	auto provider = doi::wrap({size, size}, format, 1, 1, 6, {ptrs});
-	auto res = doi::writeKtx(outfile, *provider);
-	dlg_assertm(res == doi::WriteError::none, (int) res);
+	auto provider = tkn::wrap({size, size}, format, 1, 1, 6, {ptrs});
+	auto res = tkn::writeKtx(outfile, *provider);
+	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }
 
 void saveIrradiance(const char* infile, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
 	auto size = 32u;
-	doi::TextureCreateParams params;
+	tkn::TextureCreateParams params;
 	params.format = format;
 	params.cubemap = true;
-	auto envmap = doi::Texture(dev, doi::read(infile, true), params);
+	auto envmap = tkn::Texture(dev, tkn::read(infile, true), params);
 
 	auto sampler = linearSampler(dev);
-	doi::Irradiancer irradiancer;
+	tkn::Irradiancer irradiancer;
 	irradiancer.init(dev.devMemAllocator(), {size, size}, sampler);
 
 	auto& qs = dev.queueSubmitter();
@@ -382,21 +382,21 @@ void saveIrradiance(const char* infile, const char* outfile,
 		ptr + 5 * faceSize,
 	};
 
-	auto provider = doi::wrap({size, size}, format, 1, 1, 6, {ptrs});
-	auto res = doi::writeKtx(outfile, *provider);
-	dlg_assertm(res == doi::WriteError::none, (int) res);
+	auto provider = tkn::wrap({size, size}, format, 1, 1, 6, {ptrs});
+	auto res = tkn::writeKtx(outfile, *provider);
+	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }
 
 void saveConvoluted(const char* cubemap, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
-	auto p = doi::read(cubemap, true);
+	auto p = tkn::read(cubemap, true);
 	auto size = p->size();
 	auto full = int(vpp::mipmapLevels({size.x, size.y})) - 4;
 	unsigned mipLevels = std::max(full, 1);
 	dlg_assert(mipLevels > 1);
 
-	doi::TextureCreateParams params;
+	tkn::TextureCreateParams params;
 	params.format = format;
 	params.cubemap = true;
 	params.mipLevels = mipLevels;
@@ -404,10 +404,10 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 	params.view.levelCount = 1u;
 	params.usage = params.defaultUsage | vk::ImageUsageBits::storage;
 
-	auto envmap = doi::Texture(dev, std::move(p), params);
+	auto envmap = tkn::Texture(dev, std::move(p), params);
 
 	auto sampler = linearSampler(dev);
-	doi::EnvironmentMapFilter convoluter;
+	tkn::EnvironmentMapFilter convoluter;
 
 	auto& qs = dev.queueSubmitter();
 	auto cb = dev.commandAllocator().get(qs.queue().family());
@@ -502,22 +502,22 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 		map.invalidate();
 	}
 
-	auto provider = doi::wrap(size, format, mipLevels, 1, 6, pointers);
-	auto res = doi::writeKtx(outfile, *provider);
-	dlg_assertm(res == doi::WriteError::none, (int) res);
+	auto provider = tkn::wrap(size, format, mipLevels, 1, 6, pointers);
+	auto res = tkn::writeKtx(outfile, *provider);
+	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }
 
 void saveSHProj(const char* cubemap, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
-	auto p = doi::read(cubemap, true);
+	auto p = tkn::read(cubemap, true);
 	auto size = p->size();
 	// we mip down to the level before 32x32
 	auto maxLevels = int(vpp::mipmapLevels({size.x, size.y})) - 5;
 	unsigned mipLevels = std::max(maxLevels, 1);
-	auto lastSize = doi::mipmapSize({size.x, size.y}, mipLevels - 1);
+	auto lastSize = tkn::mipmapSize({size.x, size.y}, mipLevels - 1);
 
-	doi::TextureCreateParams params;
+	tkn::TextureCreateParams params;
 	params.format = format;
 	params.cubemap = true;
 	params.mipLevels = mipLevels;
@@ -526,7 +526,7 @@ void saveSHProj(const char* cubemap, const char* outfile,
 		params.defaultUsage | // not really needed though
 		vk::ImageUsageBits::transferSrc |
 		vk::ImageUsageBits::transferDst;
-	auto envmap = doi::Texture(dev, std::move(p), params);
+	auto envmap = tkn::Texture(dev, std::move(p), params);
 
 	auto& qs = dev.queueSubmitter();
 	auto cb = dev.commandAllocator().get(qs.queue().family());
@@ -577,7 +577,7 @@ void saveSHProj(const char* cubemap, const char* outfile,
 		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barriers[1]}});
 
 	auto sampler = linearSampler(dev);
-	doi::SHProjector shproj;
+	tkn::SHProjector shproj;
 	shproj.create(dev, sampler);
 
 	shproj.record(cb, img.imageView());
@@ -588,7 +588,7 @@ void saveSHProj(const char* cubemap, const char* outfile,
 	// read coeffs
 	auto map = shproj.coeffsBuffer().memoryMap();
 	auto span = map.span();
-	auto coeffs = doi::read<std::array<nytl::Vec3f, 9>>(span);
+	auto coeffs = tkn::read<std::array<nytl::Vec3f, 9>>(span);
 	for(auto i = 0u; i < coeffs.size(); ++i) {
 		dlg_info("coeffs[{}]: {}", i, coeffs[i]);
 	}

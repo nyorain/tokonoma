@@ -192,7 +192,7 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 		gpi.depthStencil.depthWriteEnable = false;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 		gpi.blend.attachmentCount = 1u;
-		gpi.blend.pAttachments = &doi::noBlendAttachment();
+		gpi.blend.pAttachments = &tkn::noBlendAttachment();
 
 		pipe_ = {dev, gpi.info()};
 
@@ -207,7 +207,7 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 		gpi.depthStencil.depthWriteEnable = false;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 		gpi.blend.attachmentCount = 1u;
-		gpi.blend.pAttachments = &doi::noBlendAttachment();
+		gpi.blend.pAttachments = &tkn::noBlendAttachment();
 
 		blur_.pipe = {dev, gpi.info()};
 	}
@@ -267,8 +267,8 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 
 	auto noiseFormat = vk::Format::r32g32b32a32Sfloat;
 	auto span = nytl::as_bytes(nytl::span(noiseData));
-	auto p = doi::wrap({noiseDim, noiseDim}, noiseFormat, span);
-	auto params = doi::TextureCreateParams{};
+	auto p = tkn::wrap({noiseDim, noiseDim}, noiseFormat, span);
+	auto params = tkn::TextureCreateParams{};
 	params.format = noiseFormat;
 	noise_ = {data.initNoise, wb, std::move(p), params};
 
@@ -305,7 +305,7 @@ void SSAOPass::init(InitData& data, const PassCreateInfo& info) {
 		{{copy}});
 }
 
-void SSAOPass::createBuffers(InitBufferData& data, const doi::WorkBatcher& wb,
+void SSAOPass::createBuffers(InitBufferData& data, const tkn::WorkBatcher& wb,
 		vk::Extent2D size) {
 	auto info = targetInfo(size, usingCompute());
 	dlg_assert(vpp::supported(wb.dev, info.img));
@@ -390,7 +390,7 @@ void SSAOPass::record(vk::CommandBuffer cb,
 			vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
-		doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
+		tkn::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
 		vk::cmdDispatch(cb, dx, dy, 1);
 
 		// make sure write to target_ is visible since it will be
@@ -420,7 +420,7 @@ void SSAOPass::record(vk::CommandBuffer cb,
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, blur_.pipe);
 		vk::cmdPushConstants(cb, blur_.pipeLayout,
 			vk::ShaderStageBits::compute, 0, 4, &horizontal);
-		doi::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsHorz});
+		tkn::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsHorz});
 		vk::cmdDispatch(cb, dx, dy, 1);
 
 		// i guess when we make sure that write to blur_.target has finished,
@@ -445,7 +445,7 @@ void SSAOPass::record(vk::CommandBuffer cb,
 		horizontal = 0u;
 		vk::cmdPushConstants(cb, blur_.pipeLayout,
 			vk::ShaderStageBits::compute, 0, 4, &horizontal);
-		doi::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsVert});
+		tkn::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsVert});
 		vk::cmdDispatch(cb, dx, dy, 1);
 	} else {
 		vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
@@ -456,7 +456,7 @@ void SSAOPass::record(vk::CommandBuffer cb,
 			{0u, 0u, width, height}, 0, nullptr}, {});
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		vk::cmdEndRenderPass(cb);
 
@@ -484,7 +484,7 @@ void SSAOPass::record(vk::CommandBuffer cb,
 		u32 horizontal = 1u;
 		vk::cmdPushConstants(cb, blur_.pipeLayout,
 			vk::ShaderStageBits::fragment, 0, 4, &horizontal);
-		doi::cmdBindGraphicsDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsHorz});
+		tkn::cmdBindGraphicsDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsHorz});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		vk::cmdEndRenderPass(cb);
 
@@ -506,7 +506,7 @@ void SSAOPass::record(vk::CommandBuffer cb,
 			{0u, 0u, width, height}, 0, nullptr}, {});
 		vk::cmdPushConstants(cb, blur_.pipeLayout,
 			vk::ShaderStageBits::fragment, 0, 4, &horizontal);
-		doi::cmdBindGraphicsDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsVert});
+		tkn::cmdBindGraphicsDescriptors(cb, blur_.pipeLayout, 0, {blur_.dsVert});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		vk::cmdEndRenderPass(cb);
 	}

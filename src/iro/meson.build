@@ -6,5 +6,5 @@ iro_src = [
 
 executable('iro',
 	sources: iro_src,
-	dependencies: stage_dep)
+	dependencies: tkn_dep)
 

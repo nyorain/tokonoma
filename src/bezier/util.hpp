@@ -1,9 +1,9 @@
-#include <stage/types.hpp>
+#include <tkn/types.hpp>
 #include <nytl/vecOps.hpp>
 #include <nytl/math.hpp>
 #include <cmath>
 
-using namespace doi::types;
+using namespace tkn::types;
 
 // update nytl::mix?
 template<typename P, typename T>

@@ -1,5 +1,5 @@
 #include "automaton.hpp"
-#include <stage/bits.hpp>
+#include <tkn/bits.hpp>
 
 #include <vpp/vk.hpp>
 #include <vpp/bufferOps.hpp>
@@ -16,9 +16,9 @@
 
 #include <shaders/automaton.hex.vert.h>
 #include <shaders/automaton.hex_line.vert.h>
-#include <shaders/stage.fullscreen_transform.vert.h>
-#include <shaders/stage.incolor.frag.h>
-#include <shaders/stage.texture.frag.h>
+#include <shaders/tkn.fullscreen_transform.vert.h>
+#include <shaders/tkn.incolor.frag.h>
+#include <shaders/tkn.texture.frag.h>
 
 constexpr float cospi6 = 0.86602540378; // cos(pi/6) or sqrt(3)/2
 
@@ -138,7 +138,7 @@ void Automaton::resize(nytl::Vec2ui size) {
 
 void Automaton::writeGfxData(nytl::Span<std::byte>& data) {
 	if(transform_) {
-		doi::write(data, *transform_);
+		tkn::write(data, *transform_);
 		transform_ = {};
 	} else { // skip
 		auto s = sizeof(nytl::Mat4f);
@@ -146,8 +146,8 @@ void Automaton::writeGfxData(nytl::Span<std::byte>& data) {
 	}
 
 	if(gridType_ == GridType::hex) {
-		doi::write(data, std::uint32_t(size_.x));
-		doi::write(data, std::uint32_t(size_.y));
+		tkn::write(data, std::uint32_t(size_.x));
+		tkn::write(data, std::uint32_t(size_.y));
 
 		// center hexagons
 		auto radius = 1.f;
@@ -165,8 +165,8 @@ void Automaton::writeGfxData(nytl::Span<std::byte>& data) {
 		hex_.radius = radius;
 		hex_.off = off;
 
-		doi::write(data, off);
-		doi::write(data, radius);
+		tkn::write(data, off);
+		tkn::write(data, radius);
 	}
 }
 
@@ -342,15 +342,15 @@ void Automaton::initGfxPipe(vk::RenderPass renderPass,
 		if(gridType_ == GridType::hex) {
 			vert = automaton_hex_vert_data;
 		} else {
-			vert = stage_fullscreen_transform_vert_data;
+			vert = tkn_fullscreen_transform_vert_data;
 		}
 	}
 
 	if(frag.empty()) {
 		if(gridType_ == GridType::hex) {
-			frag = stage_incolor_frag_data;
+			frag = tkn_incolor_frag_data;
 		} else {
-			frag = stage_texture_frag_data;
+			frag = tkn_texture_frag_data;
 		}
 	}
 

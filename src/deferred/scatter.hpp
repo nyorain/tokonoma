@@ -1,7 +1,7 @@
 #pragma once
 
 #include "pass.hpp"
-#include <stage/render.hpp>
+#include <tkn/render.hpp>
 
 // TODO: implement alternative that just uses an additional
 // output in light pass
@@ -46,7 +46,7 @@ public:
 	void create(InitData&, const PassCreateInfo&, bool directional);
 	void init(InitData&, const PassCreateInfo&);
 
-	void createBuffers(InitBufferData&, const doi::WorkBatcher&, vk::Extent2D);
+	void createBuffers(InitBufferData&, const tkn::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::Extent2D,
 		vk::ImageView depth);
 

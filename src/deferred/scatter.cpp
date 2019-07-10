@@ -81,7 +81,7 @@ void LightScatterPass::create(InitData& data, const PassCreateInfo& info,
 	gpi.depthStencil.depthWriteEnable = false;
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 	gpi.blend.attachmentCount = 1u;
-	gpi.blend.pAttachments = &doi::noBlendAttachment();
+	gpi.blend.pAttachments = &tkn::noBlendAttachment();
 	pipe_ = {dev, gpi.info()};
 	vpp::nameHandle(pipe_, "LightScatterPass:pipe");
 
@@ -99,7 +99,7 @@ void LightScatterPass::init(InitData& data, const PassCreateInfo&) {
 }
 
 void LightScatterPass::createBuffers(InitBufferData& data,
-		const doi::WorkBatcher& wb, vk::Extent2D size) {
+		const tkn::WorkBatcher& wb, vk::Extent2D size) {
 	auto usage = vk::ImageUsageBits::sampled |
 		vk::ImageUsageBits::colorAttachment;
 	auto info = vpp::ViewableImageCreateInfo(format,
@@ -143,7 +143,7 @@ void LightScatterPass::record(vk::CommandBuffer cb, vk::Extent2D size,
 		0, nullptr
 	}, {});
 
-	doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {scene, ds_, light});
+	tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {scene, ds_, light});
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 	vk::cmdDraw(cb, 4, 1, 0, 0); // tri fan fullscreen
 	vk::cmdEndRenderPass(cb);
@@ -151,7 +151,7 @@ void LightScatterPass::record(vk::CommandBuffer cb, vk::Extent2D size,
 
 void LightScatterPass::updateDevice() {
 	auto span = uboMap_.span();
-	doi::write(span, params);
+	tkn::write(span, params);
 	uboMap_.flush();
 }
 

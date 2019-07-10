@@ -8,5 +8,5 @@ fun_src = [
 executable('fun',
 	sources: fun_src,
 	include_directories: external_inc,
-	dependencies: [stage_dep, dep_b2d])
+	dependencies: [tkn_dep, dep_b2d])
 

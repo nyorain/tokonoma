@@ -1,7 +1,7 @@
 #include "geomLight.hpp"
 
-#include <stage/scene/environment.hpp>
-#include <stage/scene/material.hpp>
+#include <tkn/scene/environment.hpp>
+#include <tkn/scene/material.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/shader.hpp>
 #include <vpp/formats.hpp>
@@ -175,14 +175,14 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		{fragShader, vk::ShaderStageBits::fragment},
 	}}}, 0};
 
-	gpi.vertex = doi::Scene::vertexInfo();
+	gpi.vertex = tkn::Scene::vertexInfo();
 
 	// we don't blend in the gbuffers; simply overwrite
 	auto blendAttachments = {
-		doi::noBlendAttachment(),
-		doi::noBlendAttachment(),
-		doi::noBlendAttachment(),
-		doi::noBlendAttachment(),
+		tkn::noBlendAttachment(),
+		tkn::noBlendAttachment(),
+		tkn::noBlendAttachment(),
+		tkn::noBlendAttachment(),
 	};
 
 	gpi.blend.attachmentCount = blendAttachments.size();
@@ -213,7 +213,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		{blendFragShader, vk::ShaderStageBits::fragment},
 	}}}, 1};
 
-	bgpi.vertex = doi::Scene::vertexInfo();
+	bgpi.vertex = tkn::Scene::vertexInfo();
 	bgpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 	bgpi.depthStencil.depthTestEnable = true;
 	bgpi.depthStencil.depthWriteEnable = false;
@@ -386,7 +386,7 @@ void GeomLightPass::init(InitData& data) {
 }
 
 void GeomLightPass::createBuffers(InitBufferData& data,
-		const doi::WorkBatcher& wb, vk::Extent2D size) {
+		const tkn::WorkBatcher& wb, vk::Extent2D size) {
 	auto createInfo = [&](vk::Format format,
 			vk::ImageUsageFlags usage) {
 		auto info = vpp::ViewableImageCreateInfo(format,
@@ -501,10 +501,10 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 }
 
 void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
-		vk::DescriptorSet camDs, const doi::Scene& scene,
-		nytl::Span<const doi::PointLight*> pointLights,
-		nytl::Span<const doi::DirLight*> dirLights, vpp::BufferSpan boxIndices,
-		vk::DescriptorSet envCamDs, const doi::Environment* env,
+		vk::DescriptorSet camDs, const tkn::Scene& scene,
+		nytl::Span<const tkn::PointLight*> pointLights,
+		nytl::Span<const tkn::DirLight*> dirLights, vpp::BufferSpan boxIndices,
+		vk::DescriptorSet envCamDs, const tkn::Environment* env,
 		TimeWidget* time) {
 	vpp::DebugLabel(cb, "GeomLightPass");
 	auto width = size.width;
@@ -525,7 +525,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 	{
 		vpp::DebugLabel(cb, "geometry pass");
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, geomPipe_);
-		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {camDs});
+		tkn::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {camDs});
 		scene.render(cb, geomPipeLayout_, false); // opaque
 		if(time) {
 			time->add("geometry");
@@ -536,19 +536,19 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 
 	{
 		vpp::DebugLabel(cb, "light pass");
-		doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 0, {camDs, lightDs_});
+		tkn::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 0, {camDs, lightDs_});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pointLightPipe_);
 		vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
 			boxIndices.offset(), vk::IndexType::uint16);
 		for(auto* light : pointLights) {
-			doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light->ds()});
+			tkn::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light->ds()});
 			// vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0); // box
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 		}
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, dirLightPipe_);
 		for(auto* light : dirLights) {
-			doi::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light->ds()});
+			tkn::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light->ds()});
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 		}
 
@@ -558,7 +558,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		if(renderAO()) {
 			vpp::DebugLabel(cb, "ao pass");
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, aoPipe_);
-			doi::cmdBindGraphicsDescriptors(cb, aoPipeLayout_, 0, {camDs, aoDs_});
+			tkn::cmdBindGraphicsDescriptors(cb, aoPipeLayout_, 0, {camDs, aoDs_});
 			vk::cmdPushConstants(cb, aoPipeLayout_, vk::ShaderStageBits::fragment,
 				0, 4, &aoEnvLods_);
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
@@ -570,7 +570,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		// important that this comes before the transparent pass since
 		// that doesn't write the depth buffer
 		if(env) {
-			doi::cmdBindGraphicsDescriptors(cb, env->pipeLayout(), 0, {envCamDs});
+			tkn::cmdBindGraphicsDescriptors(cb, env->pipeLayout(), 0, {envCamDs});
 			vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
 				boxIndices.offset(), vk::IndexType::uint16);
 			env->render(cb);
@@ -580,7 +580,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		}
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
-		doi::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {camDs});
+		tkn::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {camDs});
 		scene.render(cb, geomPipeLayout_, true); // blend
 		if(time) {
 			time->add("transparent");
@@ -593,7 +593,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 void GeomLightPass::updateDevice() {
 	if(renderAO()) {
 		auto span = aoUboMap_.span();
-		doi::write(span, aoParams);
+		tkn::write(span, aoParams);
 		aoUboMap_.flush();
 	}
 }

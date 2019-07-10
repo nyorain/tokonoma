@@ -1,8 +1,8 @@
 #pragma once
 
 #include "pass.hpp"
-#include <stage/render.hpp>
-#include <stage/types.hpp>
+#include <tkn/render.hpp>
+#include <tkn/types.hpp>
 
 // TODO: we can probably apply bloom and scattering in post processing
 // pass, right? they don't really need fxaa/dof (dof for bloom is

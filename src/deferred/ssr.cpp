@@ -75,7 +75,7 @@ void SSRPass::init(InitData& data, const PassCreateInfo&) {
 	vpp::nameHandle(ds_, "SSRPass:ds_");
 }
 
-void SSRPass::createBuffers(InitBufferData& data, const doi::WorkBatcher& wb,
+void SSRPass::createBuffers(InitBufferData& data, const tkn::WorkBatcher& wb,
 		vk::Extent2D size) {
 	auto usage = vk::ImageUsageBits::storage |
 		vk::ImageUsageBits::sampled |
@@ -119,7 +119,7 @@ void SSRPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,
 		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
-	doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
+	tkn::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {sceneDs, ds_});
 
 	auto cx = u32(std::ceil(size.width / float(groupDimSize)));
 	auto cy = u32(std::ceil(size.height / float(groupDimSize)));
@@ -128,7 +128,7 @@ void SSRPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,
 
 void SSRPass::updateDevice() {
 	auto span = uboMap_.span();
-	doi::write(span, params);
+	tkn::write(span, params);
 	uboMap_.flush();
 }
 

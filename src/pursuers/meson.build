@@ -5,5 +5,5 @@ pursuers_src = [
 
 executable('pursuers',
 	sources: pursuers_src,
-	dependencies: stage_dep)
+	dependencies: tkn_dep)
 

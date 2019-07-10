@@ -1,7 +1,7 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/bits.hpp>
-#include <stage/util.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/util.hpp>
 #include <argagg.hpp>
 
 #include <vpp/device.hpp>
@@ -22,16 +22,16 @@
 #include <cstdlib>
 #include <sys/wait.h>
 
-#include <shaders/stage.fullscreen.vert.h>
+#include <shaders/tkn.fullscreen.vert.h>
 
 // Specification of the frag shader ubo in ./spec.md
 
-class ViewerApp : public doi::App {
+class ViewerApp : public tkn::App {
 public:
 	static constexpr auto cacheFile = "sviewer.cache";
 
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -52,7 +52,7 @@ public:
 		plInfo.setLayoutCount = 1;
 		plInfo.pSetLayouts = pipeSets.begin();
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
-		vertShader_ = {dev, stage_fullscreen_vert_data};
+		vertShader_ = {dev, tkn_fullscreen_vert_data};
 
 		cache_ = {dev, cacheFile};
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
@@ -81,7 +81,7 @@ public:
 			} else {
 				// check if its a number
 				unsigned num;
-				if (doi::stoi(ev.utf8, num)) {
+				if (tkn::stoi(ev.utf8, num)) {
 					effect_ = num;
 					dlg_info("Effect: {}", effect_);
 				} else {
@@ -132,10 +132,10 @@ public:
 		// static constexpr auto align = 0.f;
 		auto map = ubo_.memoryMap();
 		auto span = map.span();
-		doi::write(span, mpos_);
-		doi::write(span, time_);
-		doi::write(span, effect_);
-		doi::write(span, camPos_);
+		tkn::write(span, mpos_);
+		tkn::write(span, time_);
+		tkn::write(span, effect_);
+		tkn::write(span, camPos_);
 
 		if(reload_) {
 			initPipe(glsl_);
@@ -160,7 +160,7 @@ public:
 	bool initPipe(std::string_view glslFile) {
 		auto name = "sviewer/shaders/" + std::string(glslFile);
 		name += ".frag";
-		if(auto mod = doi::loadShader(vulkanDevice(), name)) {
+		if(auto mod = tkn::loadShader(vulkanDevice(), name)) {
 			initPipe(std::move(*mod));
 			return true;
 		} else {

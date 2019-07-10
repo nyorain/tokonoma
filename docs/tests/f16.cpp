@@ -1,9 +1,9 @@
-#include <stage/f16.hpp>
+#include <tkn/f16.hpp>
 #include <nytl/approx.hpp>
 #include "bugged.hpp"
 
-using doi::f16;
-using namespace doi::f16_literal;
+using tkn::f16;
+using namespace tkn::f16_literal;
 using namespace nytl::approxOps;
 constexpr auto eps = 0.001;
 
@@ -35,15 +35,15 @@ TEST(special) {
 
 	EXPECT(float(hinf), finf);
 
-	EXPECT(doi::isinf(hinf), true);
-	EXPECT(doi::isinf(f16(0.f)), false);
-	EXPECT(doi::isinf(-hinf), true);
-	EXPECT(doi::isinf(f16(1.f)), false);
+	EXPECT(tkn::isinf(hinf), true);
+	EXPECT(tkn::isinf(f16(0.f)), false);
+	EXPECT(tkn::isinf(-hinf), true);
+	EXPECT(tkn::isinf(f16(1.f)), false);
 
-	EXPECT(doi::isnan(hinf), false);
-	EXPECT(doi::isnan(f16(0.f)), false);
-	EXPECT(doi::isnan(-hinf), false);
-	EXPECT(doi::isnan(f16(1.f)), false);
+	EXPECT(tkn::isnan(hinf), false);
+	EXPECT(tkn::isnan(f16(0.f)), false);
+	EXPECT(tkn::isnan(-hinf), false);
+	EXPECT(tkn::isnan(f16(1.f)), false);
 }
 
 TEST(ops) {

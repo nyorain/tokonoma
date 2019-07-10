@@ -1,5 +1,5 @@
 #include "light.hpp"
-#include <stage/bits.hpp>
+#include <tkn/bits.hpp>
 
 #include <vpp/formats.hpp>
 #include <vpp/vk.hpp>
@@ -113,11 +113,11 @@ nytl::Vec3f blackbody(unsigned temp) {
 
 // Light
 void Light::writeUBO(nytl::Span<std::byte>& data) {
-	doi::write(data, color);
-	doi::write(data, position);
-	doi::write(data, radius_);
-	doi::write(data, strength_);
-	doi::write(data, bounds_);
+	tkn::write(data, color);
+	tkn::write(data, position);
+	tkn::write(data, radius_);
+	tkn::write(data, strength_);
+	tkn::write(data, bounds_);
 }
 
 Light::Light(LightSystem& system, nytl::Vec2f pos,
@@ -462,7 +462,7 @@ bool LightSystem::updateDevice() {
 		cmd.instanceCount = segments_.size();
 		cmd.vertexCount = 6;
 
-		doi::write(span, cmd);
+		tkn::write(span, cmd);
 		memcpy(span.data(), segments_.data(),
 				segments_.size() * sizeof(segments_[0]));
 	}

@@ -9,20 +9,20 @@
 // - allow visualization of GI probes via spheres as in shv
 // - add ability to save the rendered probes to file
 
-#include <stage/camera.hpp>
-#include <stage/app.hpp>
-#include <stage/render.hpp>
-#include <stage/window.hpp>
-#include <stage/transform.hpp>
-#include <stage/texture.hpp>
-#include <stage/bits.hpp>
-#include <stage/gltf.hpp>
-#include <stage/quaternion.hpp>
-#include <stage/scene/shape.hpp>
-#include <stage/scene/scene.hpp>
-#include <stage/scene/light.hpp>
-#include <stage/scene/scene.hpp>
-#include <stage/scene/environment.hpp>
+#include <tkn/camera.hpp>
+#include <tkn/app.hpp>
+#include <tkn/render.hpp>
+#include <tkn/window.hpp>
+#include <tkn/transform.hpp>
+#include <tkn/texture.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/gltf.hpp>
+#include <tkn/quaternion.hpp>
+#include <tkn/scene/shape.hpp>
+#include <tkn/scene/scene.hpp>
+#include <tkn/scene/light.hpp>
+#include <tkn/scene/scene.hpp>
+#include <tkn/scene/environment.hpp>
 #include <argagg.hpp>
 
 #include <ny/key.hpp>
@@ -56,9 +56,9 @@
 #include <vector>
 #include <string>
 
-using namespace doi::types;
+using namespace tkn::types;
 
-class ViewApp : public doi::App {
+class ViewApp : public tkn::App {
 public:
 	static constexpr auto probeSize = vk::Extent2D {128, 128};
 	static constexpr auto probeFaceSize = probeSize.width * probeSize.height * 8;
@@ -66,7 +66,7 @@ public:
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -86,14 +86,14 @@ public:
 
 		alloc_.emplace(dev);
 		auto& alloc = *this->alloc_;
-		doi::WorkBatcher batch{dev, cb, {
+		tkn::WorkBatcher batch{dev, cb, {
 				alloc.memDevice, alloc.memHost, memStage,
 				alloc.bufDevice, alloc.bufHost, bufStage,
 				dev.descriptorAllocator(),
 			}
 		};
 
-		vpp::Init<doi::Texture> initBrdfLut(batch, doi::read("brdflut.ktx"));
+		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
 		brdfLut_ = initBrdfLut.init(batch);
 
 		// tex sampler
@@ -110,23 +110,23 @@ public:
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
-		auto p = doi::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
-		doi::TextureCreateParams params;
+		auto p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+		tkn::TextureCreateParams params;
 		params.format = vk::Format::r8g8b8a8Unorm;
 		dummyTex_ = {batch, std::move(p), params};
 
 		// Load scene
 		auto s = sceneScale_;
-		auto mat = doi::scaleMat<4, float>({s, s, s});
+		auto mat = tkn::scaleMat<4, float>({s, s, s});
 		auto samplerAnisotropy = 1.f;
 		if(anisotropy_) {
 			samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
 		}
-		auto ri = doi::SceneRenderInfo{
+		auto ri = tkn::SceneRenderInfo{
 			dummyTex_.vkImageView(),
 			samplerAnisotropy, false, multiDrawIndirect_
 		};
-		auto [omodel, path] = doi::loadGltf(modelname_);
+		auto [omodel, path] = tkn::loadGltf(modelname_);
 		if(!omodel) {
 			return false;
 		}
@@ -135,11 +135,11 @@ public:
 		auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
 		auto& sc = model.scenes[scene];
 
-		auto initScene = vpp::InitObject<doi::Scene>(scene_, batch, path,
+		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
 			model, sc, mat, ri);
 		initScene.init(batch, dummyTex_.vkImageView());
 
-		shadowData_ = doi::initShadowData(dev, depthFormat(),
+		shadowData_ = tkn::initShadowData(dev, depthFormat(),
 			scene_.dsLayout(), multiview_, depthClamp_);
 
 		// view + projection matrix
@@ -151,7 +151,7 @@ public:
 
 		cameraDsLayout_ = {dev, cameraBindings};
 
-		doi::Environment::InitData initEnv;
+		tkn::Environment::InitData initEnv;
 		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", sampler_);
 		env_.createPipe(device(), cameraDsLayout_, renderPass(), 0u, samples());
 		env_.init(initEnv, batch);
@@ -186,7 +186,7 @@ public:
 			{fragShader, vk::ShaderStageBits::fragment},
 		}}}, 0, samples()};
 
-		gpi.vertex = doi::Scene::vertexInfo();
+		gpi.vertex = tkn::Scene::vertexInfo();
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 		gpi.depthStencil.depthTestEnable = true;
@@ -348,25 +348,25 @@ public:
 
 		// PERF: do this in scene initialization to avoid additional
 		// data upload
-		auto cube = doi::Cube{{}, {0.05f, 0.05f, 0.05f}};
-		auto shape = doi::generate(cube);
+		auto cube = tkn::Cube{{}, {0.05f, 0.05f, 0.05f}};
+		auto shape = tkn::generate(cube);
 		cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
-		auto sphere = doi::Sphere{{}, {0.05f, 0.05f, 0.05f}};
-		shape = doi::generateUV(sphere);
+		auto sphere = tkn::Sphere{{}, {0.05f, 0.05f, 0.05f}};
+		shape = tkn::generateUV(sphere);
 		spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
 		// init light visualizations
-		doi::Material lmat;
+		tkn::Material lmat;
 
 		lmat.emissionFac = dirLight_.data.color;
 		lmat.albedoFac = Vec4f(dirLight_.data.color);
 		lmat.albedoFac[3] = 1.f;
 		// HACK: make sure it doesn't write to depth buffer and isn't
 		// rendered into shadow map
-		lmat.flags |= doi::Material::Bit::blend;
+		lmat.flags |= tkn::Material::Bit::blend;
 		dirLight_.materialID = scene_.addMaterial(lmat);
 		dirLight_.instanceID = scene_.addInstance(cubePrimitiveID_,
 			dirLightObjMatrix(), dirLight_.materialID);
@@ -386,7 +386,7 @@ public:
 	// guaranteed to work for anything behind current camera).
 	// we would somehow have to refresh the shadow map projection
 	// (and re-render all cascades) for *each face* we render here.
-	void initProbePipe(const doi::WorkBatcher&) {
+	void initProbePipe(const tkn::WorkBatcher&) {
 		auto& dev = vulkanDevice();
 
 		// faces, ubo, ds
@@ -478,7 +478,7 @@ public:
 		probe_.rerecord = true;
 	}
 
-	bool features(doi::Features& enable, const doi::Features& supported) override {
+	bool features(tkn::Features& enable, const tkn::Features& supported) override {
 		if(!App::features(enable, supported)) {
 			return false;
 		}
@@ -554,20 +554,20 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
 			dirLight_.ds(), pointLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, false); // opaque
 
 		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 			boxIndices_.offset(), vk::IndexType::uint16);
-		doi::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
+		tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
 			{envCameraDs_});
 		env_.render(cb);
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
 			dirLight_.ds(), pointLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, true); // transparent/blend
 
@@ -580,7 +580,7 @@ public:
 		// movement
 		auto kc = appContext().keyboardContext();
 		if(kc) {
-			doi::checkMovement(camera_, *kc, dt);
+			tkn::checkMovement(camera_, *kc, dt);
 		}
 
 		if(moveLight_) {
@@ -634,8 +634,8 @@ public:
 				moveLight_ ^= true;
 				return true;
 			case ny::Keycode::p:
-				dirLight_.data.flags ^= doi::lightFlagPcf;
-				pointLight_.data.flags ^= doi::lightFlagPcf;
+				dirLight_.data.flags ^= tkn::lightFlagPcf;
+				pointLight_.data.flags ^= tkn::lightFlagPcf;
 				updateLight_ = true;
 				return true;
 			case ny::Keycode::r: // refresh all light probes
@@ -705,7 +705,7 @@ public:
 		return false;
 	}
 
-	// doing this multiple times can be used for light bounces
+	// tknng this multiple times can be used for light bounces
 	void refreshLightProbes() {
 		probe_.refresh = true;
 	}
@@ -713,8 +713,8 @@ public:
 	void setupLightProbeRendering(u32 i, Vec3f pos) {
 		auto map = probe_.comp.ubo.memoryMap();
 		auto span = map.span();
-		doi::write(span, pos);
-		doi::write(span, i);
+		tkn::write(span, pos);
+		tkn::write(span, i);
 		map.flush();
 		map = {};
 
@@ -723,17 +723,17 @@ public:
 			auto map = probe_.faces[i].ubo.memoryMap();
 			auto span = map.span();
 
-			auto mat = doi::cubeProjectionVP(pos, i);
-			doi::write(span, mat);
-			doi::write(span, pos);
-			doi::write(span, 0.01f); // near
-			doi::write(span, 30.f); // far
+			auto mat = tkn::cubeProjectionVP(pos, i);
+			tkn::write(span, mat);
+			tkn::write(span, pos);
+			tkn::write(span, 0.01f); // near
+			tkn::write(span, 30.f); // far
 			map.flush();
 
 			// fixed matrix, position irrelevant
 			auto envMap = probe_.faces[i].envUbo.memoryMap();
 			auto envSpan = envMap.span();
-			doi::write(envSpan, doi::cubeProjectionVP({}, i));
+			tkn::write(envSpan, tkn::cubeProjectionVP({}, i));
 			envMap.flush();
 		}
 	}
@@ -753,7 +753,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 			App::scheduleRedraw();
 		}
 	}
@@ -793,21 +793,21 @@ public:
 			// almost the same as the default output, we just have to
 			// use a different pipe and descriptor set
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, probe_.pipe);
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
+			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
 				dirLight_.ds(), pointLight_.ds(), aoDs_});
 			scene_.render(cb, pipeLayout_, false); // opaque
 
 			vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 				boxIndices_.offset(), vk::IndexType::uint16);
-			doi::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
+			tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
 				{face.envDs});
 			env_.render(cb);
 
 			// TODO: we need a probe_.blendPipe here
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, probe_.pipe);
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {face.ds});
+			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
 				dirLight_.ds(), pointLight_.ds(), aoDs_});
 			scene_.render(cb, pipeLayout_, true); // transparent/blend
 
@@ -844,7 +844,7 @@ public:
 
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
 				probe_.comp.pipe);
-			doi::cmdBindComputeDescriptors(cb, probe_.comp.pipeLayout,
+			tkn::cmdBindComputeDescriptors(cb, probe_.comp.pipeLayout,
 				0, {probe_.comp.ds});
 			u32 iface = i;
 			vk::cmdPushConstants(cb, probe_.comp.pipeLayout,
@@ -936,15 +936,15 @@ public:
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
 
-			doi::write(span, matrix(camera_));
-			doi::write(span, camera_.pos);
-			doi::write(span, camera_.perspective.near);
-			doi::write(span, camera_.perspective.far);
+			tkn::write(span, matrix(camera_));
+			tkn::write(span, camera_.pos);
+			tkn::write(span, camera_.perspective.near);
+			tkn::write(span, camera_.perspective.far);
 			map.flush();
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
-			doi::write(envSpan, fixedMatrix(camera_));
+			tkn::write(envSpan, fixedMatrix(camera_));
 			envMap.flush();
 
 			updateLight_ = true;
@@ -1000,22 +1000,22 @@ public:
 			updateAOParams_ = false;
 			auto map = aoUbo_.memoryMap();
 			auto span = map.span();
-			doi::write(span, mode_);
-			doi::write(span, u32(lightProbes_.size()));
-			doi::write(span, aoFac_);
-			doi::write(span, maxProbeDist_);
-			doi::write(span, u32(env_.convolutionMipmaps()));
+			tkn::write(span, mode_);
+			tkn::write(span, u32(lightProbes_.size()));
+			tkn::write(span, aoFac_);
+			tkn::write(span, maxProbeDist_);
+			tkn::write(span, u32(env_.convolutionMipmaps()));
 			map.flush();
 		}
 	}
 
 	// only for visualizing the box/sphere
 	nytl::Mat4f dirLightObjMatrix() {
-		return doi::translateMat(-dirLight_.data.dir);
+		return tkn::translateMat(-dirLight_.data.dir);
 	}
 
 	nytl::Mat4f pointLightObjMatrix() {
-		return doi::translateMat(pointLight_.data.position);
+		return tkn::translateMat(pointLight_.data.position);
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -1102,7 +1102,7 @@ protected:
 		std::array<Face, 6u> faces;
 	} probe_ {};
 
-	doi::Texture dummyTex_;
+	tkn::Texture dummyTex_;
 	bool moveLight_ {false};
 
 	bool anisotropy_ {}; // whether device supports anisotropy
@@ -1113,17 +1113,17 @@ protected:
 	float time_ {};
 	bool rotateView_ {false}; // mouseLeft down
 
-	doi::Scene scene_; // no default constructor
-	doi::Camera camera_ {};
+	tkn::Scene scene_; // no default constructor
+	tkn::Camera camera_ {};
 
-	struct DirLight : public doi::DirLight {
-		using doi::DirLight::DirLight;
+	struct DirLight : public tkn::DirLight {
+		using tkn::DirLight::DirLight;
 		u32 instanceID;
 		u32 materialID;
 	};
 
-	struct PointLight : public doi::PointLight {
-		using doi::PointLight::PointLight;
+	struct PointLight : public tkn::PointLight {
+		using tkn::PointLight::PointLight;
 		u32 instanceID;
 		u32 materialID;
 	};
@@ -1132,13 +1132,13 @@ protected:
 	u32 spherePrimitiveID_ {};
 
 	// light and shadow
-	doi::ShadowData shadowData_;
+	tkn::ShadowData shadowData_;
 	DirLight dirLight_;
 	PointLight pointLight_;
 	bool updateLight_ {true};
 
-	doi::Environment env_;
-	doi::Texture brdfLut_;
+	tkn::Environment env_;
+	tkn::Texture brdfLut_;
 
 	// args
 	std::string modelname_ {};

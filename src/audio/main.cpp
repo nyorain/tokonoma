@@ -1,4 +1,4 @@
-#include <stage/audio.hpp>
+#include <tkn/audio.hpp>
 #include <nytl/math.hpp>
 #include <dlg/dlg.hpp>
 
@@ -6,7 +6,7 @@
 #include <chrono>
 #include <cmath>
 
-class DummySound : public doi::Audio {
+class DummySound : public tkn::Audio {
 public:
 	void render(float& buf, unsigned samples) override {
         auto pitch = 440.0;
@@ -27,7 +27,7 @@ public:
 };
 
 int main() {
-	doi::AudioPlayer ap;
+	tkn::AudioPlayer ap;
 	ap.add(std::make_unique<DummySound>());
 	std::this_thread::sleep_for(std::chrono::seconds(10));
 }

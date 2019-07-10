@@ -6,4 +6,4 @@ smooth_shadow_src = [
 
 executable('smooth_shadow',
 	sources: smooth_shadow_src,
-	dependencies: stage_dep)
+	dependencies: tkn_dep)

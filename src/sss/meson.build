@@ -7,4 +7,4 @@ sss_src = [
 
 executable('sss',
 	sources: sss_src,
-	dependencies: stage_dep)
+	dependencies: tkn_dep)

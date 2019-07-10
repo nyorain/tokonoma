@@ -1,12 +1,12 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/render.hpp>
-#include <stage/texture.hpp>
-#include <stage/bits.hpp>
-#include <stage/defer.hpp>
-#include <stage/types.hpp>
-#include <stage/camera.hpp>
-#include <stage/scene/environment.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/render.hpp>
+#include <tkn/texture.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/defer.hpp>
+#include <tkn/types.hpp>
+#include <tkn/camera.hpp>
+#include <tkn/scene/environment.hpp>
 
 #include <vpp/handles.hpp>
 #include <vpp/submit.hpp>
@@ -24,20 +24,20 @@
 
 #include <argagg.hpp>
 
-#include <shaders/stage.fullscreen.vert.h>
-#include <shaders/stage.texture.frag.h>
-#include <shaders/stage.skybox.vert.h>
-#include <shaders/stage.skybox.frag.h>
+#include <shaders/tkn.fullscreen.vert.h>
+#include <shaders/tkn.texture.frag.h>
+#include <shaders/tkn.skybox.vert.h>
+#include <shaders/tkn.skybox.frag.h>
 
 // TODO: add checkerboard pattern for visualizing alpha
 
-using namespace doi::types;
+using namespace tkn::types;
 
 /// ImageProvider wrapper that returns all faces as layers instead and
 /// only the first original layer.
-class FaceLayersProvider : public doi::ImageProvider {
+class FaceLayersProvider : public tkn::ImageProvider {
 public:
-	std::unique_ptr<doi::ImageProvider> impl_;
+	std::unique_ptr<tkn::ImageProvider> impl_;
 
 public:
 	unsigned mipLevels() const override { return impl_->mipLevels(); }
@@ -61,10 +61,10 @@ public:
 	}
 };
 
-class ImageView : public doi::App {
+class ImageView : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -74,14 +74,14 @@ public:
 		vk::beginCommandBuffer(cb, {});
 
 		// load image
-		auto p = doi::read(file_);
+		auto p = tkn::read(file_);
 		if(noCube_) {
 			auto wrapper = std::make_unique<FaceLayersProvider>();
 			wrapper->impl_ = std::move(p);
 			p = std::move(wrapper);
 		}
 
-		doi::TextureCreateParams params;
+		tkn::TextureCreateParams params;
 		params.cubemap = cubemap_ = (p->faces() == 6 && p->layers() == 1);
 		params.format = p->format();
 		if(!params.cubemap) {
@@ -101,9 +101,9 @@ public:
 		dlg_info("Image has {} layers", layerCount_);
 		dlg_info("Image has {} faces", p->faces());
 
-		auto wb = doi::WorkBatcher::createDefault(dev);
+		auto wb = tkn::WorkBatcher::createDefault(dev);
 		wb.cb = cb;
-		auto tex = doi::Texture(wb, std::move(p), params);
+		auto tex = tkn::Texture(wb, std::move(p), params);
 		auto [img, view] = tex.viewableImage().split();
 		image_ = std::move(img);
 		view_ = std::move(view);
@@ -146,14 +146,14 @@ public:
 			// indices
 			auto usage = vk::BufferUsageBits::indexBuffer |
 				vk::BufferUsageBits::transferDst;
-			auto inds = doi::boxInsideIndices;
+			auto inds = tkn::boxInsideIndices;
 			boxIndices_ = {dev.bufferAllocator(), sizeof(inds),
 				usage, dev.deviceMemoryTypes(), 4u};
 			boxIndicesStage = vpp::fillStaging(cb, boxIndices_, inds);
 
 			// pipeline
-			vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);
-			vpp::ShaderModule fragShader(dev, stage_skybox_frag_data);
+			vpp::ShaderModule vertShader(dev, tkn_skybox_vert_data);
+			vpp::ShaderModule fragShader(dev, tkn_skybox_frag_data);
 
 			vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
 				{vertShader, vk::ShaderStageBits::vertex},
@@ -166,8 +166,8 @@ public:
 			pipeLayout_ = {dev, {{texDsLayout_.vkHandle()}}, {}};
 
 			// pipeline
-			vpp::ShaderModule vertShader(dev, stage_fullscreen_vert_data);
-			vpp::ShaderModule fragShader(dev, stage_texture_frag_data);
+			vpp::ShaderModule vertShader(dev, tkn_fullscreen_vert_data);
+			vpp::ShaderModule fragShader(dev, tkn_texture_frag_data);
 
 			vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
 				{vertShader, vk::ShaderStageBits::vertex},
@@ -227,12 +227,12 @@ public:
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		if(cubemap_) {
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {camDs_, texDs_});
+			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {camDs_, texDs_});
 			vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
 				boxIndices_.offset(), vk::IndexType::uint16);
 			vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
 		} else {
-			doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {texDs_});
+			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {texDs_});
 			vk::cmdDraw(cb, 4, 1, 0, 0);
 		}
 	}
@@ -247,7 +247,7 @@ public:
 			camera_.update = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			doi::write(span, fixedMatrix(camera_));
+			tkn::write(span, fixedMatrix(camera_));
 			map.flush();
 		}
 
@@ -276,7 +276,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(cubemap_ && rotateView_) {
-			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 			App::scheduleRedraw();
 		}
 	}
@@ -369,7 +369,7 @@ protected:
 	vpp::SubBuffer boxIndices_;
 	vpp::SubBuffer cameraUbo_;
 	bool rotateView_ {};
-	doi::Camera camera_;
+	tkn::Camera camera_;
 };
 
 int main(int argc, const char** argv) {

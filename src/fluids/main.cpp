@@ -1,6 +1,6 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/bits.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/bits.hpp>
 
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/vk.hpp>
@@ -22,7 +22,7 @@
 #include <cstring>
 #include <random>
 
-#include <shaders/stage.fullscreen.vert.h>
+#include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/fluids.fluid_texture.frag.h>
 #include <shaders/fluids.advect.vel.comp.h>
 #include <shaders/fluids.advect.dens.comp.h>
@@ -291,12 +291,12 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 void FluidSystem::updateDevice(float dt, nytl::Vec2f mp0, nytl::Vec2f mp1) {
 	auto map = ubo_.memoryMap();
 	auto data = map.span();
-	doi::write(data, mp0);
-	doi::write(data, mp1);
-	doi::write(data, dt);
-	doi::write(data, velocityFac);
-	doi::write(data, densityFac);
-	doi::write(data, radius);
+	tkn::write(data, mp0);
+	tkn::write(data, mp1);
+	tkn::write(data, dt);
+	tkn::write(data, velocityFac);
+	tkn::write(data, densityFac);
+	tkn::write(data, radius);
 }
 
 void FluidSystem::compute(vk::CommandBuffer cb) {
@@ -464,7 +464,7 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 }
 
 // == FluidApp ==
-class FluidApp : public doi::App {
+class FluidApp : public tkn::App {
 public:
 	bool init(const nytl::Span<const char*> args) override {
 		if(!App::init(args)) {
@@ -499,7 +499,7 @@ public:
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}},
 			{{{vk::ShaderStageBits::fragment, 0, 4u}}}};
 
-		vpp::ShaderModule fullscreenShader(dev, stage_fullscreen_vert_data);
+		vpp::ShaderModule fullscreenShader(dev, tkn_fullscreen_vert_data);
 		vpp::ShaderModule textureShader(dev, fluids_fluid_texture_frag_data);
 
 		vpp::GraphicsPipelineInfo pipeInfo(renderPass(), pipeLayout_, {{{
@@ -573,7 +573,7 @@ public:
 
 		auto map = mouseUbo_.memoryMap();
 		auto span = map.span();
-		doi::write(span, mpos_);
+		tkn::write(span, mpos_);
 
 		if(changeView_) {
 			vpp::DescriptorSetUpdate update(ds_);

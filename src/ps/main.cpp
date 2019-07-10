@@ -1,7 +1,7 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/bits.hpp>
-#include <stage/util.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/util.hpp>
 #include <argagg.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
@@ -157,15 +157,15 @@ public:
 
 		auto view = compUbo_.memoryMap();
 		auto span = view.span();
-		doi::write(span, float(delta));
-		doi::write(span, time_);
-		doi::write(span, effect);
+		tkn::write(span, float(delta));
+		tkn::write(span, time_);
+		tkn::write(span, effect);
 
 		if(paramsChanged) {
 			auto view = gfxUbo_.memoryMap();
 			auto span = view.span();
-			doi::write(span, alpha);
-			doi::write(span, pointSize);
+			tkn::write(span, alpha);
+			tkn::write(span, pointSize);
 			paramsChanged = false;
 		}
 	}
@@ -175,7 +175,7 @@ public:
 	// returning false signals an error
 	// must only be called during updateDevice
 	bool reloadShader() {
-		auto mod = doi::loadShader(device(), "ps/ps.comp");
+		auto mod = tkn::loadShader(device(), "ps/ps.comp");
 		if (!mod) { // error will be shown; continue with old module
 			return false;
 		}
@@ -249,10 +249,10 @@ protected:
 	float time_ {};
 };
 
-class ParticlesApp : public doi::App {
+class ParticlesApp : public tkn::App {
 public:
 	bool init(const nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -337,7 +337,7 @@ public:
 			} else {
 				// check if its a number
 				unsigned num;
-				if(doi::stoi(ev.utf8, num)) {
+				if(tkn::stoi(ev.utf8, num)) {
 					dlg_info("Effect: {}", num);
 					system_.effect = num;
 				} else {

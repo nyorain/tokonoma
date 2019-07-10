@@ -1,6 +1,6 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/bits.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/bits.hpp>
 #include <argagg.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
@@ -208,19 +208,19 @@ public:
 		auto span = view.span();
 
 		for(auto p : attractors) {
-			doi::write(span, p);
+			tkn::write(span, p);
 		}
 
 		auto off = sizeof(nytl::Vec4f) * 5;
 		span = view.span().last(view.span().size() - off);
-		doi::write(span, float(delta));
-		doi::write(span, std::uint32_t(attractors.size()));
+		tkn::write(span, float(delta));
+		tkn::write(span, std::uint32_t(attractors.size()));
 
 		if(paramsChanged) {
 			auto view = gfxUbo_.memoryMap();
 			auto span = view.span();
-			doi::write(span, alpha);
-			doi::write(span, pointSize);
+			tkn::write(span, alpha);
+			tkn::write(span, pointSize);
 		}
 	}
 
@@ -246,10 +246,10 @@ protected:
 	unsigned count_ {};
 };
 
-class ParticlesApp : public doi::App {
+class ParticlesApp : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 

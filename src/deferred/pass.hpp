@@ -1,9 +1,9 @@
 #pragma once
 
-#include <stage/defer.hpp>
-#include <stage/bits.hpp>
-#include <stage/texture.hpp>
-#include <stage/types.hpp>
+#include <tkn/defer.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/texture.hpp>
+#include <tkn/types.hpp>
 
 #include <vpp/vk.hpp>
 #include <vpp/sharedBuffer.hpp>
@@ -13,7 +13,7 @@
 
 // Utilities for modular render passes.
 
-using namespace doi::types;
+using namespace tkn::types;
 
 // TODO: move to stage/render.hpp
 // Pipeline specialization info the compute group size.
@@ -25,8 +25,8 @@ struct ComputeGroupSizeSpec {
 		}};
 
 		auto span = nytl::Span<std::byte>(data);
-		doi::write(span, x);
-		doi::write(span, y);
+		tkn::write(span, x);
+		tkn::write(span, y);
 
 		spec.dataSize = sizeof(data);
 		spec.pData = data.data();
@@ -40,7 +40,7 @@ struct ComputeGroupSizeSpec {
 };
 
 struct PassCreateInfo {
-	const doi::WorkBatcher& wb;
+	const tkn::WorkBatcher& wb;
 	vk::Format depthFormat;
 
 	struct {

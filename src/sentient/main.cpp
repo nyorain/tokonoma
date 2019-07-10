@@ -1,6 +1,6 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/bits.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/bits.hpp>
 
 #include <nytl/vec.hpp>
 #include <nytl/math.hpp>
@@ -23,15 +23,15 @@
 void circleTriStrip(nytl::Span<std::byte>& buf, float radius,
 		nytl::Vec2f center = {}, unsigned count = 64) {
 	using nytl::constants::pi;
-	doi::write(buf, center + radius * nytl::Vec2f {1.f, 0.f});
+	tkn::write(buf, center + radius * nytl::Vec2f {1.f, 0.f});
 	for(auto i = 0u; i < (count - 2) / 2; ++i) {
 		float a = 2 * pi * i / float(count);
 		auto p1 = center + radius * nytl::Vec2f {std::cos(a), std::sin(a)};
 		auto p2 = center + radius * nytl::Vec2f {std::cos(a), -std::sin(a)};
-		doi::write(buf, p1);
-		doi::write(buf, p2);
+		tkn::write(buf, p1);
+		tkn::write(buf, p2);
 	}
-	doi::write(buf, center - radius * nytl::Vec2f {1.f, 0.f});
+	tkn::write(buf, center - radius * nytl::Vec2f {1.f, 0.f});
 }
 
 class Bulb {
@@ -96,10 +96,10 @@ protected:
 	vpp::Pipeline pipe_;
 };
 
-class CreaturesApp : public doi::App {
+class CreaturesApp : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 

@@ -3,7 +3,7 @@ executable('taa', [
 		taa_shaders,
 		br_shaders,
 	], dependencies: [
-		stage_dep,
+		tkn_dep,
 		gltf_dep,
 	])
 

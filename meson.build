@@ -1,4 +1,4 @@
-project('stage', ['cpp', 'c'],
+project('tokonoma', ['cpp', 'c'],
 	license: 'BSD',
 	version: '0.1.0',
 	meson_version: '>=0.47',
@@ -65,7 +65,7 @@ libpath = join_paths(meson.source_root(), 'external', 'lib', build_machine.syste
 message('libpath: ' + libpath)
 
 subdir('src/shaders')
-subdir('src/stage')
+subdir('src/tkn')
 subdir('docs/tests')
 
 # projects
@@ -86,82 +86,82 @@ subdir('src/cloth')
 # inline (for small projects)
 executable('pendulum',
 	'src/pendulum/main.cpp',
-	dependencies: stage_dep)
+	dependencies: tkn_dep)
 
 executable('dpend',
 	'src/dpend/main.cpp',
-	dependencies: stage_dep)
+	dependencies: tkn_dep)
 
 executable('audio',
 	'src/audio/main.cpp',
-	dependencies: stage_dep)
+	dependencies: tkn_dep)
 
 executable('dummy',
 	'src/dummy/main.cpp',
-	dependencies: stage_dep)
+	dependencies: tkn_dep)
 
 executable('guitest',
 	'src/guitest/main.cpp',
-	dependencies: stage_dep)
+	dependencies: tkn_dep)
 
 executable('particles', [
 		'src/particles/main.cpp',
 		particles_shaders,
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('automaton', [
 	  'src/automaton/main.cpp',
 	  'src/automaton/automaton.cpp',
 	  automaton_shaders,
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('normals', [
 		'src/normals/main.cpp',
 		normals_shaders,
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('sviewer', [
 		'src/sviewer/main.cpp',
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('curves', [
 		'src/curves/main.cpp',
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('ps', [
 		'src/ps/main.cpp',
 		ps_shaders,
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('sen', [
 		'src/sen/main.cpp',
 		sen_shaders,
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('pbr', [
 		'src/pbr/main.cpp',
-		stage_shaders,
-	], dependencies: stage_dep)
+		tkn_shaders,
+	], dependencies: tkn_dep)
 
 executable('iv',
 	'src/iv/main.cpp',
-	dependencies: stage_dep)
+	dependencies: tkn_dep)
 
 executable('shv', [
 		'src/shv/main.cpp',
 		shv_shaders,
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('volume', [
 		'src/volume/main.cpp',
 		volume_shaders,
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('bezier', [
 		'src/bezier/main.cpp',
 		bezier_shaders,
-	], dependencies: stage_dep)
+	], dependencies: tkn_dep)
 
 executable('pg',
 	'src/playground/main5.cpp',
-	dependencies: stage_dep)
+	dependencies: tkn_dep)

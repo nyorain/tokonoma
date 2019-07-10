@@ -1,7 +1,7 @@
 #pragma once
 
 #include "part.hpp"
-#include <stage/deriveCast.hpp>
+#include <tkn/deriveCast.hpp>
 #include <dlg/dlg.hpp>
 #include <typeindex>
 #include <cstddef>
@@ -59,18 +59,18 @@ inline const Part& Entity::expectPart(PartType type) const {
 }
 
 template<typename T> T* Entity::part() {
-	return doi::deriveCast<T*>(part({typeid(T)}), "Entity::part");
+	return tkn::deriveCast<T*>(part({typeid(T)}), "Entity::part");
 }
 
 template<typename T> const T* Entity::part() const {
-	return doi::deriveCast<const T*>(part({typeid(T)}), "Entity::part");
+	return tkn::deriveCast<const T*>(part({typeid(T)}), "Entity::part");
 }
 
 template<typename T> T& Entity::expectPart() {
-	return doi::deriveCast<T&>(part({typeid(T)}), "Entity::expectPart");
+	return tkn::deriveCast<T&>(part({typeid(T)}), "Entity::expectPart");
 }
 
 template<typename T> const T& Entity::expectPart() const {
-	return doi::deriveCast<const T&>(expectPart({typeid(T)}),
+	return tkn::deriveCast<const T&>(expectPart({typeid(T)}),
 			"Entity::expectPart");
 }

@@ -1,5 +1,5 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
 #include <dlg/dlg.hpp>
 
 #include <vui/gui.hpp>
@@ -7,10 +7,10 @@
 #include <vui/textfield.hpp>
 #include <vui/colorPicker.hpp>
 
-class DummyApp : public doi::App {
+class DummyApp : public tkn::App {
 public:
 	bool init(const nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 

@@ -4,7 +4,7 @@ fluid_software_src = [
 
 executable('software',
 	sources: fluid_software_src,
-	dependencies: stage_dep)
+	dependencies: tkn_dep)
 
 fluid_src = [
 	fluids_shaders,
@@ -13,4 +13,4 @@ fluid_src = [
 
 executable('fluid',
 	sources: fluid_src,
-	dependencies: stage_dep)
+	dependencies: tkn_dep)

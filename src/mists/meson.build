@@ -9,4 +9,4 @@ mists_src = [
 executable('mists',
 	sources: mists_src,
 	include_directories: external_inc,
-	dependencies: [stage_dep, dep_b2d])
+	dependencies: [tkn_dep, dep_b2d])

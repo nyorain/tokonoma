@@ -12,7 +12,7 @@ executable('deferred', [
 		'scatter.cpp',
 		deferred_shaders,
 	], dependencies: [
-		stage_dep,
+		tkn_dep,
 		gltf_dep,
 	])
 

@@ -1,7 +1,7 @@
-#include <stage/app.hpp>
-#include <stage/physics.hpp>
-#include <stage/transform.hpp>
-#include <stage/window.hpp>
+#include <tkn/app.hpp>
+#include <tkn/physics.hpp>
+#include <tkn/transform.hpp>
+#include <tkn/window.hpp>
 
 #include <rvg/shapes.hpp>
 #include <rvg/paint.hpp>
@@ -23,7 +23,7 @@
 #include <vector>
 #include <unordered_set>
 
-class Fun : public doi::App {
+class Fun : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!App::init(args)) {
@@ -119,24 +119,24 @@ public:
 			(-2.f / (fac * h)), 1
 		};
 
-		auto mat = doi::translateMat({0, 2, 0});
-		mat = doi::scaleMat({s.x, s.y, 1.f}) * mat;
-		mat = doi::translateMat({-1, 1, 0}) * mat;
+		auto mat = tkn::translateMat({0, 2, 0});
+		mat = tkn::scaleMat({s.x, s.y, 1.f}) * mat;
+		mat = tkn::translateMat({-1, 1, 0}) * mat;
 		levelTransform_.matrix(mat);
 	}
 
 	const char* name() const override { return "fun"; }
 
 protected:
-	doi::PhysicsSystem physics_;
+	tkn::PhysicsSystem physics_;
 
 	rvg::Shape funShape_;
 	rvg::Paint funPaint_;
 	rvg::Transform levelTransform_;
-	doi::parts::Rigid funRigid_;
+	tkn::parts::Rigid funRigid_;
 
 	struct {
-		doi::parts::Rigid rigid;
+		tkn::parts::Rigid rigid;
 		rvg::CircleShape shape;
 		rvg::Paint paint;
 	} player_;

@@ -6,12 +6,12 @@
 
 #include "tables.hpp"
 
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/bits.hpp>
-#include <stage/camera.hpp>
-#include <stage/render.hpp>
-#include <stage/types.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/camera.hpp>
+#include <tkn/render.hpp>
+#include <tkn/types.hpp>
 
 #include <vpp/vk.hpp>
 #include <vpp/pipeline.hpp>
@@ -31,7 +31,7 @@
 #include <shaders/volume.volume.vert.h>
 #include <shaders/volume.volume.frag.h>
 
-using namespace doi::types;
+using namespace tkn::types;
 
 struct Cell {
 	std::array<Vec3f, 8> pos;
@@ -326,10 +326,10 @@ struct Volume {
 	}
 };
 
-class VolumeApp : public doi::App {
+class VolumeApp : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -411,9 +411,9 @@ public:
 		auto cb = dev.commandAllocator().get(qfam);
 		vk::beginCommandBuffer(cb, {});
 
-		auto _s1 = vpp::fillStaging(cb, positions_, doi::bytes(volume.positions));
-		auto _s2 = vpp::fillStaging(cb, normals_, doi::bytes(volume.normals));
-		auto _s3 = vpp::fillStaging(cb, indices_, doi::bytes(volume.indices));
+		auto _s1 = vpp::fillStaging(cb, positions_, tkn::bytes(volume.positions));
+		auto _s2 = vpp::fillStaging(cb, normals_, tkn::bytes(volume.normals));
+		auto _s3 = vpp::fillStaging(cb, indices_, tkn::bytes(volume.indices));
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
@@ -423,7 +423,7 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
 		vk::cmdBindVertexBuffers(cb, 0,
 			{{positions_.buffer().vkHandle(), normals_.buffer().vkHandle()}},
 			{{positions_.offset(), normals_.offset()}});
@@ -437,7 +437,7 @@ public:
 
 		auto kc = appContext().keyboardContext();
 		if(kc) {
-			doi::checkMovement(camera_, *kc, dt);
+			tkn::checkMovement(camera_, *kc, dt);
 		}
 
 		if(camera_.update) {
@@ -454,8 +454,8 @@ public:
 			auto span = map.span();
 
 			auto mat = matrix(camera_);
-			doi::write(span, mat);
-			doi::write(span, camera_.pos);
+			tkn::write(span, mat);
+			tkn::write(span, camera_.pos);
 			map.flush();
 		}
 	}
@@ -469,7 +469,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 			App::scheduleRedraw();
 		}
 	}
@@ -501,7 +501,7 @@ protected:
 	vpp::SubBuffer normals_;
 	vpp::SubBuffer indices_;
 	vpp::SubBuffer cameraUbo_;
-	doi::Camera camera_;
+	tkn::Camera camera_;
 	bool rotateView_ {};
 };
 

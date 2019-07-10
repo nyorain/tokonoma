@@ -1,11 +1,11 @@
 #include "network.hpp"
 #include <dlg/dlg.hpp>
-#include <stage/bits.hpp>
+#include <tkn/bits.hpp>
 #include <mutex>
 #include <condition_variable>
 
 // TODO:
-// - invalid packages (currently using doi::read, only asserts size)
+// - invalid packages (currently using tkn::read, only asserts size)
 //   probably best solved by exceptions in read function, caught here
 // - acknowledge and stuff
 
@@ -168,7 +168,7 @@ bool Socket::update(MsgHandler handler) {
 		// XXX: we assume packet ordering here which we obviously
 		// cannot. Handle other packets specifically; account for
 		// lost packets
-		dlg_assert(doi::read<std::uint64_t>(r) == recv_);
+		dlg_assert(tkn::read<std::uint64_t>(r) == recv_);
 
 		recvd_[(recv_ + delay) % (2 * delay)] = {std::move(buf)};
 
@@ -199,7 +199,7 @@ bool Socket::update(MsgHandler handler) {
 	// process
 	auto recv = RecvBuf(recvd_[step_ % (2 * delay)].data);
 	if(!recv.empty()) { // only at the beginning. assert that?
-		auto i = doi::read<std::uint64_t>(recv);
+		auto i = tkn::read<std::uint64_t>(recv);
 		dlg_assertm(i + delay == step_, "{} {}", i, step_);
 		while(!recv.empty()) {
 			handler(1 - player_, recv);
@@ -208,7 +208,7 @@ bool Socket::update(MsgHandler handler) {
 
 	auto own = RecvBuf(ownPending_[step_ % (2 * delay)].data);
 	if(!own.empty()) { // only at the beginning. assert that?
-		auto i = doi::read<std::uint64_t>(own);
+		auto i = tkn::read<std::uint64_t>(own);
 		dlg_assertm(i + delay == step_, "{} {}", i, step_);
 		while(!own.empty()) {
 			handler(player_, own);

@@ -1,5 +1,5 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
 
 #include <rvg/shapes.hpp>
 #include <rvg/context.hpp>
@@ -90,10 +90,10 @@ public:
 };
 
 // PendulumApp
-class PendulumApp : public doi::App {
+class PendulumApp : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 

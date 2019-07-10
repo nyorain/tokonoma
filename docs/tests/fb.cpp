@@ -1,11 +1,11 @@
-#include <stage/fb.hpp>
-#include <stage/types.hpp>
+#include <tkn/fb.hpp>
+#include <tkn/types.hpp>
 #include <nytl/approx.hpp>
 #include <nytl/matOps.hpp>
 #include <ostream>
 #include "bugged.hpp"
 
-using namespace doi;
+using namespace tkn;
 using namespace nytl::approxOps;
 
 TEST(bits) {
@@ -15,7 +15,7 @@ TEST(bits) {
 	EXPECT(fb0.nums, 0u);
 
 	// number representation the same as for i32 (up to 2^26)
-	auto i = doi::i32(0);
+	auto i = tkn::i32(0);
 	EXPECT(std::memcmp(&fb0, &i, 4), 0);
 
 	/*

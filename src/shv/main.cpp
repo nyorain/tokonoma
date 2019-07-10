@@ -1,10 +1,10 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/render.hpp>
-#include <stage/camera.hpp>
-#include <stage/bits.hpp>
-#include <stage/scene/environment.hpp>
-#include <stage/scene/shape.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/render.hpp>
+#include <tkn/camera.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/scene/environment.hpp>
+#include <tkn/scene/shape.hpp>
 #include <argagg.hpp>
 
 #include <vpp/trackedDescriptor.hpp>
@@ -25,14 +25,14 @@
 #include <nytl/vecOps.hpp>
 
 #include <fstream>
-#include <shaders/stage.skybox.vert.h>
+#include <shaders/tkn.skybox.vert.h>
 #include <shaders/shv.shv.frag.h>
 #include <shaders/shv.sphere.vert.h>
 
-class SHView : public doi::App {
+class SHView : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -102,7 +102,7 @@ public:
 		auto& dev = vulkanDevice();
 
 		// pipeline
-		vpp::ShaderModule vertShader(dev, stage_skybox_vert_data);
+		vpp::ShaderModule vertShader(dev, tkn_skybox_vert_data);
 		vpp::ShaderModule fragShader(dev, shv_shv_frag_data);
 
 		vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
@@ -116,7 +116,7 @@ public:
 		// indices
 		auto usage = vk::BufferUsageBits::indexBuffer |
 			vk::BufferUsageBits::transferDst;
-		auto inds = doi::boxInsideIndices;
+		auto inds = tkn::boxInsideIndices;
 		indices_ = {dev.bufferAllocator(), sizeof(inds),
 			usage, dev.deviceMemoryTypes(), 4u};
 		auto boxIndicesStage = vpp::fillStaging(cb, indices_, inds);
@@ -127,8 +127,8 @@ public:
 	[[nodiscard]] std::array<vpp::SubBuffer, 2>
 	initSpherePipe(vk::CommandBuffer cb) {
 		auto& dev = vulkanDevice();
-		auto sphere = doi::Sphere{{0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}};
-		auto shape = doi::generateUV(sphere);
+		auto sphere = tkn::Sphere{{0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}};
+		auto shape = tkn::generateUV(sphere);
 
 		// pipeline
 		vpp::ShaderModule vertShader(dev, shv_sphere_vert_data);
@@ -161,7 +161,7 @@ public:
 		// indices
 		auto usage = vk::BufferUsageBits::indexBuffer |
 			vk::BufferUsageBits::transferDst;
-		auto inds = doi::bytes(shape.indices);
+		auto inds = tkn::bytes(shape.indices);
 		indices_ = {dev.bufferAllocator(), std::size_t(inds.size()),
 			usage, dev.deviceMemoryTypes(), 4u};
 		auto indStage = vpp::fillStaging(cb, indices_, inds);
@@ -169,7 +169,7 @@ public:
 
 		usage = vk::BufferUsageBits::vertexBuffer |
 			vk::BufferUsageBits::transferDst;
-		auto poss = doi::bytes(shape.positions);
+		auto poss = tkn::bytes(shape.positions);
 		spherePositions_ = {dev.bufferAllocator(), std::size_t(poss.size()),
 			usage, dev.deviceMemoryTypes(), 4u};
 		auto posStage = vpp::fillStaging(cb, spherePositions_, poss);
@@ -181,7 +181,7 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		doi::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
 		if(skybox_) {
 			vk::cmdBindIndexBuffer(cb, indices_.buffer(),
 				indices_.offset(), vk::IndexType::uint16);
@@ -198,7 +198,7 @@ public:
 		App::update(dt);
 		auto kc = appContext().keyboardContext();
 		if(kc) {
-			doi::checkMovement(camera_, *kc, dt);
+			tkn::checkMovement(camera_, *kc, dt);
 		}
 
 		App::scheduleRedraw();
@@ -211,7 +211,7 @@ public:
 			camera_.update = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			doi::write(span, skybox_ ? fixedMatrix(camera_) : matrix(camera_));
+			tkn::write(span, skybox_ ? fixedMatrix(camera_) : matrix(camera_));
 			map.flush();
 		}
 	}
@@ -219,7 +219,7 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			doi::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
 			App::scheduleRedraw();
 		}
 	}
@@ -283,7 +283,7 @@ protected:
 	bool skybox_ {};
 	unsigned indexCount_ {};
 	const char* file_ {};
-	doi::Camera camera_ {};
+	tkn::Camera camera_ {};
 };
 
 int main(int argc, const char** argv) {

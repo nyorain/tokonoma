@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stage/geometry.hpp>
+#include <tkn/geometry.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/handles.hpp>
@@ -11,7 +11,7 @@
 class LightSystem;
 
 struct ShadowSegment {
-	doi::Segment2f seg;
+	tkn::Segment2f seg;
 	float opacity;
 };
 

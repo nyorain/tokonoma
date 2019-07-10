@@ -1,5 +1,5 @@
 #include "bloom.hpp"
-#include <stage/bits.hpp>
+#include <tkn/bits.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/shader.hpp>
 #include <vpp/pipeline.hpp>
@@ -113,7 +113,7 @@ void BloomPass::init(InitData& data, const PassCreateInfo&) {
 	}
 }
 
-void BloomPass::createBuffers(InitBufferData& data, const doi::WorkBatcher& wb,
+void BloomPass::createBuffers(InitBufferData& data, const tkn::WorkBatcher& wb,
 		const vk::Extent2D& size) {
 	auto& dev = wb.dev;
 	auto usage = vk::ImageUsageBits::storage |
@@ -206,7 +206,7 @@ void BloomPass::recordBlur(vk::CommandBuffer cb, unsigned mip, vk::Extent2D size
 	u32 horizontal = 1u;
 	vk::cmdPushConstants(cb, blur_.pipeLayout, vk::ShaderStageBits::compute,
 		0, 4, &horizontal);
-	doi::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {tmpl.ds});
+	tkn::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {tmpl.ds});
 
 	auto w = std::max(size.width >> (mip + 1), 1u);
 	auto h = std::max(size.height >> (mip + 1), 1u);
@@ -241,7 +241,7 @@ void BloomPass::recordBlur(vk::CommandBuffer cb, unsigned mip, vk::Extent2D size
 	horizontal = 0u;
 	vk::cmdPushConstants(cb, blur_.pipeLayout, vk::ShaderStageBits::compute,
 		0, 4, &horizontal);
-	doi::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {targetl.ds});
+	tkn::cmdBindComputeDescriptors(cb, blur_.pipeLayout, 0, {targetl.ds});
 	vk::cmdDispatch(cb, cx, cy, 1);
 }
 
@@ -257,8 +257,8 @@ void BloomPass::record(vk::CommandBuffer cb, vk::Image emission,
 	// of dynamically creating a mipmap chain, we just run addition
 	// blur shaders in between to blur every mipmap level.
 	// Blurring layer for layer (both passes every time)
-	// might have cache advantages over first doing horizontal
-	// for all and then doing vertical for all i guess
+	// might have cache advantages over first tknng horizontal
+	// for all and then tknng vertical for all i guess
 
 	// blit (downscale to 0.5 * size): emission to target mip 0
 	// make tmp target writable for blur passes
@@ -343,7 +343,7 @@ void BloomPass::record(vk::CommandBuffer cb, vk::Image emission,
 				vk::PipelineStageBits::computeShader,
 				{}, {}, {}, {{barrier}});
 
-			doi::cmdBindComputeDescriptors(cb, filter_.pipeLayout, 0, {filter_.ds});
+			tkn::cmdBindComputeDescriptors(cb, filter_.pipeLayout, 0, {filter_.ds});
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, filter_.pipe);
 			vk::cmdDispatch(cb,
 				std::ceil(w / float(groupDimSize)),
@@ -404,7 +404,7 @@ void BloomPass::record(vk::CommandBuffer cb, vk::Image emission,
 
 void BloomPass::updateDevice() {
 	auto span = filter_.uboMap.span();
-	doi::write(span, params);
+	tkn::write(span, params);
 	filter_.uboMap.flush();
 }
 

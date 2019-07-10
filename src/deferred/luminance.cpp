@@ -1,5 +1,5 @@
 #include "luminance.hpp"
-#include <stage/f16.hpp>
+#include <tkn/f16.hpp>
 
 #include <vpp/debug.hpp>
 #include <vpp/shader.hpp>
@@ -109,7 +109,7 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		gpi.depthStencil.depthWriteEnable = false;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 		gpi.blend.attachmentCount = 1u;
-		gpi.blend.pAttachments = &doi::noBlendAttachment();
+		gpi.blend.pAttachments = &tkn::noBlendAttachment();
 
 		extract_.pipe = {dev, gpi.info()};
 	} else {
@@ -191,7 +191,7 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 	vpp::nameHandle(extract_.pipe, "LuminancePass:extract_.pipe");
 
 	extract_.ds = {data.initDs, wb.alloc.ds, extract_.dsLayout};
-	dstBuffer_ = {data.initDstBuffer, wb.alloc.bufHost, sizeof(doi::f16),
+	dstBuffer_ = {data.initDstBuffer, wb.alloc.bufHost, sizeof(tkn::f16),
 		vk::BufferUsageBits::transferDst, dev.hostMemoryTypes(), 2u};
 }
 
@@ -213,7 +213,7 @@ void LuminancePass::init(InitData& data, const PassCreateInfo&) {
 }
 
 void LuminancePass::createBuffers(InitBufferData& data,
-		const doi::WorkBatcher& wb, vk::Extent2D size) {
+		const tkn::WorkBatcher& wb, vk::Extent2D size) {
 	auto mem = wb.dev.deviceMemoryTypes();
 	auto info = targetInfo(size, usingCompute()).img;
 	auto levelCount = vpp::mipmapLevels(size); // full mip chain
@@ -267,7 +267,7 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 		while(isize.width > 1 || isize.height > 1) {
 			totalSum *= mf * mf;
 
-			auto mipi = doi::mipmapSize(size, i);
+			auto mipi = tkn::mipmapSize(size, i);
 			isize.width = std::ceil(isize.width / float(mf));
 			isize.height = std::ceil(isize.height / float(mf));
 			if(isize.width > mipi.width || isize.height > mipi.height) {
@@ -360,7 +360,7 @@ void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 		u32 cx = std::ceil(width / float(extractGroupDimSize));
 		u32 cy = std::ceil(height / float(extractGroupDimSize));
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, extract_.pipe);
-		doi::cmdBindComputeDescriptors(cb, extract_.pipeLayout, 0, {extract_.ds});
+		tkn::cmdBindComputeDescriptors(cb, extract_.pipeLayout, 0, {extract_.ds});
 		vk::cmdDispatch(cb, cx, cy, 1);
 
 		const auto mf = (mipGroupDimSize * 4); // minification factor
@@ -392,7 +392,7 @@ void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 				0, sizeof(size), &size);
 			width = std::ceil(width / float(mf));
 			height = std::ceil(height / float(mf));
-			doi::cmdBindComputeDescriptors(cb, mip_.pipeLayout, 0, {level.ds});
+			tkn::cmdBindComputeDescriptors(cb, mip_.pipeLayout, 0, {level.ds});
 			vk::cmdDispatch(cb, width, height, 1);
 			prevLevel = i;
 			i = level.target;
@@ -429,11 +429,11 @@ void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 			{0u, 0u, width, height}, 0, nullptr}, {});
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, extract_.pipe);
-		doi::cmdBindGraphicsDescriptors(cb, extract_.pipeLayout, 0, {extract_.ds});
+		tkn::cmdBindGraphicsDescriptors(cb, extract_.pipeLayout, 0, {extract_.ds});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen
 		vk::cmdEndRenderPass(cb);
 
-		doi::DownscaleTarget target;
+		tkn::DownscaleTarget target;
 		target.image = target_.image();
 		target.srcAccess = vk::AccessBits::colorAttachmentWrite;
 		target.srcStages = vk::PipelineStageBits::colorAttachmentOutput;
@@ -441,7 +441,7 @@ void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 		target.layerCount = 1;
 		target.width = width;
 		target.height = height;
-		doi::downscale(cb, target, levelCount - 1);
+		tkn::downscale(cb, target, levelCount - 1);
 
 		// make sure transfer to last level has completed
 		vk::ImageMemoryBarrier barrierLast;
@@ -487,7 +487,7 @@ void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 float LuminancePass::updateDevice() {
 	dstBufferMap_.invalidate();
 	auto span = dstBufferMap_.span();
-	auto v = float(doi::read<doi::f16>(span));
+	auto v = float(tkn::read<tkn::f16>(span));
 	return std::exp2(mip_.factor * v);
 }
 

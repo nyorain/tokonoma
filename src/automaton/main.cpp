@@ -1,7 +1,7 @@
-#include <stage/app.hpp>
-#include <stage/window.hpp>
-#include <stage/bits.hpp>
-#include <stage/transform.hpp>
+#include <tkn/app.hpp>
+#include <tkn/window.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/transform.hpp>
 
 #include <vpp/pipeline.hpp>
 #include <vpp/trackedDescriptor.hpp>
@@ -214,7 +214,7 @@ std::pair<bool, vk::Semaphore> PredPrey::updateDevice() {
 	if(paramsChanged_) {
 		auto map = ubo_.memoryMap();
 		auto span = map.span();
-		doi::write(span, params_);
+		tkn::write(span, params_);
 	}
 
 	// must be here since otherwise we can't be sure that it's finished
@@ -223,10 +223,10 @@ std::pair<bool, vk::Semaphore> PredPrey::updateDevice() {
 	if(read_.size() && selected_) {
 		auto map = read_.memoryMap();
 		auto span = map.span();
-		// auto x = doi::read<std::uint8_t>(span);
-		// auto y = doi::read<std::uint8_t>(span);
-		auto x = doi::read<float>(span);
-		auto y = doi::read<float>(span);
+		// auto x = tkn::read<std::uint8_t>(span);
+		// auto y = tkn::read<std::uint8_t>(span);
+		auto x = tkn::read<float>(span);
+		auto y = tkn::read<float>(span);
 		if(x != oldPrey_ || y != oldPred_) {
 			preyField_->textfield().utf8(std::to_string(x));
 			predField_->textfield().utf8(std::to_string(y));
@@ -354,10 +354,10 @@ protected:
 	} params_;
 };
 
-class AutomatonApp : public doi::App {
+class AutomatonApp : public tkn::App {
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!doi::App::init(args)) {
+		if(!tkn::App::init(args)) {
 			return false;
 		}
 
@@ -374,7 +374,7 @@ public:
 		return true;
 	}
 
-	bool features(doi::Features& enable, const doi::Features& supported) override {
+	bool features(tkn::Features& enable, const tkn::Features& supported) override {
 		if(!App::features(enable, supported)) {
 			return false;
 		}
@@ -429,9 +429,9 @@ public:
 		auto n = nytl::Vec2f(ev.position) / window().size();
 		auto d = 2 * nytl::Vec2f{n.x - 0.5f, n.y - 0.5f};
 
-		doi::translate(mat_, -d);
-		doi::scale(mat_, nytl::Vec {s, s});
-		doi::translate(mat_, d);
+		tkn::translate(mat_, -d);
+		tkn::scale(mat_, nytl::Vec {s, s});
+		tkn::translate(mat_, d);
 
 		automaton_.transform(mat_);
 		App::scheduleRedraw();
@@ -499,7 +499,7 @@ public:
 		using namespace nytl::vec::cw::operators;
 		auto normed = 2 * delta / window().size();
 
-		doi::translate(mat_, normed);
+		tkn::translate(mat_, normed);
 		automaton_.transform(mat_);
 		App::scheduleRedraw();
 	}

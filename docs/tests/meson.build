@@ -1,8 +1,8 @@
-tf16 = executable('f16', 'f16.cpp', dependencies: stage_dep)
+tf16 = executable('f16', 'f16.cpp', dependencies: tkn_dep)
 test('f16', tf16)
 
-tgraph = executable('graph', 'graph.cpp', dependencies: stage_dep)
+tgraph = executable('graph', 'graph.cpp', dependencies: tkn_dep)
 test('graph', tgraph)
 
-tfb = executable('fb', 'fb.cpp', dependencies: stage_dep)
+tfb = executable('fb', 'fb.cpp', dependencies: tkn_dep)
 test('fb', tfb)

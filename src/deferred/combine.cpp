@@ -89,7 +89,7 @@ void CombinePass::updateInputs(vk::ImageView output, vk::ImageView light,
 void CombinePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 	vpp::DebugLabel(cb, "CombinePass");
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
-	doi::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {ds_});
+	tkn::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {ds_});
 	auto cx = std::ceil(size.width / float(groupDimSize));
 	auto cy = std::ceil(size.height / float(groupDimSize));
 	vk::cmdDispatch(cb, cx, cy, 1);
@@ -97,7 +97,7 @@ void CombinePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 
 void CombinePass::updateDevice() {
 	auto span = uboMap_.span();
-	doi::write(span, params);
+	tkn::write(span, params);
 	uboMap_.flush();
 }
 
