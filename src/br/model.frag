@@ -80,7 +80,7 @@ void main() {
 		MaterialTex nt = material.normals;
 		vec2 tuv = (nt.coords == 0u) ? inTexCoord0 : inTexCoord1;
 		vec4 n = texture(sampler2D(textures[nt.id], samplers[nt.samplerID]), tuv);
-		normal = tbnNormal(normal, inPos, tuv, n.xyz);
+		normal = tbnNormal(normal, inPos, tuv, 2.0 * n.xyz - 1.0);
 	}
 
 	if(!gl_FrontFacing) { // flip normal, see gltf spec

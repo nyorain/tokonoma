@@ -8,12 +8,12 @@ vec3 tbnNormal(vec3 normal, vec3 pos, vec2 uv, vec3 tnormal) {
 	vec3 q2 = dFdy(pos);
 	vec2 st1 = dFdx(uv);
 	vec2 st2 = dFdy(uv);
-
+ 
 	vec3 p1 = cross(q2, normal);
 	vec3 p2 = cross(normal, q1);
 	vec3 t = p2 * st1.x + p1 * st2.x;
 	vec3 b = p2 * st1.y + p1 * st2.y;
-
+ 
 	float scale = inversesqrt(max(dot(t, t), dot(b, b)));
 	return normalize(mat3(scale * t, scale * b, normal) * tnormal);
 }
