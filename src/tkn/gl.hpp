@@ -223,6 +223,7 @@ enum GLPixelType {
  	GL_INT                                                        = 0x1404, // reuse ColorPointerType, decimal value: 5124
 	// GL_UNSIGNED_INT                                               = 0x1405, // reuse ColorPointerType, decimal value: 5125
 	GL_FLOAT                                                      = 0x1406, // reuse ColorPointerType, decimal value: 5126
+	GL_HALF_FLOAT 												  = 0x140B,
     GL_BITMAP                                                     = 0x1A00, // decimal value: 6656
     GL_UNSIGNED_BYTE_3_3_2                                        = 0x8032, // decimal value: 32818
     GL_UNSIGNED_BYTE_3_3_2_EXT                                    = 0x8032, // decimal value: 32818

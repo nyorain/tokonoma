@@ -47,10 +47,10 @@ constexpr struct FormatEntry {
 	{GL_RGB16, GL_RGB, GL_UNSIGNED_SHORT, vk::Format::r16g16b16Unorm},
 	{GL_RGBA16, GL_RGBA, GL_UNSIGNED_SHORT, vk::Format::r16g16b16a16Unorm},
 
-	{GL_R16F, GL_RED, GL_FLOAT, vk::Format::r16Sfloat},
-	{GL_RG16F, GL_RG, GL_FLOAT, vk::Format::r16g16Sfloat},
-	{GL_RGB16F, GL_RGB, GL_FLOAT, vk::Format::r16g16b16Sfloat},
-	{GL_RGBA16F, GL_RGBA, GL_FLOAT, vk::Format::r16g16b16a16Sfloat},
+	{GL_R16F, GL_RED, GL_HALF_FLOAT, vk::Format::r16Sfloat},
+	{GL_RG16F, GL_RG, GL_HALF_FLOAT, vk::Format::r16g16Sfloat},
+	{GL_RGB16F, GL_RGB, GL_HALF_FLOAT, vk::Format::r16g16b16Sfloat},
+	{GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, vk::Format::r16g16b16a16Sfloat},
 
 	{GL_R16_SNORM, GL_RED, GL_SHORT, vk::Format::r16Snorm},
 	{GL_RG16_SNORM, GL_RG, GL_SHORT, vk::Format::r16g16Snorm},
@@ -261,6 +261,27 @@ struct KtxHeader {
 	u32 bytesKeyValueData;
 };
 
+std::ostream& operator<<(std::ostream& os, const KtxHeader& header) {
+	os << "endianess: " << header.endianness << "\n";
+
+	std::ios_base::fmtflags f(os.flags());
+	os << std::hex;
+	os << "glType: " << header.glType << "\n";
+	os << "glTypeSize: " << header.glTypeSize << "\n";
+	os << "glFormat: " << header.glFormat << "\n";
+	os << "glInternalFormat: " << header.glInternalFormat << "\n";
+	os << "glBaseInternalFormat: " << header.glBaseInternalFormat << "\n";
+	os.flags(f);
+
+	os << "pixelWidth: " << header.pixelWidth << "\n";
+	os << "pixelHeight: " << header.pixelHeight << "\n";
+	os << "pixelDepth: " << header.pixelDepth << "\n";
+	os << "numberArrayElements: " << header.numberArrayElements << "\n";
+	os << "numberFaces: " << header.numberFaces << "\n";
+	os << "numberMipmapLevels: " << header.numberMipmapLevels << "\n";
+	return os;
+}
+
 ReadError readKtx(nytl::StringParam path, KtxReader& reader) {
 	auto file = std::fopen(path.c_str(), "rb");
 	if(!file) {
@@ -283,6 +304,8 @@ ReadError readKtx(nytl::StringParam path, KtxReader& reader) {
 		std::fclose(file);
 		return ReadError::unexpectedEnd;
 	}
+
+	dlg_trace("KTX header:\n {}", header);
 
 	if(header.endianness != ktxEndianess) {
 		// In this case the file was written in non-native endianess
@@ -401,6 +424,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 		return WriteError::invalidFormat;
 	}
 
+	// the same since uncompressed
 	header.glFormat = entry->glPixelFormat;
 	header.glBaseInternalFormat = entry->glPixelFormat;
 	header.glType = entry->glPixelType;

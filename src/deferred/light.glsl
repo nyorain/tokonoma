@@ -73,8 +73,7 @@ void main() {
 	// vec3 light = dot(normal, -ldir) * albedo;
 
 	vec3 v = normalize(scene.viewPos - fragPos);
-	vec3 light = cookTorrance(normal, -ldir, v, roughness, metallic,
-		albedo);
+	vec3 light = cookTorrance(normal, -ldir, v, roughness, metallic, albedo);
 	vec3 color = max(light * lcolor, 0.0);
 
 	// NOTE: we are currently wasting the alpha component
