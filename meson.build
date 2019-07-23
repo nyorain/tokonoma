@@ -164,5 +164,5 @@ executable('bezier', [
 	], dependencies: tkn_dep)
 
 executable('pg',
-	'src/playground/main5.cpp',
+	'src/playground/main6.cpp',
 	dependencies: tkn_dep)
