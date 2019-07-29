@@ -163,6 +163,14 @@ executable('bezier', [
 		bezier_shaders,
 	], dependencies: tkn_dep)
 
+executable('tta',
+	'src/playground/tta.cpp',
+	dependencies: tkn_dep)
+
+executable('terrain',
+	'src/playground/terrain.cpp',
+	dependencies: tkn_dep)
+
 executable('pg',
 	'src/playground/main6.cpp',
 	dependencies: tkn_dep)
