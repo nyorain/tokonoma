@@ -45,7 +45,7 @@
 // == FluidSystem ==
 class FluidSystem {
 public:
-	static constexpr auto pressureIterations = 400u;
+	static constexpr auto pressureIterations = 40u;
 	static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
@@ -369,6 +369,9 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 	// we clear pressure since we want to use vec4(0) as initial guess
 	// for pressure (to get better approximations)
 	// might also work if we don't do this
+	// NOTE: seems to works better if we don't do this, seems like the
+	// pressure from the previous frame is a way better guess than just 0
+	/*
 	auto color = vk::ClearColorValue {{0.f, 0.f, 0.f, 0.f}};
 	vk::cmdClearColorImage(cb, pressure_.vkImage(), vk::ImageLayout::general,
 		color, {{{vk::ImageAspectBits::color, 0, 1, 0, 1}}});
@@ -376,6 +379,7 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 	insertBarrier(PSB::transfer, PSB::computeShader, {
 		barrier(pressure_, AB::transferWrite, readWrite),
 	});
+	*/
 
 	// == velocity ==
 	// advect velocity (also applies external forces after advection)
