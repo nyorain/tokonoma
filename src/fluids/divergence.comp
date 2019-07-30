@@ -24,8 +24,8 @@ void main() {
 	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 	vec2 l = velocity(pos + ivec2(-1, 0));
 	vec2 r = velocity(pos + ivec2(1, 0));
-	vec2 t = velocity(pos + ivec2(0, 1));
 	vec2 b = velocity(pos + ivec2(0, -1));
+	vec2 t = velocity(pos + ivec2(0, 1));
 	float div = 0.5 * (r.x - l.x + t.y - b.y);
 	imageStore(out_divergence, pos, vec4(div));
 }

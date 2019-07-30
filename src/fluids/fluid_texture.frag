@@ -14,6 +14,9 @@ layout(set = 0, binding = 1) uniform UBO {
 const uint TypeForward = 1u;
 const uint TypeVelocity = 2u;
 const uint TypeLightDensity = 3u;
+const uint TypeDivergence = 4u;
+const uint TypeDivergence2 = 5u;
+
 layout(push_constant) uniform Type {
 	uint type;
 } type;
@@ -74,6 +77,16 @@ void main() {
 		float s = 10 * (abs(vel.x) + abs(vel.y)); // how much color
 		float v = 8 * dot(vel, vel); // how much light
 		out_color.rgb = hsv2rgb(vec3(angle, s, v));
+	} else if(type.type == TypeDivergence) {
+		out_color.rgb = 10 * read.rgb;
+	} else if(type.type == TypeDivergence2) {
+		// divergence:
+		ivec2 p = ivec2(in_uv * textureSize(tex, 0));
+		float a = texelFetchOffset(tex, p, 0, ivec2(0, 1)).x -
+			 texelFetchOffset(tex, p, 0, ivec2(0, -1)).x;
+		float b = texelFetchOffset(tex, p, 0, ivec2(1, 0)).y -
+			 texelFetchOffset(tex, p, 0, ivec2(-1, 0)).y;
+		out_color.rgb = vec3(a + b, -a - b, 0);
 	}
 
 	// old normalize (e.g. velocity)

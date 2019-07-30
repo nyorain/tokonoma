@@ -45,7 +45,7 @@
 // == FluidSystem ==
 class FluidSystem {
 public:
-	static constexpr auto pressureIterations = 50u;
+	static constexpr auto pressureIterations = 400u;
 	static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
@@ -374,11 +374,11 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 		color, {{{vk::ImageAspectBits::color, 0, 1, 0, 1}}});
 
 	insertBarrier(PSB::transfer, PSB::computeShader, {
-		barrier(pressure_, AB::transferWrite, AB::shaderRead),
+		barrier(pressure_, AB::transferWrite, readWrite),
 	});
 
 	// == velocity ==
-	// advect velocity
+	// advect velocity (also applies external forces after advection)
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, advectVel_);
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 		pipeLayout_, 0, {{advectVelocityDs_.vkHandle()}}, {});
@@ -424,7 +424,7 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 		pipeLayout_, 0, {{projectDs_.vkHandle()}}, {});
 	vk::cmdDispatch(cb, dx, dy, 1);
 
-	insertBarrier(PSB::computeShader, PSB::computeShader, {
+	insertBarrier(PSB::computeShader, PSB::computeShader | PSB::fragmentShader, {
 		barrier(velocity_, readWrite, readWrite),
 	});
 
@@ -567,10 +567,13 @@ public:
 			viewType_ = 2;
 		} else if(ev.keycode == ny::Keycode::q) {
 			changeView_ = system_->divergence().vkImageView();
-			viewType_ = 1;
+			viewType_ = 4;
 		} else if(ev.keycode == ny::Keycode::p) {
 			changeView_ = system_->pressure().vkImageView();
 			viewType_ = 1;
+		} else if(ev.keycode == ny::Keycode::l) {
+			changeView_ = system_->velocity().vkImageView();
+			viewType_ = 5;
 		} else {
 			return false;
 		}
@@ -617,10 +620,10 @@ public:
 		auto kc = appContext().keyboardContext();
 		auto mod = kc->modifiers() & ny::KeyboardModifier::shift;
 		if(ev.button == ny::MouseButton::left && !mod) {
-			system_->densityFac = ev.pressed * 0.5;
-			system_->velocityFac = ev.pressed;
+			system_->densityFac = ev.pressed * 0.01;
+			system_->velocityFac = 0.f;
 		} else if(ev.button == ny::MouseButton::right || mod) {
-			system_->velocityFac = ev.pressed * 150.f;
+			system_->velocityFac = ev.pressed * 10.f;
 		} else {
 			return false;
 		}

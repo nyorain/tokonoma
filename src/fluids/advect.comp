@@ -64,10 +64,10 @@ void main() {
 	if(fac > 0.f) {
 #ifdef VELOCITY
 		vec2 mvel = (ubo.mp1 - ubo.mp0) / size;
-		val += fac * ubo.dt * ubo.velFac * vec4(mvel, 0.0, 0.0);
+		val += fac * /* ubo.dt * */ ubo.velFac * vec4(mvel, 0.0, 0.0);
 #elif defined(DENSITY)
 		// val = clamp(val + fac * ubo.dt * vec4(ubo.densFac), 0.0, 1.0);
-		val = val + fac * ubo.dt * vec4(ubo.densFac);
+		val = val + fac * /* ubo.dt * */ vec4(ubo.densFac);
 #endif
 	}
 

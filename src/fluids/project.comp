@@ -25,11 +25,13 @@ void main() {
 	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 	float l = pressure(pos + ivec2(-1, 0)).x;
 	float r = pressure(pos + ivec2(1, 0)).x;
-	float t = pressure(pos + ivec2(0, 1)).x;
 	float b = pressure(pos + ivec2(0, -1)).x;
+	float t = pressure(pos + ivec2(0, 1)).x;
 	vec2 grad = 0.5 * vec2(r - l, t - b);
+	// vec2 grad = vec2(r - l, t - b);
 
 	// vec2 vel = imageLoad(in_vel, pos).xy - clamp(10 * ubo.dt, 0, 1) * grad;
 	vec2 vel = imageLoad(in_vel, pos).xy - grad;
+	// vec2 vel = imageLoad(in_vel, pos).xy;
 	imageStore(out_vel, pos, vec4(vel, 0.0, 0.0));
 }
