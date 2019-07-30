@@ -1,3 +1,14 @@
+// TODO/current state:
+// - pressure correction seems not to work for larger dt (it at least
+//   seems like that is the problem. Maybe we can't just move dt out
+//   of the linear system?)
+//  	- also for smaller dt: density can just vanish which should
+//  	  not happen (mass preservation). only approximation errors?
+// - diffusion currently completely disabled (diffuse.comp broken and
+//   disabled needs correct boundary conditions. But probably not
+//   really worth it anyways?)
+// - not 100% sure about the other boundary conditions
+
 #include <tkn/app.hpp>
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
@@ -101,8 +112,12 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 	info.magFilter = vk::Filter::linear;
 	info.minFilter = vk::Filter::linear;
 	info.minLod = 0;
-	info.maxLod = 0.25;
+	info.maxLod = 0;
 	info.mipmapMode = vk::SamplerMipmapMode::nearest;
+	// velocity border condition: 0
+	info.addressModeU = vk::SamplerAddressMode::clampToBorder;
+	info.addressModeV = vk::SamplerAddressMode::clampToBorder;
+	info.borderColor = vk::BorderColor::floatTransparentBlack;
 	sampler_ = vpp::Sampler(dev, info);
 
 	// pipe
@@ -379,6 +394,10 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 		pipeLayout_, 0, {{divergenceDs_.vkHandle()}}, {});
 	vk::cmdDispatch(cb, dx, dy, 1);
 
+	insertBarrier(PSB::computeShader, PSB::computeShader, {
+		barrier(divergence_, AB::shaderWrite, AB::shaderRead),
+	});
+
 	// iterate pressure
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pressureIteration_);
 	for(auto i = 0u; i < pressureIterations / 2; ++i) {
@@ -449,7 +468,8 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 	}
 	*/
 
-	// one final iterations for even swap count
+	// one final iterations for even swap count (taking the initial
+	// advection into account)
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 		pipeLayout_, 0, {{diffuseDens0_.vkHandle()}}, {});
 	vk::cmdDispatch(cb, dx, dy, 1);

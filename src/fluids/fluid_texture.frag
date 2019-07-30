@@ -68,11 +68,11 @@ void main() {
 		out_color.rgb *= vec3(accum);
 	} else if(type.type == TypeVelocity) {
 		// #2 velocity using hsv
-		vec2 vel = texture(tex, in_uv).xy;
+		vec2 vel = read.xy;
 		const float pi = 3.1415; // good enough
 		float angle = (atan(vel.y, vel.x) + pi) / (2 * pi); // which color
-		float s = 25 * (abs(vel.x) + abs(vel.y)); // how much color
-		float v = 16 * dot(vel, vel); // how much light
+		float s = 10 * (abs(vel.x) + abs(vel.y)); // how much color
+		float v = 8 * dot(vel, vel); // how much light
 		out_color.rgb = hsv2rgb(vec3(angle, s, v));
 	}
 

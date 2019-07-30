@@ -168,7 +168,7 @@ executable('tta',
 	dependencies: tkn_dep)
 
 executable('terrain',
-	'src/playground/terrain.cpp',
+	'src/terrain/main.cpp',
 	dependencies: tkn_dep)
 
 executable('pg',

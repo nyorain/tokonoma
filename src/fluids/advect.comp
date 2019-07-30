@@ -29,6 +29,20 @@ float distance(vec2 point, vec2 segA, vec2 segB) {
 	return length(point - clamped);
 }
 
+vec2 velocity(vec2 pos) {
+	vec2 clamped = clamp(pos, 0, 1);
+
+	// dirichlet boundary condition (slip)
+	vec2 vel = texture(in_field, clamped).xy;
+	return vec2(equal(pos, clamped)) * vel;
+
+	// dirichlet boundary condition (no slip)
+	// if(pos != clamped) {
+	// 	return vec2(0.0);
+	// }
+	// return texture(in_field, clamped).xy;
+}
+
 void main() {
 	vec2 pos = gl_GlobalInvocationID.xy;
 	vec2 vel = imageLoad(in_vel, ivec2(pos)).xy;
@@ -36,7 +50,11 @@ void main() {
 	// normalized position, workGroupSize * numWorkGroups is image size
 	uvec2 size = (gl_WorkGroupSize * gl_NumWorkGroups).xy;
 	vec2 npos = (pos + vec2(0.5, 0.5)) / size;
+#ifdef VELOCITY
+	vec4 val = vec4(velocity(npos - ubo.dt * vel), 0, 0);
+#else
 	vec4 val = texture(in_field, npos - ubo.dt * vel);
+#endif
 
 	// closer the the line it is applied with factor 0, at the max distance
 	// with factor 0

@@ -15,12 +15,18 @@ layout(binding = 4) uniform UBO {
 	float radius;
 } ubo;
 
+ivec2 size = imageSize(in_pressure);
+float pressure(ivec2 pos) {
+	// pressure boundary condition: neumann -> clamp
+	return imageLoad(in_pressure, clamp(pos, ivec2(0), size - 1)).x;
+}
+
 void main() {
 	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
-	float l = imageLoad(in_pressure, pos + ivec2(-1, 0)).x;
-	float r = imageLoad(in_pressure, pos + ivec2(1, 0)).x;
-	float t = imageLoad(in_pressure, pos + ivec2(0, 1)).x;
-	float b = imageLoad(in_pressure, pos + ivec2(0, -1)).x;
+	float l = pressure(pos + ivec2(-1, 0)).x;
+	float r = pressure(pos + ivec2(1, 0)).x;
+	float t = pressure(pos + ivec2(0, 1)).x;
+	float b = pressure(pos + ivec2(0, -1)).x;
 	vec2 grad = 0.5 * vec2(r - l, t - b);
 
 	// vec2 vel = imageLoad(in_vel, pos).xy - clamp(10 * ubo.dt, 0, 1) * grad;

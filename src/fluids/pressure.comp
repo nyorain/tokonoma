@@ -6,13 +6,19 @@ layout(binding = 0, r32f) uniform writeonly image2D out_pressure;
 layout(binding = 1, r32f) uniform readonly image2D in_pressure;
 layout(binding = 2, r32f) uniform readonly image2D in_divergence;
 
+ivec2 size = imageSize(in_pressure);
+float pressure(ivec2 pos) {
+	// pressure boundary condition: neumann -> clamp
+	return imageLoad(in_pressure, clamp(pos, ivec2(0), size - 1)).x;
+}
+
 void main() {
 	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 	float div = imageLoad(in_divergence, pos).x;
-	float l = imageLoad(in_pressure, pos + ivec2(-1, 0)).x;
-	float r = imageLoad(in_pressure, pos + ivec2(1, 0)).x;
-	float t = imageLoad(in_pressure, pos + ivec2(0, 1)).x;
-	float b = imageLoad(in_pressure, pos + ivec2(0, -1)).x;
+	float l = pressure(pos + ivec2(-1, 0));
+	float r = pressure(pos + ivec2(1, 0));
+	float t = pressure(pos + ivec2(0, 1));
+	float b = pressure(pos + ivec2(0, -1));
 	float p = (l + r + t + b - div) / 4.0;
 	imageStore(out_pressure, pos, vec4(p));
 }
