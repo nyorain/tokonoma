@@ -81,11 +81,15 @@ void main() {
 		out_color.rgb = 10 * read.rgb;
 	} else if(type.type == TypeDivergence2) {
 		// divergence:
-		ivec2 p = ivec2(in_uv * textureSize(tex, 0));
-		float a = texelFetchOffset(tex, p, 0, ivec2(0, 1)).x -
-			 texelFetchOffset(tex, p, 0, ivec2(0, -1)).x;
-		float b = texelFetchOffset(tex, p, 0, ivec2(1, 0)).y -
-			 texelFetchOffset(tex, p, 0, ivec2(-1, 0)).y;
+		// ivec2 p = ivec2(in_uv * textureSize(tex, 0));
+		// float a = texelFetchOffset(tex, p, 0, ivec2(1, 0)).x -
+		// 	 texelFetchOffset(tex, p, 0, ivec2(-1, 0)).x;
+		// float b = texelFetchOffset(tex, p, 0, ivec2(0, 1)).y -
+		// 	 texelFetchOffset(tex, p, 0, ivec2(0, -1)).y;
+		float a = textureOffset(tex, in_uv, ivec2(1, 0)).x -
+			 textureOffset(tex, in_uv, ivec2(-1, 0)).x;
+		float b = textureOffset(tex, in_uv, ivec2(0, 1)).y -
+			 textureOffset(tex, in_uv, ivec2(0, -1)).y;
 		out_color.rgb = vec3(a + b, -a - b, 0);
 	}
 

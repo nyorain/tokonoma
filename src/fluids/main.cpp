@@ -45,7 +45,7 @@
 // == FluidSystem ==
 class FluidSystem {
 public:
-	static constexpr auto pressureIterations = 10u;
+	static constexpr auto pressureIterations = 40u;
 	static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
@@ -348,10 +348,10 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 	// when adding additional passes we might need one additional
 	// copy image at the beginning/end to make sure the number of
 	// swaps comes out even
-	vk::ImageCopy full;
-	full.dstSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
-	full.srcSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
-	full.extent = {size_.x, size_.y, 1u};
+	// vk::ImageCopy full;
+	// full.dstSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
+	// full.srcSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
+	// full.extent = {size_.x, size_.y, 1u};
 	// vk::cmdCopyImage(cb, velocity0_.image(), vk::ImageLayout::general,
 	// 	velocity_.image(), vk::ImageLayout::general, {full});
 	// insertBarrier(PSB::transfer, PSB::computeShader, {
