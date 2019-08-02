@@ -45,7 +45,7 @@
 // == FluidSystem ==
 class FluidSystem {
 public:
-	static constexpr auto pressureIterations = 40u;
+	static constexpr auto pressureIterations = 10u;
 	static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
@@ -244,7 +244,7 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 	// ds & stuff
 	constexpr auto uboSize = sizeof(float) * 8;
 	ubo_ = {dev.bufferAllocator(), uboSize,
-		vk::BufferUsageBits::uniformBuffer, 4u, dev.hostMemoryTypes()};
+		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 	advectDensityDs_ = {dev.descriptorAllocator(), dsLayout_};
 	advectVelocityDs_ = {dev.descriptorAllocator(), dsLayout_};
@@ -535,7 +535,7 @@ public:
 
 		// system
 		// NOTE: MUST be multiple of 16 due to work group size
-		system_.emplace(vulkanDevice(), nytl::Vec2ui {1024, 1024});
+		system_.emplace(vulkanDevice(), nytl::Vec2ui {256, 256});
 
 		// mouse ubo
 		mouseUbo_ = {dev.bufferAllocator(), sizeof(nytl::Vec2f),

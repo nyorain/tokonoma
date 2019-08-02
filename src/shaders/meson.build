@@ -25,6 +25,8 @@ deferred_glsl = include_glsl + scene_glsl + files(
 	'../deferred/ssaoBlur.glsl',
 )
 
+fluid_glsl = files('../fluids/fluid.glsl')
+
 # shader specifications
 # contains multiple shader groups, specified like this:
 # { 'name': [['shader.vert', glsl_inc, 'outname.vert', ['-DDEF_STH']], ... ], ... }
@@ -67,12 +69,12 @@ shaders_src = {
 		['line.frag'],
 	],
 	'fluids': [
-		['advect.comp', [], 'advect.vel.comp', ['-DVELOCITY']],
-		['advect.comp', [], 'advect.dens.comp', ['-DDENSITY']],
-		['pressure.comp'],
-		['divergence.comp'],
-		['project.comp'],
-		['diffuse.comp', [], 'diffuse.dens.comp'],
+		['advect.comp', fluid_glsl, 'advect.vel.comp', ['-DVELOCITY']],
+		['advect.comp', fluid_glsl, 'advect.dens.comp', ['-DDENSITY']],
+		['pressure.comp', fluid_glsl],
+		['divergence.comp', fluid_glsl],
+		['project.comp', fluid_glsl],
+		['diffuse.comp', fluid_glsl, 'diffuse.dens.comp'],
 		['fluid_texture.frag'],
 	],
 	'automaton': [

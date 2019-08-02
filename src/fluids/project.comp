@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "fluid.glsl"
 
 layout (local_size_x = 16, local_size_y = 16) in;
 
@@ -15,23 +17,30 @@ layout(binding = 4) uniform UBO {
 	float radius;
 } ubo;
 
-ivec2 size = imageSize(in_pressure);
-float pressure(ivec2 pos) {
-	// pressure boundary condition: neumann -> clamp
-	return imageLoad(in_pressure, clamp(pos, ivec2(0), size - 1)).x;
-}
-
 void main() {
 	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
-	float l = pressure(pos + ivec2(-1, 0)).x;
-	float r = pressure(pos + ivec2(1, 0)).x;
-	float b = pressure(pos + ivec2(0, -1)).x;
-	float t = pressure(pos + ivec2(0, 1)).x;
+	if(obstacle(pos)) {
+		imageStore(out_vel, pos, vec4(0.0));
+		return;
+	}
+
+	float l = pressure(in_pressure, pos, ivec2(-1, 0)).x;
+	float r = pressure(in_pressure, pos, ivec2(1, 0)).x;
+	float b = pressure(in_pressure, pos, ivec2(0, -1)).x;
+	float t = pressure(in_pressure, pos, ivec2(0, 1)).x;
 	vec2 grad = 0.5 * vec2(r - l, t - b);
 	// vec2 grad = vec2(r - l, t - b);
 
+	vec2 mask = vec2(1, 1);
+	if(obstacle(pos + ivec2(-1, 0)) || obstacle(pos + ivec2(1, 0))) {
+		mask.x = 0.0;
+	}
+	if(obstacle(pos + ivec2(0, -1)) || obstacle(pos + ivec2(0, 1))) {
+		mask.y = 0.0;
+	}
+
 	// vec2 vel = imageLoad(in_vel, pos).xy - clamp(10 * ubo.dt, 0, 1) * grad;
-	vec2 vel = imageLoad(in_vel, pos).xy - grad;
+	vec2 vel = mask * (imageLoad(in_vel, pos).xy - grad);
 	// vec2 vel = imageLoad(in_vel, pos).xy;
 	imageStore(out_vel, pos, vec4(vel, 0.0, 0.0));
 }

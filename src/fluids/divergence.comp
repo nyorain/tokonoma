@@ -1,31 +1,27 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "fluid.glsl"
 
 layout (local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0, r32f) uniform writeonly image2D out_divergence;
 layout(binding = 1, rgba16f) uniform readonly image2D in_vel;
 
-ivec2 size = imageSize(out_divergence);
-vec2 velocity(ivec2 pos) {
-	ivec2 clamped = clamp(pos, ivec2(0), size - 1);
+vec2 obsVelocity(ivec2 pos) {
+	if(obstacle(pos)) {
+		return vec2(0.0);
+	}
 
-	// dirichlet boundary condition (slip)
-	vec2 vel = imageLoad(in_vel, clamped).xy;
-	return vec2(equal(pos, clamped)) * vel;
-
-	// dirichlet boundary condition (no slip)
-	// if(pos != clamped) {
-	// 	return vec2(0.0);
-	// }
-	// return imageLoad(in_vel, clamped).xy;
+	return velocity(in_vel, pos);
 }
 
 void main() {
 	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
-	vec2 l = velocity(pos + ivec2(-1, 0));
-	vec2 r = velocity(pos + ivec2(1, 0));
-	vec2 b = velocity(pos + ivec2(0, -1));
-	vec2 t = velocity(pos + ivec2(0, 1));
+	vec2 l = obsVelocity(pos + ivec2(-1, 0));
+	vec2 r = obsVelocity(pos + ivec2(1, 0));
+	vec2 b = obsVelocity(pos + ivec2(0, -1));
+	vec2 t = obsVelocity(pos + ivec2(0, 1));
+
 	float div = 0.5 * (r.x - l.x + t.y - b.y);
 	imageStore(out_divergence, pos, vec4(div));
 }
