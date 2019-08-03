@@ -175,7 +175,11 @@ shaders_src = {
 		['point.vert'],
 		['point.frag'],
 		['line.frag'],
-	]
+	],
+	'fem': [
+		['body.vert'],
+		['body.frag'],
+	],
 }
 
 # build them

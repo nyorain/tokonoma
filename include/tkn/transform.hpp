@@ -240,6 +240,7 @@ nytl::SquareMat<4, P> lookAtRH(const nytl::Vec3<P>& eye,
 
 // == 2D coordinate transformations ==
 // A rectangular view of the level, in level coordinates.
+// TODO: could add support for rotation
 struct LevelView {
 	nytl::Vec2f center; // center of the view in level coords
 	nytl::Vec2f size; // total size of the view in level coords

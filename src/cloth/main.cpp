@@ -144,7 +144,7 @@ public:
 		vpp::GraphicsPipelineInfo gpi {renderPass(), gfx_.pipeLayout, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
-		}}}};
+		}}}, 0, samples()};
 
 		vk::VertexInputAttributeDescription attribs[1];
 		attribs[0].format = vk::Format::r32g32b32Sfloat;

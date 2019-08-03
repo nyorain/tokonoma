@@ -535,7 +535,7 @@ public:
 
 		// system
 		// NOTE: MUST be multiple of 16 due to work group size
-		system_.emplace(vulkanDevice(), nytl::Vec2ui {256, 256});
+		system_.emplace(vulkanDevice(), nytl::Vec2ui {2048, 2048});
 
 		// mouse ubo
 		mouseUbo_ = {dev.bufferAllocator(), sizeof(nytl::Vec2f),

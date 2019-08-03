@@ -7,6 +7,10 @@
 
 namespace tkn::glsl {
 
+// TODO: with modification to nytl smoothstep and mix
+// (additional template parameter for factor).
+// Some overload probably still missing
+
 using nytl::Vec;
 using nytl::radians;
 using nytl::degrees;
@@ -16,6 +20,7 @@ using nytl::dot;
 using nytl::cross;
 using nytl::length;
 using nytl::normalize;
+using nytl::distance;
 
 using std::sin;
 using std::cos;
@@ -32,7 +37,6 @@ using std::sqrt;
 using std::abs;
 using std::ceil;
 using std::floor;
-using std::mod;
 using std::min;
 using std::max;
 using std::clamp;
@@ -73,8 +77,12 @@ float distance(float a, float b) {
 	return abs(a - b);
 }
 
-float normalize(float x) {
+float normalize(float) {
 	return 1.0;
+}
+
+float mod(float x, float y) {
+	return std::fmod(x, y);
 }
 
 template<size_t D, typename T>
@@ -102,17 +110,18 @@ constexpr auto step(const Vec<D, T>& edge, Vec<D, T> x) {
 	return x;
 }
 
-// template<size_t D, typename T>
-// constexpr auto length(const Vec<D, T>& v) {
-// 	T sum = T(0);
-// 	for(auto& x : v)
-// 		sum += x * x;
-// 	return sqrt(sum);
-// }
+template<size_t D, typename T>
+constexpr auto mod(Vec<D, T> x, const Vec<D, T>& y) {
+	for(auto i = 0u; i < D; ++i)
+		x[i] = std::fmod(x[i], y[i]);
+	return x;
+}
 
 template<size_t D, typename T>
-constexpr auto distance(const Vec<D, T>& a, const Vec<D, T>& b) {
-	return length(a - b);
+constexpr auto mod(Vec<D, T> x, const T& y) {
+	for(auto i = 0u; i < D; ++i)
+		x[i] = std::fmod(x[i], y);
+	return x;
 }
 
 #define TKN_VEC_UTIL_FUNC(func) \
@@ -126,6 +135,8 @@ TKN_VEC_UTIL_FUNC(inversesqrt);
 TKN_VEC_UTIL_FUNC(sign);
 TKN_VEC_UTIL_FUNC(fract);
 
+#undef TKN_VEC_UTIL_FUNC
+
 // template<size_t D, typename T>
 // Vec<D, T> inversesqrt(Vec<D, T> x) {
 // 	for(auto& v : x) v = inversesqrt(v);
@@ -136,6 +147,12 @@ TKN_VEC_UTIL_FUNC(fract);
 // template<size_t D, typename T>
 // Vec<D, T> sign(Vec<D, T> x) {
 // 	for(auto& v : x) v = sign(v);
+// 	return x;
+// }
+
+// template<size_t D, typename T>
+// Vec<D, T> fract(Vec<D, T> x) {
+// 	for(auto& v : x) v = fract(v);
 // 	return x;
 // }
 

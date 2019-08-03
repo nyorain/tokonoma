@@ -171,6 +171,11 @@ executable('terrain',
 	'src/terrain/main.cpp',
 	dependencies: tkn_dep)
 
+executable('fem', [
+		'src/fem/main.cpp',
+		fem_shaders,
+	], dependencies: tkn_dep)
+
 executable('pg',
 	'src/playground/main6.cpp',
 	dependencies: tkn_dep)

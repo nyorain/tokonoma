@@ -109,6 +109,7 @@ inline LineIntersection intersection(Line2f line, Ray2f ray) {
 /// 2-dimensional cross product.
 /// Is the same as the dot of a with the normal of b.
 template<typename T>
+[[deprecated("Use the nytl/vecOps version instead")]]
 constexpr T cross(nytl::Vec<2, T> a, nytl::Vec<2, T> b) {
     return a[0] * b[1] - a[1] * b[0];
 }
