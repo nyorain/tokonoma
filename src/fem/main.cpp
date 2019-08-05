@@ -88,6 +88,79 @@ nytl::Mat<6, 6, float> K(const Triangle& tri, const nytl::Mat3f& D) {
 	return area * nytl::transpose(b) * D * b;
 }
 
+float sign(float x) {
+	return (x > 0) ? 1.f : (x < 0) ? -1.f : 0.f;
+}
+
+// Singular value decomposition of a 2x2 matrix
+struct SVD {
+	nytl::Mat2f u, sig, v;
+};
+
+// mainly from https://sites.ualberta.ca/~mlipsett/ENGM541/Readings/svd_ellis.pdf
+SVD svd(const nytl::Mat2f m) {
+	SVD ret;
+	auto tm = transpose(m);
+
+	// find u
+	auto m1 = m * tm;
+	auto phi = 0.5f * std::atan2(m1[0][1] + m1[1][0], m1[0][0] - m1[1][1]);
+	auto cphi = std::cos(phi);
+	auto sphi = std::sin(phi);
+	ret.u = {cphi, -sphi, sphi, cphi};
+
+	// find singular values
+	auto sum = m1[0][0] + m1[1][1];
+	auto dif = m1[0][0] - m1[1][1];
+	dif = std::sqrt(dif * dif + 4 * m1[0][1] * m1[1][0]);
+	ret.sig = {
+		std::sqrt(0.5f * (sum + dif)), 0,
+		0, std::sqrt(0.5f * (sum - dif))
+	};
+
+	auto m2 = tm * m;
+	auto theta = 0.5f * std::atan2(m2[0][1] + m2[1][0], m2[0][0] - m2[1][1]);
+	auto ctheta = std::cos(theta);
+	auto stheta = std::sin(theta);
+	auto w = nytl::Mat2f {ctheta, -stheta, stheta, ctheta};
+
+	auto s = transpose(ret.u) * m * w;
+	auto c = nytl::Mat2f {sign(s[0][0]), 0, 0, sign(s[1][1])};
+	ret.v = w * c;
+
+	return ret;
+}
+
+float det(nytl::Mat2f m) {
+	return m[0][0] * m[1][1] - m[0][1] * m[1][0];
+}
+
+nytl::Mat2f inverse(nytl::Mat2f m) {
+	auto d = det(m);
+	return (1 / d) * nytl::Mat2f {
+		m[1][1], -m[0][1],
+		-m[1][0], m[0][0],
+	};
+}
+
+nytl::Mat2f F(const Triangle& tri,
+		nytl::Vec2f u1, nytl::Vec2f u2, nytl::Vec2f u3) {
+	float vt2 = nytl::cross(tri.b - tri.a, tri.c - tri.a);
+	float n1x = (tri.b.y - tri.c.y) / vt2;
+	float n1y = (tri.c.x - tri.b.x) / vt2;
+	float n2x = (tri.c.y - tri.a.y) / vt2;
+	float n2y = (tri.a.x - tri.c.x) / vt2;
+	float n3x = (tri.a.y - tri.b.y) / vt2;
+	float n3y = (tri.b.x - tri.a.x) / vt2;
+
+	return {
+		n1x * u1.x + n2x * u2.x + n3x * u3.x,
+		n1y * u1.x + n2y * u2.x + n3y * u3.x,
+		n1x * u1.y + n2x * u2.y + n3x * u3.y,
+		n1y * u1.y + n2y * u2.y + n3y * u3.y,
+	};
+}
+
 // Using simple euler integration
 void step(Body& fe, float dt) {
 	// integrate velocity
@@ -101,13 +174,30 @@ void step(Body& fe, float dt) {
 		auto& b = fe.points[tri.b];
 		auto& c = fe.points[tri.c];
 
-		nytl::Vec<6, float> u = {
+		auto f = F({a.pos, b.pos, c.pos}, a.u, b.u, c.u);
+		auto [u, sig, vt] = svd(f);
+		auto rot = u * vt;
+		auto r = nytl::Mat<6, 6, float> {
+			rot[0][0], rot[0][1], 0, 0, 0, 0,
+			rot[1][0], rot[1][1], 0, 0, 0, 0,
+			0, 0, rot[0][0], rot[0][1], 0, 0,
+			0, 0, rot[1][0], rot[1][1], 0, 0,
+			0, 0, 0, 0, rot[0][0], rot[0][1],
+			0, 0, 0, 0, rot[1][0], rot[1][1],
+		};
+
+		// dlg_info("rot: {}", u * vt);
+		// dlg_info("sig: {}", sig);
+		auto K = r * tri.K * transpose(r);
+		// auto K = tri.K;
+
+		nytl::Vec<6, float> uv = {
 			a.u.x, a.u.y,
 			b.u.x, b.u.y,
 			c.u.x, c.u.y,
 		};
 
-		auto dud = -dt * tri.invm * tri.K * u; // delta u dot
+		auto dud = -dt * tri.invm * K * uv; // delta u dot
 		a.udot.x += dud[0];
 		a.udot.y += dud[1];
 		b.udot.x += dud[2];
@@ -119,9 +209,11 @@ void step(Body& fe, float dt) {
 
 class SoftBodyApp : public tkn::App {
 public:
-	static constexpr auto width = 50u;
-	static constexpr auto height = 5u;
-	const float scale = 0.1;
+	static constexpr auto width = 20u;
+	static constexpr auto height = 2u;
+	static constexpr float scale = 0.3;
+	static constexpr float E = 1.0;
+	static constexpr float v = 0.0;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -154,7 +246,7 @@ public:
 
 		// pre-compute fe properties
 		const float density = 1.f;
-		const auto d = D(0.1, 0.1);
+		const auto d = D(E, v);
 		for(auto& tri : body_.elems) {
 			auto& a = body_.points[tri.a];
 			auto& b = body_.points[tri.b];
@@ -250,10 +342,10 @@ public:
 		vk::cmdDrawIndexed(cb, indexCount_, 1, 0, 0, 0);
 	}
 
-	void update(double dt) override {
-		App::update(dt);
+	void step(double dt) {
+		::step(body_, dt);
 
-		step(body_, dt);
+		// mouse interaction
 		if(mouseDown_) {
 			for(auto i = 0u; i < height; ++i) {
 				auto id = i * width;
@@ -261,8 +353,29 @@ public:
 				auto d = levelAttractor_ - (p.pos + p.u);
 				body_.points[id].udot += dt * d;
 			}
+
+			// body_.points[0].u = levelAttractor_ - body_.points[0].pos;
+			// body_.points[0].udot = {0.f, 0.f};
 		}
 
+		// gravity interaction
+		for(auto& p : body_.points) {
+			p.udot.y -= dt * 1.0;
+		}
+
+		// fix center points
+		for(auto i = 0u; i < height; ++i) {
+			auto id = i * width + width / 2;
+			body_.points[id].u = {0.f, 0.f};
+			body_.points[id].udot = {0.f, 0.f};
+		}
+	}
+
+	void update(double dt) override {
+		App::update(dt);
+		for(auto i = 0u; i < 10; ++i) {
+			step(0.001);
+		}
 		App::scheduleRedraw();
 	}
 
