@@ -30,18 +30,20 @@ public:
 	struct Node {
 		nytl::Vec2f pos;
 		nytl::Vec2f vel;
+		nytl::Vec2f normal;
+		float width;
+		float mass;
 	};
 
-	static constexpr auto nodeCount = 32u;
-	static constexpr auto ks1 = 1.f;
-	static constexpr auto ks2 = 1.f;
-	static constexpr auto ks3 = 1.f;
-	static constexpr auto kd1 = 0.05f;
-	static constexpr auto kd2 = 0.05f;
-	static constexpr auto kd3 = 0.05f;
-	static constexpr auto kdg = 0.2f; // general dampening per second
-	static constexpr auto mass = 0.1f;
-	static constexpr auto segLength = 1.f / nodeCount;
+	static constexpr auto nodeCount = 16u;
+	static constexpr auto ks1 = 30.f;
+	static constexpr auto ks2 = 20.f;
+	static constexpr auto ks3 = 20.f;
+	static constexpr auto kd1 = 0.01f;
+	static constexpr auto kd2 = 0.01f;
+	static constexpr auto kd3 = 0.01f;
+	static constexpr auto kdg = 5.f; // general dampening per second
+	static constexpr auto segLength = 0.5f / nodeCount;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -51,12 +53,21 @@ public:
 
 		// init logic
 		auto pos = nytl::Vec2f{0.f, -0.5f};
+		auto width = 0.1f;
+		auto widthStep = 0.9 * width / (nodeCount);
 		for(auto i = 0u; i < nodeCount; ++i) {
 			auto& node = nodes_.emplace_back();
 			node.pos = pos;
 			node.vel = {0.f, 0.f};
+			node.width = width;
+			node.mass = 1.f * width;
+
 			pos.y += segLength;
+			width -= widthStep;
 		}
+
+		nodes_[0].width *= 2.f;
+		nodes_[0].mass *= 2.f;
 
 		// init gfx
 		auto& dev = vulkanDevice();
@@ -136,6 +147,7 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
+		auto kc = appContext().keyboardContext();
 
 		auto force = [](auto& node1, auto& node2, float ks, float kd, float l) {
 			auto diff = node2.pos - node1.pos;
@@ -144,6 +156,65 @@ public:
 			diff *= 1 / ld;
 			return (ks * (ld - l) + kd * dot(vdiff, diff)) * diff;
 		};
+
+		auto muscleForce = [&](const auto& node1, const auto& node2) {
+			auto nl = node1;
+			auto nr = node1;
+			nl.pos += node1.width * node1.normal;
+			nr.pos -= node1.width * node1.normal;
+
+			auto ksa = 0.f;
+			auto ksb = 0.f;
+
+			auto ll = std::sqrt(segLength * segLength + node1.width * node1.width);
+			auto lr = ll;
+			// auto ll = nytl::length(nl.pos - node2.pos);
+			// auto lr = nytl::length(nr.pos - node2.pos);
+			// auto strength = 10.f * std::sqrt(segLength);
+			auto strength = 5.f;
+			// auto width = std::sqrt(node1.width); // node.width or 1?
+			auto width = node1.width; // node.width or 1?
+			// auto width = 1.f;
+			if(kc->pressed(ny::Keycode::k1)) {
+				// ll *= std::pow(0.1, node.width);
+				// lr /= std::pow(0.1, node.width);
+				ll *= 0.0;
+				lr *= 2.0;
+				ksa = strength * width;
+				ksb = strength * width;
+			}
+			if(kc->pressed(ny::Keycode::k2)) {
+				// lr *= std::pow(0.1, node.width);
+				// ll /= std::pow(0.1, node.width);
+				lr *= 0.0;
+				ll *= 2.0;
+				ksb = strength * width;
+				ksa = strength * width;
+			}
+
+			return force(nl, node2, ksa, 0.f, ll) +
+				force(nr, node2, ksb, 0.f, lr);
+		};
+
+		// compute normal for all nodes
+		for(auto i = 0u; i < nodes_.size(); ++i) {
+			auto& node = nodes_[i];
+
+			// NOTE: not sure about tangent calculation/interpolation
+			// normalize segments before addition or not?
+			nytl::Vec2f tangent {0.f, 0.f};
+			if(i > 0) {
+				// tangent += 0.5 * nytl::normalized(nodes_[i].pos - nodes_[i - 1].pos);
+				tangent += 0.5 * (nodes_[i].pos - nodes_[i - 1].pos);
+			}
+			if(i < nodes_.size() - 1) {
+				// tangent += 0.5 * nytl::normalized(nodes_[i + 1].pos - nodes_[i].pos);
+				tangent += 0.5 * (nodes_[i + 1].pos - nodes_[i].pos);
+			}
+
+			// node.normal = tkn::rhs::lnormal(tangent);
+			node.normal = tkn::rhs::lnormal(nytl::normalized(tangent));
+		}
 
 		auto nextNodes = nodes_;
 		for(auto i = 0u; i < nodes_.size(); ++i) {
@@ -182,14 +253,110 @@ public:
 				}
 			}
 
+			/*
+			auto nl = node;
+			auto nr = node;
+			nl.pos += node.width * node.normal;
+			nr.pos -= node.width * node.normal;
+
+			auto ksa = 0.f;
+			auto ksb = 0.f;
+
+			auto ll = std::sqrt(segLength * segLength + node.width * node.width);
+			auto lr = ll;
+			auto strength = 30.f * segLength;
+			// auto width = std::sqrt(node.width); // node.width or 1?
+			auto width = 1.f;
+			if(kc->pressed(ny::Keycode::k1)) {
+				// ll *= std::pow(0.1, node.width);
+				// lr /= std::pow(0.1, node.width);
+				ll *= 0.5;
+				lr *= 1.5;
+				ksa = strength * width;
+				ksb = strength * width;
+			}
+			if(kc->pressed(ny::Keycode::k2)) {
+				// lr *= std::pow(0.1, node.width);
+				// ll /= std::pow(0.1, node.width);
+				lr *= 0.5;
+				ll *= 1.5;
+				ksb = strength * width;
+				ksa = strength * width;
+			}
+			*/
+
+			if(i > 0) {
+				// auto nnl = nodes_[i - 1];
+				// auto nnr = nodes_[i - 1];
+				// nnl.pos += nnl.width * nnl.normal;
+				// nnr.pos -= nnl.width * nnr.normal;
+
+				// f += force(nl, nodes_[i-1], ksa, 0.f, ll);
+				// f += force(nr, nodes_[i-1], ksb, 0.f, lr);
+				f += muscleForce(node, nodes_[i - 1]);
+
+				if(i > 1) {
+					// f += force(nl, nodes_[i - 2], 0.5 * ksa, 0.f, 2 * ll);
+					// f += force(nr, nodes_[i - 2], 0.5 * ksb, 0.f, 2 * lr);
+					// f += 0.5 * muscleForce(node, nodes_[i - 2]);
+
+					if(i > 2) {
+						// f += force(nl, nodes_[i - 3], 0.3 * ksa, 0.f, 3 * ll);
+						// f += force(nr, nodes_[i - 3], 0.3 * ksb, 0.f, 3 * lr);
+						// f += 0.2 * muscleForce(node, nodes_[i - 3]);
+					}
+				}
+			}
+
+			if(i < nodes_.size() - 1) {
+				// auto nnl = nodes_[i + 1];
+				// auto nnr = nodes_[i + 1];
+				// nnl.pos += nnl.width * nnl.normal;
+				// nnr.pos -= nnl.width * nnr.normal;
+
+				// f += force(nl, nodes_[i+1], ksa, 0.f, ll);
+				// f += force(nr, nodes_[i+1], ksb, 0.f, lr);
+				f -= muscleForce(nodes_[i + 1], node);
+
+				if(i < nodes_.size() - 2) {
+					// f += force(nl, nodes_[i + 2], 0.5 * ksa, 0.f, 2 * ll);
+					// f += force(nr, nodes_[i + 2], 0.5 * ksb, 0.f, 2 * lr);
+					// f -= 0.5 * muscleForce(nodes_[i + 2], node);
+
+					if(i < nodes_.size() - 3) {
+						// f += force(nl, nodes_[i + 3], 0.3 * ksa, 0.f, 3 * ll);
+						// f += force(nr, nodes_[i + 3], 0.3 * ksb, 0.f, 3 * lr);
+						// f -= 0.2 * muscleForce(nodes_[i + 3], node);
+					}
+				}
+			}
+
+
 			// f -= (1 - std::pow(kdg, dt)) * node.vel;
-			f -= kdg * node.vel;
-			auto a = (1 / mass) * f;
+			// f -= kdg * node.vel;
+			// auto tangent = tkn::rhs::lnormal(node.normal);
+
+			// TODO: better special case for first AND last
+			if(i == 0) {
+				auto tangent = tkn::rhs::lnormal(node.normal);
+				f -= 0.1 * kdg * dot(/*10 * node.mass */ node.width * node.vel, tangent) * tangent;
+				// f -= kdg * (node.vel);
+				// f -= kdg * (10 * node.mass * node.vel);
+			}
+
+			// f -= kdg * dot(10 * node.mass * node.vel, node.normal) * node.normal;
+			// f -= kdg * dot(node.vel, node.normal) * node.normal;
+			f -= kdg * dot(/*10 * node.mass * */ segLength * node.vel, node.normal) * node.normal;
+
+			// auto a = (1 / (mass * node.width)) * f;
+			auto a = (1 / (node.mass)) * f;
 
 			// verlet-like integration
 			auto& next = nextNodes[i];
 			next.pos += dt * next.vel + 0.5 * dt * dt * a;
 			next.vel += 0.5 * dt * a;
+			// next.pos += dt * next.vel;
+			// next.vel += dt * a;
 
 			// check for intersection
 			/*
@@ -212,7 +379,6 @@ public:
 			*/
 
 			// instead of intersection: use repulsion forces
-			 /*
 			for(auto j = 1u; j < i; ++j) {
 				// auto& other = nextNodes[j];
 				// auto diff = next.pos - other.pos;
@@ -235,19 +401,18 @@ public:
 					// nextNodes[j].vel -= force;
 				}
 			}
-			*/
 		}
 
 		// "muscles"
-		auto kc = appContext().keyboardContext();
-		if(kc->pressed(ny::Keycode::k1)) {
-			auto& a = nextNodes.front();
-			auto& b = nextNodes.back();
-			auto f = force(a, b, 0.01, 0.0, 0.0 * nodes_.size() * segLength);
-			auto acc = (1 / mass) * f;
-			a.vel += acc;
-			b.vel -= acc;
-		}
+		// auto kc = appContext().keyboardContext();
+		// if(kc->pressed(ny::Keycode::k1)) {
+		// 	auto& a = nextNodes.front();
+		// 	auto& b = nextNodes.back();
+		// 	auto f = force(a, b, 0.01, 0.0, 0.0 * nodes_.size() * segLength);
+		// 	auto acc = (1 / mass) * f;
+		// 	a.vel += acc;
+		// 	b.vel -= acc;
+		// }
 
 		// "follow mouse"
 		if(mouseDown_) {
@@ -255,6 +420,7 @@ public:
 			nextNodes[0].vel = {0.f, 0.f};
 		}
 
+		/*
 		// TODO: iterative, also consider real geometric intersections
 		// and handle them somehow
 		for(auto i = 0u; i < nextNodes.size(); ++i) {
@@ -271,9 +437,9 @@ public:
 				auto dist = length(diff);
 				// tkn::Segment2f seg {nextNodes[j-1].pos, nextNodes[j].pos};
 				// auto dist = distance(next.pos, seg);
-				if(dist < 0.03) {
+				if(dist < 0.02) {
 					// nytl::Vec2f dir = nytl::normalized(next.pos - seg.a + next.pos - seg.b);
-					if(dist < 0.015) {
+					if(dist < 0.01) {
 						auto dir = nytl::normalized(diff);
 						next.vel -= std::max(dot(next.vel, -dir), 0.f) * -dir;
 						other.vel -= std::max(dot(other.vel, dir), 0.f) * dir;
@@ -289,6 +455,11 @@ public:
 					// nextNodes[j].vel -= force;
 				}
 			}
+		}
+		*/
+
+		if(!mouseDown_) {
+			// nextNodes[0].vel = {0.f, 0.f};
 		}
 
 		nodes_ = nextNodes;
