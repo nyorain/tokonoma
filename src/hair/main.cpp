@@ -36,13 +36,13 @@ public:
 	};
 
 	static constexpr auto nodeCount = 16u;
-	static constexpr auto ks1 = 30.f;
-	static constexpr auto ks2 = 20.f;
-	static constexpr auto ks3 = 20.f;
-	static constexpr auto kd1 = 0.01f;
-	static constexpr auto kd2 = 0.01f;
-	static constexpr auto kd3 = 0.01f;
-	static constexpr auto kdg = 5.f; // general dampening per second
+	static constexpr auto ks1 = 20.f;
+	static constexpr auto ks2 = 15.f;
+	static constexpr auto ks3 = 10.f;
+	static constexpr auto kd1 = 0.1f;
+	static constexpr auto kd2 = 0.1f;
+	static constexpr auto kd3 = 0.1f;
+	static constexpr auto kdg = 50.f; // general dampening per second
 	static constexpr auto segLength = 0.5f / nodeCount;
 
 public:
@@ -64,10 +64,11 @@ public:
 
 			pos.y += segLength;
 			width -= widthStep;
+			// width /= 1.3;
 		}
 
-		nodes_[0].width *= 2.f;
-		nodes_[0].mass *= 2.f;
+		nodes_[0].width *= 1.5f;
+		nodes_[0].mass *= 3.f;
 
 		// init gfx
 		auto& dev = vulkanDevice();
@@ -166,13 +167,14 @@ public:
 			auto ksa = 0.f;
 			auto ksb = 0.f;
 
-			auto ll = std::sqrt(segLength * segLength + node1.width * node1.width);
-			auto lr = ll;
-			// auto ll = nytl::length(nl.pos - node2.pos);
-			// auto lr = nytl::length(nr.pos - node2.pos);
+			// auto ll = std::sqrt(segLength * segLength + node1.width * node1.width);
+			// auto lr = ll;
+			auto ll = nytl::length(nl.pos - node2.pos);
+			auto lr = nytl::length(nr.pos - node2.pos);
 			// auto strength = 10.f * std::sqrt(segLength);
-			auto strength = 5.f;
+			auto strength = 10.f;
 			// auto width = std::sqrt(node1.width); // node.width or 1?
+			// auto width = std::pow(node1.width, 2.0); // node.width or 1?
 			auto width = node1.width; // node.width or 1?
 			// auto width = 1.f;
 			if(kc->pressed(ny::Keycode::k1)) {
@@ -337,16 +339,19 @@ public:
 			// auto tangent = tkn::rhs::lnormal(node.normal);
 
 			// TODO: better special case for first AND last
+			// does it depend on velocity squared?
 			if(i == 0) {
 				auto tangent = tkn::rhs::lnormal(node.normal);
-				f -= 0.1 * kdg * dot(/*10 * node.mass */ node.width * node.vel, tangent) * tangent;
+				auto d = dot(node.vel, tangent);
+				f -= 1.0 * kdg * node.width * d * std::abs(d) * tangent;
 				// f -= kdg * (node.vel);
 				// f -= kdg * (10 * node.mass * node.vel);
 			}
 
 			// f -= kdg * dot(10 * node.mass * node.vel, node.normal) * node.normal;
 			// f -= kdg * dot(node.vel, node.normal) * node.normal;
-			f -= kdg * dot(/*10 * node.mass * */ segLength * node.vel, node.normal) * node.normal;
+			auto d = dot(node.vel, node.normal);
+			f -= kdg * segLength * d * std::abs(d) * node.normal;
 
 			// auto a = (1 / (mass * node.width)) * f;
 			auto a = (1 / (node.mass)) * f;

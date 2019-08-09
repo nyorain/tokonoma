@@ -463,7 +463,7 @@ protected:
 	} comp_;
 
 	tkn::Camera camera_;
-	unsigned gridSize_ {40};
+	unsigned gridSize_ {64};
 	vpp::SubBuffer nodesBuf_;
 	vpp::SubBuffer tmpNodesBuf_;
 	vpp::SubBuffer indexBuf_;

@@ -78,7 +78,7 @@ vec3 totalForce(Node node, ivec2 id) {
 
 void main() {
 	ivec2 id = ivec2(gl_GlobalInvocationID.xy);
-	if(id.x > params.gridSize || id.y > params.gridSize) {
+	if(id.x >= params.gridSize || id.y >= params.gridSize) {
 		return;
 	}
 
@@ -94,10 +94,9 @@ void main() {
 		return;
 	}
 
-	// NOTE: not sure if 100% correct verlet integration
 	float dt = params.dt;
 	vec3 a = totalForce(node, id) / params.mass;
 	node.pos.xyz = node.pos.xyz + dt * node.vel.xyz + 0.5 * dt * dt * a;
-	node.vel.xyz = node.vel.xyz + 0.5 * dt * a;
+	node.vel.xyz = node.vel.xyz + dt * a;
 	outNodes[nid] = node;
 }
