@@ -57,7 +57,7 @@ public:
 	static constexpr auto historyFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
 	// TODO: we can probably use a 8-bit buffer here with a proper encoding
-	static constexpr auto velocityFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto velocityFormat = vk::Format::r32g32b32a32Sfloat;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -65,8 +65,8 @@ public:
 			return false;
 		}
 
-		camera_.perspective.near = 0.05f;
-		camera_.perspective.far = 10.f;
+		camera_.perspective.near = 0.1f;
+		camera_.perspective.far = 5.f;
 		return true;
 	}
 
@@ -447,8 +447,10 @@ public:
 			{fragShader, vk::ShaderStageBits::fragment},
 		}}}};
 
+		auto atts = {tkn::noBlendAttachment()};
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
-		gpi.blend.logicOpEnable = false;
+		gpi.blend.attachmentCount = atts.size();
+		gpi.blend.pAttachments = atts.begin();
 		pp_.pipe = {dev, gpi.info()};
 	}
 
@@ -458,6 +460,7 @@ public:
 			// linear sampler for history access important
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
+				// vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
@@ -729,7 +732,7 @@ public:
 		std::array<vk::ClearValue, 3u> cv {};
 		cv[0] = {{0.f, 0.f, 0.f, 0.f}}; // color
 		cv[1].depthStencil = {1.f, 0u};
-		cv[3] = {{0.f, 0.f, 0.f, 0.f}}; // TODO: not sure...
+		cv[3] = {{0.f, 0.f, 0.f, 0.f}}; // velocity
 		vk::cmdBeginRenderPass(cb, {offscreen_.rp, offscreen_.fb,
 			{0u, 0u, width, height},
 			std::uint32_t(cv.size()), cv.data()}, {});
@@ -1153,8 +1156,8 @@ protected:
 		nytl::Mat4f lastProj = nytl::identity<4, float>();
 		nytl::Vec2f lastJitter;
 
-		float minFac {0.85};
-		float maxFac {0.98};
+		float minFac {0.90};
+		float maxFac {0.99};
 		u32 mode {taaModeClipColor};
 
 		std::vector<nytl::Vec2f> samples;

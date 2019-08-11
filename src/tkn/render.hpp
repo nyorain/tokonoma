@@ -16,7 +16,7 @@ void cmdBindComputeDescriptors(vk::CommandBuffer, vk::PipelineLayout,
 
 void cmdCopyBuffer(vk::CommandBuffer, vpp::BufferSpan src, vpp::BufferSpan dst);
 
-/// Returns a PipelineColorBlendAttachmentState that disabled blending
+/// Returns a PipelineColorBlendAttachmentState that disables blending
 /// but allows all components to be written.
 const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
 

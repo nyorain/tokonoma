@@ -41,6 +41,16 @@ vec2 pixelSize = 1.f / size;
 // about different conventions.
 const vec3 luminanceFac = vec3(0.25, 0.65, 0.1);
 
+vec3 T(vec3 col) {
+	// return col / (1 + dot(luminanceFac, col));
+	return col;
+}
+
+vec3 iT(vec3 col) {
+	// return col / (1 - dot(luminanceFac, col));
+	return col;
+}
+
 vec3 find_closest_fragment_3x3(vec2 uv) {
 	vec2 dd = pixelSize;
 	vec2 du = vec2(dd.x, 0.0);
@@ -146,16 +156,60 @@ float irdr(vec2 uv, float velZ, float projZ, float histZ) {
 	return correctness;
 }
 
-vec3 colorClip(vec2 juv, vec3 color, vec3 hist) {
-	const ivec2 off01 = ivec2(-1, 1);
-	const ivec2 off11 = ivec2(1, 1);
+vec3 min(vec3 a, vec3 b, vec3 c, vec3 d) {
+	return min(a, min(b, min(c, d)));
+}
 
-	vec3 c00 = textureOffset(renderedTex, juv, -off11).rgb;
-	vec3 c10 = textureOffset(renderedTex, juv, -off01).rgb;
-	vec3 c01 = textureOffset(renderedTex, juv, +off01).rgb;
-	vec3 c11 = textureOffset(renderedTex, juv, +off11).rgb;
-	// vec3 c2 = textureOffset(renderedTex, juv, +off11 + off01).rgb;
-	// vec3 c3 = textureOffset(renderedTex, juv, -off11 - off01).rgb;
+vec3 max(vec3 a, vec3 b, vec3 c, vec3 d) {
+	return max(a, max(b, max(c, d)));
+}
+
+vec3 colorClip2(vec2 juv, vec3 color, vec3 hist, out float contrast) {
+	const ivec2 dx = ivec2(1, 0);
+	const ivec2 dy = ivec2(0, 1);
+
+	vec3 c00 = T(textureOffset(renderedTex, juv, -dy - dx).rgb);
+	vec3 c01 = T(textureOffset(renderedTex, juv, -dy).rgb);
+	vec3 c02 = T(textureOffset(renderedTex, juv, -dy + dx).rgb);
+	vec3 c10 = T(textureOffset(renderedTex, juv, -dx).rgb);
+	// vec3 c11 = textureOffset(renderedTex, juv, ivec2(0, 0)).rgb;
+	vec3 c12 = T(textureOffset(renderedTex, juv, dx).rgb);
+	vec3 c20 = T(textureOffset(renderedTex, juv, dy - dx).rgb);
+	vec3 c21 = T(textureOffset(renderedTex, juv, dy).rgb);
+	vec3 c22 = T(textureOffset(renderedTex, juv, dy + dx).rgb);
+
+	vec3 cmin = min(c00, c01, c02, min(c10, c12, color, min(c20, c21, c22, color)));
+	vec3 cmax = max(c00, c01, c02, max(c10, c12, color, max(c20, c21, c22, color)));
+	vec3 cavg = (c00 + c01 + c02 + c10 + c12 + color + c20 + c21 + c22) / 9.0;
+
+	// rounded
+	vec3 cmin5 = min(c01, c10, c12, min(color, c21));
+	vec3 cmax5 = max(c01, c10, c12, max(color, c21));
+	vec3 cavg5 = (c01 + c10 + c12 + c21 + color) / 5.0;
+	cmin = 0.5 * (cmin + cmin5);
+	cmax = 0.5 * (cmax + cmax5);
+	cavg = 0.5 * (cavg + cavg5);
+
+	contrast = length(cmax - cmin);
+
+	hist.rgb = clip_aabb(cmin, cmax, cavg, hist.rgb);
+	return hist.rgb;
+}
+
+vec3 colorClip(vec2 juv, vec3 color, vec3 hist, float lvel) {
+	// const vec2 off11 = exp(-100 * lvel) * vec2(1, 1) / textureSize(renderedTex, 0);
+	// const vec2 off01 = exp(-100 * lvel) * vec2(-1, 1) / textureSize(renderedTex, 0);
+	// const vec2 off11 = exp(-1 * lvel) * vec2(1, 1) / textureSize(renderedTex, 0);
+	// const vec2 off01 = exp(-1 * lvel) * vec2(-1, 1) / textureSize(renderedTex, 0);
+	const vec2 off11 = vec2(1, 1) / textureSize(renderedTex, 0);
+	const vec2 off01 = vec2(-1, 1) / textureSize(renderedTex, 0);
+	// const ivec2 off01 = vec2(1, 0);
+	// const ivec2 off10 = vec2(0, 1);
+
+	vec3 c00 = texture(renderedTex, juv -off11).rgb;
+	vec3 c10 = texture(renderedTex, juv -off01).rgb;
+	vec3 c01 = texture(renderedTex, juv +off01).rgb;
+	vec3 c11 = texture(renderedTex, juv +off11).rgb;
 
 	vec3 cmin = min(color, min(c00, min(c10, min(c01, c11))));
 	vec3 cmax = max(color, max(c00, max(c10, max(c01, c11))));
@@ -166,7 +220,7 @@ vec3 colorClip(vec2 juv, vec3 color, vec3 hist) {
 	vec3 cavg = (color + c00 + c10 + c01 + c11) / 5;
 
 	// hist.rgb = clamp(hist.rgb, cmin, cmax);
-	hist.rgb = clip_aabb(cmin, cmax, clamp(cavg, cmin, cmax), hist.rgb);
+	hist.rgb = clip_aabb(cmin, cmax, cavg, hist.rgb);
 	return hist.rgb;
 }
 
@@ -207,7 +261,7 @@ void main() {
 	vel.y *= -1.f;
 
 	// vec3 world = reconstructWorldPos(uv, ubo.invProj, depth);
-	vec3 color = texture(renderedTex, uv).rgb;
+	vec3 color = T(texture(renderedTex, uv).rgb);
 	// vec3 color = world;
 
 	// vec3 proj = multPos(ubo.lastProj, world);
@@ -217,12 +271,34 @@ void main() {
 	// check if history is still in screen
 	if(tc.xy == clamp(tc.xy, 0, 1)) { // also skip for depth == 1.0?
 		vec4 hist = texture(inHistory, tc.xy);
+		hist = vec4(T(hist.rgb), hist.a);
 
 		float weight = 0.0;
 		if(ubo.mode == modeClipColor) {
-			hist.rgb = colorClip(uv, color, hist.rgb);
-			weight = 1.f;
+			// hist.rgb = colorClip(uv, color, hist.rgb, length(vel));
+			float contrast;
+			vec3 clipped = colorClip2(uv, color, hist.rgb, contrast);
+			// weight = 1.f;
+			// if clipped and hist are almost equal (i.e. no or not
+			// much clipping happened) use a higher factor
+			hist.rgb = clipped;
+			// weight = irdr(uv, vel.z, tc.z, hist.w);
 			z = -1.f;
+			// float npz = hist.w + vel.z;
+			// z = mix(z, npz, weight);
+
+			// the larger the difference between the old and new luminance
+			// values, the more we trust the new value
+			float lum0 = dot(luminanceFac, color);
+			float lum1 = dot(luminanceFac, hist.rgb);
+			float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.2)));
+			diff = 1.0 - diff;
+			float fac1 = exp(-5 * length(clipped - hist.rgb));
+
+			weight = mix(ubo.minFac, ubo.maxFac, (diff * diff + fac1) / 2);
+			// float fac2 = 1 - exp(-1 * contrast);
+			// weight = mix(ubo.minFac, ubo.maxFac, (diff * diff + fac1 + fac2) / 3);
+			/*
 		} else if(ubo.mode == modeReprDepthRej) {
 			weight = irdr(uv, vel.z, tc.z, hist.w);
 			// if(weight < 0.1) {
@@ -236,9 +312,15 @@ void main() {
 			// float npz = depthtoz(multPos(ubo.proj, world).z, ubo.near, ubo.far);
 			float npz = hist.w + vel.z;
 			z = mix(z, npz, weight * ubo.maxFac);
+
+			float lum0 = dot(luminanceFac, color);
+			float lum1 = dot(luminanceFac, hist.rgb);
+			float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.1)));
+			diff = 1.0 - diff;
+			weight *= mix(ubo.minFac, ubo.maxFac, diff * diff);
 		} else if(ubo.mode == modeCombined) {
 			float dweight = irdr(uv, vel.z, tc.z, hist.w);
-			vec3 dcol = colorClip(uv, color, hist.rgb);
+			vec3 dcol = colorClip(uv, color, hist.rgb, length(vel));
 
 			// debugging
 			// if(dweight < 0.5) {
@@ -273,6 +355,7 @@ void main() {
 			z = mix(z, npz, weight * ubo.maxFac);
 		} else if(ubo.mode == modePass) {
 			weight = 1.f;
+			*/
 		}
 
 		// float lum0 = dot(luminanceFac, color);
@@ -281,11 +364,12 @@ void main() {
 		// diff = 1.0 - diff;
 		// weight *= mix(diff * diff, ubo.minFac, ubo.maxFac);
 		// weight *= mix(weight, ubo.minFac, ubo.maxFac);
-		weight *= ubo.maxFac;
+		// weight *= ubo.maxFac;
 
 		// weight *= 1 - 0.05 * distance(hist.rgb, color);
 		// float weight = 1 - 0.1 * distance(hist.rgb, color);
 
+		// color = mix(color, hist.rgb, weight);
 		color = mix(color, hist.rgb, weight);
 	} 
 
@@ -297,5 +381,5 @@ void main() {
 	}
 
 	// write the result into the history buffer
-	imageStore(outHistory, ivec2(pixel), vec4(color, z));
+	imageStore(outHistory, ivec2(pixel), vec4(iT(color), z));
 }

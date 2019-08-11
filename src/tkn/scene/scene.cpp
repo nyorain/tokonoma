@@ -86,7 +86,7 @@ tkn::Texture loadImage(Texture::InitData& data,
 	// check tex.pixel_type. Also support other image parameters
 	// TODO: we currently don't support hdr images. Check the
 	// specified image format
-	if(!tex.uri.empty()) {
+	if(tex.image.empty() && !tex.uri.empty()) {
 		auto full = std::string(path);
 		full += tex.uri;
 		return {data, wb, read(full), params};
@@ -1404,7 +1404,6 @@ Sampler::Sampler(const vpp::Device& dev, const gltf::Sampler& sampler,
 	sci.maxLod = 100.f; // all levels
 	sci.anisotropyEnable = maxAnisotropy != 1.f;
 	sci.maxAnisotropy = maxAnisotropy;
-	sci.mipLodBias = 0.f;
 	sci.compareEnable = false;
 	sci.borderColor = vk::BorderColor::floatOpaqueWhite;
 	this->sampler = {dev, sci};

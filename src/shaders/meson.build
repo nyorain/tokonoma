@@ -180,6 +180,12 @@ shaders_src = {
 		['body.vert'],
 		['body.frag'],
 	],
+	'repro': [
+		['model.vert'],
+		['model.frag'],
+		['repro.frag'],
+		['depth.frag'],
+	],
 }
 
 # build them

@@ -417,7 +417,7 @@ bool App::init(nytl::Span<const char*> args) {
 		{size.x, size.y}, prefs);
 
 	impl_->depthFormat = vk::Format::undefined;
-	if(needsDepth()) {
+	if(/*needsDepth()*/ true) { // TODO: really always query it?
 		// find supported depth format
 		vk::ImageCreateInfo img; // dummy for property checking
 		img.extent = {1, 1, 1};
@@ -646,7 +646,7 @@ std::vector<vk::ClearValue> App::clearValues() {
 		clearValues.push_back({c});
 	}
 
-	if(depthFormat() != vk::Format::undefined) {
+	if(depthFormat() != vk::Format::undefined && needsDepth()) {
 		clearValues.emplace_back(c).depthStencil = {1.f, 0u};
 	}
 
@@ -662,7 +662,7 @@ void App::initBuffers(const vk::Extent2D& size, nytl::Span<RenderBuffer> bufs) {
 		attachments.push_back(impl_->multisampleTarget.vkImageView());
 	}
 
-	if(depthFormat() != vk::Format::undefined) {
+	if(depthFormat() != vk::Format::undefined && needsDepth()) {
 		impl_->depthTarget = createDepthTarget(size);
 		attachments.push_back(impl_->depthTarget.vkImageView());
 	}
@@ -725,7 +725,7 @@ vpp::RenderPass App::createRenderPass() {
 	}
 
 	// optional depth target
-	if(depthFormat() != vk::Format::undefined) {
+	if(depthFormat() != vk::Format::undefined && needsDepth()) {
 		// depth attachment
 		attachments[aid].format = depthFormat();
 		attachments[aid].samples = samples();
@@ -783,7 +783,7 @@ vpp::RenderPass App::createRenderPass() {
 	subpass.pipelineBindPoint = vk::PipelineBindPoint::graphics;
 	subpass.colorAttachmentCount = 1;
 	subpass.pColorAttachments = &colorReference;
-	if(depthFormat() != vk::Format::undefined) {
+	if(depthFormat() != vk::Format::undefined && needsDepth()){
 		subpass.pDepthStencilAttachment = &depthReference;
 	}
 
