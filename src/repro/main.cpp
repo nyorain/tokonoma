@@ -102,9 +102,9 @@ public:
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
-		sci.addressModeU = vk::SamplerAddressMode::repeat;
-		sci.addressModeV = vk::SamplerAddressMode::repeat;
-		sci.addressModeW = vk::SamplerAddressMode::repeat;
+		sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
+		sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
+		sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
 		sci.magFilter = vk::Filter::linear;
 		sci.minFilter = vk::Filter::linear;
 		sci.mipmapMode = vk::SamplerMipmapMode::linear;
