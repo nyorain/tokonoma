@@ -4,6 +4,7 @@
 #include <tkn/transform.hpp>
 #include <tkn/render.hpp>
 #include <ny/mouseButton.hpp>
+#include <nytl/approxVec.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/matOps.hpp>
 #include <vpp/sharedBuffer.hpp>
@@ -34,6 +35,7 @@ struct Body {
 	struct FiniteElem {
 		unsigned a, b, c; // indices into points; form triangle
 		nytl::Mat<6, 6, float> K; // precomputed stiffness matrix
+		// TODO: shouldn't this be a matrix?
 		float invm; // inverse mass (inverse lumped mass matrix diagonal entry)
 	};
 
@@ -153,16 +155,21 @@ nytl::Mat2f F(const Triangle& tri,
 	float n3x = (tri.a.y - tri.b.y) / vt2;
 	float n3y = (tri.b.x - tri.a.x) / vt2;
 
+	// TODO: not sure about 1+
+	// should be right though since F = E + grad(u), right?
+	// and grad(u) = sum(grad(N_i) * u_i)
 	return {
-		n1x * u1.x + n2x * u2.x + n3x * u3.x,
+		1 + n1x * u1.x + n2x * u2.x + n3x * u3.x,
 		n1y * u1.x + n2y * u2.x + n3y * u3.x,
 		n1x * u1.y + n2x * u2.y + n3x * u3.y,
-		n1y * u1.y + n2y * u2.y + n3y * u3.y,
+		1 + n1y * u1.y + n2y * u2.y + n3y * u3.y,
 	};
 }
 
 // Using simple euler integration
 void step(Body& fe, float dt) {
+	// dlg_info(" ============= STEP ================ ");
+
 	// integrate velocity
 	for(auto& point : fe.points) {
 		point.u += dt * point.udot;
@@ -175,7 +182,11 @@ void step(Body& fe, float dt) {
 		auto& c = fe.points[tri.c];
 
 		auto f = F({a.pos, b.pos, c.pos}, a.u, b.u, c.u);
-		auto [u, sig, vt] = svd(f);
+		auto [u, sig, v] = svd(f);
+		auto vt = transpose(v);
+		dlg_assertm(u * sig * vt == nytl::approx(f, 0.01), "{} \nvs\n {}",
+			u * sig * vt, f);
+
 		auto rot = u * vt;
 		auto r = nytl::Mat<6, 6, float> {
 			rot[0][0], rot[0][1], 0, 0, 0, 0,
@@ -186,18 +197,35 @@ void step(Body& fe, float dt) {
 			0, 0, 0, 0, rot[1][0], rot[1][1],
 		};
 
-		// dlg_info("rot: {}", u * vt);
+		// dlg_info("rot: {}", rot);
 		// dlg_info("sig: {}", sig);
-		auto K = r * tri.K * transpose(r);
+		// auto K = r * tri.K * transpose(r);
 		// auto K = tri.K;
 
+		nytl::Vec<6, float> x = {
+			a.pos.x, a.pos.y,
+			b.pos.x, b.pos.y,
+			c.pos.x, c.pos.y,
+		};
 		nytl::Vec<6, float> uv = {
 			a.u.x, a.u.y,
 			b.u.x, b.u.y,
 			c.u.x, c.u.y,
 		};
 
-		auto dud = -dt * tri.invm * K * uv; // delta u dot
+		// nytl::Vec<6, float> f0 = r * tri.K * x;
+		// nytl::Vec<6, float> fcorot = -r * tri.K * transpose(r) * (x + uv);
+		// auto force = fcorot + f0;
+		auto force = -r * tri.K * (transpose(r) * (x + uv) - x);
+
+		// basic friction
+		force -= 0.01 * nytl::Vec<6, float>{
+			a.udot.x, a.udot.y,
+			b.udot.x, b.udot.y,
+			c.udot.x, c.udot.y,
+		};
+
+		auto dud = dt * tri.invm * force;
 		a.udot.x += dud[0];
 		a.udot.y += dud[1];
 		b.udot.x += dud[2];
@@ -209,11 +237,11 @@ void step(Body& fe, float dt) {
 
 class SoftBodyApp : public tkn::App {
 public:
-	static constexpr auto width = 20u;
-	static constexpr auto height = 2u;
-	static constexpr float scale = 0.3;
-	static constexpr float E = 1.0;
-	static constexpr float v = 0.0;
+	static constexpr auto width = 26u;
+	static constexpr auto height = 4u;
+	static constexpr float scale = 0.25;
+	static constexpr float E = 50.0;
+	static constexpr float v = 0.3;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -351,7 +379,7 @@ public:
 				auto id = i * width;
 				auto& p = body_.points[id];
 				auto d = levelAttractor_ - (p.pos + p.u);
-				body_.points[id].udot += dt * d;
+				body_.points[id].udot += 10 * dt * d;
 			}
 
 			// body_.points[0].u = levelAttractor_ - body_.points[0].pos;
@@ -360,7 +388,7 @@ public:
 
 		// gravity interaction
 		for(auto& p : body_.points) {
-			p.udot.y -= dt * 1.0;
+			p.udot.y -= dt * 9.81;
 		}
 
 		// fix center points
@@ -373,7 +401,8 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
-		for(auto i = 0u; i < 10; ++i) {
+		// TODO: accum system and match dt
+		for(auto i = 0u; i < 20; ++i) {
 			step(0.001);
 		}
 		App::scheduleRedraw();
