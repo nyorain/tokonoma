@@ -108,8 +108,9 @@ float voronoiNoise(vec2 v) {
 	return sqrt(minDistSqr);
 }
 
-// TODO: simplex noise
-
+// Simple fbm implementation (noise octaves)
+// Rather for reference than useful, you usually want to modify
+// it for the specific usecase to get something interesting
 #ifndef FBM_OCTAVES
 	#define FBM_OCTAVES 8
 #endif
