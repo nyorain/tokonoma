@@ -237,10 +237,10 @@ void step(Body& fe, float dt) {
 
 class SoftBodyApp : public tkn::App {
 public:
-	static constexpr auto width = 26u;
-	static constexpr auto height = 4u;
+	static constexpr auto width = 32u;
+	static constexpr auto height = 3u;
 	static constexpr float scale = 0.25;
-	static constexpr float E = 50.0;
+	static constexpr float E = 500.0;
 	static constexpr float v = 0.3;
 
 public:
@@ -379,7 +379,7 @@ public:
 				auto id = i * width;
 				auto& p = body_.points[id];
 				auto d = levelAttractor_ - (p.pos + p.u);
-				body_.points[id].udot += 10 * dt * d;
+				body_.points[id].udot += 100 * dt * d;
 			}
 
 			// body_.points[0].u = levelAttractor_ - body_.points[0].pos;
@@ -402,8 +402,8 @@ public:
 	void update(double dt) override {
 		App::update(dt);
 		// TODO: accum system and match dt
-		for(auto i = 0u; i < 20; ++i) {
-			step(0.001);
+		for(auto i = 0u; i < 10; ++i) {
+			step(0.002);
 		}
 		App::scheduleRedraw();
 	}

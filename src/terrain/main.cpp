@@ -33,7 +33,8 @@ public:
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
-		vk::cmdDraw(cb, size_.x * size_.y, 1, 0, 0);
+		// vk::cmdDraw(cb, size_.x * size_.y, 1, 0, 0);
+		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 	}
 
 	void update(double dt) override {
@@ -47,9 +48,9 @@ public:
 	vpp::TrDs ds_;
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
-	vpp::SubBuffer vertices_;
-	vpp::SubBuffer indices_;
-	nytl::Vec2ui size_ {128, 128};
+	// vpp::SubBuffer vertices_;
+	// vpp::SubBuffer indices_;
+	// nytl::Vec2ui size_ {128, 128};
 };
 
 int main(int argc, const char** argv) {
