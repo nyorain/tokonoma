@@ -9,11 +9,17 @@
 #include <nytl/vec.hpp>
 #include <nytl/span.hpp>
 
+#define STB_RECT_PACK_IMPLEMENTATION
 #include "stb_rect_pack.h"
 #include "atlas.hpp"
 
+#include <random>
+
 namespace gltf = tkn::gltf;
 using namespace tkn::types;
+
+constexpr auto atlasWidth = 2 * 8192u;
+constexpr auto atlasHeight = 2 * 8192u;
 
 // Returns the number of mip levels in a full mip chain
 unsigned mipLevels(unsigned width, unsigned height) {
@@ -80,13 +86,13 @@ u64 textureSpaceAtlasPOT(Textures textures) {
 	std::vector<atlas::Tex> atex;
 	for(auto& tex : textures) {
 		auto& at = atex.emplace_back();
-		at.width = tex.x;
-		at.height = tex.y;
+		at.width = atlas::npot(tex.x);
+		at.height = atlas::npot(tex.y);
 	}
 
 	u64 used = 0u;
 	while(!atex.empty()) {
-		atlas::Rect rect = {0, 0, 8192, 8192};
+		atlas::Rect rect = {0, 0, atlasWidth, atlasHeight};
 		atlas::fill(atex, rect, true);
 
 		nytl::Vec2ui max {0, 0};
@@ -132,20 +138,24 @@ u64 textureSpaceAtlasLUTNaive(Textures textures) {
 	}
 
 	u64 used = 0u;
-	while(!atex.empty()) {
-		atlas::Rect rect = {0, 0, 8192, 8192};
-		atlas::fill(atex, rect, true);
+	nytl::Vec2ui max {0, 0};
+	auto eraser = [&](const atlas::Tex& t) {
+		if(!t.placed) {
+			return false;
+		}
 
-		nytl::Vec2ui max {0, 0};
-		auto eraser = [&](const atlas::Tex& t) {
-			if(t.x + t.width > max.x) {
-				max.x = t.x + t.width;
-			}
-			if(t.y + t.height > max.y) {
-				max.y = t.y + t.height;
-			}
-			return t.placed;
-		};
+		if(t.x + t.width > max.x) {
+			max.x = t.x + t.width;
+		}
+		if(t.y + t.height > max.y) {
+			max.y = t.y + t.height;
+		}
+		return true;
+	};
+
+	while(!atex.empty()) {
+		atlas::Rect rect = {0, 0, atlasWidth, atlasHeight};
+		atlas::fill(atex, rect, false);
 
 		atex.erase(std::remove_if(atex.begin(), atex.end(), eraser), atex.end());
 
@@ -167,23 +177,87 @@ u64 textureSpaceAtlasLUTNaive(Textures textures) {
 
 // more advanced rect packing using stb_rect_pack (skyline algorithm)
 u64 textureSpaceAtlasLUTSTB(Textures textures) {
-	// TODO
-}
+	stbrp_context ctx {};
+	stbrp_node* nodes = static_cast<stbrp_node*>(std::calloc(atlasWidth, sizeof(stbrp_node)));
 
-
-// TODO: test different distributions
-int main(int argc, const char** argv) {
-	if(argc < 2) {
-		dlg_fatal("No filepath given");
-		return -1;
+	std::vector<stbrp_rect> rects;
+	for(auto& tex : textures) {
+		auto levels = mipLevels(tex.x, tex.y);
+		auto width = tex.x;
+		auto height = tex.y;
+		for(auto i = 0u; i < levels; ++i) {
+			auto& rect = rects.emplace_back();
+			rect.w = width;
+			rect.h = height;
+			rect.was_packed = 0;
+			width = std::max(1u, width >> 1);
+			height = std::max(1u, height >> 1);
+		}
 	}
 
+	nytl::Vec2ui max {0, 0};
+	auto eraser = [&](const stbrp_rect& r) {
+		if(!r.was_packed) {
+			return false;
+		}
+
+		if(r.x + r.w > max.x) {
+			max.x = r.x + r.w;
+		}
+		if(r.y + r.h > max.y) {
+			max.y = r.y + r.h;
+		}
+		return true;
+	};
+
+	u64 used = 0u;
+	while(true) {
+		stbrp_init_target(&ctx, atlasWidth, atlasHeight, nodes, atlasWidth);
+		auto res = stbrp_pack_rects(&ctx, rects.data(), rects.size());
+
+		rects.erase(std::remove_if(rects.begin(), rects.end(), eraser), rects.end());
+
+		dlg_assert(rects.empty() == (res == 1));
+		if(res == 1) { // all rects placed
+			used += max.x * max.y;
+			break;
+		}
+
+		used += atlasWidth * atlasHeight;
+	}
+
+	return used;
+}
+
+using PlacementAlgorithm = u64(*)(Textures);
+
+struct {
+	const char* name;
+	PlacementAlgorithm algorithm;
+} algorithms[] = {
+	{"simple/bindless", textureSpaceSimple},
+	{"layered", textureSpaceLayered},
+	{"atlasPOT", textureSpaceAtlasPOT},
+	{"atlasLUT (simple packing)", textureSpaceAtlasLUTNaive},
+	{"atlasLUT (stb rect packing)", textureSpaceAtlasLUTSTB},
+};
+
+void printReqs(Textures textures) {
+	for(auto& algorithm : algorithms) {
+		auto needed = algorithm.algorithm(textures);
+		auto kb = needed / 1024.f;
+		auto mb = kb / 1024.f;
+		dlg_info("{}: {} ({} KB; {} MB)", algorithm.name, needed, kb, mb);
+	}
+}
+
+void evalGltfModel(const char* filepath) {
 	gltf::TinyGLTF loader;
 	gltf::Model model;
 	std::string err;
 	std::string warn;
 
-	auto res = loader.LoadASCIIFromFile(&model, &err, &warn, argv[1]);
+	auto res = loader.LoadASCIIFromFile(&model, &err, &warn, filepath);
 
 	// error, warnings
 	auto pos = 0u;
@@ -203,10 +277,94 @@ int main(int argc, const char** argv) {
 
 	if(!res) {
 		dlg_fatal(">> Failed to parse model");
-		return {};
+		return;
 	}
 
+	std::vector<nytl::Vec2ui> textures;
 	for(auto& image : model.images) {
-		dlg_info("{} {}", image.width, image.height);
+		dlg_assert(image.width > 0 && image.height > 0);
+		auto w = unsigned(image.width);
+		auto h = unsigned(image.height);
+		dlg_assertm(w <= atlasWidth && h <= atlasHeight, "{} {}", w, h);
+		textures.push_back({w, h});
+	}
+
+	printReqs(textures);
+}
+
+using Distribution = std::function<unsigned()>;
+void evalDistribution(const Distribution& distr) {
+	struct Stats {
+		float best {std::numeric_limits<float>::infinity()};
+		float worst {0.f};
+		float avg {0.f};
+		unsigned count {0u};
+	};
+	std::array<Stats, 4> stats;
+
+	std::vector<nytl::Vec2ui> textures;
+	for(auto count = 10u; count < 100; ++count) {
+		dlg_info("count: {}", count);
+		for(auto n = 0; n < 20; ++n) {
+			// dlg_info("  n: {}", n);
+			textures.clear();
+			for(auto i = 0u; i < count; ++i) {
+				unsigned w = distr();
+				unsigned h = distr();
+				textures.push_back({w, h});
+			}
+
+			auto base = textureSpaceSimple(textures);
+			for(auto i = 0u; i < 4; ++i) {
+				auto needed = algorithms[1 + i].algorithm(textures);
+				auto fac = float(needed) / base;
+				if(fac > stats[i].worst) {
+					stats[i].worst = fac;
+				}
+				if(fac < stats[i].best) {
+					stats[i].best = fac;
+				}
+				++stats[i].count;
+				stats[i].avg += (fac - stats[i].avg) / float(stats[i].count);
+			}
+		}
+	}
+
+	for(auto i = 0u; i < 4; ++i) {
+		dlg_info("{}", algorithms[1 + i].name);
+		dlg_info("  best: {}", stats[i].best);
+		dlg_info("  worst: {}", stats[i].worst);
+		dlg_info("  avg: {}", stats[i].avg);
+	}
+}
+
+int main(int argc, const char** argv) {
+	if(argc >= 2) {
+		evalGltfModel(argv[1]);
+		return EXIT_SUCCESS;
+	}
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+	/*
+	{
+		dlg_info("distribution: uniform pot");
+		std::uniform_int_distribution<unsigned> dis(0, 12);
+		evalDistribution([&]{
+			return unsigned(std::pow(2, dis(gen)));
+		});
+	}
+	*/
+
+	{
+		dlg_info("distribution: lognormal");
+		std::lognormal_distribution<float> dis(6.f, 1.25f);
+		// for(auto i = 0u; i < 100; ++i) {
+		// 	dlg_info("{}", dis(gen));
+		// }
+		evalDistribution([&]{
+			return std::min(unsigned(dis(gen)), 8192u);
+		});
 	}
 }
