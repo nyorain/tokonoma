@@ -26,6 +26,7 @@ deferred_glsl = include_glsl + scene_glsl + files(
 )
 
 fluid_glsl = files('../fluids/fluid.glsl')
+scatter_glsl = files('../terrain/scatter.glsl')
 
 # shader specifications
 # contains multiple shader groups, specified like this:
@@ -185,6 +186,10 @@ shaders_src = {
 		['model.frag'],
 		['repro.frag'],
 		['depth.frag'],
+	],
+	'terrain': [
+		['sky.vert'],
+		# ['sky.frag', scatter_glsl],
 	],
 }
 

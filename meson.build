@@ -167,9 +167,10 @@ executable('tta',
 	'src/playground/tta.cpp',
 	dependencies: tkn_dep)
 
-executable('terrain',
-	'src/terrain/main.cpp',
-	dependencies: tkn_dep)
+executable('terrain', [
+		'src/terrain/main.cpp',
+		terrain_shaders,
+	], dependencies: tkn_dep)
 
 executable('fem', [
 		'src/fem/main.cpp',

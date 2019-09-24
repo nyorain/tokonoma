@@ -4,7 +4,6 @@
 // - https://www.alanzucconi.com/2017/10/10/atmospheric-scattering-1/ and following
 // - https://developer.nvidia.com/gpugems/GPUGems2/gpugems2_chapter16.html
 // - https://github.com/cosmoscout/csp-atmospheres/
-// - https://github.com/cosmoscout/csp-atmospheres/
 // - https://github.com/OpenSpace/OpenSpace/blob/master/modules/atmosphere
 // - https://davidson16807.github.io/tectonics.js//2019/03/24/fast-atmospheric-scattering.html
 
@@ -16,9 +15,9 @@
 const float pi = 3.1415926535897932;
 // scale height: how slow density of relevant particles 
 // decays when going up in atmosphere
-const float rayleighH = 8500;
+const float rayleighH = 2000;
 const float planetRadius = 6000;
-const float atmosphereRadius = 10000;
+const float atmosphereRadius = 35000;
 
 // rayleigh scattering coefficients roughly for RGB wavelengths, from
 // http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
@@ -41,7 +40,7 @@ float phase(float cosTheta, float g) {
 	const float fac = 0.11936620731; // 3 / (8 * pi) for normalization
 	float gg = g * g;
 	float cc = cosTheta * cosTheta;
-	return fac * ((1 - gg) * 1 + cc) / ((2 + gg) * pow(1 + gg * - 2 * g * c, 1.5));
+	return fac * ((1 - gg) * 1 + cc) / ((2 + gg) * pow(1 + gg * - 2 * g * cosTheta, 1.5));
 }
 
 // optimized version of phase(cosTheta, g = 0)
@@ -56,7 +55,7 @@ float height(vec3 pos) {
 }
 
 float opticalDepth(vec3 from, vec3 to) {
-	const uint numSteps = 20;
+	const uint numSteps = 5u;
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
 	float res = 0.0;
@@ -70,11 +69,12 @@ float opticalDepth(vec3 from, vec3 to) {
 	return res;
 }
 
+// assumes that rd is normalized
 float intersectRaySphere(vec3 ro, vec3 rd, vec3 sc, float sr) {
 	vec3 oc = ro - sc;
-	float a = dot(oc, rd);
-	float b = dot(oc, oc) - sr * sr;
-	float c = a * a - b;
+	float a = dot(oc, rd); // p/2
+	float b = dot(oc, oc) - sr * sr; // q
+	float c = a * a - b; // (p/2)^2 - q
 
 	// for c == 0.0 there is exactly one intersection (tangent)
 	// for c > 0.0, there are two intersections
@@ -82,9 +82,9 @@ float intersectRaySphere(vec3 ro, vec3 rd, vec3 sc, float sr) {
 		return -1.0;
 	}
 
-	// this is the first intersection (smaller t)
-	// the larger intersection would be -b + sqrt(c)
-	return -b - sqrt(c);
+	c = sqrt(c);
+	float r1 = -a - c;
+	return (r1 >= 0) ? r1 : -a + c;
 }
 
 // sun here doesn't have a position but only a direction
@@ -92,7 +92,7 @@ float intersectRaySphere(vec3 ro, vec3 rd, vec3 sc, float sr) {
 // the atmosphere/scales unknown. Assumed to be normalized
 // NOTE: we assume here that the viewer is inside the atmosphere,
 // requires slight tweaks (e.g. for intersection) when that isn't the case
-vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir) {
+vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir, out float totalOD) {
 	const uint numSteps = 50u;
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
@@ -103,7 +103,12 @@ vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir) {
 
 	for(uint i = 0u; i < numSteps; ++i) {
 		float h = height(pos);
-		od += density(height(pos), rayleighH) * dt;
+		if(h < 0) {
+			break;
+		}
+
+		float d = density(height(pos), rayleighH);
+		od += d * dt;
 		pos += delta;
 
 		// sample incoming scattering of secondary ray at pos
@@ -117,10 +122,18 @@ vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir) {
 		//   even if the viewer is inside the atmosphere, remember
 		//   this are secondary rays!)
 		if(srs > 0.f && sre < 0.f) {
-			vec3 sre = pos + min(srs, sre) * toSun;
-			res += exp(-scatteringCoeffs * od * opticalDepth(pos, sre)) * dt;
+			vec3 sre = pos - srs * sunDir;
+			// res += scatteringCoeffs * exp(-scatteringCoeffs * (od + opticalDepth(pos, sre))) * dt;
+			res += d * exp(-scatteringCoeffs * (od + opticalDepth(pos, sre))) * dt;
+		} else if(srs == -1.f) {
+			// res += vec3(0, 0, 0.1);
+		} else if(srs < 0.f) {
+			// res += vec3(0.1, 0, 0);
+		} else if(sre > 0.f) {
+			// res += vec3(0, 0.1, 0);
 		}
 	}
 
-	return res;
+	totalOD = od;
+	return res * scatteringCoeffs;
 }
