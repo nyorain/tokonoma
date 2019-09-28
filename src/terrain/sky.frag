@@ -11,8 +11,8 @@ layout(set = 0, binding = 0) uniform Camera {
 	// vec3 position;
 } camera;
 
-const vec3 sunDir = normalize(vec3(1.0, 0.4, 0.0));
-const vec3 sunColor = 100 * vec3(1, 1, 1);
+const vec3 sunDir = normalize(vec3(1.0, 0.0, 0.0));
+const vec3 sunColor = 10 * vec3(1, 1, 1);
 
 void main() {
 	vec3 dir = normalize(pos);

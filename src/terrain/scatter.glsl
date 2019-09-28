@@ -15,9 +15,9 @@
 const float pi = 3.1415926535897932;
 // scale height: how slow density of relevant particles 
 // decays when going up in atmosphere
-const float rayleighH = 100;
-const float planetRadius = 6000;
-const float atmosphereRadius = 6500;
+const float rayleighH = 7994;
+const float planetRadius = 6300000;
+const float atmosphereRadius = 6400000;
 
 // rayleigh scattering coefficients roughly for RGB wavelengths, from
 // http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
@@ -125,11 +125,7 @@ vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir, out float totalOD) {
 		if(srs >= 0.f && sre < 0.f) {
 			vec3 sre = pos - srs * sunDir;
 			float odsun = opticalDepth(pos, sre);
-
-			// TODO: random ass factor
-			res += d * exp(-scatteringCoeffs * 50 * (od + odsun)) * dt;
-			// res += d * exp(-scatteringCoeffs * (od + odsun)) * dt;
-			// totalOD += opticalDepth(pos, sre);
+			res += d * exp(-scatteringCoeffs * (od + odsun)) * dt;
 		} else if(srs == -1.f) {
 			// res += vec3(0, 0, 0.1);
 		} else if(srs < 0.f) {
