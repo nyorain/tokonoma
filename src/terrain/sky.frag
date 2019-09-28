@@ -11,18 +11,12 @@ layout(set = 0, binding = 0) uniform Camera {
 	// vec3 position;
 } camera;
 
-const vec3 sunDir = normalize(vec3(0.5, 0.1, 0.1));
-const vec3 sunColor = 15 * vec3(1, 1, 1);
+const vec3 sunDir = normalize(vec3(1.0, 0.4, 0.0));
+const vec3 sunColor = 100 * vec3(1, 1, 1);
 
 void main() {
 	vec3 dir = normalize(pos);
-	vec3 cpos = vec3(0, planetRadius + 0.1, 0);
-
-	// visualize sun position
-	// if(dot(sunDir, dir) > 0.99) {
-	// 	fragColor = vec4(1.0, 0.0, 0.0, 1.0);
-	// 	return;
-	// }
+	vec3 cpos = (planetRadius + 1) * normalize(vec3(0, 1, 0));
 
 	float te = intersectRaySphere(cpos, dir, vec3(0.0), planetRadius);
 	float ta = intersectRaySphere(cpos, dir, vec3(0.0), atmosphereRadius);
@@ -39,10 +33,18 @@ void main() {
 
 	// outscatter
 	vec3 color = inscatter * phaseRayleigh(dot(dir, sunDir)) * sunColor;
+	// color += 0.01 * clamp(dot(sunDir, dir), 0, 1) * sunColor;
 
 	// fragColor = vec4(0.0001 * vec3(ta), 1.0);
 	fragColor = vec4(1.0 - exp(-color), 1.0);
 	// fragColor = vec4(color, 1.0);
 	// fragColor = vec4(0.5 + 0.5 * dir, 1.0);
 	// fragColor = vec4(0.5f + 0.5 * pos, 1.0);
+	// fragColor = vec4(vec3(0.00001 * totalOD), 1.0);
+
+	// visualize sun position
+	if(dot(-sunDir, dir) > 0.995) {
+		fragColor = mix(fragColor, vec4(0.1, 0.1, 0.0, 1.0), 0.5);
+		return;
+	}
 }

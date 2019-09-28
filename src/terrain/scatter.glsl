@@ -15,9 +15,9 @@
 const float pi = 3.1415926535897932;
 // scale height: how slow density of relevant particles 
 // decays when going up in atmosphere
-const float rayleighH = 2000;
+const float rayleighH = 100;
 const float planetRadius = 6000;
-const float atmosphereRadius = 35000;
+const float atmosphereRadius = 6500;
 
 // rayleigh scattering coefficients roughly for RGB wavelengths, from
 // http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
@@ -55,18 +55,18 @@ float height(vec3 pos) {
 }
 
 float opticalDepth(vec3 from, vec3 to) {
-	const uint numSteps = 5u;
+	const uint numSteps = 10u;
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
 	float res = 0.0;
 	float ds = length(delta);
 	vec3 pos = from;
 	for(uint i = 0u; i < numSteps; ++i) {
-		res += density(height(pos), rayleighH) * ds;
+		res += density(height(pos), rayleighH);
 		pos += delta;
 	}
 
-	return res;
+	return res * ds;
 }
 
 // assumes that rd is normalized
@@ -93,7 +93,7 @@ float intersectRaySphere(vec3 ro, vec3 rd, vec3 sc, float sr) {
 // NOTE: we assume here that the viewer is inside the atmosphere,
 // requires slight tweaks (e.g. for intersection) when that isn't the case
 vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir, out float totalOD) {
-	const uint numSteps = 50u;
+	const uint numSteps = 100u;
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
 	float dt = length(delta);
@@ -101,13 +101,14 @@ vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir, out float totalOD) {
 	vec3 res = vec3(0.0);
 	float od = 0.0; // optical depth along primary ray
 
+	totalOD = 0.0;
 	for(uint i = 0u; i < numSteps; ++i) {
 		float h = height(pos);
 		if(h < 0) {
 			break;
 		}
 
-		float d = density(height(pos), rayleighH);
+		float d = density(h, rayleighH);
 		od += d * dt;
 		pos += delta;
 
@@ -121,16 +122,22 @@ vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir, out float totalOD) {
 		// sre < 0.f: the ray doesn't hit the planet (this is important
 		//   even if the viewer is inside the atmosphere, remember
 		//   this are secondary rays!)
-		if(srs > 0.f && sre < 0.f) {
+		if(srs >= 0.f && sre < 0.f) {
 			vec3 sre = pos - srs * sunDir;
-			// res += scatteringCoeffs * exp(-scatteringCoeffs * (od + opticalDepth(pos, sre))) * dt;
-			res += d * exp(-scatteringCoeffs * (od + opticalDepth(pos, sre))) * dt;
+			float odsun = opticalDepth(pos, sre);
+
+			// TODO: random ass factor
+			res += d * exp(-scatteringCoeffs * 50 * (od + odsun)) * dt;
+			// res += d * exp(-scatteringCoeffs * (od + odsun)) * dt;
+			// totalOD += opticalDepth(pos, sre);
 		} else if(srs == -1.f) {
 			// res += vec3(0, 0, 0.1);
 		} else if(srs < 0.f) {
 			// res += vec3(0.1, 0, 0);
 		} else if(sre > 0.f) {
 			// res += vec3(0, 0.1, 0);
+		} else {
+			// res = vec3(1, 1, 1);
 		}
 	}
 
