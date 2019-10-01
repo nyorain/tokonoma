@@ -108,7 +108,8 @@ u64 textureSpaceAtlasPOT(Textures textures) {
 
 		atex.erase(std::remove_if(atex.begin(), atex.end(), eraser), atex.end());
 		if(atex.empty()) { // last level
-			used += totalTexSpace(atlas::npot(max.x), atlas::npot(max.y));
+			// used += totalTexSpace(atlas::npot(max.x), atlas::npot(max.y));
+			used += totalTexSpace(max.x, max.y);
 		} else {
 			// count full atlas level
 			// the space wasted here is the fault of the placement
@@ -347,24 +348,28 @@ int main(int argc, const char** argv) {
     std::random_device rd;
     std::mt19937 gen(rd());
 
-	/*
-	{
-		dlg_info("distribution: uniform pot");
-		std::uniform_int_distribution<unsigned> dis(0, 12);
-		evalDistribution([&]{
-			return unsigned(std::pow(2, dis(gen)));
-		});
-	}
-	*/
+	// {
+	// 	dlg_info("distribution: uniform pot");
+	// 	std::uniform_int_distribution<unsigned> dis(0, 12);
+	// 	evalDistribution([&]{
+	// 		return unsigned(std::pow(2, dis(gen)));
+	// 	});
+	// }
 
 	{
-		dlg_info("distribution: lognormal");
-		std::lognormal_distribution<float> dis(6.f, 1.25f);
-		// for(auto i = 0u; i < 100; ++i) {
-		// 	dlg_info("{}", dis(gen));
-		// }
-		evalDistribution([&]{
-			return std::min(unsigned(dis(gen)), 8192u);
-		});
+		dlg_info("distribution: uniform");
+		std::uniform_int_distribution<unsigned> dis(1, 4000);
+		evalDistribution([&]{ return dis(gen); });
 	}
+
+	// {
+	// 	dlg_info("distribution: lognormal");
+	// 	std::lognormal_distribution<float> dis(6.f, 1.25f);
+	// 	// for(auto i = 0u; i < 100; ++i) {
+	// 	// 	dlg_info("{}", dis(gen));
+	// 	// }
+	// 	evalDistribution([&]{
+	// 		return std::min(unsigned(dis(gen)), 4096u);
+	// 	});
+	// }
 }
