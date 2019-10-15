@@ -55,7 +55,7 @@ float height(vec3 pos) {
 }
 
 float opticalDepth(vec3 from, vec3 to) {
-	const uint numSteps = 10u;
+	const uint numSteps = 8u;
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
 	float res = 0.0;
@@ -93,7 +93,7 @@ float intersectRaySphere(vec3 ro, vec3 rd, vec3 sc, float sr) {
 // NOTE: we assume here that the viewer is inside the atmosphere,
 // requires slight tweaks (e.g. for intersection) when that isn't the case
 vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir, out float totalOD) {
-	const uint numSteps = 100u;
+	const uint numSteps = 20u;
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
 	float dt = length(delta);

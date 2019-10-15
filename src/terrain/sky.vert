@@ -4,7 +4,7 @@ layout(location = 0) out vec3 cubePos;
 
 layout(set = 0, binding = 0, row_major) uniform Camera {
 	mat4 VP;
-	vec3 pos;
+	vec3 _pos;
 } camera;
 
 void main() {
@@ -21,7 +21,7 @@ void main() {
 	// we don't need here so offset position by the camera pos.
 	// Can also be thought of as if the skybox is fixed around the
 	// camera and moving with it.
-	gl_Position = camera.VP * vec4(camera.pos + cubePos, 1.0);
+	gl_Position = camera.VP * vec4(cubePos, 1.0);
 	gl_Position.y = -gl_Position.y;
 
 	// Requires pipeline to have lessOrEqual as depth test.

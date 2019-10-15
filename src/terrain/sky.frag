@@ -6,15 +6,22 @@
 layout(location = 0) in vec3 pos;
 layout(location = 0) out vec4 fragColor;
 
-layout(set = 0, binding = 0) uniform Camera {
-	mat4 _;
-	// vec3 position;
-} camera;
+layout(set = 0, binding = 0, row_major) uniform Camera {
+	mat4 _VP;
+	vec3 _pos;
+	float time; // time of day, 0 - 1
+} ubo;
 
-const vec3 sunDir = normalize(vec3(1.0, 0.0, 0.0));
 const vec3 sunColor = 10 * vec3(1, 1, 1);
 
 void main() {
+	vec3 sunDir = vec3(0.0);
+	// sunDir.y = sin(2 * pi * (ubo.time - 0.25));
+	sunDir.z = cos(2 * pi * (ubo.time - 0.25));
+	sunDir.y = 1 - 4 * abs(0.5 - ubo.time);
+	// sunDir.z = 0.05 * (-1 + 4 * abs(0.5 - ubo.time));
+	sunDir = normalize(sunDir);
+
 	vec3 dir = normalize(pos);
 	vec3 cpos = (planetRadius + 1) * normalize(vec3(0, 1, 0));
 

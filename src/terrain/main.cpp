@@ -1,6 +1,6 @@
 // TODO
-// - include atmospheric scattering
-//   volumetric light rendering in general
+// - add mie scattering
+// - add terrain...
 // - maybe make the terrain planet-like and allow to leave atmosphere
 // - add tesselation shader
 //   evaluate terrain generation in tesselation shader?
@@ -16,6 +16,7 @@
 #include <tkn/render.hpp>
 #include <tkn/camera.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/glsl.hpp>
 #include <shaders/terrain.sky.vert.h>
 
 #include <vpp/trackedDescriptor.hpp>
@@ -56,7 +57,8 @@ public:
 		createPipeline(*fragMod);
 
 		// ubo
-		ubo_ = {dev.bufferAllocator(), sizeof(nytl::Mat4f) + sizeof(nytl::Vec3f),
+		auto uboSize = sizeof(nytl::Mat4f) + sizeof(nytl::Vec3f) + sizeof(float);
+		ubo_ = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer,
 			dev.hostMemoryTypes()};
 
@@ -107,6 +109,8 @@ public:
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
 			tkn::write(span, fixedMatrix(camera_));
+			tkn::write(span, camera_.pos);
+			tkn::write(span, time_);
 			map.flush();
 		}
 	}
@@ -141,8 +145,19 @@ public:
 			return false;
 		}
 
+		using tkn::glsl::fract;
 		if(ev.keycode == ny::Keycode::r) {
 			reload_ = true;
+			App::scheduleRedraw();
+		} else if(ev.keycode == ny::Keycode::up) {
+			time_ = fract(time_ + 0.01);
+			dlg_info("time: {}", time_);
+			camera_.update = true; // write ubo
+			App::scheduleRedraw();
+		} else if(ev.keycode == ny::Keycode::down) {
+			time_ = fract(time_ - 0.01);
+			dlg_info("time: {}", time_);
+			camera_.update = true; // write ubo
 			App::scheduleRedraw();
 		}
 
@@ -166,6 +181,7 @@ public:
 
 	vpp::ShaderModule skyVert_;
 	bool reload_ {false};
+	float time_ {0.25f}; // in range [0,1]
 
 	bool rotateView_ {};
 	tkn::Camera camera_;
