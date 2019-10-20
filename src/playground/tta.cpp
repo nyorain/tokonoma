@@ -361,22 +361,34 @@ int main(int, const char**) {
 	if(mode == Mode::gltf) {
 		auto home = std::getenv("HOME");
 		dlg_assert(home);
-		auto basePath = home + std::string("/code/ext/glTF-Sample-Models/2.0/");
-		auto models = {
-			"Sponza/glTF/Sponza.gltf",
-			"Lantern/glTF-pbrSpecularGlossiness/Lantern.gltf",
-			"SciFiHelmet/glTF/SciFiHelmet.gltf",
-			"BoomBox/glTF-pbrSpecularGlossiness/BoomBox.gltf",
-			"DamagedHelmet/glTF/DamagedHelmet.gltf",
-			"FlightHelmet/glTF/FlightHelmet.gltf",
-			"Monster/glTF/Monster.gltf",
-			"WaterBottle/glTF-pbrSpecularGlossiness/WaterBottle.gltf",
+		auto gltfBase = home + std::string("/code/ext/glTF-Sample-Models/2.0/");
+		auto sfBase = home + std::string("/art/assets/gltf/");
+		auto tknBase = home + std::string("/code/tkn/assets/gltf/");
+		std::vector<std::string> models = {
+			gltfBase + "Sponza/glTF/Sponza.gltf",
+			gltfBase + "Lantern/glTF-pbrSpecularGlossiness/Lantern.gltf",
+			gltfBase + "SciFiHelmet/glTF/SciFiHelmet.gltf",
+			// gltfBase + "BoomBox/glTF-pbrSpecularGlossiness/BoomBox.gltf",
+			gltfBase + "DamagedHelmet/glTF/DamagedHelmet.gltf",
+			gltfBase + "FlightHelmet/glTF/FlightHelmet.gltf",
+			gltfBase + "Monster/glTF/Monster.gltf",
+			gltfBase + "WaterBottle/glTF-pbrSpecularGlossiness/WaterBottle.gltf",
+			gltfBase + "VC/glTF/VC.gltf",
+
+			sfBase + "ftm/scene.gltf",
+			sfBase + "seakeep/scene.gltf",
+			sfBase + "tree/scene.gltf",
+			sfBase + "wanderers/scene.gltf",
+			sfBase + "alien/scene.gltf",
+			sfBase + "crypt/scene.gltf",
+
+			tknBase + "ssky/scene.gltf",
 		};
 
 		std::array<Stats, 4> stats;
 		for(auto m : models) {
 			dlg_info("model: {}", m);
-			auto path = basePath + m;
+			auto path = m;
 			auto textures = loadGltfTextures(path.c_str());
 			eval(stats, textures);
 		}
