@@ -9,7 +9,6 @@
 #include <tkn/quaternion.hpp>
 #include <tkn/scene/shape.hpp>
 #include <tkn/scene/scene.hpp>
-#include <tkn/scene/light.hpp>
 #include <tkn/scene/scene.hpp>
 #include <tkn/scene/environment.hpp>
 #include <argagg.hpp>
@@ -40,29 +39,37 @@
 #include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/repro.model.vert.h>
 #include <shaders/repro.model.frag.h>
-#include <shaders/repro.depth.frag.h>
-#include <shaders/repro.repro.frag.h>
+#include <shaders/repro.snap.frag.h>
+#include <shaders/repro.pp.frag.h>
 
 #include <optional>
 #include <vector>
 #include <string>
 
-// TODO: currently contains lots of potentially unneeded stuff (lights etc)
-// from br. Can be cleaned up
-
-// Basically three render passes:
-// - snap: only executed every time a new snapshot is taken. Renders into
-//   the snap image that is read from
-// - depth only: rendered every frame, only renders depth of whole scene
-// - repro: final pass of every frame. Takes rendered depth and the last
-//   snap and reprojects the snap onto the depth
+// ideas:
+// - use depth bounds (and other stuff) as effects
+//   like "focusing on a certain distance", dof equivalent for
+//   the repro sensory system
+// - use a projection matrix that uses linear depth when taking
+//   the snapshot? not sure yet
+// - maybe make the whole "repro blending" an ability the
+//   player gets later on (and can decide if/when to use).
+//   maybe make them control the individual exposure values (distance
+//   to current position; distance to snap position) and make
+//   this whole "scene with 100 layers and additive blending difficult to
+//   understand, but only having a small visible radius around yourself
+//   kinda sucks as well"-thing a game mechanic.
+//   *why don't we make all value tweaking stuff literally just game mechanics?* :D
+// - this project should be awesome for temporal super sampling
 
 using namespace tkn::types;
 
 class ViewApp : public tkn::App {
 public:
-	static constexpr auto snapFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto snapSize = vk::Extent2D {2 * 4096, 2 * 4096};
+	static constexpr auto snapFormat = vk::Format::d32Sfloat;
+	static constexpr auto sceneFormat = vk::Format::r16Sfloat;
+	static constexpr auto snapSize = vk::Extent2D {4096, 4096};
+	static constexpr auto reproBlend = true;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -96,9 +103,6 @@ public:
 				dev.descriptorAllocator(),
 			}
 		};
-
-		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
-		brdfLut_ = initBrdfLut.init(batch);
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -143,185 +147,66 @@ public:
 			model, sc, mat, ri);
 		initScene.init(batch, dummyTex_.vkImageView());
 
-		shadowData_ = tkn::initShadowData(dev, depthFormat(),
-			scene_.dsLayout(), multiview_, depthClamp_);
-
 		// view + projection matrix
-		auto cameraBindings = {
+		auto sceneBindings = {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		cameraDsLayout_ = {dev, cameraBindings};
-
-		// ao
-		auto aoBindings = {
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::fragment),
-		};
-
-		aoDsLayout_ = {dev, aoBindings};
-
-		// box indices
-		std::array<std::uint16_t, 36> indices = {
-			0, 1, 2,  2, 1, 3, // front
-			1, 5, 3,  3, 5, 7, // right
-			2, 3, 6,  6, 3, 7, // top
-			4, 0, 6,  6, 0, 2, // left
-			4, 5, 0,  0, 5, 1, // bottom
-			5, 4, 7,  7, 4, 6, // back
-		};
-
-		boxIndices_ = {alloc.bufDevice,
-			36u * sizeof(std::uint16_t),
-			vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-			dev.deviceMemoryTypes(), 4u};
-		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
+		sceneDsLayout_ = {dev, sceneBindings};
 
 		// camera
-		auto cameraUboSize = sizeof(nytl::Mat4f) // proj matrix
-			+ sizeof(nytl::Vec3f) + sizeof(float) * 2; // viewPos, near, far
-		cameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
-		cameraUbo_ = {dev.bufferAllocator(), cameraUboSize,
+		auto sceneUboSize = 2 * sizeof(nytl::Mat4f)
+			+ sizeof(nytl::Vec3f) + sizeof(float) * 5;
+		sceneDs_ = {dev.descriptorAllocator(), sceneDsLayout_};
+		sceneUbo_ = {dev.bufferAllocator(), sceneUboSize,
 			vk::BufferUsageBits::uniformBuffer, hostMem};
 
-		envCameraUbo_ = {dev.bufferAllocator(), sizeof(nytl::Mat4f),
-			vk::BufferUsageBits::uniformBuffer, hostMem};
-		envCameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
-
-		// example light
-		dirLight_ = {batch, shadowData_};
-		dirLight_.data.dir = {5.8f, -12.0f, 4.f};
-		dirLight_.data.color = {5.f, 5.f, 5.f};
-
-		pointLight_ = {batch, shadowData_};
-		pointLight_.data.position = {0.f, 5.0f, 0.f};
-		pointLight_.data.radius = 2.f;
-		pointLight_.data.attenuation = {1.f, 0.1f, 0.05f};
-
-		updateLight_ = true;
-
-		// bring lights initially into correct layout and stuff
-		dirLight_.render(cb, shadowData_, scene_);
-		pointLight_.render(cb, shadowData_, scene_);
-
-		auto aoUboSize = 3 * 4u;
-		aoUbo_ = {dev.bufferAllocator(), aoUboSize,
-			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
-		aoDs_ = {dev.descriptorAllocator(), aoDsLayout_};
-
-		// PERF: do this in scene initialization to avoid additional
-		// data upload
-		auto cube = tkn::Cube{{}, {0.05f, 0.05f, 0.05f}};
-		auto shape = tkn::generate(cube);
-		cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
-			std::move(shape.normals), std::move(shape.indices));
-
-		auto sphere = tkn::Sphere{{}, {0.05f, 0.05f, 0.05f}};
-		shape = tkn::generateUV(sphere);
-		spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
-			std::move(shape.normals), std::move(shape.indices));
-
-		// init light visualizations
-		tkn::Material lmat;
-
-		lmat.emissionFac = dirLight_.data.color;
-		lmat.albedoFac = Vec4f(dirLight_.data.color);
-		lmat.albedoFac[3] = 1.f;
-		// HACK: make sure it doesn't write to depth buffer and isn't
-		// rendered into shadow map
-		lmat.flags |= tkn::Material::Bit::blend;
-		dirLight_.materialID = scene_.addMaterial(lmat);
-		dirLight_.instanceID = scene_.addInstance(cubePrimitiveID_,
-			dirLightObjMatrix(), dirLight_.materialID);
-
-		lmat.emissionFac = pointLight_.data.color;
-		lmat.albedoFac = Vec4f(pointLight_.data.color);
-		lmat.albedoFac[3] = 1.f;
-		pointLight_.materialID = scene_.addMaterial(lmat);
-		pointLight_.instanceID = scene_.addInstance(spherePrimitiveID_,
-			pointLightObjMatrix(), pointLight_.materialID);
-
-		initSnap();
-		initDepth();
-		initRepr();
-
-		tkn::Environment::InitData initEnv;
-		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", sampler_);
-		env_.createPipe(device(), cameraDsLayout_, snap_.rp, 0u, samples());
-		env_.init(initEnv, batch);
+		initSnap(cb);
+		initRepro();
+		initPP();
 
 		// descriptors
-		vpp::DescriptorSetUpdate sdsu(cameraDs_);
-		sdsu.uniform({{{cameraUbo_}}});
+		vpp::DescriptorSetUpdate sdsu(sceneDs_);
+		sdsu.uniform({{{sceneUbo_}}});
 		sdsu.apply();
-
-		vpp::DescriptorSetUpdate edsu(envCameraDs_);
-		edsu.uniform({{{envCameraUbo_}}});
-		edsu.apply();
-
-		vpp::DescriptorSetUpdate adsu(aoDs_);
-		adsu.imageSampler({{{}, env_.envMap().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.imageSampler({{{}, brdfLut_.imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.imageSampler({{{}, env_.irradiance().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.uniform({{{aoUbo_}}});
-		adsu.apply();
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 	}
 
+	// Records the command buffer to render a snapshot
 	void recordSnap(vk::CommandBuffer cb) {
 		vk::beginCommandBuffer(cb, {});
-		std::array<vk::ClearValue, 2u> cv {};
-		cv[0] = {{0.f, 0.f, 0.f, 0.f}}; // color
-		cv[1].depthStencil = {1.f, 0u}; // depth
+		std::array<vk::ClearValue, 1u> cv {};
+		cv[0].depthStencil = {1.f, 0u}; // depth
 		vk::cmdBeginRenderPass(cb, {snap_.rp, snap_.fb,
 			{0u, 0u, snapSize.width, snapSize.height},
 			std::uint32_t(cv.size()), cv.data()}, {});
 
-		vk::Viewport vp{0.f, 0.f, (float) snapSize.width, (float) snapSize.height, 0.f, 1.f};
+		vk::Viewport vp {0.f, 0.f, (float) snapSize.width, (float) snapSize.height, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, snapSize.width, snapSize.height});
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, snap_.pipe);
-		tkn::cmdBindGraphicsDescriptors(cb, snap_.pipeLayout, 0, {cameraDs_});
-		tkn::cmdBindGraphicsDescriptors(cb, snap_.pipeLayout, 2, {
-			dirLight_.ds(), pointLight_.ds(), aoDs_});
+		tkn::cmdBindGraphicsDescriptors(cb, snap_.pipeLayout, 0, {sceneDs_});
 		scene_.render(cb, snap_.pipeLayout, false); // opaque
 
-		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
-			boxIndices_.offset(), vk::IndexType::uint16);
-		tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
-			{envCameraDs_});
-		env_.render(cb);
-
-		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
-		// tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
-		// tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
-		// 	dirLight_.ds(), pointLight_.ds(), aoDs_});
-		// scene_.render(cb, pipeLayout_, true); // transparent/blend
+		// NOTE: when taking snapthosts we actually don't care about
+		// blending transparency at all. There are only solid objects
+		// or air.
+		scene_.render(cb, snap_.pipeLayout, true); // transparent/blend
 
 		vk::cmdEndRenderPass(cb);
 		vk::endCommandBuffer(cb);
-
 	}
 
-	void initSnap() {
+	void initSnap(vk::CommandBuffer cb) {
 		auto& dev = vulkanDevice();
 
 		// rp
-		std::array<vk::AttachmentDescription, 2> attachments;
+		std::array<vk::AttachmentDescription, 1> attachments;
 		attachments[0].initialLayout = vk::ImageLayout::undefined;
 		attachments[0].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 		attachments[0].format = snapFormat;
@@ -329,36 +214,20 @@ public:
 		attachments[0].storeOp = vk::AttachmentStoreOp::store;
 		attachments[0].samples = vk::SampleCountBits::e1;
 
-		attachments[1].initialLayout = vk::ImageLayout::undefined;
-		attachments[1].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		attachments[1].format = depthFormat();
-		attachments[1].loadOp = vk::AttachmentLoadOp::clear;
-		attachments[1].storeOp = vk::AttachmentStoreOp::store;
-		attachments[1].samples = vk::SampleCountBits::e1;
-
-		vk::AttachmentReference colorRefs[1];
-		colorRefs[0].attachment = 0;
-		colorRefs[0].layout = vk::ImageLayout::colorAttachmentOptimal;
-
 		vk::AttachmentReference depthRef;
-		depthRef.attachment = 1;
+		depthRef.attachment = 0;
 		depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
 
 		vk::SubpassDescription subpass;
-		subpass.colorAttachmentCount = 1;
-		subpass.pColorAttachments = colorRefs;
 		subpass.pDepthStencilAttachment = &depthRef;
 
 		// make sure color and depth buffer are available afterwards
 		vk::SubpassDependency dependency;
 		dependency.srcSubpass = 0;
 		dependency.srcStageMask =
-			vk::PipelineStageBits::colorAttachmentOutput |
 			vk::PipelineStageBits::earlyFragmentTests |
 			vk::PipelineStageBits::lateFragmentTests;
-		dependency.srcAccessMask =
-			vk::AccessBits::colorAttachmentWrite |
-			vk::AccessBits::depthStencilAttachmentWrite;
+		dependency.srcAccessMask = vk::AccessBits::depthStencilAttachmentWrite;
 		dependency.dstSubpass = vk::subpassExternal;
 		dependency.dstStageMask = vk::PipelineStageBits::allGraphics;
 		dependency.dstAccessMask = vk::AccessBits::shaderRead;
@@ -374,15 +243,12 @@ public:
 
 		// pipeline layout consisting of all ds layouts and pcrs
 		snap_.pipeLayout = {dev, {{
-			cameraDsLayout_.vkHandle(),
+			sceneDsLayout_.vkHandle(),
 			scene_.dsLayout().vkHandle(),
-			shadowData_.dsLayout.vkHandle(),
-			shadowData_.dsLayout.vkHandle(),
-			aoDsLayout_.vkHandle(),
 		}}, {}};
 
 		vpp::ShaderModule vertShader(dev, repro_model_vert_data);
-		vpp::ShaderModule fragShader(dev, repro_model_frag_data);
+		vpp::ShaderModule fragShader(dev, repro_snap_frag_data);
 		vpp::GraphicsPipelineInfo gpi {snap_.rp, snap_.pipeLayout, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
@@ -395,10 +261,9 @@ public:
 		gpi.depthStencil.depthWriteEnable = true;
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 
-		// no blending at all, alpha contains linear depth (z)
-		auto atts = {tkn::noBlendAttachment()};
-		gpi.blend.attachmentCount = atts.size();
-		gpi.blend.pAttachments = atts.begin();
+		// no color attachment
+		gpi.blend.attachmentCount = 0;
+		gpi.blend.pAttachments = nullptr;
 
 		// NOTE: see the gltf material.doubleSided property. We can't switch
 		// this per material (without requiring two pipelines) so we simply
@@ -408,13 +273,10 @@ public:
 		gpi.rasterization.cullMode = vk::CullModeBits::none;
 		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 		gpi.rasterization.depthBiasEnable = true;
-		gpi.rasterization.depthBiasConstantFactor = 5.f;
-		gpi.rasterization.depthBiasSlopeFactor = 15.f;
+		gpi.rasterization.depthBiasConstantFactor = 1.f;
+		gpi.rasterization.depthBiasSlopeFactor = 3.f;
 
 		snap_.pipe = {dev, gpi.info()};
-
-		// gpi.depthStencil.depthWriteEnable = false;
-		// snap_.blendPipe = {dev, gpi.info()};
 
 		snap_.semaphore = {dev};
 		auto qf = dev.queueSubmitter().queue().family();
@@ -423,50 +285,39 @@ public:
 
 		// image and fb
 		auto info = vpp::ViewableImageCreateInfo(snapFormat,
-			vk::ImageAspectBits::color, snapSize,
+			vk::ImageAspectBits::depth, snapSize,
 			vk::ImageUsageBits::sampled |
-				vk::ImageUsageBits::colorAttachment |
+				vk::ImageUsageBits::depthStencilAttachment |
 				vk::ImageUsageBits::transferDst);
 		dlg_assert(vpp::supported(dev, info.img));
-		snap_.image = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
-		snap_.depth = createDepthTarget(snapSize);
+		snap_.depth = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
 
-		// initial transition of snap image to read only
+		// initial transition of snap depth image to read only
 		{
-			auto& qs = dev.queueSubmitter();
-			auto qfam = qs.queue().family();
-			auto cb = dev.commandAllocator().get(qfam);
-			vk::beginCommandBuffer(cb, {});
-
 			vk::ImageMemoryBarrier obarrier;
-			obarrier.image = snap_.image.image();
+			obarrier.image = snap_.depth.image();
 			obarrier.oldLayout = vk::ImageLayout::undefined;
 			obarrier.newLayout = vk::ImageLayout::transferDstOptimal;
 			obarrier.dstAccessMask = vk::AccessBits::transferWrite;
-			obarrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+			obarrier.subresourceRange = {vk::ImageAspectBits::depth, 0, 1, 0, 1};
 			vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
 				vk::PipelineStageBits::transfer, {}, {}, {}, {{obarrier}});
 
-			auto color = vk::ClearColorValue {{0.f, 0.f, 0.f, 0.f}};
-			vk::cmdClearColorImage(cb, snap_.image.vkImage(),
-				vk::ImageLayout::transferDstOptimal, color,
-				{{{vk::ImageAspectBits::color, 0, 1, 0, 1}}});
+			auto depth = vk::ClearDepthStencilValue {1.f, 0u};
+			vk::cmdClearDepthStencilImage(cb, snap_.depth.vkImage(),
+				vk::ImageLayout::transferDstOptimal, depth,
+				{{{vk::ImageAspectBits::depth, 0, 1, 0, 1}}});
 
 			obarrier.oldLayout = vk::ImageLayout::transferDstOptimal;
 			obarrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
 			obarrier.srcAccessMask = vk::AccessBits::transferWrite;
 			obarrier.dstAccessMask = vk::AccessBits::shaderRead;
-			obarrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+			obarrier.subresourceRange = {vk::ImageAspectBits::depth, 0, 1, 0, 1};
 			vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
 				vk::PipelineStageBits::fragmentShader, {}, {}, {}, {{obarrier}});
-
-			// TODO: don't block...
-			vk::endCommandBuffer(cb);
-			qs.wait(qs.add(cb));
 		}
 
 		auto fbatts = {
-			snap_.image.vkImageView(),
 			snap_.depth.vkImageView(),
 		};
 		auto fbi = vk::FramebufferCreateInfo({}, snap_.rp,
@@ -475,33 +326,45 @@ public:
 		snap_.fb = {dev, fbi};
 	}
 
-	void initDepth() {
+	void initRepro() {
 		auto& dev = vulkanDevice();
 
 		// rp
-		std::array<vk::AttachmentDescription, 1> attachments;
+		std::array<vk::AttachmentDescription, 2> attachments;
 		attachments[0].initialLayout = vk::ImageLayout::undefined;
 		attachments[0].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		attachments[0].format = depthFormat();
+		attachments[0].format = sceneFormat;
 		attachments[0].loadOp = vk::AttachmentLoadOp::clear;
 		attachments[0].storeOp = vk::AttachmentStoreOp::store;
 		attachments[0].samples = vk::SampleCountBits::e1;
 
-		vk::AttachmentReference depthRef;
-		depthRef.attachment = 0;
-		depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
+		vk::AttachmentReference colorRef, depthRef;
+		colorRef.attachment = 0;
+		colorRef.layout = vk::ImageLayout::colorAttachmentOptimal;
 
 		vk::SubpassDescription subpass;
-		subpass.pDepthStencilAttachment = &depthRef;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorRef;
+
+		if(!reproBlend) {
+			depthRef.attachment = 1;
+			depthRef.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
+
+			attachments[1].initialLayout = vk::ImageLayout::undefined;
+			attachments[1].finalLayout = vk::ImageLayout::depthStencilAttachmentOptimal;
+			attachments[1].format = depthFormat();
+			attachments[1].loadOp = vk::AttachmentLoadOp::clear;
+			attachments[1].storeOp = vk::AttachmentStoreOp::dontCare;
+			attachments[1].samples = vk::SampleCountBits::e1;
+
+			subpass.pDepthStencilAttachment = &depthRef;
+		}
 
 		// make sure depth buffer is available afterwards
 		vk::SubpassDependency dependency;
 		dependency.srcSubpass = 0;
-		dependency.srcStageMask =
-			vk::PipelineStageBits::earlyFragmentTests |
-			vk::PipelineStageBits::lateFragmentTests;
-		dependency.srcAccessMask =
-			vk::AccessBits::depthStencilAttachmentWrite;
+		dependency.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+		dependency.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
 		dependency.dstSubpass = vk::subpassExternal;
 		dependency.dstStageMask = vk::PipelineStageBits::fragmentShader;
 		dependency.dstAccessMask = vk::AccessBits::shaderRead;
@@ -509,16 +372,35 @@ public:
 		vk::RenderPassCreateInfo rpi;
 		rpi.subpassCount = 1;
 		rpi.pSubpasses = &subpass;
-		rpi.attachmentCount = attachments.size();
+		rpi.attachmentCount = reproBlend ? 1 : 2;
 		rpi.pAttachments = attachments.data();
 		rpi.dependencyCount = 1u;
 		rpi.pDependencies = &dependency;
-		depth_.rp = {dev, rpi};
+		repro_.rp = {dev, rpi};
+
+		// layouts
+		auto snapBindings = {
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+		};
+
+		repro_.snapDsLayout = {dev, snapBindings};
+		repro_.snapDs = {dev.descriptorAllocator(), repro_.snapDsLayout};
+		repro_.pipeLayout = {dev, {{
+			sceneDsLayout_.vkHandle(),
+			scene_.dsLayout().vkHandle(),
+			repro_.snapDsLayout.vkHandle(),
+		}}, {}};
+
+		vpp::DescriptorSetUpdate dsu(repro_.snapDs);
+		dsu.imageSampler({{{}, snap_.depth.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.apply();
 
 		// pipe
 		vpp::ShaderModule vertShader(dev, repro_model_vert_data);
-		vpp::ShaderModule fragShader(dev, repro_depth_frag_data);
-		vpp::GraphicsPipelineInfo gpi {depth_.rp, snap_.pipeLayout, {{{
+		vpp::ShaderModule fragShader(dev, repro_model_frag_data);
+		vpp::GraphicsPipelineInfo gpi {repro_.rp, repro_.pipeLayout, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
 		}}}};
@@ -526,35 +408,61 @@ public:
 		gpi.vertex = tkn::Scene::vertexInfo();
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
-		gpi.depthStencil.depthTestEnable = true;
-		gpi.depthStencil.depthWriteEnable = true;
-		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+		if(reproBlend) {
+			// purely additive blending
+			static const vk::PipelineColorBlendAttachmentState blendAttachment = {
+				true,
 
-		gpi.blend.attachmentCount = 0;
+				vk::BlendFactor::one,
+				vk::BlendFactor::one,
+				vk::BlendOp::add,
+
+				vk::BlendFactor::one,
+				vk::BlendFactor::one,
+				vk::BlendOp::add,
+
+				vk::ColorComponentBits::r |
+					vk::ColorComponentBits::g |
+					vk::ColorComponentBits::b |
+					vk::ColorComponentBits::a,
+			};
+
+			gpi.blend.attachmentCount = 1;
+			gpi.blend.pAttachments = &blendAttachment;
+
+			gpi.depthStencil.depthTestEnable = false;
+			gpi.depthStencil.depthWriteEnable = false;
+		} else {
+			gpi.depthStencil.depthTestEnable = true;
+			gpi.depthStencil.depthWriteEnable = true;
+			gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+
+			gpi.blend.attachmentCount = 1;
+			gpi.blend.pAttachments = &tkn::noBlendAttachment();
+		}
+
 		gpi.rasterization.cullMode = vk::CullModeBits::none;
 		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
-		depth_.pipe = {dev, gpi.info()};
+		repro_.pipe = {dev, gpi.info()};
 	}
 
-	void initRepr() {
+	void initPP() {
 		auto& dev = vulkanDevice();
 
 		// layouts
 		auto bindings = {
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 		};
 
-		repr_.dsLayout = {dev, bindings};
-		repr_.pipeLayout = {dev, {{repr_.dsLayout}}, {}};
+		pp_.dsLayout = {dev, bindings};
+		pp_.pipeLayout = {dev, {{pp_.dsLayout}}, {}};
 
 		vpp::ShaderModule vertShader(dev, tkn_fullscreen_vert_data);
-		vpp::ShaderModule fragShader(dev, repro_repro_frag_data);
-		vpp::GraphicsPipelineInfo gpi {renderPass(), repr_.pipeLayout, {{{
+		vpp::ShaderModule fragShader(dev, repro_pp_frag_data);
+		vpp::GraphicsPipelineInfo gpi {renderPass(), pp_.pipeLayout, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
 		}}}, 0};
@@ -563,14 +471,14 @@ public:
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 		gpi.blend.attachmentCount = atts.size();
 		gpi.blend.pAttachments = atts.begin();
-		repr_.pipe = {dev, gpi.info()};
+		pp_.pipe = {dev, gpi.info()};
 
 		// ubo
-		auto s = sizeof(nytl::Mat4f) * 2 + sizeof(nytl::Vec3f) + sizeof(float) * 5;
-		repr_.ubo = {dev.bufferAllocator(), s, vk::BufferUsageBits::uniformBuffer,
+		auto s = sizeof(float);
+		pp_.ubo = {dev.bufferAllocator(), s, vk::BufferUsageBits::uniformBuffer,
 			dev.hostMemoryTypes()};
 
-		repr_.ds = {dev.descriptorAllocator(), repr_.dsLayout};
+		pp_.ds = {dev.descriptorAllocator(), pp_.dsLayout};
 	}
 
 	bool features(tkn::Features& enable, const tkn::Features& supported) override {
@@ -642,21 +550,28 @@ public:
 		App::initBuffers(size, bufs);
 		auto& dev = vulkanDevice();
 
-		depth_.image = createDepthTarget(size);
-		auto fbi = vk::FramebufferCreateInfo({}, depth_.rp,
-			1u, &depth_.image.vkImageView(),
+		auto info = vpp::ViewableImageCreateInfo(sceneFormat,
+			vk::ImageAspectBits::color, size,
+			vk::ImageUsageBits::sampled |
+				vk::ImageUsageBits::colorAttachment);
+		dlg_assert(vpp::supported(dev, info.img));
+		repro_.image = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
+
+		if(!reproBlend) {
+			repro_.depth = createDepthTarget(size);
+		}
+
+		auto attachments = {repro_.image.vkImageView(), repro_.depth.vkImageView()};
+		auto fbi = vk::FramebufferCreateInfo({}, repro_.rp,
+			2 - int(reproBlend), attachments.begin(),
 			size.width, size.height, 1);
-		depth_.fb = {dev, fbi};
+		repro_.fb = {dev, fbi};
 
 		// update ds
-		vpp::DescriptorSetUpdate dsu(repr_.ds);
-		dsu.uniform({{{repr_.ubo}}});
-		// dsu.imageSampler({{{}, snap_.image.vkImageView(),
-		// 	vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, snap_.depth.vkImageView(),
+		vpp::DescriptorSetUpdate dsu(pp_.ds);
+		dsu.imageSampler({{{}, repro_.image.vkImageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, depth_.image.vkImageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.uniform({{{pp_.ubo}}});
 		dsu.apply();
 
 		recordSnap(snap_.cb);
@@ -664,35 +579,31 @@ public:
 
 	void beforeRender(vk::CommandBuffer cb) override {
 		App::beforeRender(cb);
-		if(mode_ & modeDirLight) {
-			dirLight_.render(cb, shadowData_, scene_);
-		}
-		if(mode_ & modePointLight) {
-			pointLight_.render(cb, shadowData_, scene_);
-		}
 
-		// depth pass
+		// depth/repro pass
 		auto [width, height] = swapchainInfo().imageExtent;
-		vk::ClearValue cv {};
-		cv.depthStencil = {1.f, 0u};
-		vk::cmdBeginRenderPass(cb, {depth_.rp, depth_.fb,
-			{0u, 0u, width, height}, 1, &cv}, {});
+		vk::ClearValue cvs[2] {};
+		cvs[0].color = {0.1f, 0.1f, 0.1f, 0.f};
+		cvs[1].depthStencil = {1.f, 0u};
+		vk::cmdBeginRenderPass(cb, {repro_.rp, repro_.fb,
+			{0u, 0u, width, height}, 2 - reproBlend, cvs}, {});
 
 		vk::Viewport vp{0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, depth_.pipe);
-		tkn::cmdBindGraphicsDescriptors(cb, snap_.pipeLayout, 0, {cameraDs_});
-		tkn::cmdBindGraphicsDescriptors(cb, snap_.pipeLayout, 2, {
-			dirLight_.ds(), pointLight_.ds(), aoDs_});
-		scene_.render(cb, snap_.pipeLayout, false); // opaque
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, repro_.pipe);
+		tkn::cmdBindGraphicsDescriptors(cb, repro_.pipeLayout, 0, {sceneDs_});
+		tkn::cmdBindGraphicsDescriptors(cb, repro_.pipeLayout, 2, {repro_.snapDs});
+		// NOTE: again, we treat opaque and blended objects equally
+		scene_.render(cb, repro_.pipeLayout, false);
+		scene_.render(cb, repro_.pipeLayout, true);
 		vk::cmdEndRenderPass(cb);
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, repr_.pipe);
-		tkn::cmdBindGraphicsDescriptors(cb, repr_.pipeLayout, 0, {repr_.ds});
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
+		tkn::cmdBindGraphicsDescriptors(cb, pp_.pipeLayout, 0, {pp_.ds});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 	}
 
@@ -706,33 +617,14 @@ public:
 			tkn::checkMovement(camera_, *kc, dt);
 		}
 
-		if(moveLight_) {
-			if(mode_ & modePointLight) {
-				pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
-				pointLight_.data.position.z = 7.0 * std::sin(0.2 * time_);
-				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
-				scene_.updatedInstance(pointLight_.instanceID);
-			} else if(mode_ & modeDirLight) {
-				dirLight_.data.dir.x = 7.0 * std::cos(0.2 * time_);
-				dirLight_.data.dir.z = 7.0 * std::sin(0.2 * time_);
-				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
-				scene_.updatedInstance(dirLight_.instanceID);
-			}
-			updateLight_ = true;
-		}
-
 		if(snap_.pending) {
 			snap_.time = time_;
 			snap_.vp = matrix(camera_);
+			camera_.update = true; // trigger scene ubo update
 			snap_.pending = false;
-			repr_.update = true;
 		}
 
 		// we currently always redraw to see consistent fps
-		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
-		// 	App::scheduleRedraw();
-		// }
-
 		App::scheduleRedraw();
 	}
 
@@ -746,59 +638,23 @@ public:
 		}
 
 		switch(ev.keycode) {
-			case ny::Keycode::m: // move light here
-				moveLight_ = false;
-				dirLight_.data.dir = -camera_.pos;
-				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
-				scene_.updatedInstance(dirLight_.instanceID);
-				updateLight_ = true;
-				return true;
-			case ny::Keycode::n: // move light here
-				moveLight_ = false;
-				updateLight_ = true;
-				pointLight_.data.position = camera_.pos;
-				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
-				scene_.updatedInstance(pointLight_.instanceID);
-				return true;
-			case ny::Keycode::l:
-				moveLight_ ^= true;
-				return true;
-			case ny::Keycode::p:
-				dirLight_.data.flags ^= tkn::lightFlagPcf;
-				pointLight_.data.flags ^= tkn::lightFlagPcf;
-				updateLight_ = true;
-				return true;
 			case ny::Keycode::up:
-				repr_.exposure *= 1.1;
-				dlg_info("exposure: {}", repr_.exposure);
+				pp_.exposure *= 1.1;
+				pp_.update = true;
+				dlg_info("exposure: {}", pp_.exposure);
 				return true;
 			case ny::Keycode::down:
-				repr_.exposure /= 1.1;
-				dlg_info("exposure: {}", repr_.exposure);
+				pp_.exposure /= 1.1;
+				pp_.update = true;
+				dlg_info("exposure: {}", pp_.exposure);
 				return true;
-			case ny::Keycode::k1:
-				mode_ ^= modeDirLight;
-				updateLight_ = true;
-				updateAOParams_ = true;
-				App::scheduleRerecord();
-				dlg_info("dir light: {}", bool(mode_ & modeDirLight));
+			case ny::Keycode::left:
+				repro_.exposure *= 1.1;
+				dlg_info("repro exposure: {}", repro_.exposure);
 				return true;
-			case ny::Keycode::k2:
-				mode_ ^= modePointLight;
-				updateLight_ = true;
-				updateAOParams_ = true;
-				App::scheduleRerecord();
-				dlg_info("point light: {}", bool(mode_ & modePointLight));
-				return true;
-			case ny::Keycode::k3:
-				mode_ ^= modeSpecularIBL;
-				dlg_info("specular IBL: {}", bool(mode_ & modeSpecularIBL));
-				updateAOParams_ = true;
-				return true;
-			case ny::Keycode::k4:
-				mode_ ^= modeIrradiance;
-				updateAOParams_ = true;
-				dlg_info("Static AO: {}", bool(mode_ & modeIrradiance));
+			case ny::Keycode::right:
+				repro_.exposure /= 1.1;
+				dlg_info("repro exposure: {}", repro_.exposure);
 				return true;
 			case ny::Keycode::space: {
 				auto& qs = vulkanDevice().queueSubmitter();
@@ -841,84 +697,35 @@ public:
 	}
 
 	void updateDevice() override {
-		// update scene ubo
-		if(camera_.update) {
-			camera_.update = false;
-			updateLight_ = true;
-			repr_.update = true;
-
-
-			{
-				auto map = cameraUbo_.memoryMap();
-				auto span = map.span();
-				tkn::write(span, matrix(camera_));
-				tkn::write(span, camera_.pos);
-				tkn::write(span, camera_.perspective.near);
-				tkn::write(span, camera_.perspective.far);
-				map.flush();
-			}
-
-			{
-				auto envMap = envCameraUbo_.memoryMap();
-				auto envSpan = envMap.span();
-				tkn::write(envSpan, fixedMatrix(camera_));
-				envMap.flush();
-			}
-		}
-
-		// always update e.g. for time_
-		if(/*repr_.update*/ true) {
-			repr_.update = false;
-			auto map = repr_.ubo.memoryMap();
+		// update scene ubo every frame (for time)
+		{
+			auto map = sceneUbo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, snap_.vp);
-			tkn::write(span, nytl::Mat4f(nytl::inverse(matrix(camera_))));
+			tkn::write(span, matrix(camera_));
 			tkn::write(span, camera_.pos);
+			tkn::write(span, time_);
+			tkn::write(span, snap_.vp);
+			tkn::write(span, snap_.time);
 			tkn::write(span, camera_.perspective.near);
 			tkn::write(span, camera_.perspective.far);
-			tkn::write(span, snap_.time);
-			tkn::write(span, time_);
-			tkn::write(span, repr_.exposure);
+			tkn::write(span, repro_.exposure);
+			map.flush();
+		}
+
+		if(pp_.update) {
+			auto map = pp_.ubo.memoryMap();
+			auto span = map.span();
+			tkn::write(span, pp_.exposure);
 			map.flush();
 		}
 
 		auto semaphore = scene_.updateDevice(matrix(camera_));
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
-			// HACK: trigger initBuffers to rerecord all cb's...
+			// HACK: we need to trigger initBuffers to rerecord all cb's...
 			// App::scheduleRerecord();
 			App::resize_ = true;
 		}
-
-		if(updateLight_) {
-			if(mode_ & modeDirLight) {
-				dirLight_.updateDevice(camera_);
-			}
-			if(mode_ & modePointLight) {
-				pointLight_.updateDevice();
-			}
-
-			updateLight_ = false;
-		}
-
-		if(updateAOParams_) {
-			updateAOParams_ = false;
-			auto map = aoUbo_.memoryMap();
-			auto span = map.span();
-			tkn::write(span, mode_);
-			tkn::write(span, aoFac_);
-			tkn::write(span, u32(env_.convolutionMipmaps()));
-			map.flush();
-		}
-	}
-
-	// only for visualizing the box/sphere
-	nytl::Mat4f dirLightObjMatrix() {
-		return tkn::translateMat(-dirLight_.data.dir);
-	}
-
-	nytl::Mat4f pointLightObjMatrix() {
-		return tkn::translateMat(pointLight_.data.position);
 	}
 
 	void resize(const ny::SizeEvent& ev) override {
@@ -945,31 +752,15 @@ protected:
 	std::optional<Alloc> alloc_;
 
 	vpp::Sampler sampler_;
-	vpp::TrDsLayout cameraDsLayout_;
 
-	vpp::SubBuffer cameraUbo_;
-	vpp::TrDs cameraDs_;
-	vpp::SubBuffer envCameraUbo_;
-	vpp::TrDs envCameraDs_;
-
-	vpp::TrDsLayout aoDsLayout_;
-	vpp::TrDs aoDs_;
-	vpp::SubBuffer aoUbo_;
-	bool updateAOParams_ {true};
-	float aoFac_ {0.1f};
-
-	struct {
-		vpp::ViewableImage image;
-		vpp::Pipeline pipe;
-		vpp::Framebuffer fb;
-		vpp::RenderPass rp;
-	} depth_;
+	vpp::TrDsLayout sceneDsLayout_;
+	vpp::SubBuffer sceneUbo_;
+	vpp::TrDs sceneDs_;
 
 	struct {
 		vpp::RenderPass rp;
 		vpp::CommandBuffer cb;
 		vpp::ViewableImage depth;
-		vpp::ViewableImage image;
 		vpp::Framebuffer fb;
 		vpp::Semaphore semaphore;
 		vpp::Pipeline pipe;
@@ -979,6 +770,22 @@ protected:
 		bool pending {false};
 	} snap_;
 
+	// reprojection depth pass; actually rendering the scene
+	// in every frame
+	struct {
+		vpp::ViewableImage image;
+		vpp::ViewableImage depth;
+		vpp::Pipeline pipe;
+		vpp::Framebuffer fb;
+		vpp::RenderPass rp;
+		vpp::PipelineLayout pipeLayout;
+
+		vpp::TrDsLayout snapDsLayout;
+		vpp::TrDs snapDs;
+		float exposure {1.f};
+	} repro_;
+
+	// post processing pass
 	struct {
 		vpp::Pipeline pipe;
 		vpp::PipelineLayout pipeLayout;
@@ -987,16 +794,9 @@ protected:
 		vpp::SubBuffer ubo;
 		bool update {true};
 		float exposure {1.f};
-	} repr_;
-
-	static constexpr u32 modeDirLight = (1u << 0);
-	static constexpr u32 modePointLight = (1u << 1);
-	static constexpr u32 modeSpecularIBL = (1u << 2);
-	static constexpr u32 modeIrradiance = (1u << 3);
-	u32 mode_ {modePointLight | modeIrradiance | modeSpecularIBL};
+	} pp_;
 
 	tkn::Texture dummyTex_;
-	bool moveLight_ {false};
 
 	bool anisotropy_ {}; // whether device supports anisotropy
 	bool multiview_ {}; // whether device supports multiview
@@ -1009,35 +809,9 @@ protected:
 	tkn::Scene scene_; // no default constructor
 	tkn::Camera camera_ {};
 
-	struct DirLight : public tkn::DirLight {
-		using tkn::DirLight::DirLight;
-		u32 instanceID;
-		u32 materialID;
-	};
-
-	struct PointLight : public tkn::PointLight {
-		using tkn::PointLight::PointLight;
-		u32 instanceID;
-		u32 materialID;
-	};
-
-	u32 cubePrimitiveID_ {};
-	u32 spherePrimitiveID_ {};
-
-	// light and shadow
-	tkn::ShadowData shadowData_;
-	DirLight dirLight_;
-	PointLight pointLight_;
-	bool updateLight_ {true};
-
-	tkn::Environment env_;
-	tkn::Texture brdfLut_;
-
 	// args
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
-
-	vpp::SubBuffer boxIndices_;
 };
 
 int main(int argc, const char** argv) {

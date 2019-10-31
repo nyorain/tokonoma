@@ -184,8 +184,8 @@ shaders_src = {
 	'repro': [
 		['model.vert'],
 		['model.frag'],
-		['repro.frag'],
-		['depth.frag'],
+		['snap.frag'],
+		['pp.frag'],
 	],
 	'terrain': [
 		['sky.vert'],
