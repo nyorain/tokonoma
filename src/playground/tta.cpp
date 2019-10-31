@@ -252,7 +252,7 @@ void printReqs(Textures textures) {
 	}
 }
 
-void evalGltfModel(const char* filepath) {
+std::vector<nytl::Vec2ui> loadGltfTextures(const char* filepath) {
 	gltf::TinyGLTF loader;
 	gltf::Model model;
 	std::string err;
@@ -278,7 +278,7 @@ void evalGltfModel(const char* filepath) {
 
 	if(!res) {
 		dlg_fatal(">> Failed to parse model");
-		return;
+		return {};
 	}
 
 	std::vector<nytl::Vec2ui> textures;
@@ -290,17 +290,44 @@ void evalGltfModel(const char* filepath) {
 		textures.push_back({w, h});
 	}
 
-	printReqs(textures);
+	return textures;
+}
+
+struct Stats {
+	float best {std::numeric_limits<float>::infinity()};
+	float worst {0.f};
+	float avg {0.f};
+	unsigned count {0u};
+};
+
+void eval(std::array<Stats, 4>& stats, Textures textures) {
+	auto base = textureSpaceSimple(textures);
+	dlg_assert(base > 0);
+	for(auto i = 0u; i < 4; ++i) {
+		auto needed = algorithms[1 + i].algorithm(textures);
+		auto fac = float(needed) / base;
+		if(fac > stats[i].worst) {
+			stats[i].worst = fac;
+		}
+		if(fac < stats[i].best) {
+			stats[i].best = fac;
+		}
+		++stats[i].count;
+		stats[i].avg += (fac - stats[i].avg) / float(stats[i].count);
+	}
+}
+
+void printStats(const std::array<Stats, 4>& stats) {
+	for(auto i = 0u; i < 4; ++i) {
+		dlg_info("{}", algorithms[1 + i].name);
+		dlg_info("  best: {}", stats[i].best);
+		dlg_info("  worst: {}", stats[i].worst);
+		dlg_info("  avg: {}", stats[i].avg);
+	}
 }
 
 using Distribution = std::function<unsigned()>;
 void evalDistribution(const Distribution& distr) {
-	struct Stats {
-		float best {std::numeric_limits<float>::infinity()};
-		float worst {0.f};
-		float avg {0.f};
-		unsigned count {0u};
-	};
 	std::array<Stats, 4> stats;
 
 	std::vector<nytl::Vec2ui> textures;
@@ -315,61 +342,78 @@ void evalDistribution(const Distribution& distr) {
 				textures.push_back({w, h});
 			}
 
-			auto base = textureSpaceSimple(textures);
-			for(auto i = 0u; i < 4; ++i) {
-				auto needed = algorithms[1 + i].algorithm(textures);
-				auto fac = float(needed) / base;
-				if(fac > stats[i].worst) {
-					stats[i].worst = fac;
-				}
-				if(fac < stats[i].best) {
-					stats[i].best = fac;
-				}
-				++stats[i].count;
-				stats[i].avg += (fac - stats[i].avg) / float(stats[i].count);
-			}
+			eval(stats, textures);
 		}
 	}
 
-	for(auto i = 0u; i < 4; ++i) {
-		dlg_info("{}", algorithms[1 + i].name);
-		dlg_info("  best: {}", stats[i].best);
-		dlg_info("  worst: {}", stats[i].worst);
-		dlg_info("  avg: {}", stats[i].avg);
-	}
+	printStats(stats);
 }
 
-int main(int argc, const char** argv) {
-	if(argc >= 2) {
-		evalGltfModel(argv[1]);
+enum class Mode {
+	gltf,
+	randomPOT,
+	randomUniform,
+	randomLognormal,
+};
+
+int main(int, const char**) {
+	Mode mode = Mode::gltf;
+	if(mode == Mode::gltf) {
+		auto home = std::getenv("HOME");
+		dlg_assert(home);
+		auto gltfBase = home + std::string("/code/ext/glTF-Sample-Models/2.0/");
+		auto sfBase = home + std::string("/art/assets/gltf/");
+		auto tknBase = home + std::string("/code/tkn/assets/gltf/");
+		std::vector<std::string> models = {
+			gltfBase + "Sponza/glTF/Sponza.gltf",
+			gltfBase + "Lantern/glTF-pbrSpecularGlossiness/Lantern.gltf",
+			gltfBase + "SciFiHelmet/glTF/SciFiHelmet.gltf",
+			// gltfBase + "BoomBox/glTF-pbrSpecularGlossiness/BoomBox.gltf",
+			gltfBase + "DamagedHelmet/glTF/DamagedHelmet.gltf",
+			gltfBase + "FlightHelmet/glTF/FlightHelmet.gltf",
+			gltfBase + "Monster/glTF/Monster.gltf",
+			gltfBase + "WaterBottle/glTF-pbrSpecularGlossiness/WaterBottle.gltf",
+			gltfBase + "VC/glTF/VC.gltf",
+
+			sfBase + "ftm/scene.gltf",
+			sfBase + "seakeep/scene.gltf",
+			sfBase + "tree/scene.gltf",
+			sfBase + "wanderers/scene.gltf",
+			sfBase + "alien/scene.gltf",
+			sfBase + "crypt/scene.gltf",
+
+			tknBase + "ssky/scene.gltf",
+		};
+
+		std::array<Stats, 4> stats;
+		for(auto m : models) {
+			dlg_info("model: {}", m);
+			auto path = m;
+			auto textures = loadGltfTextures(path.c_str());
+			eval(stats, textures);
+		}
+
+		printStats(stats);
 		return EXIT_SUCCESS;
 	}
 
     std::random_device rd;
     std::mt19937 gen(rd());
 
-	// {
-	// 	dlg_info("distribution: uniform pot");
-	// 	std::uniform_int_distribution<unsigned> dis(0, 12);
-	// 	evalDistribution([&]{
-	// 		return unsigned(std::pow(2, dis(gen)));
-	// 	});
-	// }
-
-	{
+	if(mode == Mode::randomPOT) {
+		dlg_info("distribution: uniform pot");
+		std::uniform_int_distribution<unsigned> dis(0, 12);
+		evalDistribution([&]{
+			return unsigned(std::pow(2, dis(gen)));
+		});
+	} else if(mode == Mode::randomUniform) {
 		dlg_info("distribution: uniform");
 		std::uniform_int_distribution<unsigned> dis(1, 4000);
 		evalDistribution([&]{ return dis(gen); });
+	} else if(mode == Mode::randomLognormal) {
+		std::lognormal_distribution<float> dis(6.f, 1.25f);
+		evalDistribution([&]{
+			return std::min(unsigned(dis(gen)), 4096u);
+		});
 	}
-
-	// {
-	// 	dlg_info("distribution: lognormal");
-	// 	std::lognormal_distribution<float> dis(6.f, 1.25f);
-	// 	// for(auto i = 0u; i < 100; ++i) {
-	// 	// 	dlg_info("{}", dis(gen));
-	// 	// }
-	// 	evalDistribution([&]{
-	// 		return std::min(unsigned(dis(gen)), 4096u);
-	// 	});
-	// }
 }
