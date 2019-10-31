@@ -38,7 +38,7 @@ constexpr Vec3f eval(const Bezier<N>& bezier, float t) {
 	auto p = bezier.points;
 	for(auto i = 0u; i < N; ++i) {
 		for(auto j = 0u; j < N - i; ++j) {
-			p[j] = mix(p[j], p[j + 1], t);
+			p[j] = ::mix(p[j], p[j + 1], t);
 		}
 	}
 
@@ -55,7 +55,7 @@ constexpr Vec3f evalRec(const Bezier<N>& bezier, float t) {
 
 	Bezier<N - 1> next;
 	for(auto i = 0u; i < N - 1; ++i) {
-		next[i] = mix(bezier.points[i], bezier.points[i + 1], t);
+		next[i] = ::mix(bezier.points[i], bezier.points[i + 1], t);
 	}
 
 	return evalRec(next, t);
@@ -74,9 +74,9 @@ struct Bezier2 {
 };
 
 constexpr Vec3f eval(const Bezier2& b, float t) {
-	Vec3f i1 = mix(b.start, b.control, t);
-	Vec3f i2 = mix(b.control, b.end, t);
-	return mix(i1, i2, t);
+	Vec3f i1 = ::mix(b.start, b.control, t);
+	Vec3f i2 = ::mix(b.control, b.end, t);
+	return ::mix(i1, i2, t);
 }
 
 // dynamic
@@ -88,7 +88,7 @@ Vec3f eval(const BezierN& bezier, float t) {
 	auto p = bezier.points;
 	for(auto i = 0u; i < p.size(); ++i) {
 		for(auto j = 0u; j < p.size() - i; ++j) {
-			p[j] = mix(p[j], p[j + 1], t);
+			p[j] = ::mix(p[j], p[j + 1], t);
 		}
 	}
 
