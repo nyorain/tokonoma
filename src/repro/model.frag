@@ -57,6 +57,14 @@ void main() {
 		discard;
 	}
 
+	vec3 normal = normalize(inNormal);
+	if((material.flags & normalMap) != 0u) {
+		MaterialTex nt = material.normals;
+		vec2 tuv = (nt.coords == 0u) ? inTexCoord0 : inTexCoord1;
+		vec4 n = texture(sampler2D(textures[nt.id], samplers[nt.samplerID]), tuv);
+		normal = tbnNormal(normal, inPos, tuv, 2.0 * n.xyz - 1.0);
+	}
+
 	vec3 snapuv = sceneMap(scene.snapVP, inPos);
 	if(snapuv.xy != clamp(snapuv.xy, 0, 1)) {
 		discard;
@@ -81,13 +89,13 @@ void main() {
 	   vec2( 0.14383161, -0.14100790 ));
 
 	float fac = 0.0;
-	int count = 4;
+	int count = 8;
 	for(int i = 0; i < count; i++) {
 		// we could make the length dependent on the
 		// distance behind the first sample or something... (i.e.
 		// make the shadow smoother when further away from
 		// shadow caster).
-		float len = 2 * mrandom(vec4(gl_FragCoord.xyy + 100 * inPos.xyz, i));
+		float len = 4 * mrandom(vec4(gl_FragCoord.xyy + 100 * inPos.xyz, i));
 		float rid = mrandom(vec4(0.1 * gl_FragCoord.yxy - 32 * inPos.yzx, i));
 		int id = int(16.0 * rid) % 16;
 		vec2 off = len * poissonDisk[id] / textureSize(snapshotTex, 0).xy;
@@ -112,10 +120,14 @@ void main() {
 	float low = result / snapSpeed;
 	float high = result / snapSpeed + snapLength;
 	fac *= 1 - smoothstep(low, high, dt);
+	// float dv = clamp(dot(normalize(scene.camPos - inPos), normalize(inNormal)), 0, 1);
+	// float dv = smoothstep(-1, 1, dot(normalize(scene.camPos - inPos), normalize(inNormal)));
+	float dv = smoothstep(-1, 1, dot(normalize(scene.camPos - inPos), normal));
 
 	float zcurrent = distance(inPos, scene.camPos);
 	float zsnap = depthtoz(snapuv.z, scene.near, scene.far);
 	// outCol = fac * exp(-scene.exposure * (0.1 + zcurrent) * zsnap);
 	// outCol = fac * exp(-scene.exposure * pow(zcurrent, 2) * zsnap);
-	outCol = fac * exp(-scene.exposure * zcurrent * zsnap);
+	// outCol = fac * (1.5 - dv) * exp(-scene.exposure * zcurrent * zsnap);
+	outCol = fac * (0.1 + dv) * exp(-scene.exposure * zcurrent * zsnap);
 }

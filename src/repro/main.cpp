@@ -60,7 +60,35 @@
 //   understand, but only having a small visible radius around yourself
 //   kinda sucks as well"-thing a game mechanic.
 //   *why don't we make all value tweaking stuff literally just game mechanics?* :D
+// - use additional visual clues to make understanding layered, blended
+//   scenes easer? like also color them based on normal?
+//   [tried in model.frag, kinda nice but not too helpful. can include
+//    objects normals into that but probably not what we want]
+// - repro pass alpha blending: do a depth pre pass and take objects
+//   behind the first way less into account? poor-mans alpha blending
+//   i guess...
 // - this project should be awesome for temporal super sampling
+//   i guess we could get away with depth-based rejection, right?
+//   especially when we consider the scene static (i.e. no linearly
+//   approximated movement visualization sensor module for now) we
+//   should get pretty much ground truth with that? and it can be
+//   useful for better snap (shadow map) sampling
+//
+// - getting more detailed snaps (shadow maps):
+//   render high res and generate mipmaps? i guess the main performance
+//   impact atm is sampling a super high-res shadow map in primitives
+//   that are far away and outside of the snap.
+// - huge performance improvement: frustum-culling the primitives in the
+//   snap and only render them in the repro-depth passes afterwards (per frame).
+//   wait, we can do even more than just frustum culling. We could even
+//   perform occlusion culling in the snap. Maybe just use occlusion queries
+//   for that?
+//   Remember that the information we calculate there once brings huge
+//   performance improvements in all following repro frames.
+// - to not have all the high-res shadow map rendering have a huge impact
+//   on playability (i.e. we want snap results fast! like in a few milliseconds)
+//   start by rendering a low LOD and only when that is finished do all
+//   the fancier stuff (async) like rendering the super high-res snap(s)
 
 using namespace tkn::types;
 
@@ -273,8 +301,8 @@ public:
 		gpi.rasterization.cullMode = vk::CullModeBits::none;
 		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 		gpi.rasterization.depthBiasEnable = true;
-		gpi.rasterization.depthBiasConstantFactor = 1.f;
-		gpi.rasterization.depthBiasSlopeFactor = 3.f;
+		gpi.rasterization.depthBiasConstantFactor = 2.f;
+		gpi.rasterization.depthBiasSlopeFactor = 5.f;
 
 		snap_.pipe = {dev, gpi.info()};
 
