@@ -17,16 +17,8 @@ enough not listed here
 
 ## urgent todos
 
-- scene/light is messed up. Constructor takes unused, weird descriptor
-  set
-- re-add lost features: light/object picking, dynamically adding lights etc
-  just see TODOs and commented out sections
-- timeWidget currently somewhat hacked together, working
-  around rvg quirks triggering re-record while recording...
-  probably better to add passes to timeWidget (getting an id)
-  in initPasses and then use that id when recording to record
-  a timestamp. Shouldn't be too hard given that initPasses currently
-  also records the passes, just capture by value
+- re-add lost features: light/object picking
+- fix the current probe mess. Really hacky implementation
 - fix diretional light shadow in screenshot/probe
 - better transparency light model. Respect aoFactor and apply
   lightning from environment maps
@@ -56,16 +48,26 @@ enough not listed here
      its own parameters? normalize distance by radius before passing
      it to attenuation? parameters that work fine for a normalized
      distance are (1, 8, 128), but then lights are rather weak
-- deferred light initialization, re-implement adding lights
 - rgba16snorm (normalsFormat) isn't guaranteed to be supported
   as color attachment... i guess we could fall back to rgba16sint
   which is guaranteed to be supported? and then encode it
 - we don't need one extra ubo/ds for environment.
   the whole fixedMatrix stuff is rather bad, we could just add
-  the position in skybox.vert to viewPos and use the normal matrix
+  the position in skybox.vert to viewPos and use the usual matrix
 
 ## further ideas
 
+- add deferred light initialization
+- timeWidget is more hacked together than anything else.
+  See the notes in timeWidget.hpp
+- frame graph: might be possible to combine the frame graph utility
+  with all the (currently manual) plugging of image views into
+  other passes (see initBuffers). We currently basically provide
+  this information twice. When extending the frame graph api and making
+  all the different passes (ssao/luminance/ssr etc) derive from
+  FramePass it should be possible to set it up just once and automate
+  it otherwise. Not sure if worth it though, i probably was on the
+  right trip to keep everything as minimal as possible
 - blur bloom/apply dof depending on light? the brighter,
   the more blur (e.g. dof), is it maybe possible to merge bloom and dof?
 - we could render the skybox implicitly in the ao pass (we
@@ -120,6 +122,7 @@ most of these are more of a guess, have to test/benchmark
   performance when there are a couple of lights
 - don't recreate renderpasses, layouts and pipelines on
   every initPasses, only re-create what is really needed.
+  -> better framePass/frameGraph abstraction
 - correctly use byRegion dependency flag where possible?
   already using it in geomLight pass where it should have largest
   effect, e.g. for tiled renderers. Not sure if it has any effect

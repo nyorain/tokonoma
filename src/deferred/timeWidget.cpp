@@ -77,51 +77,71 @@ void TimeWidget::draw(vk::CommandBuffer cb) {
 	totalTime.draw(cb);
 }
 
-void TimeWidget::start(vk::CommandBuffer cb, nytl::Vec2f position) {
-	pos_ = position;
+void TimeWidget::move(nytl::Vec2f pos) {
+	y_ = pos.y + entryHeight;
+	bg_.change()->position = pos;
 
-	entries_.clear();
-	entries_.reserve(maxCount);
-	updateCounter_ = updateAfter_;
+	// update all entries
+	for(auto& entry : entries_) {
+		entry.name.change()->position = {pos.x + 20, y_};
+		entry.time.change()->position = {pos.x + 20 + labelWidth, y_};
+		y_ += entryHeight;
+	}
 
-	y_ = pos_.y + 20;
-	id_ = 0;
-	cb_ = cb;
-	vk::cmdWriteTimestamp(cb_, vk::PipelineStageBits::bottomOfPipe,
-		pool_, 0);
-}
-
-void TimeWidget::add(std::string name, vk::PipelineStageBits stage) {
-	name += ":";
-	auto& entry = entries_.emplace_back();
-	auto pos = nytl::Vec2f{pos_.x + 20, y_};
-	entry.name = {rvgContext(), pos, std::move(name), font(), 14.f};
-	entry.name.updateDevice();
-	pos.x += 100;
-	entry.time = {rvgContext(), pos, "......................", font(), 14.f};
-	entry.time.updateDevice();
-
-	vk::cmdWriteTimestamp(cb_, stage, pool_, ++id_);
-	y_ += 20;
-}
-
-void TimeWidget::finish() {
-	auto x = pos_.x + 20;
+	auto x = bg_.position().x + 20;
 	totalName.change()->position = {x, y_};
 	totalName.updateDevice();
-	x += 100;
+	x += labelWidth;
 	totalTime.change()->position = {x, y_};
 	totalTime.updateDevice();
-
 	y_ += 35;
-	vk::cmdWriteTimestamp(cb_, vk::PipelineStageBits::bottomOfPipe,
-		pool_, ++id_);
-	cb_ = {};
+}
+
+void TimeWidget::reset() {
+	entries_.clear();
+	updateCounter_ = updateAfter_;
+	id_ = 0;
+	y_ = bg_.position().y + entryHeight;
+}
+
+void TimeWidget::addTiming(std::string name) {
+	name += ":";
+	auto& entry = entries_.emplace_back();
+	auto pos = nytl::Vec2f{bg_.position().x + 20, y_};
+	entry.name = {rvgContext(), pos, std::move(name), font(), 14.f};
+	entry.name.updateDevice();
+	pos.x += labelWidth;
+	entry.time = {rvgContext(), pos, "......................", font(), 14.f};
+	entry.time.updateDevice();
+	y_ += entryHeight;
+}
+
+void TimeWidget::complete() {
+	auto x = bg_.position().x + 20;
+	totalName.change()->position = {x, y_};
+	totalName.updateDevice();
+	x += labelWidth;
+	totalTime.change()->position = {x, y_};
+	totalTime.updateDevice();
+	y_ += 35;
 
 	auto bgc = bg_.change();
-	bgc->position = pos_;
-	bgc->size.x = width_;
-	bgc->size.y = y_ - pos_.y;
+	bgc->size.x = width;
+	bgc->size.y = y_ - bgc->position.y;
+}
+
+void TimeWidget::start(vk::CommandBuffer cb) {
+	// write initial timing
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe, pool_, 0);
+	id_ = 0;
+}
+
+void TimeWidget::addTimestamp(vk::CommandBuffer cb, vk::PipelineStageBits stage) {
+	vk::cmdWriteTimestamp(cb, stage, pool_, ++id_);
+}
+
+void TimeWidget::finish(vk::CommandBuffer cb) {
+	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe, pool_, ++id_);
 }
 
 void TimeWidget::hide(bool h) {

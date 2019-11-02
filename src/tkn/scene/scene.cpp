@@ -290,7 +290,8 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 		vk::BufferUsageBits::transferSrc, hostMem};
 
 	auto qf = device().queueSubmitter().queue().family();
-	uploadCb_ = device().commandAllocator().get(qf);
+	uploadCb_ = device().commandAllocator().get(qf,
+		vk::CommandPoolCreateBits::resetCommandBuffer);
 	uploadSemaphore_ = {device()};
 }
 
@@ -1047,7 +1048,10 @@ vk::Semaphore Scene::upload() {
 		newPrimitives_ = 0;
 	}
 
-	dlg_assert(stageSpan.size() == 0); // all used
+	// pretty sure this assert is wrong, right?
+	// because stageSpan can obviously be larger than what we neet
+	// dlg_assertm(stageSpan.size() == 0, "{}", stageSpan.size()); // all used
+
 	stageMap.flush();
 	stageMap = {};
 
