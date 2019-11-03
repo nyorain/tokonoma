@@ -41,12 +41,12 @@ add_project_arguments(
 	language: 'cpp')
 
 # mainly needed for shaders and assets and stuff
+source_root = '/'.join(meson.source_root().split('\\'))
 add_project_arguments(
-	'-DDOI_BASE_DIR="@0@"'.format(meson.current_source_dir()),
+	'-DDOI_BASE_DIR="@0@"'.format(source_root),
 	language: 'cpp')
 
 # project-specific stuff
-source_root = '/'.join(meson.source_root().split('\\'))
 flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
 add_project_arguments(flag_dlg, language: 'cpp')
 add_project_arguments('-DASIO_STANDALONE', language: 'cpp')
