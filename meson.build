@@ -83,6 +83,7 @@ subdir('src/lpgi')
 subdir('src/taa')
 subdir('src/deferred')
 subdir('src/cloth')
+subdir('src/spirv')
 
 # inline (for small projects)
 executable('pendulum',

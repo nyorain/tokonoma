@@ -1,0 +1,23 @@
+; Basically an empty compute shader
+
+; Header, meta-information
+OpCapability Shader
+%1 = OpExtInstImport "GLSL.std.450"
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %mymain "mymain"
+OpExecutionMode %mymain LocalSize 4 1 1
+
+; Debugging instructions
+OpSource Unknown 0
+OpSourceContinued "Original source goes here"
+OpName %mymain "mymain"
+
+; types & functions
+%void = OpTypeVoid
+%mymain_type = OpTypeFunction %void
+
+; main function
+%mymain = OpFunction %void None %mymain_type
+%2 = OpLabel
+OpReturn
+OpFunctionEnd
