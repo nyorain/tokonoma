@@ -6,7 +6,8 @@
 #include <ostream>
 #include <numeric>
 
-// WIP implementation of iq's floating bar concept
+// Unfinished toy implementation of iq's floating bar concept
+// See https://iquilezles.org/www/articles/floatingbar/floatingbar.htm
 
 namespace tkn {
 
@@ -16,7 +17,7 @@ using u64 = std::uint64_t;
 
 // TODO: standard doesn't guarantee packing to 32 bits though
 // could just use u32 and (mem)copy when needed
-// TODO: to match int representation this has to depend on endianess i guess
+// TODO: to match int representation this has to depend on endianess i guess.
 // probably just do it manually, don't rely on bitfields... like in f16
 struct fb32 {
 public:
@@ -30,7 +31,9 @@ public:
 		sign(s), bar(b), nums(n) {}
 	explicit constexpr inline fb32(int);
 
-	// NOTE: should probably better be explicit, right?
+	// TODO: should be explicit.
+	// Requires static casting in nytl vec/mat conversion though.
+	// Should those be explicit as well?
 	constexpr inline operator double() const;
 };
 

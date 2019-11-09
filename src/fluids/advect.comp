@@ -1,8 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 
-#include "fluid.glsl"
-
 layout (local_size_x = 16, local_size_y = 16) in;
 
 #ifdef VELOCITY
@@ -22,6 +20,9 @@ layout(binding = 4) uniform UBO {
 	float densFac;
 	float radius;
 } ubo;
+
+#include "fluid.glsl"
+#include "velocity.glsl"
 
 // distance between point and segment (segA, segB)
 float distance(vec2 point, vec2 segA, vec2 segB) {

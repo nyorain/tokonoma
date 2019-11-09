@@ -6,7 +6,6 @@
 
 namespace tkn {
 
-// TODO: conversion from/to double
 // 16-bit IEEE floating point value, compatible with gpu representations.
 // Often called "half".
 class f16 final {
@@ -20,6 +19,10 @@ public:
 	f16() = default;
 	f16(float);
 	explicit f16(u16 sign, u16 exp, u16 mantissa);
+
+	// TODO: should be explicit.
+	// Requires static casting in nytl vec/mat conversion though.
+	// Should those be explicit as well?
 	operator float() const;
 
 	u16& bits() { return bits_; }
