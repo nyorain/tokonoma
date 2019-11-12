@@ -169,17 +169,19 @@ vec2 intersectionFacs(vec2 p1, vec2 d1, vec2 p2, vec2 d2) {
 	return (1 / det) * vec2(cross(ab, d2), cross(ab, d1));
 }
 
-bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos) {
+const float eps = 0.001;
+bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos, out float isfac) {
 	float m = -1;
 	for(uint i = 0u; i < segments.length(); ++i) {
 		Segment segi = segments[i];
 		vec2 is = intersectionFacs(pos, dir, segi.start, segi.end - segi.start);
-		if(is.y < 0.0 || is.y > 1.0 || is.x < 0.01) {
+		if(is.y < -eps || is.y > 1 + eps || is.x < eps) {
 			continue;
 		}
 
 		if(m == -1 || is.x < m) {
 			seg = segi;
+			isfac = is.y;
 			m = is.x;
 		}
 	}
@@ -235,7 +237,13 @@ void main() {
 	float dist = light.radius;
 	uint bounce = 0;
 	bool finished = false;
-	while(trace(pos, dir, seg, npos)) {
+	float isf;
+	while(trace(pos, dir, seg, npos, isf)) {
+		if(isf < eps || isf > 1 - eps) {
+			finished = true;
+			break;
+		}
+
 		uint id = atomicAdd(pointCount, 2);
 		positions[id + 0] = pos; 
 		positions[id + 1] = npos; 
