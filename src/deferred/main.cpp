@@ -83,6 +83,7 @@ public:
 public:
 	bool init(const nytl::Span<const char*> args) override;
 	void initRenderData() override;
+	void initTimings();
 	void initPasses(const tkn::WorkBatcher&);
 	void screenshot();
 	void addPointLight(nytl::Vec3f pos, nytl::Vec3f color, float radius,
@@ -229,6 +230,7 @@ protected:
 	bool recreatePasses_ {false};
 	vpp::ShaderModule fullVertShader_;
 
+	bool hideTimeWidget_ {false};
 	TimeWidget timeWidget_;
 
 	struct {
@@ -471,9 +473,34 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	});
 
 	selected_.removedFolder = panel.remove(*selected_.folder);
+
+	// time widget
 	timeWidget_ = {rvgContext(), defaultFont()};
+	initTimings();
 
 	return true;
+}
+
+void ViewApp::initTimings() {
+	timeWidget_.reset();
+	timeWidget_.addTiming("shadows"); // always the first, no dependencies
+	for(auto& pass : frameGraph_.order()) {
+		dlg_assert(pass.pass->name);
+		if(std::strcmp(pass.pass->name, "geomLight") == 0) {
+			timeWidget_.addTiming("geometry");
+			timeWidget_.addTiming("light");
+			if(geomLight_.renderAO()) {
+				timeWidget_.addTiming("ao");
+			}
+			timeWidget_.addTiming("env");
+			timeWidget_.addTiming("geom:blend");
+		} else if(std::strcmp(pass.pass->name, "no-timing") == 0) {
+			// no-op
+		} else {
+			timeWidget_.addTiming(pass.pass->name);
+		}
+	}
+	timeWidget_.complete();
 }
 
 void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
@@ -514,6 +541,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 
 	auto& passGeomLight = frameGraph_.addPass();
+	passGeomLight.name = "geomLight";
 	auto& targetNormals = passGeomLight.addOut(syncScopeFlex,
 		geomLight_.normalsTarget().vkImage());
 	auto& targetAlbedo = passGeomLight.addOut(syncScopeFlex,
@@ -537,6 +565,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 	vpp::InitObject initPP(pp_, passInfo, swapchainInfo().imageFormat);
 	auto& passPP = frameGraph_.addPass();
+	passPP.name = "pp";
 	passPP.record = [&](const auto& buf) {
 		auto cb = buf.cb;
 		vk::cmdBeginRenderPass(cb, {
@@ -547,7 +576,8 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		}, {});
 
 		pp_.record(cb, debugMode_);
-		timeWidget_.add("pp");
+		// timeWidget_.add("pp");
+		timeWidget_.addTimestamp(cb);
 
 		// gui stuff
 		vpp::DebugLabel debugLabel(cb, "GUI");
@@ -555,7 +585,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		gui().draw(cb);
 
 		// times
-		timeWidget_.finish();
+		// timeWidget_.finish();
 		rvgContext().bindDefaults(cb);
 		windowTransform().bind(cb);
 		timeWidget_.draw(cb);
@@ -569,6 +599,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		ssao_.create(initSSAO, passInfo);
 
 		auto& passSSAO = frameGraph_.addPass();
+		passSSAO.name = "ssao";
 		passSSAO.addIn(targetLDepth, ssao_.dstScopeDepth());
 		passSSAO.addIn(targetNormals, ssao_.dstScopeNormals());
 		targetSSAO = &passSSAO.addOut(ssao_.srcScopeTarget(),
@@ -576,7 +607,8 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 		passSSAO.record = [&](const auto& buf) {
 			ssao_.record(buf.cb, buf.size, cameraDs_);
-			timeWidget_.add("ssao");
+			// timeWidget_.add("ssao");
+			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
 
@@ -586,6 +618,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		ao_.create(initAO, passInfo);
 
 		auto& passAO = frameGraph_.addPass();
+		passAO.name = "ao";
 		targetAO = &passAO.addInOut(targetLight, ao_.scopeLight());
 		passAO.addIn(targetLDepth, ao_.dstScopeGBuf());
 		passAO.addIn(targetAlbedo, ao_.dstScopeGBuf());
@@ -597,7 +630,8 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 		passAO.record = [&](const auto& buf) {
 			ao_.record(buf.cb, cameraDs_, buf.size);
-			timeWidget_.add("ao");
+			// timeWidget_.add("ao");
+			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
 
@@ -607,6 +641,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		bloom_.create(initBloom, passInfo);
 
 		auto& passBloom = frameGraph_.addPass();
+		passBloom.name = "bloom";
 		passBloom.addIn(targetEmission, bloom_.dstScopeEmission());
 		passBloom.addIn(*targetAO, bloom_.dstScopeLight());
 		targetBloom = &passBloom.addOut(bloom_.srcScopeTarget(),
@@ -615,7 +650,8 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 		passBloom.record = [&](const auto& buf) {
 			bloom_.record(buf.cb, geomLight_.emissionTarget().image(), buf.size);
-			timeWidget_.add("bloom");
+			// timeWidget_.add("bloom");
+			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
 
@@ -625,6 +661,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		ssr_.create(initSSR, passInfo);
 
 		auto& passSSR = frameGraph_.addPass();
+		passSSR.name = "ssr";
 		passSSR.addIn(targetLDepth, ssr_.dstScopeDepth());
 		passSSR.addIn(targetNormals, ssr_.dstScopeNormals());
 		targetSSR = &passSSR.addOut(ssr_.srcScopeTarget(),
@@ -632,7 +669,8 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 		passSSR.record = [&](const auto& buf) {
 			ssr_.record(buf.cb, cameraDs_, buf.size);
-			timeWidget_.add("ssr");
+			// timeWidget_.add("ssr");
+			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
 
@@ -642,6 +680,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		scatter_.create(initScatter, passInfo, !pointLight);
 
 		auto& passScatter = frameGraph_.addPass();
+		passScatter.name = "scatter";
 		passScatter.addIn(targetLDepth, scatter_.dstScopeDepth());
 		targetScatter = &passScatter.addOut(scatter_.srcScopeTarget(),
 			scatter_.target().vkImage());
@@ -651,7 +690,8 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 				pointLights_[0].ds() :
 				dirLights_[0].ds();
 			scatter_.record(buf.cb, buf.size, cameraDs_, lightDs);
-			timeWidget_.add("scatter");
+			// timeWidget_.add("scatter");
+			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
 
@@ -661,6 +701,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		combine_.create(initCombine, passInfo);
 
 		auto& passCombine = frameGraph_.addPass();
+		passCombine.name = "combine";
 		passCombine.addIn(targetLDepth, combine_.dstScopeDepth());
 		passCombine.addIn(*targetAO, combine_.dstScopeLight());
 		if(targetBloom) {
@@ -676,7 +717,8 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 			combine_.scopeTarget());
 		passCombine.record = [&](const auto& buf) {
 			combine_.record(buf.cb, buf.size);
-			timeWidget_.add("combine");
+			// timeWidget_.add("combine");
+			timeWidget_.addTimestamp(buf.cb);
 		};
 
 		targetPPInput = &targetCombined;
@@ -688,6 +730,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		luminance_.create(initLuminance, passInfo);
 
 		auto& passLum = frameGraph_.addPass();
+		passLum.name = "luminance";
 		passLum.addIn(*targetPPInput, luminance_.dstScopeLight());
 		targetLuminance = &passLum.addOut(
 			luminance_.srcScopeTarget(),
@@ -698,6 +741,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 			// TODO: luminance might be executed after pp.
 			// still working around weird time widget quirks
 			// timeWidget_.add("luminance");
+			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
 
@@ -728,6 +772,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		// pseudo-pass that copies the center pixel of the depth target
 		// so we know what depth is currently focused and can adopt dof
 		auto& passCopyDepth = frameGraph_.addPass();
+		passCopyDepth.name = "no-timing"; // special, see initTimings
 		passCopyDepth.addIn(targetLDepth, {
 			vk::PipelineStageBits::transfer,
 			vk::ImageLayout::transferSrcOptimal,
@@ -750,6 +795,11 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 	dlg_assert(frameGraph_.check());
 	frameGraph_.compute();
 
+	if(timeWidget_.valid()) {
+		initTimings();
+	}
+
+	// targets
 	auto dstAlbedo = targetAlbedo.producer.scope;
 	auto dstNormals = targetNormals.producer.scope;
 	auto dstEmission = targetEmission.producer.scope;
@@ -1325,10 +1375,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	App::beforeRender(cb);
 	vk::cmdResetQueryPool(cb, timeWidget_.queryPool(), 0, timeWidget_.maxCount);
 
-	auto pos = nytl::Vec2f(window().size());
-	pos.x -= 240;
-	pos.y = 10;
-	timeWidget_.start(cb, pos);
+	timeWidget_.start(cb);
 
 	// render shadow maps
 	for(auto& light : pointLights_) {
@@ -1340,7 +1387,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 		light.render(cb, shadowData_, scene_);
 	}
 
-	timeWidget_.add("shadows");
+	timeWidget_.addTimestamp(cb);
 
 	auto size = swapchainInfo().imageExtent;
 	const auto width = size.width;
@@ -1354,6 +1401,7 @@ void ViewApp::record(const RenderBuffer& buf) {
 	data.fb = buf.framebuffer;
 	data.size = size;
 	frameGraph_.record(data);
+	timeWidget_.finish(cb);
 
 	App::afterRender(cb);
 	vk::endCommandBuffer(cb);
@@ -1392,7 +1440,7 @@ void ViewApp::addPointLight(nytl::Vec3f pos, nytl::Vec3f color, float radius,
 	auto wb = tkn::WorkBatcher::createDefault(vulkanDevice());
 	auto& l = pointLights_.emplace_back(wb, shadowData_,
 		shadowMap ? vk::ImageView{} : dummyCube_.vkImageView());
-	std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+	// std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 	l.data.position = pos;
 	l.data.color = color;
 	l.data.radius = radius;
@@ -1402,7 +1450,7 @@ void ViewApp::addPointLight(nytl::Vec3f pos, nytl::Vec3f color, float radius,
 
 	// HACK: make sure it doesn't write to depth buffer and isn't
 	// rendered into shadow map
-	// lmat.flags |= tkn::Material::Bit::blend;
+	lmat.flags |= tkn::Material::Bit::blend;
 	lmat.emissionFac = l.data.color;
 	lmat.albedoFac = Vec4f(l.data.color);
 	lmat.albedoFac[3] = 1.f;
@@ -1620,15 +1668,12 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			break;
 		 } case ny::Keycode::z: {
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-			addPointLight(camera_.pos, {dist(rnd), dist(rnd), dist(rnd)}, 0.5, true);
+			addPointLight(camera_.pos, {dist(rnd), dist(rnd), dist(rnd)}, 5.0, true);
 			break;
 		} case ny::Keycode::f: {
-			// timings_.hide ^= true;
-			// timings_.bg.disable(timings_.hidden);
-			// for(auto& t : timings_.texts) {
-			// 	t.passName.disable(timings_.hidden);
-			// 	t.time.disable(timings_.hidden);
-			// }
+			hideTimeWidget_ ^= true;
+			timeWidget_.hide(hideTimeWidget_);
+			break;
 		} default:
 			break;
 	}
@@ -1944,6 +1989,11 @@ void ViewApp::resize(const ny::SizeEvent& ev) {
 	selectionPos_ = {};
 	camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 	camera_.update = true;
+
+	auto pos = nytl::Vec2f(ev.size);
+	pos.x -= 240;
+	pos.y = 10;
+	timeWidget_.move(pos);
 }
 
 int main(int argc, const char** argv) {

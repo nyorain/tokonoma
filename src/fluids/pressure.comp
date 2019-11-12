@@ -1,12 +1,14 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
-#include "fluid.glsl"
 
 layout (local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0, r32f) uniform writeonly image2D out_pressure;
 layout(binding = 1, r32f) uniform readonly image2D in_pressure;
 layout(binding = 2, r32f) uniform readonly image2D in_divergence;
+
+#include "fluid.glsl"
+#include "pressure.glsl"
 
 void main() {
 	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
@@ -15,10 +17,10 @@ void main() {
 	// }
 
 	float div = imageLoad(in_divergence, pos).x;
-	float l = pressure(in_pressure, pos, ivec2(-1, 0));
-	float r = pressure(in_pressure, pos, ivec2(1, 0));
-	float t = pressure(in_pressure, pos, ivec2(0, 1));
-	float b = pressure(in_pressure, pos, ivec2(0, -1));
+	float l = pressure(pos, ivec2(-1, 0));
+	float r = pressure(pos, ivec2(1, 0));
+	float t = pressure(pos, ivec2(0, 1));
+	float b = pressure(pos, ivec2(0, -1));
 	float p = (l + r + t + b - div) / 4.0;
 	imageStore(out_pressure, pos, vec4(p));
 }

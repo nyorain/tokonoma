@@ -1,15 +1,11 @@
 #pragma once
 
-// Allows to code as glsl like as possible
+// Allows to code as glsl-like as possible
 #include <nytl/vecOps.hpp>
 #include <nytl/matOps.hpp>
 #include <nytl/math.hpp>
 
 namespace tkn::glsl {
-
-// TODO: with modification to nytl smoothstep and mix
-// (additional template parameter for factor).
-// Some overload probably still missing
 
 using nytl::Vec;
 using nytl::radians;
@@ -111,6 +107,14 @@ constexpr auto step(const Vec<D, T>& edge, Vec<D, T> x) {
 }
 
 template<size_t D, typename T>
+constexpr auto smoothstep(const Vec<D, T>& edge0, const Vec<D, T>& edge1,
+		Vec<D, T> x) {
+	for(auto i = 0u; i < D; ++i)
+		x[i] = smoothstep(edge0[i], edge1[i], x[i]);
+	return x;
+}
+
+template<size_t D, typename T>
 constexpr auto mod(Vec<D, T> x, const Vec<D, T>& y) {
 	for(auto i = 0u; i < D; ++i)
 		x[i] = std::fmod(x[i], y[i]);
@@ -124,36 +128,22 @@ constexpr auto mod(Vec<D, T> x, const T& y) {
 	return x;
 }
 
-#define TKN_VEC_UTIL_FUNC(func) \
-	template<size_t D, typename T> \
-	constexpr Vec<D, T> func(Vec<D, T> vec) { \
-		for(auto& val : vec) val = func(val); \
-		return vec; \
-	}
+template<size_t D, typename T>
+Vec<D, T> inversesqrt(Vec<D, T> x) {
+	for(auto& v : x) v = inversesqrt(v);
+	return x;
+}
 
-TKN_VEC_UTIL_FUNC(inversesqrt);
-TKN_VEC_UTIL_FUNC(sign);
-TKN_VEC_UTIL_FUNC(fract);
+template<size_t D, typename T>
+Vec<D, T> sign(Vec<D, T> x) {
+	for(auto& v : x) v = sign(v);
+	return x;
+}
 
-#undef TKN_VEC_UTIL_FUNC
-
-// template<size_t D, typename T>
-// Vec<D, T> inversesqrt(Vec<D, T> x) {
-// 	for(auto& v : x) v = inversesqrt(v);
-// 	return x;
-// }
-//
-
-// template<size_t D, typename T>
-// Vec<D, T> sign(Vec<D, T> x) {
-// 	for(auto& v : x) v = sign(v);
-// 	return x;
-// }
-
-// template<size_t D, typename T>
-// Vec<D, T> fract(Vec<D, T> x) {
-// 	for(auto& v : x) v = fract(v);
-// 	return x;
-// }
+template<size_t D, typename T>
+Vec<D, T> fract(Vec<D, T> x) {
+	for(auto& v : x) v = fract(v);
+	return x;
+}
 
 } // namespace tkn::glsl

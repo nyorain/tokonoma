@@ -58,6 +58,7 @@ struct FrameTarget {
 class FramePass {
 public:
 	std::function<void(const RenderData& data)> record;
+	const char* name {}; // external utility
 
 public:
 	void addIn(FrameTarget& target, SyncScope scope) {

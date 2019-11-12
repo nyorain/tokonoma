@@ -1,12 +1,15 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
-#include "fluid.glsl"
 
 layout (local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0, rgba16f) uniform writeonly image2D out_vel;
 layout(binding = 1, rgba16f) uniform readonly image2D in_vel;
 layout(binding = 2, r32f) uniform readonly image2D in_pressure;
+
+#include "fluid.glsl"
+#include "pressure.glsl"
+#include "velocity.glsl"
 
 layout(binding = 4) uniform UBO {
 	vec2 mp0;
@@ -24,10 +27,10 @@ void main() {
 		return;
 	}
 
-	float l = pressure(in_pressure, pos, ivec2(-1, 0)).x;
-	float r = pressure(in_pressure, pos, ivec2(1, 0)).x;
-	float b = pressure(in_pressure, pos, ivec2(0, -1)).x;
-	float t = pressure(in_pressure, pos, ivec2(0, 1)).x;
+	float l = pressure(pos, ivec2(-1, 0)).x;
+	float r = pressure(pos, ivec2(1, 0)).x;
+	float b = pressure(pos, ivec2(0, -1)).x;
+	float t = pressure(pos, ivec2(0, 1)).x;
 	vec2 grad = 0.5 * vec2(r - l, t - b);
 	// vec2 grad = vec2(r - l, t - b);
 

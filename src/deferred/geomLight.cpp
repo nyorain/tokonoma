@@ -528,7 +528,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		tkn::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {camDs});
 		scene.render(cb, geomPipeLayout_, false); // opaque
 		if(time) {
-			time->add("geometry");
+			time->addTimestamp(cb);
 		}
 	}
 
@@ -553,7 +553,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		}
 
 		if(time) {
-			time->add("light");
+			time->addTimestamp(cb);
 		}
 		if(renderAO()) {
 			vpp::DebugLabel(cb, "ao pass");
@@ -563,7 +563,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 				0, 4, &aoEnvLods_);
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 			if(time) {
-				time->add("ao");
+				time->addTimestamp(cb);
 			}
 		}
 
@@ -575,7 +575,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 				boxIndices.offset(), vk::IndexType::uint16);
 			env->render(cb);
 			if(time) {
-				time->add("env");
+				time->addTimestamp(cb);
 			}
 		}
 
@@ -583,7 +583,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		tkn::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {camDs});
 		scene.render(cb, geomPipeLayout_, true); // blend
 		if(time) {
-			time->add("transparent");
+			time->addTimestamp(cb);
 		}
 	}
 

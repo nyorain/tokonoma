@@ -446,11 +446,12 @@ bool App::init(nytl::Span<const char*> args) {
 		}
 	}
 
+	// finish initializion
 	impl_->renderPass = createRenderPass();
 	initRenderData();
 	impl_->renderer.emplace(*this, *presentQueue, impl_->scInfo);
 
-	// additional stuff
+	// init rvg
 	auto [pass, subpass] = rvgPass();
 	if(pass) {
 		rvg::ContextSettings rvgcs {pass, subpass};
@@ -471,6 +472,7 @@ bool App::init(nytl::Span<const char*> args) {
 		impl_->guiListener.app(*this);
 		impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
 	}
+
 
 	return true;
 }
