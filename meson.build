@@ -186,6 +186,11 @@ executable('repro', [
 		repro_shaders,
 	], dependencies: tkn_dep)
 
+executable('rays', [
+		'src/rays/main.cpp',
+		rays_shaders,
+	], dependencies: tkn_dep)
+
 executable('pg',
 	'src/playground/main6.cpp',
 	dependencies: tkn_dep)

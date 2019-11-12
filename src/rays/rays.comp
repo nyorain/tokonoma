@@ -1,0 +1,301 @@
+#version 460
+
+const float pi = 3.1415926535897932;
+
+// TODO: optimize, find sweet spot
+layout(local_size_x = 1, local_size_y = 1) in;
+
+struct Segment {
+	vec2 start;
+	vec2 end;
+	uint material;
+	uint _pad0;
+};
+
+layout(set = 0, binding = 0, std430) buffer Segments {
+	Segment segments[];
+};
+
+struct Material {
+	vec3 albedo;
+	float roughness;
+	float metallic;
+	float _pad0[3];
+};
+
+layout(set = 0, binding = 1, std430) buffer Materials {
+	Material materials[];
+};
+
+// Point light
+struct Light {
+	vec3 color;
+	float radius;
+	vec2 pos;
+	float _pad0[2];
+};
+
+layout(set = 0, binding = 2, std430) buffer Lights {
+	Light lights[];
+};
+
+// Must match vertex shader description
+// struct Ray {
+// 	vec3 startColor;
+// 	vec2 start;
+// 	vec4 endColor;
+// 	vec2 end;
+// };
+
+layout(set = 0, binding = 3, std430) buffer DrawCommand {
+	// indirect draw command
+	uint pointCount;
+	uint _p0;
+	uint _p1;
+	uint _p2;
+};
+
+layout(set = 0, binding = 4, std430) buffer Positions {
+	vec2 positions[];
+};
+
+layout(set = 0, binding = 5, std430) buffer Colors {
+	// alpha contains the distance to light
+	vec4 colors[];
+};
+
+
+layout(set = 0, binding = 6) uniform UBO {
+	vec2 pos;
+	vec2 size;
+	float time;
+} view;
+
+// pbr util
+float distributionGGX(vec2 n, vec2 h, float roughness) {
+	// NOTE: originally a (usually called alpha) was the roughness of
+	// the material but for better visual results, roughness * roughness
+	// is often used.
+	// float a = roughness;
+	float a = roughness * roughness;
+
+	float a2 = a * a;
+	float ndh = max(dot(n, h), 0.0);
+	float ndh2 = ndh * ndh;
+
+	float denom = max(ndh2 * (a2 - 1.0) + 1.0, 0.01);
+	denom = pi * denom * denom;
+	return a2 / denom;
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 f0) {
+	return f0 + (1.0 - f0) * pow(1.0 - cosTheta, 5.0);
+}
+
+float geometrySchlickGGX(float ndv, float k) {
+	return ndv / (ndv * (1.0 - k) + k);
+}
+
+float geometrySmith(float ndv, float ndl, float roughness) {
+	float r = (roughness + 1.0);
+    float k = (r * r) / 8.0;
+	float ggx1 = geometrySchlickGGX(ndv, k);
+	float ggx2 = geometrySchlickGGX(ndl, k);
+	return ggx1 * ggx2;
+}
+
+vec3 cookTorrance(vec2 n, vec2 l, vec2 v, float roughness,
+		float metallic, vec3 albedo) {
+	vec3 f0 = vec3(0.04); // NOTE: good enough, could be made material property
+	f0 = mix(f0, albedo, metallic);
+
+	vec2 h = normalize(l + v);
+	float ndv = max(dot(n, v), 0.001);
+	float ndl = max(dot(n, l), 0.001);
+
+	float ndf = distributionGGX(n, h, roughness);
+	float g = geometrySmith(ndv, ndl, roughness);
+	vec3 f = fresnelSchlick(clamp(dot(h, v), 0.0, 1.0), f0);
+
+	vec3 specular = (ndf * g * f) / max(4.0 * ndv * ndl, 0.001);
+	vec3 diffuse = (1.0 - f) * (1.0 - metallic) * albedo / pi;
+	return (specular + diffuse) * ndl;
+}
+
+vec2 clip_aabb(vec2 boxmin, vec2 boxmax, vec2 pos, vec2 dir) {
+	vec2 v1 = (boxmin - pos) / dir;
+	vec2 v2 = (boxmax - pos) / dir;
+	float m = 99999999;
+	if(v1.x > 0 && v1.x < m) m = v1.x;
+	if(v1.y > 0 && v1.y < m) m = v1.y;
+	if(v2.x > 0 && v2.x < m) m = v2.x;
+	if(v2.y > 0 && v2.y < m) m = v2.y;
+	return pos + m * dir;
+}
+
+float random(float v) {
+    float a = 43758.5453;
+    float sn = mod(v, 3.14);
+    return fract(sin(sn) * a);
+}
+
+float random(vec2 v) {
+    float a = 43758.5453;
+    float b = 12.9898;
+    float c = 78.233;
+    float dt = dot(v, vec2(b, c));
+    float sn = mod(dt, 3.14);
+    return fract(sin(sn) * a);
+}
+
+vec2 random2(vec2 v) {
+	return vec2(
+		random(dot(v, vec2(15.32, 64.234))),
+		random(dot(v, vec2(-35.2234, 24.23588453))));
+}
+
+vec2 r2seq(float x) {
+	return vec2(random(25.32 * x), random(-35.12942 * x));
+}
+
+float cross(vec2 a, vec2 b) {
+	return a.x * b.y - a.y * b.x;
+}
+
+vec2 intersectionFacs(vec2 p1, vec2 d1, vec2 p2, vec2 d2) {
+	vec2 ab = p2 - p1;
+	float det = cross(d1, d2);
+	// TODO: if det == 0 the lines are collinear
+	return (1 / det) * vec2(cross(ab, d2), cross(ab, d1));
+}
+
+bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos) {
+	float m = -1;
+	for(uint i = 0u; i < segments.length(); ++i) {
+		Segment segi = segments[i];
+		vec2 is = intersectionFacs(pos, dir, segi.start, segi.end - segi.start);
+		if(is.y < 0.0 || is.y > 1.0 || is.x < 0.01) {
+			continue;
+		}
+
+		if(m == -1 || is.x < m) {
+			seg = segi;
+			m = is.x;
+		}
+	}
+
+	if(m == -1) {
+		return false;
+	}
+
+	npos = pos + m * dir;
+	return true;
+}
+
+
+const uint maxBounces = 10u;
+const float lightEps = 0.001;
+
+void main() {
+	uint lightID = gl_GlobalInvocationID.x;
+	if(lightID >= lights.length()) {
+		return;
+	}
+
+	uint sampleCount = gl_NumWorkGroups.y;
+	uint sampleID = gl_GlobalInvocationID.y;
+	Light light = lights[lightID];
+
+	// simple, random offset
+	// vec2 off = normalize(-1 + 2 * r2seq(10 * view.time - 0.01 * sampleID));
+
+	// more uniformly distributed offset
+	// float fs = sampleID;
+	float fs = sampleID + random(-pi * view.time + sampleID);
+	float phi = 2 * pi * (fs / sampleCount);
+	vec2 off = vec2(cos(phi), sin(phi));
+
+	// float scale = 0.2 * pi;
+	// vec2 diff = vec2(1.5, 1.5) - light.pos;
+	// float phi = -0.5 * scale + scale * (fs / sampleCount) + atan(diff.y, diff.x);
+	// vec2 off = normalize(vec2(cos(phi), sin(phi)));
+
+	// vec2 dir = off;
+	// direction slightly random from offset
+	vec2 noff = vec2(-off.y, off.x);
+	float rf = -1 + 2 * random(view.time + sampleID);
+	// rf *= pow(abs(rf), 4);
+	vec2 dir = normalize(rf * noff + (1 - rf) * off);
+
+	Segment seg;
+	vec2 pos = light.pos + light.radius * off;
+	vec3 color = (1.f / sampleCount) * light.color * dot(dir, off);
+	vec2 npos;
+
+	float dist = light.radius;
+	uint bounce = 0;
+	bool finished = false;
+	while(trace(pos, dir, seg, npos)) {
+		uint id = atomicAdd(pointCount, 2);
+		positions[id + 0] = pos; 
+		positions[id + 1] = npos; 
+		colors[id + 0] = vec4(color, dist);
+		dist += distance(npos, pos);
+		colors[id + 1] = vec4(color, dist);
+
+		// bounce
+		vec2 tangent = normalize(seg.end - seg.start);
+		vec2 normal = vec2(-tangent.y, tangent.x); // TODO: left or right normal?
+		if(dot(normal, -dir) < 0) { // double sided for now
+			normal *= -1;
+		}
+
+		Material mat = materials[seg.material];
+
+		// vec2 n = normal;
+		// ggx importance sampling of reflection
+		// probably not really correct yet
+		float a = mat.roughness * mat.roughness;
+		float r = random(pos + view.time);
+		float cosTheta = sqrt((1 - r) / (1 + (a * a - 1) * r));
+		float sinTheta = sqrt(1 - cosTheta * cosTheta);
+		if(random(pos - view.time) < 0.5) sinTheta *= -1;
+		vec2 n = cosTheta * normal + sinTheta * tangent;
+		
+		vec2 ndir = reflect(dir, n);
+		if(dot(ndir, normal) < 0) { // geometry shadowing i guess?
+			finished = true;
+			break;
+		}
+
+		// brdf
+		// really include diffuse term here?
+		// TODO: inverse-square light falloff over distance
+		// color *= cookTorrance(normal, -dir, ndir,
+		// 	mat.roughness, mat.metallic, mat.albedo);
+		color *= mat.albedo * max(dot(-dir, n), 0);
+		// color *= mat.albedo;
+
+		dir = ndir;
+		pos = npos;
+
+		++bounce;
+		// if(bounce > maxBounces || length(color / (dist * dist)) < lightEps) {
+		if(bounce > maxBounces) {
+			finished = true;
+			break;
+		}
+	}
+
+	// add final ray out of screen
+	if(!finished) {
+		npos = clip_aabb(view.pos, view.pos + view.size, pos, dir);
+
+		uint id = atomicAdd(pointCount, 2);
+		positions[id + 0] = pos; 
+		positions[id + 1] = npos; 
+		colors[id + 0] = vec4(color, dist);
+		dist += distance(npos, pos);
+		colors[id + 1] = vec4(color, dist);
+	}
+}

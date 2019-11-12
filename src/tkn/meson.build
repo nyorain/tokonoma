@@ -43,6 +43,7 @@ tkn_src = [
 	'headless.cpp',
 	'defer.cpp',
 	'f16.cpp',
+	'util.cpp',
 
 	'scene/scene.cpp',
 	'scene/material.cpp',

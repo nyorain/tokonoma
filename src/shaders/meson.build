@@ -191,6 +191,11 @@ shaders_src = {
 		['sky.vert'],
 		# ['sky.frag', scatter_glsl],
 	],
+	'rays': [
+		['rays.comp'],
+		['ray.vert'],
+		['ray.frag'],
+	],
 }
 
 # build them

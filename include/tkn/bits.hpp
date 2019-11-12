@@ -104,4 +104,10 @@ bytes(const std::vector<T>& val) {
 	return nytl::as_bytes(nytl::span(val));
 }
 
+template<typename T>
+std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<const std::byte>>
+bytes(const std::initializer_list<T>& val) {
+	return nytl::as_bytes(nytl::span(val));
+}
+
 } // namespace tkn
