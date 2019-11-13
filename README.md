@@ -62,6 +62,13 @@ List of projects with some sample screenshots (noninclusive):
 - pursuers: small system of particle pursuers resulting in interesting
   patterns
   ![pursuers screenshot](./assets/pics/pursuers1.png)
+- rays: 2D light model, rendered using a ray/path tracing approach and line
+  rendering.
+  ![rays screenshot](./assets/pics/rays.png)
+- repro: first prototype of a game with visual perception based on taking
+  snapshots of the current view and then depth-reprojecting it as one is
+  moving through it
+  ![repro screenshot](./assets/pics/repro.png)
 - sen: first raytracing and path tracing experiments (mainly a cornell-box),
   done via compute shaders (or similar methods) on the gpu.
   Not even physically-based yet, just playing around with the basic concepts.
@@ -100,9 +107,10 @@ the excellent [dat.gui](https://github.com/dataarts/dat.gui).
 
 ## Licenses
 
-Unless stated otherwise, the code is available under the MIT license (see LICENSE,
-some projects may use GPL, they have their own LICENSE file in their
-src/ folder then).
+Unless stated otherwise, the code is available under the MIT license, see LICENSE.
+Some projects (mainly the ones where some time was invested or new techniques
+developed, like `rays`, `repro`, `iro` or `smooth-shadow`) may use GPL
+or other licenses, they have their own LICENSE file in their src/ folder then.
 Additional external licenses for distributed code/assets:
 
 - `assets/LiberationSans-*.ttf`: [SIL Open Font License 1.1](https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL#5667e9e4)
