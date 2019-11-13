@@ -195,6 +195,8 @@ shaders_src = {
 		['rays.comp'],
 		['ray.vert'],
 		['ray.frag'],
+		['tss.comp'],
+		['pp.frag'],
 	],
 }
 

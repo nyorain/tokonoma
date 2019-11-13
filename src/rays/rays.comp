@@ -2,8 +2,7 @@
 
 const float pi = 3.1415926535897932;
 
-// TODO: optimize, find sweet spot
-layout(local_size_x = 1, local_size_y = 1) in;
+layout(local_size_x = 1, local_size_y = 16) in;
 
 struct Segment {
 	vec2 start;
@@ -195,7 +194,7 @@ bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos, out float isfac) 
 }
 
 
-const uint maxBounces = 10u;
+const uint maxBounces = 9u;
 const float lightEps = 0.001;
 
 void main() {
@@ -204,7 +203,7 @@ void main() {
 		return;
 	}
 
-	uint sampleCount = gl_NumWorkGroups.y;
+	uint sampleCount = gl_WorkGroupSize.y * gl_NumWorkGroups.y;
 	uint sampleID = gl_GlobalInvocationID.y;
 	Light light = lights[lightID];
 
@@ -226,11 +225,12 @@ void main() {
 	// direction slightly random from offset
 	vec2 noff = vec2(-off.y, off.x);
 	float rf = -1 + 2 * random(view.time + sampleID);
+	// rf = 0.2 * rf;
 	// rf *= pow(abs(rf), 4);
 	vec2 dir = normalize(rf * noff + (1 - rf) * off);
 
 	Segment seg;
-	vec2 pos = light.pos + light.radius * off;
+	vec2 pos = (light.pos + light.radius * off) - (2 * light.radius * dir);
 	vec3 color = (1.f / sampleCount) * light.color * dot(dir, off);
 	vec2 npos;
 
@@ -260,28 +260,40 @@ void main() {
 
 		Material mat = materials[seg.material];
 
+		// lambert
+		float theta = pi * random(pos + view.time);
+		float ct = cos(theta);
+		float st = sin(theta);
+		vec2 ndir = normalize(st * normal + ct * tangent);
+
 		// vec2 n = normal;
 		// ggx importance sampling of reflection
 		// probably not really correct yet
-		float a = mat.roughness * mat.roughness;
-		float r = random(pos + view.time);
-		float cosTheta = sqrt((1 - r) / (1 + (a * a - 1) * r));
-		float sinTheta = sqrt(1 - cosTheta * cosTheta);
-		if(random(pos - view.time) < 0.5) sinTheta *= -1;
-		vec2 n = cosTheta * normal + sinTheta * tangent;
-		
-		vec2 ndir = reflect(dir, n);
-		if(dot(ndir, normal) < 0) { // geometry shadowing i guess?
-			finished = true;
-			break;
-		}
+		// float a = mat.roughness * mat.roughness;
+		// float r = random(pos + view.time);
+		// float cosTheta = sqrt((1 - r) / (1 + (a * a - 1) * r));
+		// float sinTheta = sqrt(1 - cosTheta * cosTheta);
+		// if(random(pos - view.time) < 0.5) sinTheta *= -1;
+		// vec2 n = cosTheta * normal + sinTheta * tangent;
+		// vec2 ndir = reflect(dir, n);
+
+		// if(dot(ndir, normal) < 0) { // geometry shadowing i guess?
+		// 	finished = true;
+		// 	color *= mat.albedo * max(dot(-dir, n), 0);
+		// 	++bounce;
+		// 	if(bounce > maxBounces) {
+		// 		finished = true;
+		// 		break;
+		// 	}
+		// 	continue;
+		// }
 
 		// brdf
 		// really include diffuse term here?
 		// TODO: inverse-square light falloff over distance
 		// color *= cookTorrance(normal, -dir, ndir,
 		// 	mat.roughness, mat.metallic, mat.albedo);
-		color *= mat.albedo * max(dot(-dir, n), 0);
+		color *= pi * mat.albedo * max(dot(-dir, normal), 0);
 		// color *= mat.albedo;
 
 		dir = ndir;

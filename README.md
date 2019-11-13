@@ -101,7 +101,8 @@ the excellent [dat.gui](https://github.com/dataarts/dat.gui).
 ## Licenses
 
 Unless stated otherwise, the code is available under the MIT license (see LICENSE,
-some projects may use GPL, they have their own LICENSE file then).
+some projects may use GPL, they have their own LICENSE file in their
+src/ folder then).
 Additional external licenses for distributed code/assets:
 
 - `assets/LiberationSans-*.ttf`: [SIL Open Font License 1.1](https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL#5667e9e4)
