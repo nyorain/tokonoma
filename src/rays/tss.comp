@@ -5,8 +5,6 @@ layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0) uniform sampler2D rendered;
 layout(set = 0, binding = 1, rgba16f) uniform image2D history;
 
-const float fac = 0.9;
-
 vec3 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec3 p, vec3 q) {
 	vec3 r = q - p;
 	vec3 rmax = aabb_max - p.xyz;
@@ -31,12 +29,106 @@ vec3 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec3 p, vec3 q) {
 	return p + r;
 }
 
+#define SIGMA 1.05
+#define BSIGMA (1 / SIGMA)
+#define MSIZE 5
+
+float normpdf(in float x, in float sigma) {
+	return 0.39894*exp(-0.5*x*x/(sigma*sigma))/sigma;
+}
+
+float normpdf3(in vec3 v, in float sigma) {
+	return 0.39894*exp(-0.5*dot(v,v)/(sigma*sigma))/sigma;
+}
+
+vec3 colBlurred(vec2 uv) {
+	vec2 texelSize = 1.f / textureSize(rendered, 0);
+	vec3 c = texture(rendered, uv).rgb;
+
+	const int kSize = (MSIZE-1)/2;
+	float kernel[MSIZE];
+	vec3 final_color = vec3(0.0);
+
+	//create the 1-D kernel
+	float Z = 0.0;
+	for(int j = 0; j <= kSize; ++j) {
+		kernel[kSize+j] = kernel[kSize-j] = normpdf(float(j), SIGMA);
+	}
+
+	vec3 cc;
+	float factor;
+	float bZ = 1.0/normpdf(0.0, BSIGMA);
+	//read out the texels
+	for (int i=-kSize; i <= kSize; ++i) {
+		for (int j=-kSize; j <= kSize; ++j) {
+			vec2 ouv = uv + texelSize * vec2(i, j);
+			cc = texture(rendered, ouv).rgb;
+			factor = normpdf3(cc-c, BSIGMA)*bZ*kernel[kSize+j]*kernel[kSize+i];
+			Z += factor;
+			final_color += factor*cc;
+		}
+	}
+
+	return final_color;
+}
+
+const float exposure = 1.f;
+vec3 tonemap(vec3 c) {
+	return 1.f - exp(-exposure * c);
+}
+
+vec3 untonemap(vec3 c) {
+	return -log(-c + 1.f) / exposure;
+}
+
+float random(float v) {
+    float a = 43758.5453;
+    float sn = mod(v, 3.14);
+    return fract(sin(sn) * a);
+}
+
+float random(vec2 v) {
+    float a = 43758.5453;
+    float b = 12.9898;
+    float c = 78.233;
+    float dt = dot(v, vec2(b, c));
+    float sn = mod(dt, 3.14);
+    return fract(sin(sn) * a);
+}
+
+vec2 random2(vec2 v) {
+	return vec2(
+		random(dot(v, vec2(15.32, 64.234))),
+		random(dot(v, vec2(-35.2234, 24.23588453))));
+}
+
+float sgradientNoise(vec2 v) {
+	vec2 i = floor(v);
+	vec2 f = fract(v);
+	vec2 u = smoothstep(0, 1, f);
+
+	// random gradients, needed in range [-1, 1]
+    float a = dot(-1 + 2 * random2(i + vec2(0, 0)), f - vec2(0, 0));
+    float b = dot(-1 + 2 * random2(i + vec2(1, 0)), f - vec2(1, 0));
+    float c = dot(-1 + 2 * random2(i + vec2(0, 1)), f - vec2(0, 1));
+    float d = dot(-1 + 2 * random2(i + vec2(1, 1)), f - vec2(1, 1));
+
+	return mix(mix(a, c, u.y), mix(b, d, u.y), u.x);
+}
+
+float gradientNoise(vec2 v) {
+	// normalize it back to [0, 1]
+	return 0.5 + 0.5 * sgradientNoise(v);
+}
+
 void main() {
 	uvec2 size = imageSize(history);
 	ivec2 id = ivec2(gl_GlobalInvocationID.xy);
 	if(id.x >= size.x || id.y > size.y) {
 		return;
 	}
+
+	vec3 h = imageLoad(history, id).rgb;
 
 	// TODO: we really need a larger area to sample for this usecase,
 	// there may be a lot of space between rays. We could sample one pixel
@@ -48,42 +140,95 @@ void main() {
 	const vec2 offs[] = {
 		vec2(1, 1),
 		vec2(-1, 1),
-		vec2(1, 0),
-		vec2(0, 1),
-		vec2(1, 2),
-		vec2(2, 1),
-		vec2(2, 0),
-		vec2(0, 2),
+		// vec2(1, 0),
+		// vec2(0, 1),
+		// vec2(1, 2),
+		// vec2(2, 1),
+		// vec2(2, 0),
+		// vec2(0, 2),
+		// vec2(0, 4),
+		// vec2(4, 0),
+		// vec2(-4, 4),
+		// vec2(4, 4),
+		// vec2(-8, 4),
+		// vec2(8, 4),
+		// vec2(-4, 8),
+		// vec2(4, 8),
+		// vec2(8, 0),
+		// vec2(0, 8),
 	};
 
 	// TODO: could use shared compute stuff here
-	vec2 uv = vec2(id) / size;
+	vec2 uv = vec2(id + 0.5) / size;
 	vec3 r = texture(rendered, uv).rgb;
 	vec3 cmin = r;
 	vec3 cmax = r;
 	vec3 cavg = r;
-	for(uint i = 0u; i < offs.length(); ++i) {
-		vec2 off = offs[i] / size;
-		vec3 c1 = texture(rendered, uv + off).rgb;
-		vec3 c2 = texture(rendered, uv - off).rgb;
-		cmin = min(cmin, min(c1, c2));
-		cmax = max(cmax, min(c1, c2));
-		cavg += c1 + c2;
+
+	// vec3 havg = h;
+	// vec3 hmax = h;
+	// for(uint i = 0u; i < offs.length(); ++i) {
+	// 	vec2 off = offs[i] / size;
+	// 	vec3 c1 = texture(rendered, uv + off).rgb;
+	// 	vec3 c2 = texture(rendered, uv - off).rgb;
+	// 	cmin = min(cmin, min(c1, c2));
+	// 	cmax = max(cmax, min(c1, c2));
+	// 	cavg += c1 + c2;
+//  
+	// 	// havg += imageLoad(history, id + ivec2(off[i])).rgb;
+	// 	// havg += imageLoad(history, id - ivec2(off[i])).rgb;
+	// }
+
+	// cavg /= (1 + 2 * offs.length());
+	// havg /= (1 + 2 * offs.length());
+	
+	/*
+	uint count = 0u;
+	cavg = vec3(0.0);
+	// havg = vec3(0.0);
+	int d = 1;
+	for(int x = -d; x <= d; ++x) {
+		for(int y = -d; y <= d; ++y) {
+			// vec2 off = vec2(x, y) / size;
+			vec2 off = (2 * vec2(x, y) * random2(vec2(x, y) + uv + h.rb)) / size;
+			vec3 c = tonemap(texture(rendered, uv + off).rgb);
+			// vec3 c = texture(rendered, uv + off).rgb;
+			// vec3 h = imageLoad(history, id + ivec2(x, y)).rgb;
+			cavg += c;
+			// havg += h;
+			// hmax = max(h, hmax);
+			cmax = max(c, cmax);
+			cmin = min(c, cmin);
+			++count;
+		}
 	}
+  
+	cavg /= count;
+	// havg /= count;
 
-	cavg /= (1 + 2 * offs.length());
+	float r1 = random(dot(uv, h.rg));
+	float r2 = random(dot(uv, h.gb));
+	// float r2 = random(uv.x - dot(uv, h.br));
+	h.rgb = clip_aabb((0.2 + 0.8 * r1) * cmin, (1 + 4 * r2) * cmax, cavg, h.rgb);
+	*/
 
-	// vec3 c00 = textureOffset(rendered, uv, -off11_1).rgb;
-	// vec3 c10 = textureOffset(rendered, uv, -off01_1).rgb;
-	// vec3 c01 = textureOffset(rendered, uv, +off01_1).rgb;
-	// vec3 c11 = textureOffset(rendered, uv, +off11_1).rgb;
-	// vec3 cmin = min(r, min(c00, min(c10, min(c01, c11))));
-	// vec3 cmax = max(r, max(c00, max(c10, max(c01, c11))));
-	// vec3 cavg = (r + c00 + c10 + c01 + c11) / 5;
+	// vec3 rb = r;
+	vec3 rb = tonemap(colBlurred(uv));
+	// vec3 rb = colBlurred(uv);
+	// vec3 rb = tonemap(r);
+	// h.rgb = tonemap(h.rgb);
 
-	vec3 h = imageLoad(history, id).rgb;
-	// h.rgb = clip_aabb(cmin, cmax, cavg, h.rgb);
+	const vec3 luminanceFac = vec3(0.25, 0.65, 0.1);
+	float lum0 = dot(luminanceFac, rb);
+	float lum1 = dot(luminanceFac, h);
+	float ndiff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.0001)));
+	// diff = pow(diff, 2.0);
+	float f = 1;
+	// f -= diff * gradientNoise(0.05 * (h.rg + h.b));
+	// f -= 0.2 * pow(random(0.1 + h.rg + h.b), 2);
+	f -= 0.4 * pow(ndiff, 4) * pow(gradientNoise(uv + 0.1 * (h.rg + h.b)), 1);
+	// float f = 0.9999;
 
-	vec3 res = mix(r, h, fac);
+	vec3 res = mix(rb, h, f);
 	imageStore(history, id, vec4(res, 1));
 }

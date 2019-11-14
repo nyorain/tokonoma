@@ -62,8 +62,8 @@ struct Segment {
 
 class RaysApp : public tkn::App {
 public:
-	static constexpr auto sampleCount = 2048u;
-	static constexpr auto maxBounces = 10u; // XXX: defined again in rays.comp
+	static constexpr auto sampleCount = 1024u;
+	static constexpr auto maxBounces = 8u; // XXX: defined again in rays.comp
 	static constexpr auto renderFormat = vk::Format::r16g16b16a16Sfloat;
 
 public:

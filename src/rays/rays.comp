@@ -194,7 +194,7 @@ bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos, out float isfac) 
 }
 
 
-const uint maxBounces = 9u;
+const uint maxBounces = 7u;
 const float lightEps = 0.001;
 
 void main() {
