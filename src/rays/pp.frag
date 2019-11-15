@@ -5,7 +5,7 @@ layout(location = 0) out vec4 fragColor;
 
 layout(set = 0, binding = 0) uniform sampler2D history;
 
-const float exposure = 1.0;
+const float exposure = 2.0;
 
 #define SIGMA 1.1
 #define BSIGMA (1 / SIGMA)

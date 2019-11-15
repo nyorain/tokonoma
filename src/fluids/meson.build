@@ -11,6 +11,7 @@ fluid_src = [
 	'main.cpp'
 ]
 
-executable('fluid',
+build_target('fluid',
 	sources: fluid_src,
-	dependencies: tkn_dep)
+	dependencies: tkn_dep,
+	target_type: exetarget)

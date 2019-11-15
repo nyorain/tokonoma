@@ -1,7 +1,8 @@
 project('tokonoma', ['cpp', 'c'],
+
 	license: 'BSD',
 	version: '0.1.0',
-	meson_version: '>=0.47',
+	meson_version: '>=0.51',
 	default_options: [
 		'cpp_std=c++1z',
 		'c_std=c99',
@@ -13,6 +14,16 @@ project('tokonoma', ['cpp', 'c'],
 profiling = get_option('profiling')
 if profiling
   add_global_arguments('-pg', language: 'cpp')
+endif
+
+cc = meson.get_compiler('cpp')
+android = (cc.get_define('__ANDROID__') != '')
+exetarget = 'executable'
+
+if android
+	add_global_arguments('-DVKPP_DYNAMIC_DISPATCH', language: ['cpp', 'c'])
+	# exetarget = 'shared_library'
+	exetarget = 'shared_module'
 endif
 
 # warnings
@@ -35,7 +46,6 @@ warnings = [
 
 # default arrguments
 # warnings and stuff
-cc = meson.get_compiler('cpp')
 add_project_arguments(
 	cc.get_supported_arguments(warnings),
 	language: 'cpp')
@@ -54,12 +64,17 @@ add_project_arguments('-DASIO_STANDALONE', language: 'cpp')
 dep_vpp = dependency('vpp', fallback: ['vpp', 'vpp_dep'])
 dep_nytl = dependency('nytl MASTER', fallback: ['nytl', 'nytl_dep'])
 dep_dlg = dependency('dlg MASTER', fallback: ['dlg', 'dlg_dep'])
-dep_ny = dependency('ny', fallback: ['ny', 'ny_dep'])
+dep_ny = dependency('ny', fallback: ['ny', 'ny_dep'],
+	default_options: '-Dandroid=@0@'.format(android))
 dep_rvg = dependency('rvg', fallback: ['rvg', 'rvg_dep'])
 dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
-dep_turbojpeg = dependency('libturbojpeg', fallback: ['turbojpeg', 'jpeg_dep'])
 dep_png = dependency('libpng', fallback: ['png', 'png_dep'])
+
+# TODO: fall back to default libjpeg, add (non-turbo) libjpeg loader
+dep_turbojpeg = dependency('libturbojpeg',
+	required: false,
+	fallback: ['turbojpeg', 'jpeg_dep'])
 
 external_inc = include_directories('external/include')
 libpath = join_paths(meson.source_root(), 'external', 'lib', build_machine.system())
@@ -106,10 +121,11 @@ executable('guitest',
 	'src/guitest/main.cpp',
 	dependencies: tkn_dep)
 
-executable('particles', [
+build_target('particles', [
 		'src/particles/main.cpp',
 		particles_shaders,
-	], dependencies: tkn_dep)
+	], dependencies: tkn_dep,
+	target_type: exetarget)
 
 executable('automaton', [
 	  'src/automaton/main.cpp',
@@ -187,10 +203,11 @@ executable('repro', [
 		repro_shaders,
 	], dependencies: tkn_dep)
 
-executable('rays', [
+build_target('rays', [
 		'src/rays/main.cpp',
 		rays_shaders,
-	], dependencies: tkn_dep)
+	], dependencies: tkn_dep,
+	target_type: exetarget)
 
 executable('pg',
 	'src/playground/main6.cpp',

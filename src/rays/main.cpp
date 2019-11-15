@@ -62,7 +62,7 @@ struct Segment {
 
 class RaysApp : public tkn::App {
 public:
-	static constexpr auto sampleCount = 1024u;
+	static constexpr auto sampleCount = 512u;
 	static constexpr auto maxBounces = 8u; // XXX: defined again in rays.comp
 	static constexpr auto renderFormat = vk::Format::r16g16b16a16Sfloat;
 
@@ -170,7 +170,7 @@ public:
 
 		float fac = 10.f;
 		std::initializer_list<Light> lights = {
-			{20 * tkn::blackbody(3000), 0.1f, {-1.f, 1.f}},
+			{50 * tkn::blackbody(3500), 0.1f, {-1.f, 1.f}},
 			// {1 * tkn::blackbody(5500), 0.1f, {2.0f, 1.8f}},
 			// {fac * tkn::blackbody(5500), 0.1f, {-2.f, -1.8f}},
 			// {1 * tkn::blackbody(5000), 0.1f, {-2.f, 2.f}},
@@ -178,7 +178,7 @@ public:
 		};
 
 		std::initializer_list<Material> mats {
-			{{0.9f, 0.9f, 0.9f}, 1.f, 0.f}, // white rough
+			{{0.5f, 0.5f, 0.5f}, 1.f, 0.f}, // white rough
 			{{0.8f, 0.7f, 0.7f}, 0.2f, 0.f}, // red shiny
 			{{0.7f, 0.8f, 0.7f}, 0.2f, 1.f}, // green metal
 			{{0.7f, 0.6f, 0.8f}, 0.05f, 0.f}, // blue mirror
@@ -608,6 +608,7 @@ public:
 		tkn::write(span, view_.center - 0.5f * view_.size);
 		tkn::write(span, view_.size);
 		tkn::write(span, time_);
+		map.flush();
 
 		if(updateLight_) {
 			updateLight_ = false;
@@ -626,7 +627,7 @@ public:
 
 	void updateMatrix() {
 		auto wsize = window().size();
-		view_.size = tkn::levelViewSize(wsize.x / float(wsize.y), 10.f);
+		view_.size = tkn::levelViewSize(wsize.x / float(wsize.y), 15.f);
 		matrix_ = tkn::levelMatrix(view_);
 		updateView_ = true;
 	}
@@ -647,6 +648,18 @@ public:
 		}
 
 		return false;
+	}
+
+	void touchBegin(const ny::TouchBeginEvent& ev) override {
+		auto pos = tkn::windowToLevel(window().size(), view_, nytl::Vec2i(ev.pos));
+		light_.pos = pos;
+		updateLight_ = true;
+	}
+
+	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
+		auto pos = tkn::windowToLevel(window().size(), view_, nytl::Vec2i(ev.pos));
+		light_.pos = pos;
+		updateLight_ = true;
 	}
 
 	void mouseMove(const ny::MouseMoveEvent& ev) override {

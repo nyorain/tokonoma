@@ -192,4 +192,28 @@ void MainWindow::surfaceCreated(const ny::SurfaceCreatedEvent& ev) {
 	}
 }
 
+void MainWindow::touchBegin(const ny::TouchBeginEvent& ev) {
+	if(onTouchBegin) {
+		onTouchBegin(ev);
+	}
+}
+
+void MainWindow::touchUpdate(const ny::TouchUpdateEvent& ev) {
+	if(onTouchUpdate) {
+		onTouchUpdate(ev);
+	}
+}
+
+void MainWindow::touchCancel(const ny::TouchCancelEvent& ev) {
+	if(onTouchCancel) {
+		onTouchCancel(ev);
+	}
+}
+
+void MainWindow::touchEnd(const ny::TouchEndEvent& ev) {
+	if(onTouchEnd) {
+		onTouchEnd(ev);
+	}
+}
+
 } // namespace tkn

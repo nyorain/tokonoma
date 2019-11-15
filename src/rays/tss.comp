@@ -72,7 +72,7 @@ vec3 colBlurred(vec2 uv) {
 	return final_color;
 }
 
-const float exposure = 1.f;
+const float exposure = 4.f;
 vec3 tonemap(vec3 c) {
 	return 1.f - exp(-exposure * c);
 }
@@ -226,7 +226,7 @@ void main() {
 	float f = 1;
 	// f -= diff * gradientNoise(0.05 * (h.rg + h.b));
 	// f -= 0.2 * pow(random(0.1 + h.rg + h.b), 2);
-	f -= 0.4 * pow(ndiff, 4) * pow(gradientNoise(uv + 0.1 * (h.rg + h.b)), 1);
+	f -= 0.4 * pow(ndiff, 2) * pow(gradientNoise(uv + 0.05 * (h.rg + h.b)), 2);
 	// float f = 0.9999;
 
 	vec3 res = mix(rb, h, f);

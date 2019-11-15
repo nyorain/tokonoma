@@ -45,12 +45,12 @@
 // == FluidSystem ==
 class FluidSystem {
 public:
-	static constexpr auto pressureIterations = 40u;
+	static constexpr auto pressureIterations = 20u;
 	static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
 	float densityFac {0.0};
-	float radius {20.f};
+	float radius {10.f};
 
 public:
 	FluidSystem(vpp::Device& dev, nytl::Vec2ui size);
@@ -535,7 +535,6 @@ public:
 
 		// system
 		// NOTE: MUST be multiple of 16 due to work group size
-		system_.emplace(vulkanDevice(), nytl::Vec2ui {512, 512});
 
 		// mouse ubo
 		mouseUbo_ = {dev.bufferAllocator(), sizeof(nytl::Vec2f),
@@ -549,6 +548,24 @@ public:
 		update.uniform({{{mouseUbo_}}});
 
 		return true;
+	}
+
+	// TODO: kinda hacky to put this here. Guess App should have
+	// a virtual function for these kind of things
+	void initBuffers(const vk::Extent2D& size,
+			nytl::Span<RenderBuffer> bufs) override {
+		App::initBuffers(size, bufs);
+
+		auto fac = size.height / float(size.width);
+		unsigned width = 256;
+		unsigned height = vpp::align((unsigned)(fac * width), 16u);
+		system_.emplace(vulkanDevice(), nytl::Vec2ui {width, height});
+
+		if(viewType_ == 1) {
+			changeView_ = system_->density().vkImageView();
+		} else {
+			changeView_ = system_->velocity().vkImageView();
+		}
 	}
 
 	bool key(const ny::KeyEvent& ev) override {
@@ -633,6 +650,35 @@ public:
 		}
 
 		return true;
+	}
+
+	void touchBegin(const ny::TouchBeginEvent& ev) override {
+		using namespace nytl::vec::cw::operators;
+		mpos_ = ev.pos / window().size();
+		prevPos_ = mpos_;
+
+		if(mpos_.x > 0.9 && mpos_.y > 0.95) {
+			if(viewType_ == 1) {
+				changeView_ = system_->velocity().vkImageView();
+				viewType_ = 2;
+			} else if(viewType_ == 2) {
+				changeView_ = system_->density().vkImageView();
+				viewType_ = 1;
+			}
+		} else {
+			system_->velocityFac = 5.f * (viewType_ == 2);
+			system_->densityFac = 0.02 * (viewType_ == 1);
+		}
+	}
+
+	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
+		using namespace nytl::vec::cw::operators;
+		mpos_ = ev.pos / window().size();
+	}
+
+	void touchEnd(const ny::TouchEndEvent&) override {
+		system_->velocityFac = 0.f;
+		system_->densityFac = 0.f;
 	}
 
 	bool mouseWheel(const ny::MouseWheelEvent& ev) override {

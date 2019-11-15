@@ -4,6 +4,7 @@
 #include <nytl/nonCopyable.hpp>
 
 #include <ny/fwd.hpp>
+#include <ny/event.hpp>
 #include <vpp/fwd.hpp>
 #include <vpp/renderer.hpp>
 #include <vkpp/structs.hpp> // for features
@@ -172,6 +173,10 @@ protected:
 	virtual void mouseCross(const ny::MouseCrossEvent&);
 	virtual void focus(const ny::FocusEvent&);
 	virtual void close(const ny::CloseEvent&);
+	virtual void touchBegin(const ny::TouchBeginEvent&) {}
+	virtual void touchEnd(const ny::TouchEndEvent&) {}
+	virtual void touchUpdate(const ny::TouchUpdateEvent&) {}
+	virtual void touchCancel(const ny::TouchCancelEvent&) {}
 
 protected:
 	struct RenderImpl;
@@ -190,11 +195,11 @@ protected:
 	};
 
 	struct {
-		bool vsync = true;
+		bool vsync = false;
 		bool layers = true;
 		bool renderdoc = false;
 		unsigned samples = 1;
-		std::variant<DevType, unsigned, const char*> phdev = DevType::dgpu;
+		std::variant<DevType, unsigned, const char*> phdev = DevType::choose;
 	} args_ {};
 };
 

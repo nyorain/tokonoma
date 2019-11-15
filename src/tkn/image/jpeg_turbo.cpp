@@ -18,10 +18,6 @@
 
 namespace tkn {
 
-// TODO: unix only atm. Really efficient though, using mmap.
-// probably best to implement C-based alternative that is used on
-// non-unix (or non-linux; not sure how cross platform mmap is) platforms.
-// That should probably first manually copy the whole file in to a large buffer.
 class JpegReader : public ImageProvider {
 public:
 	u64 fileLength_ {};

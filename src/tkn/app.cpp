@@ -225,9 +225,13 @@ struct App::Impl {
 App::App() = default;
 App::~App() = default;
 
+static constexpr bool android = true; // TODO
 bool App::init(nytl::Span<const char*> args) {
-	dlg_set_handler(dlgHandler, nullptr);
 	impl_ = std::make_unique<Impl>();
+
+	if(android) {
+		args_.layers = false;
+	}
 
 	// arguments
 	if(!args.empty()) {
@@ -259,6 +263,10 @@ bool App::init(nytl::Span<const char*> args) {
 
 	// init
 	impl_->backend = &ny::Backend::choose();
+	if(!impl_->backend) {
+		throw std::runtime_error("ny couldn't find a backend");
+	}
+
 	if(!impl_->backend->vulkan()) {
 		throw std::runtime_error("ny backend has no vulkan support!");
 	}
@@ -267,7 +275,13 @@ bool App::init(nytl::Span<const char*> args) {
 
 	// vulkan init: instance
 	auto iniExtensions = appContext().vulkanExtensions();
-	iniExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+	if(args_.layers) {
+		iniExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+	}
+
+	if(android) {
+		iniExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+	}
 
 	// TODO: don't require 1.1 since it's not really needed for any app
 	// (just some tests with it in sen). Also not supported in vkpp yet
@@ -292,6 +306,7 @@ bool App::init(nytl::Span<const char*> args) {
 		instanceInfo.ppEnabledLayerNames = layers.data();
 	}
 
+	dlg_trace("trying to create vulkan instance");
 	try {
 		impl_->instance = {instanceInfo};
 		if(!impl_->instance.vkInstance()) {
@@ -305,6 +320,7 @@ bool App::init(nytl::Span<const char*> args) {
 		dlg_error("This application requires vulkan to work");
 		return false;
 	}
+	dlg_trace("vulkan instance created!");
 
 	// debug callback
 	auto& ini = impl_->instance;
@@ -322,9 +338,17 @@ bool App::init(nytl::Span<const char*> args) {
 	window().onMouseButton = [&](const auto& ev) { mouseButton(ev); };
 	window().onMouseWheel = [&](const auto& ev) { mouseWheel(ev); };
 	window().onMouseCross = [&](const auto& ev) { mouseCross(ev); };
+	window().onTouchUpdate = [&](const auto& ev) { touchUpdate(ev); };
+	window().onTouchBegin = [&](const auto& ev) { touchBegin(ev); };
+	window().onTouchEnd = [&](const auto& ev) { touchEnd(ev); };
+	window().onTouchCancel = [&](const auto& ev) { touchCancel(ev); };
 	window().onFocus = [&](const auto& ev) { focus(ev); };
 	window().onClose = [&](const auto& ev) { close(ev); };
 	window().onDraw = [&](const auto&) { redraw_ = true; };
+
+	// TODO: fix for android
+	window().onSurfaceDestroyed = [&](){};
+	window().onSurfaceCreated = [&](auto surface){};
 
 	// create device
 	// enable some extra features
@@ -366,6 +390,12 @@ bool App::init(nytl::Span<const char*> args) {
 	if(!phdev) {
 		dlg_error("Could not find physical device");
 		return false;
+	}
+
+	// debugging for android mainly
+	auto devexts = vk::enumerateDeviceExtensionProperties(phdev, nullptr);
+	for(auto& ext : devexts) {
+		dlg_trace("Device extension: {}", ext.extensionName.data());
 	}
 
 	auto p = vk::getPhysicalDeviceProperties(phdev);
@@ -413,6 +443,7 @@ bool App::init(nytl::Span<const char*> args) {
 		prefs.presentMode = vk::PresentModeKHR::fifo; // vsync
 	}
 	auto size = window().size();
+	dlg_info("initial size: {}", size);
 	impl_->scInfo = vpp::swapchainCreateInfo(vulkanDevice(), vkSurf,
 		{size.x, size.y}, prefs);
 
@@ -451,6 +482,7 @@ bool App::init(nytl::Span<const char*> args) {
 	initRenderData();
 	impl_->renderer.emplace(*this, *presentQueue, impl_->scInfo);
 
+	/*
 	// init rvg
 	auto [pass, subpass] = rvgPass();
 	if(pass) {
@@ -472,6 +504,7 @@ bool App::init(nytl::Span<const char*> args) {
 		impl_->guiListener.app(*this);
 		impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
 	}
+	*/
 
 
 	return true;

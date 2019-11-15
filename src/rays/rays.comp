@@ -168,7 +168,7 @@ vec2 intersectionFacs(vec2 p1, vec2 d1, vec2 p2, vec2 d2) {
 	return (1 / det) * vec2(cross(ab, d2), cross(ab, d1));
 }
 
-const float eps = 0.001;
+const float eps = 0.0001;
 bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos, out float isfac) {
 	float m = -1;
 	for(uint i = 0u; i < segments.length(); ++i) {
@@ -229,9 +229,14 @@ void main() {
 	// rf *= pow(abs(rf), 4);
 	vec2 dir = normalize(rf * noff + (1 - rf) * off);
 
+	float c = dot(dir, off);
+	float s = sqrt(1 - c * c);
+	if(dot(noff, dir) > 0) s = -s;
+	vec2 start = light.pos + light.radius * (c * off + s * noff);
+
 	Segment seg;
-	vec2 pos = (light.pos + light.radius * off) - (2 * light.radius * dir);
-	vec3 color = (1.f / sampleCount) * light.color * dot(dir, off);
+	vec2 pos = start;
+	vec3 color = (1.f / sampleCount) * light.color * c;
 	vec2 npos;
 
 	float dist = light.radius;

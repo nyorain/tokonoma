@@ -14,30 +14,24 @@ gltf_dep = declare_dependency(
 	include_directories: tkn_inc)
 
 # libtkn
-dep_soundio = meson.get_compiler('cpp').find_library('soundio', dirs: libpath)
 dep_b2d = meson.get_compiler('cpp').find_library('Box2D', dirs: libpath)
 tkn_deps = [
-  dep_vpp,
-  dep_ny,
-  dep_nytl,
-  dep_dlg,
-  dep_rvg,
-  dep_vui,
-  dep_vulkan,
-  dep_soundio,
-  dep_b2d,
-  dep_turbojpeg,
-  dep_png,
-  gltf_dep,
+	dep_vpp,
+	dep_ny,
+	dep_nytl,
+	dep_dlg,
+	dep_rvg,
+	dep_vui,
+	dep_vulkan,
+	dep_png,
+	gltf_dep,
 ]
 
 tkn_src = [
 	'app.cpp',
-	'audio.cpp',
 	'window.cpp',
 	'camera.cpp',
 	'geometry.cpp',
-	'physics.cpp',
 	'texture.cpp',
 	'render.cpp',
 	'headless.cpp',
@@ -53,12 +47,33 @@ tkn_src = [
 	'scene/pbr.cpp',
 
 	'image.cpp',
-	'image/jpeg_turbo.cpp',
 	'image/png.cpp',
 	'image/ktx.cpp',
 
 	tkn_shaders,
 ]
+
+if dep_turbojpeg.found()
+	tkn_src += 'image/jpeg_turbo.cpp'
+	tkn_deps += dep_turbojpeg
+else
+	tkn_src += 'image/jpeg_dummy.cpp'
+endif
+
+dep_soundio = meson.get_compiler('cpp').find_library('soundio',
+	required: false,
+	dirs: libpath,
+)
+
+if not android and dep_soundio.found()
+	tkn_src += 'audio.cpp'
+	tkn_deps += dep_soundio
+endif
+
+if not android and dep_b2d.found()
+	tkn_src += 'physics.cpp'
+	tkn_deps += dep_b2d
+endif
 
 tkn_args = []
 if build_machine.system() == 'linux'

@@ -24,6 +24,10 @@ public:
 	std::function<void(const ny::SizeEvent&)> onResize;
 	std::function<void(const ny::CloseEvent&)> onClose;
 	std::function<void(const ny::DrawEvent&)> onDraw;
+	std::function<void(const ny::TouchBeginEvent&)> onTouchBegin;
+	std::function<void(const ny::TouchUpdateEvent&)> onTouchUpdate;
+	std::function<void(const ny::TouchCancelEvent&)> onTouchCancel;
+	std::function<void(const ny::TouchEndEvent&)> onTouchEnd;
 	std::function<void()> onSurfaceDestroyed;
 	std::function<void(vk::SurfaceKHR)> onSurfaceCreated;
 
@@ -43,6 +47,10 @@ protected:
 	void mouseWheel(const ny::MouseWheelEvent&) override;
 	void mouseMove(const ny::MouseMoveEvent&) override;
 	void mouseCross(const ny::MouseCrossEvent&) override;
+	void touchBegin(const ny::TouchBeginEvent&) override;
+	void touchEnd(const ny::TouchEndEvent&) override;
+	void touchUpdate(const ny::TouchUpdateEvent&) override;
+	void touchCancel(const ny::TouchCancelEvent&) override;
 	void key(const ny::KeyEvent&) override;
 	void state(const ny::StateEvent&) override;
 	void close(const ny::CloseEvent&) override;
@@ -57,7 +65,7 @@ protected:
 	std::unique_ptr<ny::WindowContext> wc_;
 
 	vk::SurfaceKHR surface_ {};
-	nytl::Vec2ui size_ {};
+	nytl::Vec2ui size_ {2340, 1080};
 	ny::ToplevelState state_ {};
 	bool focus_ {};
 	bool mouseOver_ {};
