@@ -12,9 +12,12 @@ It expectes the android ndk (version r20) to be installed to `/opt/android-ndk`
 and builds for armv8 (i.e. 64-bit) processors.
 
 ```
-meson build/android --cross-file=apk/android_cross.txt
+meson build/android --cross-file=apk/android_cross.txt -Dvkpp:regen=true
 ```
 
+To will have to regenerate the vkpp api with a vk.xml version
+that is compatible to what is provided in your android-ndk version.
+Just paste it to subprojects/vkpp/vk.xml.
 Compilation is not supported for all projects. See `meson.build` in this
 directory for a list of apks that will be built.
 

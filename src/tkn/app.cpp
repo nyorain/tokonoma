@@ -31,6 +31,13 @@
 #include <optional>
 #include <thread>
 
+#ifdef __ANDROID__
+#include <ny/android/appContext.hpp>
+#include <android/native_activity.h>
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
+#endif
+
 namespace tkn {
 
 // constants
@@ -225,13 +232,15 @@ struct App::Impl {
 App::App() = default;
 App::~App() = default;
 
-static constexpr bool android = true; // TODO
 bool App::init(nytl::Span<const char*> args) {
 	impl_ = std::make_unique<Impl>();
 
-	if(android) {
-		args_.layers = false;
-	}
+#ifdef __ANDROID__
+	// TODO: workaround atm, this seems to be needed since sometimes global
+	// state isn't reset when the app is reloaded?
+	vk::dispatch = {};
+	args_.layers = false;
+#endif
 
 	// arguments
 	if(!args.empty()) {
@@ -279,9 +288,9 @@ bool App::init(nytl::Span<const char*> args) {
 		iniExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 	}
 
-	if(android) {
-		iniExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
-	}
+	// if(android) {
+	// 	iniExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+	// }
 
 	// TODO: don't require 1.1 since it's not really needed for any app
 	// (just some tests with it in sen). Also not supported in vkpp yet
@@ -345,10 +354,29 @@ bool App::init(nytl::Span<const char*> args) {
 	window().onFocus = [&](const auto& ev) { focus(ev); };
 	window().onClose = [&](const auto& ev) { close(ev); };
 	window().onDraw = [&](const auto&) { redraw_ = true; };
+	window().onSurfaceDestroyed = [&](){
+		surface_ = false;
+		impl_->renderer.reset();
+	};
+	window().onSurfaceCreated = [&](auto surface){
+		dlg_assert(!surface_);
+		surface_ = true;
+		auto size = window().size();
+		auto vkSurf = window().vkSurface();
+		auto prefs = swapchainPrefs();
 
-	// TODO: fix for android
-	window().onSurfaceDestroyed = [&](){};
-	window().onSurfaceCreated = [&](auto surface){};
+		// NOTE: we don't recreate the other resources here; we assume
+		// that format etc stays the same (important e.g. for renderpass)
+		impl_->scInfo = vpp::swapchainCreateInfo(vulkanDevice(), vkSurf,
+			{size.x, size.y}, prefs);
+
+		auto& dev = vulkanDevice();
+		auto queueFlags = vk::QueueBits::compute | vk::QueueBits::graphics;
+		int queueFam = vpp::findQueueFamily(dev.vkPhysicalDevice(), vkSurf, queueFlags);
+		auto presentQueue = vulkanDevice().queue(queueFam);
+
+		impl_->renderer.emplace(*this, *presentQueue, impl_->scInfo);
+	};
 
 	// create device
 	// enable some extra features
@@ -392,11 +420,10 @@ bool App::init(nytl::Span<const char*> args) {
 		return false;
 	}
 
-	// debugging for android mainly
-	auto devexts = vk::enumerateDeviceExtensionProperties(phdev, nullptr);
-	for(auto& ext : devexts) {
-		dlg_trace("Device extension: {}", ext.extensionName.data());
-	}
+	// auto devexts = vk::enumerateDeviceExtensionProperties(phdev, nullptr);
+	// for(auto& ext : devexts) {
+	// 	dlg_trace("Device extension: {}", ext.extensionName.data());
+	// }
 
 	auto p = vk::getPhysicalDeviceProperties(phdev);
 	dlg_debug("Using device: {}", p.deviceName.data());
@@ -438,12 +465,9 @@ bool App::init(nytl::Span<const char*> args) {
 			return false;
 	}
 
-	vpp::SwapchainPreferences prefs {};
-	if(args_.vsync) {
-		prefs.presentMode = vk::PresentModeKHR::fifo; // vsync
-	}
+	surface_ = true;
+	auto prefs = swapchainPrefs();
 	auto size = window().size();
-	dlg_info("initial size: {}", size);
 	impl_->scInfo = vpp::swapchainCreateInfo(vulkanDevice(), vkSurf,
 		{size.x, size.y}, prefs);
 
@@ -482,7 +506,6 @@ bool App::init(nytl::Span<const char*> args) {
 	initRenderData();
 	impl_->renderer.emplace(*this, *presentQueue, impl_->scInfo);
 
-	/*
 	// init rvg
 	auto [pass, subpass] = rvgPass();
 	if(pass) {
@@ -494,17 +517,28 @@ bool App::init(nytl::Span<const char*> args) {
 		impl_->windowTransform = {rvgContext()};
 		impl_->fontAtlas.emplace(rvgContext());
 
+#ifdef __ANDROID__
+		auto& ac = dynamic_cast<ny::AndroidAppContext&>(appContext());
+		auto* mgr = ac.nativeActivity()->assetManager;
+		auto asset = AAssetManager_open(mgr, "font.ttf", AASSET_MODE_BUFFER);
+		dlg_assert(asset);
+		auto len = AAsset_getLength(asset);
+		auto buf = (std::byte*)AAsset_getBuffer(asset);
+		std::vector<std::byte> bytes(buf, buf + len);
+		impl_->defaultFont.emplace(*impl_->fontAtlas, std::move(bytes));
+		AAsset_close(asset);
+#else
 		std::string fontPath = DOI_BASE_DIR;
 		fontPath += "/assets/Roboto-Regular.ttf";
 		// fontPath += "assets/OpenSans-Light.ttf";
 		// fontPath += "build/Lucida-Grande.ttf"; // nonfree
 		impl_->defaultFont.emplace(*impl_->fontAtlas, fontPath);
+#endif
 
 		// gui
 		impl_->guiListener.app(*this);
 		impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
 	}
-	*/
 
 
 	return true;
@@ -674,7 +708,7 @@ vpp::ViewableImage App::createMultisampleTarget(const vk::Extent2D& size) {
 std::vector<vk::ClearValue> App::clearValues() {
 	std::vector<vk::ClearValue> clearValues;
 	clearValues.reserve(3);
-	vk::ClearValue c {{0.f, 0.f, 0.f, 0.f}};
+	vk::ClearValue c {{0.f, 0.f, 0.f, 0.5f}};
 
 	clearValues.push_back(c); // clearColor
 	if(samples() != vk::SampleCountBits::e1) { // msaa attachment
@@ -917,6 +951,14 @@ void App::run() {
 			// first we check whether its an expected error (due to
 			// resizing) and we want to rety or if it's something else.
 			dlg_assert(res != vk::Result::success);
+			if(res == vk::Result::errorSurfaceLostKHR) {
+				appContext().waitEvents();
+				while(!surface_) {
+					appContext().waitEvents();
+				}
+				break;
+			}
+
 			auto retry = (res == vk::Result::errorOutOfDateKHR) ||
 				(res == vk::Result::suboptimalKHR);
 			if(!retry) {
@@ -970,7 +1012,7 @@ void App::run() {
 
 		// check if we can skip the next frame since nothing changed
 		auto skipped = 0u;
-		while(!redraw_ && !rerecord_ && run_) {
+		while((!surface_ || (!redraw_ && !rerecord_)) && run_) {
 			// TODO: ideally, we could use waitEvents in update
 			// an only wake up if we need to. But that would need
 			// a (threaded!) waking up algorithm and also require all
@@ -1186,6 +1228,14 @@ rvg::Font& App::defaultFont() const {
 
 vpp::DebugMessenger& App::debugMessenger() const {
 	return *impl_->debugMessenger;
+}
+
+vpp::SwapchainPreferences App::swapchainPrefs() const {
+	vpp::SwapchainPreferences prefs {};
+	if(args_.vsync) {
+		prefs.presentMode = vk::PresentModeKHR::fifo; // vsync
+	}
+	return prefs;
 }
 
 // free util

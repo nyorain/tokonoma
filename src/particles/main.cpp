@@ -200,8 +200,8 @@ public:
 	}
 
 	void updateDevice(double delta, nytl::Span<nytl::Vec2f> attractors) {
-		if(attractors.size() > 10) {
-			 attractors = attractors.first(10);
+		if(attractors.size() > 5) {
+			 attractors = attractors.first(5);
 		}
 
 		auto view = compUbo_.memoryMap();
@@ -257,6 +257,7 @@ public:
 		system_.init(vulkanDevice(), renderPass(), samples(), count_);
 
 		// gui
+#ifndef __ANDROID__
 		auto& panel = gui().create<vui::dat::Panel>(
 			nytl::Vec2f {50.f, 0.f}, 300.f, 150.f);
 		auto tfChangeProp = [&](auto& prop) {
@@ -274,6 +275,7 @@ public:
 			tfChangeProp(system_.alpha);
 		panel.create<vui::dat::Textfield>("pointSize").textfield().onSubmit =
 			tfChangeProp(system_.pointSize);
+#endif
 
 		return true;
 	}
@@ -294,6 +296,8 @@ public:
 		return 2 * normed - nytl::Vec{1.f, 1.f};
 	}
 
+	// TODO: mouse and touch currently not usable at the same time
+	// might crash application i guess
 	bool mouseButton(const ny::MouseButtonEvent& ev) override {
 		if(App::mouseButton(ev)) {
 			return true;
@@ -314,6 +318,40 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		if(!attractors_.empty()) {
 			attractors_[0] = attractorPos(ev.position);
+		}
+	}
+
+	void touchBegin(const ny::TouchBeginEvent& ev) override {
+		auto pos = attractorPos(nytl::Vec2i(ev.pos));
+		attractors_.push_back(pos);
+		touchIDs_.push_back(ev.id);
+		dlg_trace("begin: {}", ev.id);
+	}
+
+	void touchEnd(const ny::TouchEndEvent& ev) override {
+		auto it = std::find(touchIDs_.begin(), touchIDs_.end(), ev.id);
+		if(it != touchIDs_.end()) {
+			dlg_trace("erase: {}", ev.id);
+			attractors_.erase(attractors_.begin() + (it - touchIDs_.begin()));
+			touchIDs_.erase(it);
+		} else {
+			dlg_error("Invalid touch id");
+		}
+	}
+
+	void touchCancel(const ny::TouchCancelEvent&) override {
+		dlg_trace("cancel");
+		attractors_.clear();
+		touchIDs_.clear();
+	}
+
+	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
+		auto pos = attractorPos(nytl::Vec2i(ev.pos));
+		auto it = std::find(touchIDs_.begin(), touchIDs_.end(), ev.id);
+		if(it != touchIDs_.end()) {
+			attractors_[it - touchIDs_.begin()] = pos;
+		} else {
+			dlg_error("Invalid touch id");
 		}
 	}
 
@@ -353,9 +391,10 @@ public:
 
 protected:
 	ParticleSystem system_;
-	unsigned count_ {100'000};
+	unsigned count_ {500'000};
 	double delta_ {};
 	std::vector<nytl::Vec2f> attractors_ {};
+	std::vector<unsigned> touchIDs_ {};
 };
 
 int main(int argc, const char** argv) {

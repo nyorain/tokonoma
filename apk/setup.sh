@@ -6,8 +6,8 @@
 # $PLATFORM: path to sdk android platform folder to use
 arch=arm64-v8a
 
-if [ $# -lt 2 ]; then
-	echo "Usage: setup.sh <AndroidManifest.xml.in path> <output path>"
+if [ $# -lt 3 ]; then
+	echo "Usage: setup.sh <AndroidManifest.xml.in path> <output path> <font file>"
 	exit 1
 fi
 
@@ -15,6 +15,11 @@ out=$2
 cd $out
 
 mkdir -p lib/$arch
+mkdir -p assets
+
+# copy assets
+font=$3
+cp $font assets/font.ttf
 
 # the first argument must be the full path of AndroidManifest.xml.in
 # we copy it to the build dir to allow using it in build.sh
@@ -64,4 +69,5 @@ $BT/aapt add $apk \
 	lib/$arch/librvg.so \
 	lib/$arch/libpng16.so.16 \
 	lib/$arch/libvkpp.so \
-	lib/$arch/libvui.so
+	lib/$arch/libvui.so \
+	assets/font.ttf

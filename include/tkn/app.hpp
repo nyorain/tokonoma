@@ -119,6 +119,8 @@ protected:
 	virtual vpp::ViewableImage createDepthTarget(const vk::Extent2D&);
 	virtual vpp::ViewableImage createMultisampleTarget(const vk::Extent2D&);
 
+	virtual vpp::SwapchainPreferences swapchainPrefs() const;
+
 	// Called for each buffer when rerecording.
 	// By default will call beforeRender, start a render pass instance with
 	// the created renderpass (see createRenderPass), call render, end
@@ -187,6 +189,7 @@ protected:
 	bool resize_ {};
 	bool rerecord_ {};
 	bool redraw_ {};
+	bool surface_ {};
 
 	enum class DevType {
 		igpu,

@@ -121,7 +121,7 @@ executable('guitest',
 	'src/guitest/main.cpp',
 	dependencies: tkn_dep)
 
-build_target('particles', [
+particles = build_target('particles', [
 		'src/particles/main.cpp',
 		particles_shaders,
 	], dependencies: tkn_dep,
