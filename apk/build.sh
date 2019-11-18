@@ -54,10 +54,10 @@ $BT/aapt add $apku \
 	lib/arm64-v8a/libvkpp.so \
 	lib/arm64-v8a/libvui.so
 
-"${BT}/apksigner" sign --ks keystore.jks 
---ks-key-alias androidkey --ks-pass pass:android \
+"${BT}/apksigner" sign --ks keystore.jks \
+	--ks-key-alias androidkey --ks-pass pass:android \
 	--key-pass pass:android --out $apk \
 	$apku
 
 adb install $apk
-logcat -s ny:V
+adb logcat -s ny:V
