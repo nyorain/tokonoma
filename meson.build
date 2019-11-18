@@ -203,7 +203,7 @@ executable('repro', [
 		repro_shaders,
 	], dependencies: tkn_dep)
 
-build_target('rays', [
+rays = build_target('rays', [
 		'src/rays/main.cpp',
 		rays_shaders,
 	], dependencies: tkn_dep,
@@ -212,3 +212,7 @@ build_target('rays', [
 executable('pg',
 	'src/playground/main6.cpp',
 	dependencies: tkn_dep)
+
+if android
+	subdir('apk')
+endif
