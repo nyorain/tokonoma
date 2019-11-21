@@ -5,6 +5,7 @@
 #include <rvg/state.hpp>
 #include <rvg/font.hpp>
 #include <vui/gui.hpp>
+#include <vui/textfield.hpp>
 #include <vpp/device.hpp>
 #include <vpp/physicalDevice.hpp>
 #include <vpp/handles.hpp>
@@ -42,7 +43,12 @@ namespace tkn {
 
 // constants
 constexpr auto clearColor = std::array<float, 4>{{0.f, 0.f, 0.f, 1.f}};
-constexpr auto fontHeight = 12;
+
+#ifdef __ANDROID__
+	constexpr auto fontHeight = 32;
+#else
+	constexpr auto fontHeight = 12;
+#endif
 
 // util
 namespace {
@@ -112,6 +118,26 @@ public:
 		currentCursor_ = cursor;
 		auto c = static_cast<ny::CursorType>(cursor);
 		wc().cursor({c});
+	}
+
+	void focus([[maybe_unused]] vui::Widget* oldf,
+			[[maybe_unused]] vui::Widget* nf) override {
+#ifdef __ANDROID__
+		auto& aac = dynamic_cast<ny::AndroidAppContext&>(ac());
+		if(dynamic_cast<vui::Textfield*>(nf)) {
+			dlg_info("showing keyboard");
+			aac.showKeyboard();
+		} else {
+			auto name = "null";
+			if(nf) {
+				auto& t = typeid(*nf);
+				name = t.name();
+			}
+
+			dlg_trace("hiding keyboard: {}", name);
+			aac.hideKeyboard();
+		}
+#endif
 	}
 
 	bool pasteRequest(const vui::Widget& widget) override {
@@ -219,6 +245,7 @@ struct App::Impl {
 	std::optional<rvg::FontAtlas> fontAtlas;
 	std::optional<rvg::Font> defaultFont;
 	GuiListener guiListener;
+	std::optional<vui::DefaultStyles> defaultStyles;
 	std::optional<vui::Gui> gui;
 
 	std::vector<vpp::StageSemaphore> nextFrameWait;
@@ -537,7 +564,16 @@ bool App::init(nytl::Span<const char*> args) {
 
 		// gui
 		impl_->guiListener.app(*this);
-		impl_->gui.emplace(rvgContext(), *impl_->defaultFont, impl_->guiListener);
+
+		impl_->defaultStyles.emplace(rvgContext());
+		auto& styles = impl_->defaultStyles->styles();
+		styles.hint.font.height = fontHeight;
+		styles.textfield.font.height = fontHeight;
+		styles.labeledButton.font.height = fontHeight;
+
+		impl_->gui.emplace(rvgContext(), *impl_->defaultFont,
+			std::move(styles), impl_->guiListener);
+		impl_->gui->defaultFontHeight = fontHeight;
 	}
 
 
@@ -1236,6 +1272,28 @@ vpp::SwapchainPreferences App::swapchainPrefs() const {
 		prefs.presentMode = vk::PresentModeKHR::fifo; // vsync
 	}
 	return prefs;
+}
+
+bool App::touchBegin(const ny::TouchBeginEvent& ev) {
+	if(impl_->gui) {
+		return gui().mouseButton({true, vui::MouseButton::left, ev.pos});
+	}
+
+	return false;
+}
+
+bool App::touchEnd(const ny::TouchEndEvent& ev) {
+	if(impl_->gui) {
+		gui().mouseButton({false, vui::MouseButton::left, ev.pos});
+	}
+
+	return false;
+}
+
+void App::touchUpdate(const ny::TouchUpdateEvent& ev) {
+	if(impl_->gui) {
+		gui().mouseMove({static_cast<nytl::Vec2f>(ev.pos)});
+	}
 }
 
 // free util

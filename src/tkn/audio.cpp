@@ -82,7 +82,7 @@ void AudioPlayer::init() {
 	// NOTE: currently hardcoded settings
 	constexpr auto sampleRate = 48000;
 	constexpr auto channelCount = 2u;
-	constexpr auto prefLatency = 1 / 60.f;
+	constexpr auto prefLatency = 1 / 10.f;
 
 	// soundio
 	soundio_ = soundio_create();

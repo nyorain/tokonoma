@@ -12,6 +12,7 @@ setup_apk = custom_target('setup_apk',
 	# TODO: kinda redundant, pass them as args?
 	# also not all deps listed here
 	depends: tkn_lib,
+	depend_files: manifest,
 )
 
 apks = {

@@ -175,9 +175,9 @@ protected:
 	virtual void mouseCross(const ny::MouseCrossEvent&);
 	virtual void focus(const ny::FocusEvent&);
 	virtual void close(const ny::CloseEvent&);
-	virtual void touchBegin(const ny::TouchBeginEvent&) {}
-	virtual void touchEnd(const ny::TouchEndEvent&) {}
-	virtual void touchUpdate(const ny::TouchUpdateEvent&) {}
+	virtual bool touchBegin(const ny::TouchBeginEvent&);
+	virtual bool touchEnd(const ny::TouchEndEvent&);
+	virtual void touchUpdate(const ny::TouchUpdateEvent&);
 	virtual void touchCancel(const ny::TouchCancelEvent&) {}
 
 protected:

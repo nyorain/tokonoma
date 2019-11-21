@@ -22,15 +22,34 @@
 #include <shaders/particles.particle.frag.h>
 #include <shaders/particles.particle.vert.h>
 
-constexpr auto compUboSize = (2 + 4 * 5) * 4;
-constexpr auto gfxUboSize = 2 * 4;
+// velocity and position is always given in screen-space coords [-1, 1]
+
+constexpr auto compUboSize = (6 + 2 + 4 * 5) * sizeof(float);
+constexpr auto gfxUboSize = 2 * sizeof(float);
 
 class ParticleSystem {
 public:
 	// params and stuff
-	float alpha {0.2f};
+	float alpha {0.1f};
 	float pointSize {1.f};
+
+	// set to true if one of above (gfx params) was changed
 	bool paramsChanged {true};
+
+
+	// it looks nicer if we add normalized (first component) and inv-linear
+	// (second component) in addition to the physically correct
+	// inv-squared (third component) distance as well.
+	nytl::Vec3f attractionFactors {0.05, 0.1, 0.4};
+	float friction {0.4f}; // lower -> more friction; 1/s
+
+	float maxVel {5.f}; // screen space per second
+	float distOff {0.05f};
+
+	struct Particle {
+		nytl::Vec2f pos;
+		nytl::Vec2f vel;
+	};
 
 public:
 	ParticleSystem() = default;
@@ -112,11 +131,6 @@ public:
 		compPipeline_ = {dev, vkpipe};
 
 		// buffer
-		struct Particle {
-			nytl::Vec2f pos;
-			nytl::Vec2f vel;
-		};
-
 		mem = 0xFFFFFFFF; // choose memory type here
 		auto bits = dev.memoryTypeBits(vk::MemoryPropertyBits::deviceLocal);
 		if(mem == 0xFFFFFFFF || !(bits & (1 << mem))) {
@@ -135,33 +149,8 @@ public:
 		compUbo_ = {device().bufferAllocator(), bufSize, usage, mem};
 
 		// create & upload particles
-		{
-			constexpr auto distrFrom = -0.85f;
-			constexpr auto distrTo = 0.85f;
-
-			std::mt19937 rgen;
-			rgen.seed(std::time(nullptr));
-			std::uniform_real_distribution<float> distr(distrFrom, distrTo);
-
-			std::vector<Particle> particles(count);
-			for(auto& part : particles) {
-				part.pos[0] = distr(rgen);
-				part.pos[1] = distr(rgen);
-				part.vel = {0.f, 0.f};
-			}
-
-			auto& qs = dev.queueSubmitter();
-			auto qfam = qs.queue().family();
-			auto cb = dev.commandAllocator().get(qfam);
-			vk::beginCommandBuffer(cb, {});
-
-			auto pspan = nytl::span(particles);
-			auto stage = vpp::fillStaging(cb, particleBuffer_,
-				nytl::as_bytes(pspan));
-
-			vk::endCommandBuffer(cb);
-			qs.wait(qs.add(cb));
-		}
+		count_ = count;
+		reset();
 
 		// write descriptor
 		{
@@ -177,8 +166,35 @@ public:
 
 			vpp::apply({{{update1}, {update2}}});
 		}
+	}
 
-		count_ = count;
+	void reset() {
+		constexpr auto distrFrom = -0.85f;
+		constexpr auto distrTo = 0.85f;
+		auto& dev = *dev_;
+
+		std::mt19937 rgen;
+		rgen.seed(std::time(nullptr));
+		std::uniform_real_distribution<float> distr(distrFrom, distrTo);
+
+		std::vector<Particle> particles(count_);
+		for(auto& part : particles) {
+			part.pos[0] = distr(rgen);
+			part.pos[1] = distr(rgen);
+			part.vel = {0.f, 0.f};
+		}
+
+		auto& qs = dev.queueSubmitter();
+		auto qfam = qs.queue().family();
+		auto cb = dev.commandAllocator().get(qfam);
+		vk::beginCommandBuffer(cb, {});
+
+		auto pspan = nytl::span(particles);
+		auto stage = vpp::fillStaging(cb, particleBuffer_,
+			nytl::as_bytes(pspan));
+
+		vk::endCommandBuffer(cb);
+		qs.wait(qs.add(cb));
 	}
 
 	void compute(vk::CommandBuffer cb) {
@@ -211,16 +227,24 @@ public:
 			tkn::write(span, p);
 		}
 
+		span = view.span();
 		auto off = sizeof(nytl::Vec4f) * 5;
-		span = view.span().last(view.span().size() - off);
+		tkn::skip(span, off);
+
+		tkn::write(span, attractionFactors);
+		tkn::write(span, friction);
+		tkn::write(span, maxVel);
+		tkn::write(span, distOff);
 		tkn::write(span, float(delta));
 		tkn::write(span, std::uint32_t(attractors.size()));
+		view.flush();
 
 		if(paramsChanged) {
 			auto view = gfxUbo_.memoryMap();
 			auto span = view.span();
 			tkn::write(span, alpha);
 			tkn::write(span, pointSize);
+			view.flush();
 		}
 	}
 
@@ -257,9 +281,7 @@ public:
 		system_.init(vulkanDevice(), renderPass(), samples(), count_);
 
 		// gui
-#ifndef __ANDROID__
-		auto& panel = gui().create<vui::dat::Panel>(
-			nytl::Vec2f {50.f, 0.f}, 300.f, 150.f);
+		auto& panel = gui().create<vui::dat::Panel>(nytl::Vec2f {100.f, 0.f});
 		auto tfChangeProp = [&](auto& prop) {
 			return [&](auto& tf) {
 				try {
@@ -271,11 +293,24 @@ public:
 			};
 		};
 
-		panel.create<vui::dat::Textfield>("alpha").textfield().onSubmit =
-			tfChangeProp(system_.alpha);
-		panel.create<vui::dat::Textfield>("pointSize").textfield().onSubmit =
-			tfChangeProp(system_.pointSize);
-#endif
+		auto createProp = [&](auto name, auto& prop) {
+			auto& tf = panel.create<vui::dat::Textfield>(name).textfield();
+			tf.onSubmit = tfChangeProp(prop);
+			auto str = std::to_string(prop);
+			str.resize(4);
+			tf.utf8(str);
+		};
+
+		createProp("Alpha", system_.alpha);
+		createProp("Point Size", system_.pointSize);
+		createProp("Friction", system_.friction);
+		createProp("Max. Velocity", system_.maxVel);
+		createProp("Distance Offset", system_.distOff);
+		createProp("Attraction 0", system_.attractionFactors.x);
+		createProp("Attraction 1", system_.attractionFactors.y);
+		createProp("Attraction 2", system_.attractionFactors.z);
+
+		panel.create<vui::dat::Button>("Reset").onClick = [&]{ reset_ = true; };
 
 		return true;
 	}
@@ -321,22 +356,33 @@ public:
 		}
 	}
 
-	void touchBegin(const ny::TouchBeginEvent& ev) override {
+	bool touchBegin(const ny::TouchBeginEvent& ev) override {
+		if(App::touchBegin(ev)) {
+			return true;
+		}
+
 		auto pos = attractorPos(nytl::Vec2i(ev.pos));
 		attractors_.push_back(pos);
 		touchIDs_.push_back(ev.id);
-		dlg_trace("begin: {}", ev.id);
+		// dlg_trace("begin: {}", ev.id);
+		return true;
 	}
 
-	void touchEnd(const ny::TouchEndEvent& ev) override {
+	bool touchEnd(const ny::TouchEndEvent& ev) override {
+		if(App::touchEnd(ev)) {
+			return true;
+		}
+
 		auto it = std::find(touchIDs_.begin(), touchIDs_.end(), ev.id);
 		if(it != touchIDs_.end()) {
-			dlg_trace("erase: {}", ev.id);
+			// dlg_trace("erase: {}", ev.id);
 			attractors_.erase(attractors_.begin() + (it - touchIDs_.begin()));
 			touchIDs_.erase(it);
 		} else {
 			dlg_error("Invalid touch id");
 		}
+
+		return true;
 	}
 
 	void touchCancel(const ny::TouchCancelEvent&) override {
@@ -346,6 +392,8 @@ public:
 	}
 
 	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
+		App::touchUpdate(ev);
+
 		auto pos = attractorPos(nytl::Vec2i(ev.pos));
 		auto it = std::find(touchIDs_.begin(), touchIDs_.end(), ev.id);
 		if(it != touchIDs_.end()) {
@@ -385,6 +433,11 @@ public:
 	void updateDevice() override {
 		App::updateDevice();
 		system_.updateDevice(delta_, attractors_);
+
+		if(reset_) {
+			reset_ = false;
+			system_.reset();
+		}
 	}
 
 	const char* name() const override { return "particles"; }
@@ -393,6 +446,7 @@ protected:
 	ParticleSystem system_;
 	unsigned count_ {500'000};
 	double delta_ {};
+	bool reset_ {};
 	std::vector<nytl::Vec2f> attractors_ {};
 	std::vector<unsigned> touchIDs_ {};
 };

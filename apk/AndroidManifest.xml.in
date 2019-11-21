@@ -17,7 +17,7 @@
 			android:name="android.app.NativeActivity"
 			android:label="%appname%"
 			android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
-			android:configChanges="keyboardHidden|orientation|screenSize">
+			android:configChanges="orientation|screenSize">
 			<meta-data 
 				android:name="android.app.lib_name" 
 				android:value="%libname%"/>

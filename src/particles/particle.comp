@@ -5,9 +5,6 @@ struct Particle {
 	vec2 vel;
 };
 
-const float attractionFactor = 5;
-const float frictionFactor = 0.7;
-
 layout(local_size_x = 64) in;
 layout(std430, set = 0, binding = 0) buffer Particles {
 	Particle particles[];
@@ -18,34 +15,52 @@ layout(set = 0, binding = 1) uniform UBO {
 	// xy is one attraction, zw is one
 	// so we really have 10 possible attractions
 	vec4 attract[5]; // attraction positions
+
+	// physically correct: only the third component is set (to a value
+	// depending on the mass). But it looks nicer if we add normalized
+	// (first component) and inv-linear (second component) in addition
+	// to the inv-squared (third component) distance as well.
+	// Alpha component is friction
+	vec4 attractionFactors;
+
+	float maxVel;
+	float distOff;
+
 	float deltaT; // time delta in seconds
 	uint count; // number of attraction positions (<= 10)
 } ubo;
 
 vec2 attraction(vec2 pos, vec2 attractPos) {
 	vec2 delta = attractPos - pos;
-	float invDist = 1.0f / length(delta);
-	return delta * invDist;
-
-	// NOTE: can play around with above factors
-	// float dDampedDot = dot(delta, delta);
-	// float invDistCubed = invDist*invDist*invDist;
+	float invDist = 1.0f / (ubo.distOff + length(delta));
+	float id1 = invDist;
+	float id2 = invDist * id1;
+	float id3 = invDist * id2;
+	return delta * dot(ubo.attractionFactors.xyz, vec3(id1, id2, id3));
 }
 
+// x dimension: bounce-back
 void topBorder(inout vec2 pos, inout vec2 vel) {
-
+	pos.y = -2.f - pos.y;
+	vel.y = -vel.y;
 }
 
 void bottomBorder(inout vec2 pos, inout vec2 vel) {
-
+	pos.y = 2.f - pos.y;
+	vel.y = -vel.y;
 }
 
+// y-dimension: wrap around
+// NOTE: we could duplicate all attractors at least once to the
+// left and right to simulate real world wrapping. When attractor is left
+// but particle on the right it should (logically, for a really wrapped world)
+// be attracted to the right more than the left.
 void rightBorder(inout vec2 pos, inout vec2 vel) {
-
+	pos.x = -2.f + pos.x;
 }
 
 void leftBorder(inout vec2 pos, inout vec2 vel) {
-
+	pos.x = 2.f + pos.x;
 }
 
 void main() {
@@ -61,14 +76,16 @@ void main() {
 	vec2 vel = particles[index].vel;
 
 	// apply friction
-	vel *= 1 - (0.7 * ubo.deltaT);
+	vel *= pow(ubo.attractionFactors.a, ubo.deltaT);
 
 	// Calculate new velocity depending on attraction point
-	float fac = 1.f / sqrt(ubo.count);
+	// float fac = 1.f / sqrt(ubo.count);
 	for(uint i = 0; i < ubo.count; ++i) {
 		vec2 a = mod(i, 2) == 0 ? ubo.attract[i / 2].xy : ubo.attract[i / 2].zw;
-		vel += fac * attractionFactor * ubo.deltaT * attraction(pos, a);
+		vel += ubo.deltaT * attraction(pos, a);
 	}
+
+	vel = clamp(vel, -ubo.maxVel, ubo.maxVel);
 
 	// Move by velocity
 	pos += vel * ubo.deltaT;
