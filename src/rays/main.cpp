@@ -62,7 +62,7 @@ struct Segment {
 
 class RaysApp : public tkn::App {
 public:
-	static constexpr auto sampleCount = 512u;
+	static constexpr auto sampleCount = 2048u;
 	static constexpr auto maxBounces = 8u; // XXX: defined again in rays.comp
 	static constexpr auto renderFormat = vk::Format::r16g16b16a16Sfloat;
 
@@ -168,9 +168,9 @@ public:
 		auto& dev = vulkanDevice();
 		auto devMem = dev.deviceMemoryTypes();
 
-		float fac = 10.f;
+		// float fac = 10.f;
 		std::initializer_list<Light> lights = {
-			{50 * tkn::blackbody(3500), 0.1f, {-1.f, 1.f}},
+			{20 * tkn::blackbody(3500), 0.1f, {-1.f, 1.f}},
 			// {1 * tkn::blackbody(5500), 0.1f, {2.0f, 1.8f}},
 			// {fac * tkn::blackbody(5500), 0.1f, {-2.f, -1.8f}},
 			// {1 * tkn::blackbody(5000), 0.1f, {-2.f, 2.f}},
