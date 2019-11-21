@@ -650,10 +650,15 @@ public:
 		return false;
 	}
 
-	void touchBegin(const ny::TouchBeginEvent& ev) override {
+	bool touchBegin(const ny::TouchBeginEvent& ev) override {
+		if(App::touchBegin(ev)) {
+			return true;
+		}
+
 		auto pos = tkn::windowToLevel(window().size(), view_, nytl::Vec2i(ev.pos));
 		light_.pos = pos;
 		updateLight_ = true;
+		return true;
 	}
 
 	void touchUpdate(const ny::TouchUpdateEvent& ev) override {

@@ -170,10 +170,11 @@ executable('shv', [
 		shv_shaders,
 	], dependencies: tkn_dep)
 
-executable('volume', [
+volume = build_target('volume', [
 		'src/volume/main.cpp',
 		volume_shaders,
-	], dependencies: tkn_dep)
+	], dependencies: tkn_dep,
+	target_type: exetarget)
 
 executable('bezier', [
 		'src/bezier/main.cpp',

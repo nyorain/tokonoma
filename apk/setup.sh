@@ -40,7 +40,7 @@ ln -sf \
 	$d/subprojects/dlg/libdlg.so \
 	$d/subprojects/katachi/libkatachi.so \
 	$d/subprojects/rvg/src/rvg/librvg.so \
-	$d/subprojects/libpng-1.6.35/libpng16.so.16 \
+	$d/subprojects/libpng-1.6.37/libpng16.so.16 \
 	$d/subprojects/vkpp/libvkpp.so \
 	$d/subprojects/vui/src/vui/libvui.so \
 	lib/$arch

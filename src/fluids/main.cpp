@@ -652,7 +652,11 @@ public:
 		return true;
 	}
 
-	void touchBegin(const ny::TouchBeginEvent& ev) override {
+	bool touchBegin(const ny::TouchBeginEvent& ev) override {
+		if(App::touchBegin(ev)) {
+			return true;
+		}
+
 		using namespace nytl::vec::cw::operators;
 		mpos_ = ev.pos / window().size();
 		prevPos_ = mpos_;
@@ -669,6 +673,8 @@ public:
 			system_->velocityFac = 5.f * (viewType_ == 2);
 			system_->densityFac = 0.02 * (viewType_ == 1);
 		}
+
+		return true;
 	}
 
 	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
@@ -676,9 +682,14 @@ public:
 		mpos_ = ev.pos / window().size();
 	}
 
-	void touchEnd(const ny::TouchEndEvent&) override {
+	bool touchEnd(const ny::TouchEndEvent& ev) override {
+		if(App::touchEnd(ev)) {
+			return true;
+		}
+
 		system_->velocityFac = 0.f;
 		system_->densityFac = 0.f;
+		return true;
 	}
 
 	bool mouseWheel(const ny::MouseWheelEvent& ev) override {

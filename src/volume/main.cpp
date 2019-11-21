@@ -65,7 +65,7 @@ struct hash<nytl::Vec<I, T>> {
 }
 
 struct Volume {
-	static constexpr auto size = Vec3ui{128, 128, 128};
+	static constexpr auto size = Vec3ui{64, 64, 64};
 	static constexpr auto extent = Vec3f{3, 3, 3};
 	static constexpr auto start = -0.5f * extent;
 	static constexpr auto scale = Vec3f{
@@ -487,6 +487,60 @@ public:
 		return false;
 	}
 
+	bool touchBegin(const ny::TouchBeginEvent& ev) override {
+		if(App::touchBegin(ev)) {
+			return true;
+		}
+
+		using namespace nytl::vec::cw::operators;
+		auto rp = ev.pos / window().size();
+		if(rp.x < 0.5f && touch_.move.id == invalidID) {
+			touch_.move.id = ev.id;
+			touch_.move.pos = ev.pos;
+		} else if(rp.x > 0.5f && touch_.rotate.id == invalidID) {
+			touch_.rotate.id = ev.id;
+			touch_.rotate.pos = ev.pos;
+		}
+
+		return true;
+	}
+
+	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
+		if(ev.id == touch_.rotate.id) {
+			auto delta = ev.pos - touch_.rotate.pos;
+			touch_.rotate.pos = ev.pos;
+
+			tkn::rotateView(camera_, 0.005 * delta.x, 0.005 * delta.y);
+			App::scheduleRedraw();
+		} else if(ev.id == touch_.move.id) {
+			auto delta = ev.pos - touch_.move.pos;
+			touch_.move.pos = ev.pos;
+
+			auto& c = camera_;
+			auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+			auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+
+			auto fac = 0.01f;
+			c.pos += fac * delta.x * right;
+			c.pos -= fac * delta.y * c.dir; // y input coords have top-left origin
+			c.update = true;
+		}
+	}
+
+	bool touchEnd(const ny::TouchEndEvent& ev) override {
+		if(App::touchEnd(ev)) {
+			return true;
+		}
+
+		if(ev.id == touch_.rotate.id) {
+			touch_.rotate.id = invalidID;
+		} else if(ev.id == touch_.move.id) {
+			touch_.move.id = invalidID;
+		}
+
+		return true;
+	}
+
 	const char* name() const override { return "volume"; }
 	bool needsDepth() const override { return true; }
 
@@ -503,6 +557,19 @@ protected:
 	vpp::SubBuffer cameraUbo_;
 	tkn::Camera camera_;
 	bool rotateView_ {};
+
+	static constexpr auto invalidID = 0xFFFFFFFFu;
+	struct {
+		struct {
+			unsigned id = invalidID;
+			nytl::Vec2f pos;
+		} move;
+
+		struct {
+			unsigned id = invalidID;
+			nytl::Vec2f pos;
+		} rotate;
+	} touch_;
 };
 
 int main(int argc, const char** argv) {
