@@ -77,7 +77,7 @@ dep_turbojpeg = dependency('libturbojpeg',
 	fallback: ['turbojpeg', 'jpeg_dep'])
 
 external_inc = include_directories('external/include')
-libpath = join_paths(meson.source_root(), 'external', 'lib', build_machine.system())
+libpath = join_paths(meson.source_root(), 'external', 'lib', host_machine.system())
 message('libpath: ' + libpath)
 
 subdir('src/shaders')

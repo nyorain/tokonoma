@@ -65,12 +65,22 @@ dep_soundio = meson.get_compiler('cpp').find_library('soundio',
 	dirs: libpath,
 )
 
-if not android and dep_soundio.found()
+dep_cubeb = meson.get_compiler('cpp').find_library('cubeb',
+	required: false,
+	dirs: libpath,
+)
+
+if dep_soundio.found()
 	tkn_src += 'audio.cpp'
 	tkn_deps += dep_soundio
 endif
 
-if not android and dep_b2d.found()
+if dep_cubeb.found()
+	tkn_src += 'audio-cubeb.cpp'
+	tkn_deps += deps_cubeb
+endif
+
+if dep_b2d.found()
 	tkn_src += 'physics.cpp'
 	tkn_deps += dep_b2d
 endif
