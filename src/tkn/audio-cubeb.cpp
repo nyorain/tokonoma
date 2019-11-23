@@ -4,13 +4,6 @@
 #include <stdexcept>
 #include <thread>
 
-// TODO: remove atomic_unique_ptr.
-// Sticking to an RAII destruction smart pointer is nice and
-// all but we do all the manging ourselves (using the added
-// release_exchange method) so i guess we should just use plain old
-// pointers and delete at this point. It's a couple of highly
-// specialized lines of code anyways.
-
 namespace tkn::acb {
 
 struct AudioPlayer::Util {
@@ -66,6 +59,14 @@ AudioPlayer::AudioPlayer() {
 		throw std::runtime_error("Could not open audio stream");
 	}
 
+	// NOTE(optimization): we could only start the stream when
+	// audios are added and stop it when there are no audios.
+	// Not so easy to implement though, we should still destroy
+	// audios in destroyed_.
+	// And then we should probably also add `bool Audio::active() const`
+	// that returns whether the audio is currently active or e.g.
+	// paused/stopped and only have the stream playing if we have
+	// and active audio.
 	rv = cubeb_stream_start(stream_);
 	if(rv != CUBEB_OK) {
 		throw std::runtime_error("Could not start stream");
@@ -92,6 +93,15 @@ AudioPlayer::~AudioPlayer() {
 	// We could instead make it wait on a cv everytime it goes
 	// to sleep and signal that here
 	updateThread_.join();
+
+	// destroy remaning active audios
+	// no thread is accessing them anymore
+	auto it = audios_.load();
+	while(it) {
+		auto next = it->next_.load();
+		delete it;
+		it = next;
+	}
 }
 
 Audio& AudioPlayer::add(std::unique_ptr<Audio> audio) {
@@ -108,39 +118,47 @@ Audio& AudioPlayer::add(std::unique_ptr<Audio> audio) {
 	audio->update(*this);
 
 	auto& ret = *audio;
-	audio->next_ = std::move(list_);
-	list_.reset(audio.release());
+	audio->next_ = audios_.load();
+	audios_.store(audio.release());
+
 	return ret;
 }
 
-std::unique_ptr<Audio> AudioPlayer::unlink(Audio& link, Audio* prev,
-		atomic_unique_ptr<Audio>& head) {
-	// via release_exchange we prevent that 'link' is destroyed
-	// but make sure it's not in a unique ptr anymore
-	if(&link == head.get()) {
-		head.release_exchange(head->next_.release());
+void AudioPlayer::unlink(Audio& link, Audio* prev, std::atomic<Audio*>& head) {
+	if(&link == head.load()) {
+		head.store(link.next_.load());
 	} else {
 		dlg_assert(prev);
-		prev->next_.release_exchange(link.next_.release());
+		prev->next_.store(link.next_.load());
 	}
-
-	// Then we construct a new unique pointer from the unlinked link
-	return std::unique_ptr<Audio>(&link);
 }
 
 bool AudioPlayer::remove(Audio& audio) {
-	// find 'audio' is 'list_', unlink it there and move
+	// find 'audio' is 'audios_', unlink it there and move
 	// it to 'destroyed_'. We furthermore set the 'destroyed_'
 	// field of audio to the current render iteration, so we can
 	// keep it alive until that iteration ends.
-	auto it = list_.get();
+	//
+	// If the update or render thread are currently processing 'audio',
+	// they will still be able to normally continue iteration since
+	// - the object is kept alive until no one needs it anymore
+	// - audio.next_ will stil point into the list of active audios,
+	//   unless audio.next_ is removed as well. But then audio.next_->next_
+	//   will point into the list of active audios again (and so on).
+	// This means, even after remove(audio) was called, audio.update()
+	// and audio.render() might still be called from other threads.
+	// But in the next iteration of the update thread or the
+	// next render callback, it won't be for certain.
+	// And then it can be destroyed.
+	auto it = audios_.load();
 	auto prev = decltype(it) {nullptr};
 	while(it) {
 		if(it == &audio) {
-			auto owned = unlink(*it, prev, list_);
-			owned->next_.reset(destroyed_.get());
-			owned->destroyed_.store(renderIteration_.load());
-			destroyed_.release_exchange(owned.release());
+			unlink(*it, prev, audios_);
+			it->destroyed_.store(renderIteration_.load());
+
+			std::lock_guard lock(dmutex_);
+			destroyed_.push_back(std::unique_ptr<Audio>(it));
 			return true;
 		}
 
@@ -154,6 +172,8 @@ bool AudioPlayer::remove(Audio& audio) {
 void AudioPlayer::updateThread() {
 	using namespace std::chrono;
 
+	// NOTE: we could allow Audio implementations to return when
+	// they need it sooner or later.
 	constexpr static auto iterationTime =
 		duration_cast<Clock::duration>(milliseconds(50));
 
@@ -161,24 +181,26 @@ void AudioPlayer::updateThread() {
 		auto nextIteration = Clock::now() + iterationTime;
 
 		// destroy all audios that we can destroy
-		auto c = renderIteration_.load();
-		auto it = destroyed_.get();
-		auto prev = decltype(it) {nullptr};
-		while(it) {
-			dlg_assert(it->destroyed_.load());
-			if(it->destroyed_ != c) {
-				auto nit = it->next_.get();
-				unlink(*it, prev, destroyed_); // ignore -> destroyed
-				it = nit;
-				// prev remains the same
-			} else {
-				prev = it;
-				it = it->next_;
+		{
+			auto c = renderIteration_.load();
+			std::lock_guard lock(dmutex_);
+			for(auto it = destroyed_.begin(); it < destroyed_.end();) {
+				auto& audio = **it;
+				dlg_assert(audio.destroyed_.load());
+				// Using '<' as comparison makes more sense logically but
+				// like this, we can also work with iteration count wrapping.
+				// And otherwise, the render iteration count is monotonically
+				// increasing anyways.
+				if(audio.destroyed_ != c) {
+					it = destroyed_.erase(it);
+				} else {
+					++it;
+				}
 			}
 		}
 
-		// upate all audios
-		for(auto it = list_.get(); it; it = it->next_.get()) {
+		// upate all active audios
+		for(auto it = audios_.load(); it; it = it->next_.load()) {
 			it->update(*this);
 		}
 
@@ -196,7 +218,7 @@ long AudioPlayer::dataCb(void* vbuffer, long nframes) {
 	auto buffer = static_cast<float*>(vbuffer);
 	std::memset(buffer, 0x0, nframes * channels() * sizeof(float));
 
-	for(auto it = list_.get(); it; it = it->next_.get()) {
+	for(auto it = audios_.load(); it; it = it->next_.load()) {
 		it->render(*this, buffer, nframes);
 	}
 

@@ -5,6 +5,7 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <mutex>
 
 // cubeb fwd decls
 typedef struct cubeb cubeb;
@@ -14,33 +15,6 @@ namespace tkn::acb {
 
 using Clock = std::chrono::high_resolution_clock;
 class Audio;
-
-template<class T>
-class atomic_unique_ptr {
-public:
-	constexpr atomic_unique_ptr() noexcept : ptr() {}
-	explicit atomic_unique_ptr(T* p) noexcept : ptr(p) {}
-	atomic_unique_ptr(atomic_unique_ptr&& p) noexcept : ptr(p.release()) {}
-	atomic_unique_ptr& operator=(atomic_unique_ptr&& p) noexcept {
-		reset(p.release());
-		return *this;
-	}
-
-	void reset(T* p = nullptr) {
-		auto old = ptr.exchange(p);
-		if (old) delete old;
-	}
-	operator T*() const { return ptr.load(); }
-	T* operator->() const { return ptr.load(); }
-	T* get() const { return ptr.load(); }
-	explicit operator bool() const { return ptr.load() != nullptr; }
-	T* release() { return ptr.exchange(nullptr); }
-	T* release_exchange(T* n) { return ptr.exchange(n); }
-	~atomic_unique_ptr() { reset(); }
-
-private:
-	std::atomic<T*> ptr;
-};
 
 /// Combines audio output.
 class AudioPlayer {
@@ -56,6 +30,10 @@ public:
 	/// Removes the given Audio implementation object.
 	/// Returns false and has no effect if the given audio
 	/// is not known. Must be called from the thread that created this player.
+	/// Note that removing the audio implementation will destroy it
+	/// eventually (as soon as possible) but due to the multi threaded nature
+	/// of the AudioPlayer, audio.update and audio.render might still be called
+	/// after this.
 	bool remove(Audio&);
 
 	/// Returns the number of channels.
@@ -70,27 +48,24 @@ protected:
 	long dataCb(void* buffer, long nframes);
 	void stateCb(unsigned);
 
-	std::unique_ptr<Audio> unlink(Audio& link, Audio* prev,
-		atomic_unique_ptr<Audio>& head);
+	void unlink(Audio& link, Audio* prev, std::atomic<Audio*>& head);
 
 	struct Util; // static c callbacks
 
 protected:
-	// std::vector<std::unique_ptr<Audio>> audios_;
-	// std::vector<std::unique_ptr<Audio>> destroyed_;
-
 	// Active audios.
 	// Iterated over by update and render thread.
 	// Elements added and unlinked by main thread (add/destroy).
-	atomic_unique_ptr<Audio> list_ {};
+	// Owned list, we don't use unique_ptrs since it's atomic
+	// and we do too much ownership moving anyways.
+	std::atomic<Audio*> audios_ {};
 
 	// List of Audios that were destroyed but needed to be kept
 	// alive until this update and render iteration finish.
-	// Iterated over and elements removed by update thread.
-	// Elements added by main thread.
-	// NOTE: We could probably implement this as vector and
-	// mutex as well, lock-free isn't really important here.
-	atomic_unique_ptr<Audio> destroyed_ {};
+	// Access synchronized by dmutex_. Doesn't have to be lock-free
+	// since this is never accessed by the audio thread.
+	std::vector<std::unique_ptr<Audio>> destroyed_ {};
+	std::mutex dmutex_ {};
 
 	std::atomic<std::uint64_t> renderIteration_ {1};
 	std::atomic<bool> run_;
@@ -107,6 +82,9 @@ protected:
 /// an audio stream or a synthesizer.
 class Audio {
 public:
+	/// When an Audio implementation is destroyed in response to
+	/// AudioPlayer::remove, destruction may be deferred and happen
+	/// in a different thread.
 	virtual ~Audio() = default;
 
 	/// This function is called regularly from a thread in which
@@ -140,7 +118,7 @@ public:
 
 protected:
 	friend class AudioPlayer;
-	atomic_unique_ptr<Audio> next_ {};
+	std::atomic<Audio*> next_ {};
 	std::atomic<std::uint64_t> destroyed_ {};
 };
 

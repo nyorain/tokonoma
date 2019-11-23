@@ -65,7 +65,7 @@ void resample(SoundBufferView dst, SoundBufferView src) {
 		} else {
 			auto nbytes = dst.frameCount * sizeof(float);
 			for(auto i = 0u; i < dst.channelCount; ++i) {
-				// TODO: not sure if that is a good idea.
+				// TODO: not sure if that is a good idea, see below
 				auto srcc = i % src.channelCount;
 				memcpy(dst.data + i, src.data + srcc, nbytes);
 			}
@@ -86,7 +86,8 @@ void resample(SoundBufferView dst, SoundBufferView src) {
 		spx_uint32_t out_len = dst.frameCount;
 		// TODO: not sure if that is a good idea.
 		// could be optimized in that case anyways, we don't
-		// have to resample the same channel multiple times
+		// have to resample the same channel multiple times.
+		// Lookup surround sound mixing.
 		auto srcc = i % src.channelCount;
 		err = speex_resampler_process_float(speex, srcc,
 			src.data + srcc, &in_len, dst.data + i, &out_len);
@@ -132,8 +133,12 @@ public:
 		}
 	}
 
-	// TODO: cache data buffers
+	// TODO: cache data buffers, don't allocate every time
 	void update(const AudioPlayer& ap) override {
+		if(!play_) {
+			return;
+		}
+
 		auto info = stb_vorbis_get_info(vorbis_);
 		auto cap = buffer_.available_write();
 		if(cap < 4096) { // not worth it, still full enough
@@ -181,12 +186,21 @@ public:
 			return;
 		}
 
-		dlg_assert(nf <= (unsigned) buffer_.available_read());
-		buffer_.dequeue(rbuf_.get(), nf * ap.channels());
-		for(auto i = 0u; i < nf; ++i) {
-			for(auto c = 0u; c < ap.channels(); ++c) {
-				buf[i * ap.channels() + c] += rbuf_[i * ap.channels() + c];
-			}
+		if(drain_.load()) {
+			// empty it
+			buffer_.dequeue(nullptr, buffer_.available_read());
+			drain_.store(false);
+			return;
+		}
+
+		// there are multiple cases where this might not be the
+		// case and it's alright. When draining (restarting)
+		// or when the stream has finished.
+		// dlg_assert(nf <= (unsigned) buffer_.available_read());
+
+		unsigned count = buffer_.dequeue(rbuf_.get(), nf * ap.channels());
+		for(auto i = 0u; i < count; ++i) {
+			buf[i] += rbuf_[i];
 		}
 	}
 
@@ -196,6 +210,7 @@ public:
 
 	void restart() {
 		stb_vorbis_seek_start(vorbis_);
+		drain_.store(true);
 	}
 
 protected:
@@ -206,6 +221,7 @@ protected:
 	std::unique_ptr<float[]> rbuf_ =
 		std::make_unique<float[]>(bufSize);
 	bool play_ {true};
+	std::atomic<bool> drain_ {}; // when restarting
 
 #ifndef NDEBUG
 	bool firstUpdate_ {true};
@@ -330,6 +346,7 @@ int main() {
 			case 'r':
 				if(dummy) {
 					ap.remove(*dummy);
+					dummy = nullptr;
 				}
 				break;
 			case 'q':
