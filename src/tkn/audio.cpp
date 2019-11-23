@@ -295,6 +295,7 @@ void AudioPlayer::audioLoop() {
 
 Audio& AudioPlayer::add(std::unique_ptr<Audio> audio) {
 	dlg_assert(audio);
+
 	std::lock_guard lock(mutex());
 	audios_.push_back(std::move(audio));
 	return *audios_.back();

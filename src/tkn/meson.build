@@ -69,6 +69,10 @@ dep_cubeb = meson.get_compiler('cpp').find_library('cubeb',
 	required: false,
 	dirs: libpath,
 )
+dep_speex = meson.get_compiler('cpp').find_library('speex',
+	required: false,
+	dirs: libpath,
+)
 
 if dep_soundio.found()
 	tkn_src += 'audio.cpp'
@@ -77,7 +81,7 @@ endif
 
 if dep_cubeb.found()
 	tkn_src += 'audio-cubeb.cpp'
-	tkn_deps += deps_cubeb
+	tkn_deps += dep_cubeb
 endif
 
 if dep_b2d.found()

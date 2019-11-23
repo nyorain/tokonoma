@@ -111,7 +111,7 @@ executable('dpend',
 
 executable('audio',
 	'src/audio/main.cpp',
-	dependencies: tkn_dep)
+	dependencies: [tkn_dep, dep_speex])
 
 executable('dummy',
 	'src/dummy/main.cpp',
