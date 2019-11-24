@@ -10,7 +10,7 @@
 
 #include <cstdio>
 #include <vector>
-#ifdef DOI_LINUX
+#ifdef TKN_LINUX
 	#include <sys/mman.h>
 	#include <unistd.h>
 	#include <fcntl.h>
@@ -25,7 +25,7 @@ public:
 	nytl::Vec2ui size_;
 	tjhandle jpeg_ {};
 	std::vector<std::byte> tmpData_;
-#ifdef DOI_LINUX
+#ifdef TKN_LINUX
 	int fd_ {};
 #else
 	std::FILE* file_ {};
@@ -37,7 +37,7 @@ public:
 		if(jpeg_) {
 			::tjDestroy(jpeg_);
 		}
-#ifdef DOI_LINUX
+#ifdef TKN_LINUX
 		if(data_) {
 			::munmap(data_, fileLength_);
 		}
@@ -84,7 +84,7 @@ public:
 };
 
 ReadError readJpeg(nytl::StringParam filename, JpegReader& reader) {
-#ifdef DOI_LINUX
+#ifdef TKN_LINUX
 	auto fd = ::open(filename.c_str(), O_RDONLY);
 	if(fd < 0) {
 		return ReadError::cantOpen;

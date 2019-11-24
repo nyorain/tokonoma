@@ -555,7 +555,7 @@ bool App::init(nytl::Span<const char*> args) {
 		impl_->defaultFont.emplace(*impl_->fontAtlas, std::move(bytes));
 		AAsset_close(asset);
 #else
-		std::string fontPath = DOI_BASE_DIR;
+		std::string fontPath = TKN_BASE_DIR;
 		fontPath += "/assets/Roboto-Regular.ttf";
 		// fontPath += "assets/OpenSans-Light.ttf";
 		// fontPath += "build/Lucida-Grande.ttf"; // nonfree
@@ -1305,11 +1305,11 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 
 	// include dirs
 	cmd += " -I";
-	cmd += DOI_BASE_DIR;
+	cmd += TKN_BASE_DIR;
 	cmd += "/src/shaders/include";
 
 	// input
-	auto fullPath = std::string(DOI_BASE_DIR);
+	auto fullPath = std::string(TKN_BASE_DIR);
 	fullPath += "/src/";
 	fullPath += glslPath;
 
@@ -1331,7 +1331,7 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 	dlg_styled_fprintf(stderr, style, ">>> End glslang <<<%s\n",
 		dlg_reset_sequence);
 
-#ifdef DOI_LINUX
+#ifdef TKN_LINUX
 	if(WEXITSTATUS(ret) != 0) { // only working for posix
 #else
 	if(ret != 0) {

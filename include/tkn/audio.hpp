@@ -1,37 +1,25 @@
 #pragma once
 
-#include <cstddef>
-#include <mutex>
-#include <vector>
+#include <chrono>
 #include <memory>
+#include <vector>
 #include <atomic>
 #include <thread>
+#include <mutex>
 
-#include <nytl/span.hpp>
-#include <nytl/callback.hpp>
-
-// TODO: audio impl currently broken
-// will fix on next motivation gain
-
-// soundio fwd
-struct SoundIo;
-struct SoundIoDevice;
-struct SoundIoOutStream;
-struct SoundIoRingBuffer;
+// cubeb fwd decls
+typedef struct cubeb cubeb;
+typedef struct cubeb_stream cubeb_stream;
 
 namespace tkn {
 
+using Clock = std::chrono::high_resolution_clock;
 class Audio;
-enum class AudioFormat;
 
 /// Combines audio output.
-/// Add (and remove) Audio implementations to output them.
-/// Always uses 48 kHz sample rate.
 class AudioPlayer {
 public:
 	/// Throws std::runtime_error if something could not be initialized.
-	/// Note that this might happen with unsupported hardware so
-	/// better catch it.
 	AudioPlayer();
 	~AudioPlayer();
 
@@ -42,74 +30,103 @@ public:
 	/// Removes the given Audio implementation object.
 	/// Returns false and has no effect if the given audio
 	/// is not known. Must be called from the thread that created this player.
+	/// Note that removing the audio implementation will destroy it
+	/// eventually (as soon as possible) but due to the multi threaded nature
+	/// of the AudioPlayer, audio.update and audio.render might still be called
+	/// after this.
 	bool remove(Audio&);
 
-	/// Should be called from main thread (that created this player)
-	/// Used to recover from errors. Might throw an exception
-	/// from reinitialization. Must be called from the thread that created
-	/// this player.
-	void update();
+	/// Returns the number of channels.
+	unsigned channels() const { return channels_; }
 
-	/// Returns the internal synchronization mutex.
-	/// Can be locked before accessing resources that might
-	/// be accessed from the audio thread.
-	/// Make sure that you never lock it for short time (otherwise
-	/// realtime audio might fail due to a buffer underflow) and
-	/// that you don't have it locked while calling a function of this object.
-	auto& mutex() { return mutex_; }
+	/// Returns the sampling rate of the output stream in Hz, e.g.
+	/// 44100 or 48000.
+	unsigned rate() const { return rate_; };
 
 protected:
-	static void cbWrite(struct SoundIoOutStream*, int, int);
-	static void cbUnderflow(struct SoundIoOutStream*);
-	static void cbError(struct SoundIoOutStream*, int);
-	static void cbBackendDisconnect(struct SoundIo*, int);
+	void updateThread();
+	long dataCb(void* buffer, long nframes);
+	void stateCb(unsigned);
 
-	// init and finish to allow easy reinitialization on error
-	void init();
-	void finish();
-	void audioLoop(); // audio thread main function
+	void unlink(Audio& link, Audio* prev, std::atomic<Audio*>& head);
 
-	void output(struct SoundIoOutStream*, int, int);
+	struct Util; // static c callbacks
 
 protected:
-	AudioFormat format_;
-	std::vector<std::unique_ptr<Audio>> audios_;
-	std::mutex mutex_;
-	std::atomic<bool> error_ {false};
-	std::thread audioThread_;
+	// Active audios.
+	// Iterated over by update and render thread.
+	// Elements added and unlinked by main thread (add/destroy).
+	// Owned list, we don't use unique_ptrs since it's atomic
+	// and we do too much ownership moving anyways.
+	std::atomic<Audio*> audios_ {};
 
-	struct SoundIo* soundio_ {};
-	struct SoundIoDevice* device_ {};
-	struct SoundIoOutStream* stream_ {};
-	struct SoundIoRingBuffer* buffer_ {};
+	// List of Audios that were destroyed but needed to be kept
+	// alive until this update and render iteration finish.
+	// Access synchronized by dmutex_. Doesn't have to be lock-free
+	// since this is never accessed by the audio thread.
+	std::vector<std::unique_ptr<Audio>> destroyed_ {};
+	std::mutex dmutex_ {};
 
-	/// The desired time to prebuffer audio in seconds.
-	/// Setting this to low might result in audio / glitches.
-	/// Setting this too high might result in audio delays (e.g. when
-	/// adding or removing an audio).
-	float bufferTime_ {0.005};
+	std::atomic<std::uint64_t> renderIteration_ {1};
+	std::atomic<bool> run_;
+
+	cubeb* cubeb_;
+	cubeb_stream* stream_;
+	unsigned rate_;
+	unsigned channels_;
+	std::thread updateThread_;
 };
 
 /// Interface for playing a sound.
 /// Could be implemented e.g. by a fixed audio buffer,
 /// an audio stream or a synthesizer.
-/// Although not in the interface, implementations should (if possible)
-/// provide a volume multiplication factor.
 class Audio {
 public:
+	/// When an Audio implementation is destroyed in response to
+	/// AudioPlayer::remove, destruction may be deferred and happen
+	/// in a different thread.
 	virtual ~Audio() = default;
+
+	/// This function is called regularly from a thread in which
+	/// more expensive operations are permitted by the AudioPlayer
+	/// it is associated with. No guarantees about the thread are
+	/// made, except that this function isn't called more than
+	/// once at a time. It might be called simultaneously with `render`.
+	/// It should prepare audio data to be written in render, if needed.
+	/// Implementations can depend on this function being called
+	/// a couple of times per second, i.e. an appropriate amount of
+	/// data to prepare for rendering would be the frames for one second.
+	/// In turn, implementations must not take extreme amounts
+	/// of time (more than a couple of milliseconds is definitely too
+	/// much).
+	virtual void update(const AudioPlayer&) {};
 
 	/// Renders its own sound into the described buffer. Must add itself to
 	/// the existent values and not just overwrite the already present values.
 	/// Note that this function is always called in a separate
 	/// audio thread and must synchronize itself internally.
-	/// It might use the AudioPlayer.mutex() for this which is guaranteed
-	/// to be locked when render is called.
-	/// Expected to output with a sample rate of 48 khz.
-	/// \param buffers Tightly packed interleaved stereo audio data.
-	///   References at least 2 * sizeof(float) * samples bytes.
-	/// \param samples The number of samples to write
-	virtual void render(float& buffer, unsigned samples) = 0;
+	/// It must not block at all and should therefore use mechanisms
+	/// like (lock-free) ring buffers. The output buffer will always
+	/// be interleaved with stereo format.
+	/// - ap: The associated audio player from which the sampling
+	///   rate and channel count can be recevied.
+	/// - buf: Tightly packed interleaved stereo audio data.
+	///   References at least 'ap.channels() * sizeof(float) * nf' bytes.
+	/// - nf: The number of frames to write.
+	virtual void render(const AudioPlayer& pl, float* buf, unsigned nf) = 0;
+
+private:
+	friend class AudioPlayer;
+
+	/// Lock-free owned linked list used by AudioPlayer for update and render
+	/// iterations. If Audio wasn't destroyed yet, next_ can be thought
+	/// of as owned pointer.
+	std::atomic<Audio*> next_ {};
+
+	/// 0 when the audio was not destroyed.
+	/// Otherwise the AudioPlayer::renderIteration_ in which it was destroyed.
+	/// The AudioPlayer keeps it alive for this iteration.
+	std::atomic<std::uint64_t> destroyed_ {};
 };
 
 } // namespace tkn

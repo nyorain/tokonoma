@@ -4,7 +4,7 @@ project('tokonoma', ['cpp', 'c'],
 	version: '0.1.0',
 	meson_version: '>=0.51',
 	default_options: [
-		'cpp_std=c++1z',
+		'cpp_std=c++17',
 		'c_std=c99',
   		'warning_level=3',
 		# TODO: re-enable
@@ -53,7 +53,7 @@ add_project_arguments(
 # mainly needed for shaders and assets and stuff
 source_root = '/'.join(meson.source_root().split('\\'))
 add_project_arguments(
-	'-DDOI_BASE_DIR="@0@"'.format(source_root),
+	'-DTKN_BASE_DIR="@0@"'.format(source_root),
 	language: 'cpp')
 
 # project-specific stuff
@@ -71,7 +71,7 @@ dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
 dep_png = dependency('libpng', fallback: ['png', 'png_dep'])
 
-# TODO: fall back to default libjpeg, add (non-turbo) libjpeg loader
+# fall back to default libjpeg, add (non-turbo) libjpeg loader?
 dep_turbojpeg = dependency('libturbojpeg',
 	required: false,
 	fallback: ['turbojpeg', 'jpeg_dep'])
@@ -109,9 +109,11 @@ executable('dpend',
 	'src/dpend/main.cpp',
 	dependencies: tkn_dep)
 
-executable('audio',
-	'src/audio/main.cpp',
-	dependencies: [tkn_dep, dep_speex])
+if dep_cubeb.found() and dep_speex.found()
+	executable('audio',
+		'src/audio/main.cpp',
+		dependencies: [tkn_dep, dep_speex])
+endif
 
 executable('dummy',
 	'src/dummy/main.cpp',

@@ -1,4 +1,4 @@
-#include <tkn/audio-cubeb.hpp>
+#include <tkn/audio.hpp>
 #include <tkn/ringbuffer.hpp>
 #include <speex_resampler.h>
 #include <nytl/math.hpp>
@@ -10,8 +10,8 @@
 #include <chrono>
 #include <cmath>
 
-using tkn::acb::Audio;
-using tkn::acb::AudioPlayer;
+using tkn::Audio;
+using tkn::AudioPlayer;
 
 class DummyAudio : public Audio {
 public:
@@ -299,10 +299,10 @@ int main() {
 	StreamedVorbisAudio* streamAudio = nullptr;
 	Audio* dummy = nullptr;
 
-	tkn::acb::AudioPlayer ap;
+	AudioPlayer ap;
 
 	auto stream = true;
-	auto samplePath = DOI_BASE_DIR "/assets/punch.ogg";
+	auto samplePath = TKN_BASE_DIR "/assets/punch.ogg";
 	if(stream) {
 		auto a = std::make_unique<StreamedVorbisAudio>(samplePath);
 		streamAudio = a.get();

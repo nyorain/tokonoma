@@ -60,11 +60,6 @@ else
 	tkn_src += 'image/jpeg_dummy.cpp'
 endif
 
-dep_soundio = meson.get_compiler('cpp').find_library('soundio',
-	required: false,
-	dirs: libpath,
-)
-
 dep_cubeb = meson.get_compiler('cpp').find_library('cubeb',
 	required: false,
 	dirs: libpath,
@@ -74,13 +69,8 @@ dep_speex = meson.get_compiler('cpp').find_library('speex',
 	dirs: libpath,
 )
 
-if dep_soundio.found()
+if dep_cubeb.found() and dep_speex.found()
 	tkn_src += 'audio.cpp'
-	tkn_deps += dep_soundio
-endif
-
-if dep_cubeb.found()
-	tkn_src += 'audio-cubeb.cpp'
 	tkn_deps += dep_cubeb
 endif
 
@@ -91,7 +81,7 @@ endif
 
 tkn_args = []
 if build_machine.system() == 'linux'
-	tkn_args += '-DDOI_LINUX'
+	tkn_args += '-DTKN_LINUX'
 endif
 
 tkn_lib = library('tkn',
