@@ -1,5 +1,4 @@
 project('tokonoma', ['cpp', 'c'],
-
 	license: 'BSD',
 	version: '0.1.0',
 	meson_version: '>=0.51',
@@ -109,10 +108,14 @@ executable('dpend',
 	'src/dpend/main.cpp',
 	dependencies: tkn_dep)
 
-if dep_cubeb.found() and dep_speex.found()
+if tkn_audio
 	executable('audio',
 		'src/audio/main.cpp',
-		dependencies: [tkn_dep, dep_speex])
+		dependencies: tkn_dep)
+
+	executable('soundfont',
+		'src/soundfont/main.cpp',
+		dependencies: tkn_dep)
 endif
 
 executable('dummy',

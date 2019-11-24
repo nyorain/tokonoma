@@ -1,0 +1,5 @@
+[wrap-git]
+directory=cubeb
+url=https://github.com/nyorain/cubeb
+revision=meson
+

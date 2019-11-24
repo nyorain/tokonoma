@@ -20,8 +20,8 @@ struct AudioPlayer::Util {
 	}
 };
 
-AudioPlayer::AudioPlayer() {
-	cubeb_init(&cubeb_, "Example Application", NULL);
+AudioPlayer::AudioPlayer(const char* name) {
+	cubeb_init(&cubeb_, name, NULL);
 	int rv;
 	uint32_t latencyFrames;
 

@@ -152,6 +152,7 @@ public:
 		if(ns == 0) {
 			dlg_info("finished stream");
 			play_ = false;
+			return;
 		}
 
 		unsigned c = info.channels;
@@ -299,7 +300,7 @@ int main() {
 	StreamedVorbisAudio* streamAudio = nullptr;
 	Audio* dummy = nullptr;
 
-	AudioPlayer ap;
+	AudioPlayer ap("tkn/audio");
 
 	auto stream = true;
 	auto samplePath = TKN_BASE_DIR "/assets/punch.ogg";
@@ -326,7 +327,9 @@ int main() {
 		char c;
 		int ret = std::fread(&c, 1, 1, stdin);
 		if(ret != 1) {
-			dlg_error("fread failed: {}", ret);
+			if(ret != 0) {
+				dlg_error("fread failed: {}", ret);
+			}
 			break;
 		}
 

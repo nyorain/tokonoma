@@ -20,12 +20,20 @@ class Audio;
 class AudioPlayer {
 public:
 	/// Throws std::runtime_error if something could not be initialized.
-	AudioPlayer();
+	AudioPlayer(const char* name = "tkn");
 	~AudioPlayer();
 
 	/// Adds the given Audio implementation to the list of audios
 	/// to render. Must be called from the thread that created this player.
 	Audio& add(std::unique_ptr<Audio>);
+
+	template<typename AudioImpl, typename... Args>
+	AudioImpl& create(Args&&... args) {
+		auto impl = std::make_unique<AudioImpl>(std::forward<Args>(args)...);
+		auto& ret = *impl;
+		add(std::move(impl));
+		return ret;
+	}
 
 	/// Removes the given Audio implementation object.
 	/// Returns false and has no effect if the given audio

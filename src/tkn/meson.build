@@ -60,18 +60,15 @@ else
 	tkn_src += 'image/jpeg_dummy.cpp'
 endif
 
-dep_cubeb = meson.get_compiler('cpp').find_library('cubeb',
-	required: false,
-	dirs: libpath,
-)
-dep_speex = meson.get_compiler('cpp').find_library('speex',
-	required: false,
-	dirs: libpath,
-)
+tkn_audio = false
+dep_cubeb = dependency('cubeb',
+	fallback: ['cubeb', 'cubeb_dep'],
+	required: false)
 
-if dep_cubeb.found() and dep_speex.found()
+if dep_cubeb.found()
 	tkn_src += 'audio.cpp'
 	tkn_deps += dep_cubeb
+	tkn_audio = true
 endif
 
 if dep_b2d.found()
