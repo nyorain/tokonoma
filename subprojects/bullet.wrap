@@ -1,0 +1,5 @@
+[wrap-git]
+directory=bullet
+url=https://gitlab.com/nyorain/bullet-meson
+revision=master
+

@@ -1,0 +1,5 @@
+[wrap-git]
+directory=b2d
+url=https://gitlab.com/nyorain/b2d
+revision=master
+

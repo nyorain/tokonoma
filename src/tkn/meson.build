@@ -14,7 +14,6 @@ gltf_dep = declare_dependency(
 	include_directories: tkn_inc)
 
 # libtkn
-dep_b2d = meson.get_compiler('cpp').find_library('Box2D', dirs: libpath)
 tkn_deps = [
 	dep_vpp,
 	dep_ny,
@@ -61,10 +60,6 @@ else
 endif
 
 tkn_audio = false
-dep_cubeb = dependency('cubeb',
-	fallback: ['cubeb', 'cubeb_dep'],
-	required: false)
-
 if dep_cubeb.found()
 	tkn_src += 'audio.cpp'
 	tkn_deps += dep_cubeb

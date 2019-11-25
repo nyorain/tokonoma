@@ -8,6 +8,8 @@
 -I./subprojects/bugged/include
 -I./subprojects/rvg/include
 -I./subprojects/rvg/src
+-I./subprojects/bullet/include/bullet
+-I./subprojects/steamaudio_api/include
 -I./subprojects/vui/include
 -I./build/subprojects/vkpp/include
 -I./build/subprojects/ny/include

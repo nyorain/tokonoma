@@ -20,8 +20,13 @@ android = (cc.get_define('__ANDROID__') != '')
 exetarget = 'executable'
 
 if android
+	# Make sure that we dispatch vulkan dynamically, that is needed
+	# on android. I guess libvulkan are just stubs for everything
+	# but instance creation proc address loading
 	add_global_arguments('-DVKPP_DYNAMIC_DISPATCH', language: ['cpp', 'c'])
-	# exetarget = 'shared_library'
+	# there are no native executables for apk's on android
+	# shared_module instead of shared_library so that export 'main'
+	# which is needed by ny
 	exetarget = 'shared_module'
 endif
 
@@ -60,24 +65,57 @@ flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
 add_project_arguments(flag_dlg, language: 'cpp')
 add_project_arguments('-DASIO_STANDALONE', language: 'cpp')
 
+# required dependencies
 dep_vpp = dependency('vpp', fallback: ['vpp', 'vpp_dep'])
 dep_nytl = dependency('nytl MASTER', fallback: ['nytl', 'nytl_dep'])
 dep_dlg = dependency('dlg MASTER', fallback: ['dlg', 'dlg_dep'])
-dep_ny = dependency('ny', fallback: ['ny', 'ny_dep'],
-	default_options: 'android=@0@'.format(android))
 dep_rvg = dependency('rvg', fallback: ['rvg', 'rvg_dep'])
 dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
 dep_png = dependency('libpng', fallback: ['png', 'png_dep'])
+dep_ny = dependency('ny',
+	fallback: ['ny', 'ny_dep'],
+	default_options: 'android=@0@'.format(android))
 
+# turbojpeg is optional, there exists no meson wrap for it.
+# if we can't find it, we just fall back to the stbi loader, i.e. make
+# tkn::JpegLoader a dummy that never works.
 # fall back to default libjpeg, add (non-turbo) libjpeg loader?
 dep_turbojpeg = dependency('libturbojpeg',
 	required: false,
 	fallback: ['turbojpeg', 'jpeg_dep'])
 
+# box2D is not required, we simply don't build 2D physics stuff if not found
+# We don't pass 'Box2D' as name to dependency because we don't to use
+# the system-installed version. We use features that were added since
+# the last release (which was 2014 as of now)
+dep_b2d = dependency('b2d',
+	fallback: ['b2d', 'b2d_dep'],
+	required: false)
+
+# bullet for 3D physics
+# optional as well, the wrap i wrote ships pre-built binaries (since
+# writing meson.build files for it would be quite some work i guess)
+# but not for every platform.
+dep_bullet = dependency('bullet',
+	fallback: ['bullet', 'bullet_dep'],
+	required: false)
+
+# cubeb for audio
+dep_cubeb = dependency('cubeb',
+	fallback: ['cubeb', 'cubeb_dep'],
+	required: false)
+
+# steamaudio, optional, for 3D audio processing
+# the library isn't free/libre or open source!
+# But has a fairly permissive license.
+dep_steamaudio = dependency('steamaudio',
+	fallback: ['steamaudio', 'steamaudio_dep'],
+	required: false)
+
 external_inc = include_directories('external/include')
-libpath = join_paths(meson.source_root(), 'external', 'lib', host_machine.system())
-message('libpath: ' + libpath)
+# libpath = join_paths(meson.source_root(), 'external', 'lib', host_machine.system())
+# message('libpath: ' + libpath)
 
 subdir('src/shaders')
 subdir('src/tkn')
@@ -218,6 +256,18 @@ rays = build_target('rays', [
 executable('pg',
 	'src/playground/main6.cpp',
 	dependencies: tkn_dep)
+
+if dep_bullet.found()
+	executable('pg-bullet',
+		'src/playground/bullet.cpp',
+		dependencies: [tkn_dep, dep_bullet])
+endif
+
+if dep_steamaudio.found()
+	executable('pg-steamaudio',
+		'src/playground/steamaudio.cpp',
+		dependencies: [tkn_dep, dep_steamaudio])
+endif
 
 if android
 	subdir('apk')

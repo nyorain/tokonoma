@@ -1,0 +1,10 @@
+[wrap-file]
+directory = steamaudio_api
+
+source_url = https://github.com/ValveSoftware/steam-audio/releases/download/v2.0-beta.17/steamaudio_api_2.0-beta.17.zip
+source_filename = steamaudio_api_2.0-beta.17.zip
+source_hash = cef95d302fb2439da9c1661e8544ccc0f30871a01be7d9864e081a91f4cd229e
+
+patch_url = https://github.com/nyorain/steamaudio-meson/releases/download/v2.0-beta17-1/steamaudio-v2.0-beta17-1-wrap.zip
+patch_filename = steamaudio-v2.0-beta17-1-wrap.zip
+patch_hash = 9365cc1c69c53531d4ac0b8defc5a9b4911c2016160388bfeb18c93c3a38ff28
