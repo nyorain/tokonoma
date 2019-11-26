@@ -18,6 +18,15 @@
 #define TML_IMPLEMENTATION
 #include <tml.h>
 
+static struct BufCache {
+	std::array<std::vector<float>, 2> bufs;
+	std::vector<float>& get(unsigned i, std::size_t size) {
+		auto& b = bufs[i];
+		if(b.size() < size) b.resize(size);
+		return b;
+	}
+} bufCache;
+
 class MidiAudio : public tkn::Audio {
 public:
 	MidiAudio() {
@@ -170,11 +179,158 @@ UniqueSoundBuffer resample(SoundBufferView view, unsigned rate,
 	return ret;
 }
 
+static const char* name(IPLerror err) {
+	switch(err) {
+		case IPL_STATUS_FAILURE: return "failure";
+		case IPL_STATUS_OUTOFMEMORY: return "out of memory";
+		case IPL_STATUS_INITIALIZATION: return "initialization";
+		default: return "<unknown>";
+	}
+}
+
+#define iplCheck(x) do { \
+	auto res = (x); \
+	if(res != IPL_STATUS_SUCCESS) { \
+		dlg_error("ipl returned {}", name(res)); \
+	} \
+} while(0)
+
+constexpr IPLAudioFormat stereoFormat() {
+	IPLAudioFormat format {};
+	format.channelLayoutType = IPL_CHANNELLAYOUTTYPE_SPEAKERS;
+	format.channelLayout = IPL_CHANNELLAYOUT_STEREO;
+	format.channelOrder = IPL_CHANNELORDER_INTERLEAVED;
+	return format;
+}
+
+class PhononSetup {
+public:
+	PhononSetup(const tkn::AudioPlayer& ap) {
+		dlg_assert(ap.channels() == 2);
+		auto frameRate = ap.rate();
+
+		iplCheck(iplCreateContext(&PhononSetup::log, nullptr,
+			nullptr, &context_));
+
+		IPLSimulationSettings envSettings {};
+		envSettings.sceneType = IPL_SCENETYPE_PHONON;
+		envSettings.numOcclusionSamples = 32;
+		envSettings.numDiffuseSamples = 32;
+		envSettings.numBounces = 8;
+		envSettings.numThreads = 1;
+		envSettings.irDuration = 0.5;
+		envSettings.maxConvolutionSources = 8u;
+		envSettings.irradianceMinDistance = 0.05;
+
+		IPLhandle env;
+		iplCheck(iplCreateEnvironment(context_, nullptr, envSettings, nullptr,
+			nullptr, &env));
+
+		IPLRenderingSettings settings {};
+		settings.samplingRate = frameRate;
+		settings.frameSize = tkn::AudioPlayer::blockSize;
+		settings.convolutionType = IPL_CONVOLUTIONTYPE_PHONON;
+		auto format = stereoFormat();
+		iplCheck(iplCreateEnvironmentalRenderer(context_, env, settings,
+			format, nullptr, nullptr, &envRenderer_));
+	}
+
+	static void log(char* msg) {
+		dlg_infot(("phonon"), "phonon: {}", msg);
+	}
+
+	IPLhandle context() const { return context_; }
+	IPLhandle envRenderer() const { return envRenderer_; }
+	IPLhandle environment() const { return iplGetEnvironmentForRenderer(envRenderer_); }
+
+private:
+	IPLhandle context_;
+	IPLhandle envRenderer_;
+};
+
+class DirectSoundEffect {
+public:
+	DirectSoundEffect(IPLhandle envRenderer) {
+		auto format = stereoFormat();
+		iplCheck(iplCreateDirectSoundEffect(envRenderer, format, format, &effect_));
+	}
+
+	// nb: number blocks
+	// in: interleaved stereo in buffer
+	// out: interleaved stereo out buffer
+	// path: queried direct sound path
+	void apply(unsigned nb, float* in, float* out, const IPLDirectSoundPath& path) {
+		int bs = tkn::AudioPlayer::blockSize;
+		auto format = stereoFormat();
+		IPLDirectSoundEffectOptions opts {};
+		opts.applyAirAbsorption = IPL_TRUE;
+		opts.applyDirectivity = IPL_TRUE;
+		opts.applyDistanceAttenuation = IPL_TRUE;
+		opts.directOcclusionMode = IPL_DIRECTOCCLUSION_NONE; // TODO
+		for(auto i = 0u; i < nb; ++i) {
+			IPLAudioBuffer inb{format, bs, ((float*) in + i * bs * 2), nullptr};
+			IPLAudioBuffer outb{format, bs, out + i * bs * 2, nullptr};
+			iplApplyDirectSoundEffect(effect_, inb, path, opts, outb);
+		}
+	}
+
+protected:
+	IPLhandle effect_;
+};
+
+class HRTF {
+public:
+	HRTF(IPLhandle context, unsigned frameRate) {
+		IPLRenderingSettings settings {};
+		settings.samplingRate = frameRate;
+		settings.frameSize = tkn::AudioPlayer::blockSize;
+		settings.convolutionType = IPL_CONVOLUTIONTYPE_PHONON;
+
+		IPLHrtfParams hrtfParams {IPL_HRTFDATABASETYPE_DEFAULT, nullptr, nullptr};
+		iplCheck(iplCreateBinauralRenderer(context, settings, hrtfParams, &renderer_));
+
+		auto format = stereoFormat();
+    	iplCheck(iplCreateBinauralEffect(renderer_, format, format, &effect_));
+	}
+
+	// nb: number blocks
+	// in: interleaved stereo in buffer
+	// out: interleaved stereo out buffer
+	// dir: direction of audio source from listener pov
+	void apply(unsigned nb, float* in, float* out, IPLVector3 dir) {
+		int bs = tkn::AudioPlayer::blockSize;
+		auto format = stereoFormat();
+		for(auto i = 0u; i < nb; ++i) {
+			IPLAudioBuffer inb{format, bs, ((float*) in + i * bs * 2), nullptr};
+			IPLAudioBuffer outb{format, bs, out + i * bs * 2, nullptr};
+			iplApplyBinauralEffect(effect_, renderer_, inb, dir,
+				IPL_HRTFINTERPOLATION_BILINEAR, outb);
+		}
+	}
+
+protected:
+	IPLhandle renderer_ {};
+	IPLhandle effect_ {};
+};
 
 /// Streams audio from a vorbis file.
 class StreamedVorbisAudio : public tkn::Audio {
 public:
-	StreamedVorbisAudio(nytl::StringParam file) {
+	static constexpr IPLVector3 position {0.f, 0.f, 0.f};
+
+	// TODO: shouldn't be stored here
+	// and changing it will result in data race.
+	IPLVector3 listenerPos {0.f, 0.f, 0.f};
+	IPLVector3 listenerDir {0.f, 0.f, 1.f};
+	IPLVector3 listenerUp {0.f, 1.f, 0.f};
+
+public:
+	StreamedVorbisAudio(nytl::StringParam file, HRTF& hrtf,
+			DirectSoundEffect& directEffect, IPLhandle env) {
+		env_ = env;
+		hrtf_ = &hrtf;
+		directEffect_ = &directEffect;
+
 		int error = 0;
 		vorbis_ = stb_vorbis_open_filename(file.c_str(), &error, nullptr);
 		if(!vorbis_) {
@@ -198,6 +354,7 @@ public:
 
 		auto info = stb_vorbis_get_info(vorbis_);
 		auto cap = buffer_.available_write();
+		cap -= (cap % tkn::AudioPlayer::blockSize);
 		if(cap < 4096) { // not worth it, still full enough
 			dlg_info("Skipping update");
 			return;
@@ -256,9 +413,46 @@ public:
 		// or when the stream has finished.
 		// dlg_assert(nf <= (unsigned) buffer_.available_read());
 
-		unsigned count = buffer_.dequeue(rbuf_.get(), nf * ap.channels());
+		auto ns = nf * ap.channels();
+		auto& buf1 = bufCache.get(0, ns);
+
+		// read into buf1
+		unsigned count = buffer_.dequeue(buf1.data(), ns);
+		// TODO: this means we could miss the overhanging streamed samples
+		// instead fill up with 0 and then process?
+		auto frames = count / 2;
+		frames -= frames % tkn::AudioPlayer::blockSize;
+		auto nb = frames / tkn::AudioPlayer::blockSize;
+
+		// query the direct sound path
+		auto radius = 0.1f;
+		IPLSource source {};
+		source.position = position;
+
+		// shouldn't matter since it's a monopole, right?
+		source.ahead = {0.f, 0.f, 1.f};
+		source.up = {0.f, 1.f, 0.f};
+		source.right = {1.f, 0.f, 0.f};
+		source.directivity.dipoleWeight = 0.0;
+
+		auto path = iplGetDirectSoundPath(env_,
+			listenerPos, listenerDir, listenerUp,
+			source, radius,
+			IPL_DIRECTOCCLUSION_NONE,
+			IPL_DIRECTOCCLUSION_RAYCAST);
+
+		// apply first effect: direct sound
+		// reads buf1, writes buf2
+		auto& buf2 = bufCache.get(1, count);
+		directEffect_->apply(nb, buf1.data(), buf2.data(), path);
+
+		// apply second effect: hrtf
+		// reads buf2, writes buf1
+		hrtf_->apply(nb, buf2.data(), buf1.data(), path.direction);
+
+		// then, mix in with existing audio, reading buf1
 		for(auto i = 0u; i < count; ++i) {
-			buf[i] += rbuf_[i];
+			buf[i] += buf1[i];
 		}
 	}
 
@@ -274,10 +468,16 @@ public:
 protected:
 	stb_vorbis* vorbis_ {};
 
+	IPLhandle env_;
+	HRTF* hrtf_;
+	DirectSoundEffect* directEffect_;
+
+	// TODO: we could probably instead use a ring buffer of owned
+	// data blocks, resulting in way less copying. But we then probably
+	// need a second (potentially global though) ring buffer to move
+	// back ownership of those block buffers to the update thread.
 	static constexpr auto bufSize = 48000 * 2;
 	tkn::ring_buffer_base<float> buffer_{bufSize};
-	std::unique_ptr<float[]> rbuf_ =
-		std::make_unique<float[]>(bufSize);
 	bool play_ {true};
 	std::atomic<bool> drain_ {}; // when restarting
 
@@ -286,6 +486,8 @@ protected:
 #endif
 };
 
+
+/*
 class AudioEffectHTRF : public tkn::AudioEffect {
 public:
 	static constexpr auto framesize = 1024u;
@@ -297,7 +499,8 @@ public:
 
 		auto rate = ap.rate();
 
-		iplCreateContext(&AudioEffectHTRF::log, nullptr, nullptr, &context_);
+		iplCheck(iplCreateContext(&AudioEffectHTRF::log, nullptr,
+			nullptr, &context_));
 
 		IPLRenderingSettings settings {};
 		settings.samplingRate = rate;
@@ -305,14 +508,26 @@ public:
 		settings.convolutionType = IPL_CONVOLUTIONTYPE_PHONON;
 
 		IPLHrtfParams hrtfParams {IPL_HRTFDATABASETYPE_DEFAULT, nullptr, nullptr};
-		iplCreateBinauralRenderer(context_, settings, hrtfParams, &renderer_);
+		iplCheck(iplCreateBinauralRenderer(context_, settings, hrtfParams, &renderer_));
 
 		format_ = {};
 		format_.channelLayoutType = IPL_CHANNELLAYOUTTYPE_SPEAKERS;
 		format_.channelLayout = IPL_CHANNELLAYOUT_STEREO;
 		format_.channelOrder = IPL_CHANNELORDER_INTERLEAVED;
 
-    	iplCreateBinauralEffect(renderer_, format_, format_, &effect_);
+    	iplCheck(iplCreateBinauralEffect(renderer_, format_, format_, &effect_));
+
+		IPLSimulationSettings envSettings {};
+		envSettings.sceneType = IPL_SCENETYPE_PHONON;
+		envSettings.numOcclusionSamples = 32;
+		envSettings.numDiffuseSamples = 32;
+		envSettings.numBounces = 8;
+		envSettings.numThreads = 1;
+		envSettings.irDuration = 0.5;
+		envSettings.maxConvolutionSources = 8u;
+		envSettings.irradianceMinDistance = 0.05;
+		iplCheck(iplCreateEnvironment(context_, nullptr, envSettings, nullptr,
+			nullptr, &environment_));
 	}
 
 	~AudioEffectHTRF() {
@@ -337,11 +552,6 @@ public:
 			iplApplyBinauralEffect(effect_, renderer_, inb, direction_,
 					IPL_HRTFINTERPOLATION_BILINEAR, outb);
 		}
-
-		// IPLAudioBuffer inb{format_, int(ns), (float*) in, nullptr};
-    	// IPLAudioBuffer outb{format_, int(ns), (float*) out, nullptr};
-		// iplApplyBinauralEffect(effect_, renderer_, inb, direction_,
-		// 		IPL_HRTFINTERPOLATION_NEAREST, outb);
 	}
 
 	static void log(char* msg) {
@@ -354,5 +564,8 @@ private:
 	IPLhandle effect_ {};
 	IPLAudioFormat format_ {};
 	IPLVector3 direction_ {0.f, 0.f, 1.f};
+
+	IPLhandle environment_ {};
 };
+*/
 

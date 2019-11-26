@@ -61,12 +61,13 @@ public:
 		camera_.perspective.far = 10.f;
 
 		// audio
-		// audioPlayer_.create<MidiAudio>();
-		audioPlayer_.create<StreamedVorbisAudio>("test.ogg");
+		auto& ap = audio_.player;
+		audio_.phonon.emplace(audio_.player);
+		audio_.hrtf.emplace(audio_.phonon->context(), ap.rate());
+		audio_.directEffect.emplace(audio_.phonon->envRenderer());
 
-		auto effect = std::make_unique<AudioEffectHTRF>(audioPlayer_);
-		audioEffect_ = effect.get();
-		audioPlayer_.effect(std::move(effect));
+		audio_.music = &ap.create<StreamedVorbisAudio>("test.ogg",
+			*audio_.hrtf, *audio_.directEffect, audio_.phonon->environment());
 
 		// init pipeline
 		auto& dev = vulkanDevice();
@@ -426,22 +427,31 @@ public:
 		}
 
 		if(camera_.update) {
-			const auto audioPos = nytl::Vec3f {0.f, 0.f, 0.f};
-
 			auto& c = camera_;
-			auto viewMat = tkn::lookAtRH(c.pos, c.pos + c.dir, c.up);
-			auto p = tkn::multPos(viewMat, audioPos);
-			p = normalized(p); // unit vector. But steamaudio examples doesn't care
-
-			// auto dir = c.dir;
 			// auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+			// auto dir = c.dir;
 			// auto right = nytl::normalized(nytl::cross(c.dir, yUp));
 			// auto up = nytl::normalized(nytl::cross(c.dir, right));
-			// auto p = -camera_.pos;
 
-			IPLVector3 vec {p.x, p.y, p.z};
-			dlg_assert(audioEffect_->updateDir.enqueue(vec));
+			// TODO: racy
+			audio_.music->listenerPos = {c.pos.x, c.pos.y, c.pos.z};
+			audio_.music->listenerDir = {c.dir.x, c.dir.y, c.dir.z};
 		}
+
+		// if(camera_.update) {
+		// 	const auto audioPos = nytl::Vec3f {0.f, 0.f, 0.f};
+		// 	auto& c = camera_;
+		// 	auto viewMat = tkn::lookAtRH(c.pos, c.pos + c.dir, c.up);
+		// 	auto p = tkn::multPos(viewMat, audioPos);
+		// 	p = normalized(p); // unit vector. But steamaudio examples doesn't care
+		// 	// auto dir = c.dir;
+		// 	// auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+		// 	// auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+		// 	// auto up = nytl::normalized(nytl::cross(c.dir, right));
+		// 	// auto p = -camera_.pos;
+		// 	IPLVector3 vec {p.x, p.y, p.z};
+		// 	dlg_assert(audioEffect_->updateDir.enqueue(vec));
+		// }
 
 		// we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
@@ -696,9 +706,13 @@ protected:
 
 	vpp::SubBuffer boxIndices_;
 
-	// audio
-	tkn::AudioPlayer audioPlayer_;
-	AudioEffectHTRF* audioEffect_;
+	struct {
+		tkn::AudioPlayer player;
+		std::optional<PhononSetup> phonon;
+		std::optional<HRTF> hrtf;
+		std::optional<DirectSoundEffect> directEffect;
+		StreamedVorbisAudio* music;
+	} audio_;
 };
 
 int main(int argc, const char** argv) {

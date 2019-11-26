@@ -183,7 +183,8 @@ void AudioPlayer::updateThread() {
 	using Clock = high_resolution_clock;
 
 	// NOTE: we could allow Audio implementations to return when
-	// they need it sooner or later.
+	// they need it sooner or later. Not sure if good design though
+	// since they can't depend on it anyways
 	constexpr static auto iterationTime =
 		duration_cast<Clock::duration>(milliseconds(50));
 
@@ -241,64 +242,63 @@ long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
 	AudioEffect* effect = effect_.load();
 	while(!std::atomic_compare_exchange_weak(&effect_, &effect, nullptr));
 
-	if(!effect) {
-		// clear the render buf first, initial values undefined
-		// if we use renderBuf_ they still contain the old values.
-		// memset 0 works for float
-		std::memset(buffer, 0x0, nsamples * channels() * sizeof(float));
-		for(auto it = audios_.load(); it; it = it->next_.load()) {
-			it->render(*this, buffer, nsamples);
-		}
-
-		return nsamples;
-	}
-
 	// first, copy the samples we already have
 	if(left_ > nsamples) { // may be enough in certain cases
-		memcpy(buffer, renderBufPost_.data() + leftOff_ * channels(),
+		memcpy(buffer, renderBuf_.data() + leftOff_ * channels(),
 			nsamples * channels() * sizeof(float));
 		leftOff_ += nsamples;
 		left_ -= nsamples;
 	} else {
 		if(left_ > 0) {
-			memcpy(buffer, renderBufPost_.data() + leftOff_ * channels(),
+			memcpy(buffer, renderBuf_.data() + leftOff_ * channels(),
 				left_ * channels() * sizeof(float));
 		}
 
 		// create new samples
-		auto fs = 1024u; // frame size
 		auto neededSamples = nsamples - left_;
-		auto renderSamples = align(neededSamples, fs);
+		auto renderSamples = align(neededSamples, blockSize);
 
 		std::size_t needed = channels() * renderSamples;
-		if(renderBuf_.size() < needed) renderBuf_.resize(needed);
-		if(renderBufPost_.size() < needed) renderBufPost_.resize(needed);
+		if(renderBuf_.size() < needed) {
+			renderBuf_.resize(needed);
+		}
 
-		std::memset(renderBuf_.data(), 0x0,
-			renderSamples * channels() * sizeof(float));
+		auto* renderBuf = renderBuf_.data();
+		if(effect) {
+			if(renderBufTmp_.size() < needed) {
+				renderBufTmp_.resize(needed);
+			}
+			renderBuf = renderBufTmp_.data();
+		}
+
+		std::memset(renderBuf, 0x0, renderSamples * channels() * sizeof(float));
 		for(auto it = audios_.load(); it; it = it->next_.load()) {
-			it->render(*this, renderBuf_.data(), renderSamples);
+			it->render(*this, renderBuf, renderSamples);
 		}
 
 		// apply effect
-		effect->apply(rate(), channels(), renderSamples,
-			renderBuf_.data(), renderBufPost_.data());
+		if(effect) {
+			effect->apply(rate(), channels(), renderSamples,
+				renderBufTmp_.data(), renderBuf_.data());
+		}
 
 		// output remaining samples
 		memcpy(buffer + left_ * channels(),
-			renderBufPost_.data(),
+			renderBuf_.data(),
 			sizeof(float) * channels() * neededSamples);
 		leftOff_ = neededSamples;
 		left_ = renderSamples - neededSamples;
 	}
 
-	// write back the effect
-	// but if it was changed in the meantime, we have to delete the old
-	// effect instead of writing it back, it's not needed anymore.
-	// It's important that we use a strong compare_exchange here
-	AudioEffect* neffect = nullptr;
-	if(!std::atomic_compare_exchange_strong(&effect_, &neffect, effect)) {
-		delete effect;
+	if(effect) {
+		// write back the effect
+		// but if it was changed in the meantime, we have to delete the old
+		// effect instead of writing it back, it's not needed anymore.
+		// It's important that we use a strong compare_exchange here
+		AudioEffect* neffect = nullptr;
+		if(!std::atomic_compare_exchange_strong(&effect_, &neffect, effect)) {
+			delete effect;
+		}
 	}
 
 	return nsamples;

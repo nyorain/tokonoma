@@ -10,6 +10,15 @@
 typedef struct cubeb cubeb;
 typedef struct cubeb_stream cubeb_stream;
 
+// Terminology:
+// - sample: a number representing the audio signal of one channel
+//   at a point in time.
+// - frame: the samples for all channels at a point in time.
+//   E.g. for a stereo setup, a frame contains 2 samples.
+// - block: a set of frames with a fixed size. Usually frames are
+//   not rendered/processed one-by-one but rather in blocks of fixed
+//   sizes, allowing for optimizied processing algorithms.
+
 namespace tkn {
 
 class Audio;
@@ -17,6 +26,11 @@ class AudioEffect;
 
 /// Combines audio output.
 class AudioPlayer {
+public:
+	// How many frames are packed together in a block.
+	// Will always render/process audio blocks of this size.
+	static constexpr auto blockSize = 1024u;
+
 public:
 	/// Throws std::runtime_error if something could not be initialized.
 	AudioPlayer(const char* name = "tkn");
@@ -47,11 +61,17 @@ public:
 	void effect(std::unique_ptr<AudioEffect> effect);
 
 	/// Returns the number of channels.
+	/// Guaranteed to stay constant and not change randomly.
 	unsigned channels() const { return channels_; }
 
-	/// Returns the sampling rate of the output stream in Hz, e.g.
-	/// 44100 or 48000.
+	/// Returns the frame rate (i.e. the number of frames per second)
+	/// of the output stream in Hz, e.g.  44100 or 48000.
+	/// Independent from the number of channels.
+	/// Guaranteed to stay constant and not change randomly.
 	unsigned rate() const { return rate_; };
+
+	/// Must only be accessed by render thread, i.e. by Audios in
+	/// their render function (or effects used by them).
 
 protected:
 	void updateThread();
@@ -91,11 +111,16 @@ protected:
 
 	// owned by render thread
 	std::vector<float> renderBuf_;
-	std::vector<float> renderBufPost_;
+	std::vector<float> renderBufTmp_;
 
 	// in samples
 	unsigned left_ {0};
 	unsigned leftOff_ {0};
+
+	// temporary buffers cache to minimize allocations while rendering
+	// and not force every source to have it's own temporary buffer.
+	// should only be accessed by render thread
+	std::array<std::vector<float>, 2> buf1_;
 };
 
 /// Interface for playing a sound.
