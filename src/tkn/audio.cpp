@@ -9,21 +9,51 @@ namespace tkn {
 
 struct AudioPlayer::Util {
 	static long dataCb(cubeb_stream*, void* user, const void* inBuf,
-			void* outBuf, long nsamples) {
+			void* outBuf, long nframes) {
 		(void) inBuf;
 		AudioPlayer* player = static_cast<AudioPlayer*>(user);
-		return player->dataCb(outBuf, nsamples);
+		return player->dataCb(outBuf, nframes);
 	}
 
 	static void stateCb(cubeb_stream*, void* user, cubeb_state state) {
 		AudioPlayer* player = static_cast<AudioPlayer*>(user);
 		player->stateCb(state);
 	}
+
+	static void log(const char* fmt, ...) {
+		va_list vlist;
+		va_start(vlist, fmt);
+
+		va_list vlistcopy;
+		va_copy(vlistcopy, vlist);
+		int needed = vsnprintf(NULL, 0, fmt, vlist);
+		if(needed < 0) {
+			dlg_error("cubeb log: invalid format given\n");
+			va_end(vlist);
+			va_end(vlistcopy);
+			return;
+		}
+
+		auto buf = std::make_unique<char[]>(needed + 1);
+		std::vsnprintf(buf.get(), needed + 1, fmt, vlistcopy);
+		va_end(vlistcopy);
+
+		// strip newline if there is one
+		auto nl = std::strchr(buf.get(), '\n');
+		auto len = needed;
+		if(nl) {
+			len = nl - buf.get();
+		}
+
+		std::string_view msg(buf.get(), len);
+		dlg_debugt(("cubeb"), "{}", msg);
+	}
 };
 
 AudioPlayer::AudioPlayer(const char* name) {
+	int rv = cubeb_set_log_callback(CUBEB_LOG_VERBOSE, Util::log);
+
 	cubeb_init(&cubeb_, name, NULL);
-	int rv;
 	uint32_t latencyFrames;
 
 	dlg_info("cubeb backend: {}", cubeb_get_backend_id(cubeb_));
@@ -41,6 +71,9 @@ AudioPlayer::AudioPlayer(const char* name) {
 	if(rv != CUBEB_OK) {
 		throw std::runtime_error("Could not get preferred sample rate");
 	}
+
+	// forcing the rate for debugging
+	rate = 44100;
 
 	output_params.rate = rate;
 	rate_ = output_params.rate;
@@ -106,6 +139,10 @@ void AudioPlayer::start() {
 	// start update thread
 	run_.store(true);
 	updateThread_ = std::thread{[this]{ this->updateThread(); }};
+
+	// cubeb requires to first explicitly unset the logger
+	cubeb_set_log_callback(CUBEB_LOG_DISABLED, nullptr);
+	cubeb_set_log_callback(CUBEB_LOG_NORMAL, Util::log);
 }
 
 AudioSource& AudioPlayer::add(std::unique_ptr<AudioSource> audio) {
@@ -234,7 +271,14 @@ constexpr auto align(A offset, B alignment) {
 	return rest ? A(offset + (alignment - rest)) : A(offset);
 }
 
-long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
+long AudioPlayer::dataCb(void* vbuffer, long nframes) {
+	using namespace std::chrono;
+	using Clock = high_resolution_clock;
+	auto start = Clock::now();
+
+	// artifical delay for testing slow cpus
+	// std::this_thread::sleep_for(milliseconds(5));
+
 	auto buffer = static_cast<float*>(vbuffer);
 	if(++renderIteration_ == 0) {
 		++renderIteration_;
@@ -247,11 +291,11 @@ long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
 	while(!std::atomic_compare_exchange_weak(&effect_, &effect, nullptr));
 
 	// first, copy the samples we already have
-	if(left_ > nsamples) { // may be enough in certain cases
+	if(left_ > nframes) { // may be enough in certain cases
 		memcpy(buffer, renderBuf_.data() + leftOff_ * channels(),
-			nsamples * channels() * sizeof(float));
-		leftOff_ += nsamples;
-		left_ -= nsamples;
+			nframes * channels() * sizeof(float));
+		leftOff_ += nframes;
+		left_ -= nframes;
 	} else {
 		renderUpdate();
 
@@ -261,11 +305,11 @@ long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
 		}
 
 		// create new samples
-		auto neededSamples = nsamples - left_;
-		auto renderSamples = align(neededSamples, blockSize);
-		auto nb = renderSamples / blockSize;
+		auto neededFrames = nframes - left_;
+		auto renderFrames = align(neededFrames, blockSize);
+		auto nb = renderFrames / blockSize;
 
-		std::size_t needed = channels() * renderSamples;
+		std::size_t needed = channels() * renderFrames;
 		if(renderBuf_.size() < needed) {
 			renderBuf_.resize(needed);
 		}
@@ -278,23 +322,23 @@ long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
 			renderBuf = renderBufTmp_.data();
 		}
 
-		std::memset(renderBuf, 0x0, renderSamples * channels() * sizeof(float));
+		std::memset(renderBuf, 0x0, renderFrames * channels() * sizeof(float));
 		for(auto it = audios_.load(); it; it = it->next.load()) {
 			it->source->render(nb, renderBuf, true);
 		}
 
 		// apply effect
 		if(effect) {
-			effect->apply(rate(), channels(), renderSamples,
+			effect->apply(rate(), channels(), renderFrames,
 				renderBufTmp_.data(), renderBuf_.data());
 		}
 
 		// output remaining samples
 		memcpy(buffer + left_ * channels(),
 			renderBuf_.data(),
-			sizeof(float) * channels() * neededSamples);
-		leftOff_ = neededSamples;
-		left_ = renderSamples - neededSamples;
+			sizeof(float) * channels() * neededFrames);
+		leftOff_ = neededFrames;
+		left_ = renderFrames - neededFrames;
 	}
 
 	if(effect) {
@@ -315,7 +359,13 @@ long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
 		++renderIteration_;
 	}
 
-	return nsamples;
+	// TODO: buffer and log from another thread!
+	// cubeb already implements that
+	auto dur = Clock::now() - start;
+	dlg_info("Needed {} ms for audio rendering",
+		duration_cast<microseconds>(dur).count() / 1000.f);
+
+	return nframes;
 }
 
 void AudioPlayer::stateCb(unsigned state) {

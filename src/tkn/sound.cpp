@@ -24,13 +24,20 @@ void resample(SoundBufferView dst, SoundBufferView src) {
 		return;
 	}
 
-	int err;
+	int err {};
 	auto speex = speex_resampler_init(src.channelCount,
 		src.rate, dst.rate, SPEEX_RESAMPLER_QUALITY_DESKTOP, &err);
-	dlg_assert(speex);
+	dlg_assert(speex && !err);
+	resample(speex, dst, src);
+	speex_resampler_destroy(speex);
+}
 
+int resample(SpeexResamplerState* speex,
+		SoundBufferView dst, SoundBufferView src) {
+	int err;
 	speex_resampler_set_input_stride(speex, src.channelCount);
 	speex_resampler_set_output_stride(speex, dst.channelCount);
+	int uff = 0;
 	for(auto i = 0u; i < dst.channelCount; ++i) {
 		spx_uint32_t in_len = src.frameCount;
 		spx_uint32_t out_len = dst.frameCount;
@@ -41,13 +48,16 @@ void resample(SoundBufferView dst, SoundBufferView src) {
 		auto srcc = i % src.channelCount;
 		err = speex_resampler_process_float(speex, srcc,
 			src.data + srcc, &in_len, dst.data + i, &out_len);
+
+		dlg_assertm(!err, "{}", err);
 		dlg_assertm(in_len == src.frameCount, "{} vs {}",
 			in_len, src.frameCount);
 		dlg_assertm(out_len == dst.frameCount, "{} vs {}",
 			out_len, dst.frameCount);
+		if(out_len < dst.frameCount) uff = 1;
 	}
 
-	speex_resampler_destroy(speex);
+	return uff;
 }
 
 UniqueSoundBuffer resample(SoundBufferView view, unsigned rate,
@@ -59,6 +69,32 @@ UniqueSoundBuffer resample(SoundBufferView view, unsigned rate,
 	auto count = ret.frameCount * ret.channelCount;
 	ret.data = std::make_unique<float[]>(count);
 	resample(ret, view);
+	return ret;
+}
+
+UniqueSoundBuffer loadVorbis(nytl::StringParam file) {
+	int error = 0;
+	auto vorbis = stb_vorbis_open_filename(file.c_str(), &error, nullptr);
+	if(!vorbis) {
+		auto msg = std::string("loadVorbis: failed to load");
+		msg += file.c_str();
+		throw std::runtime_error(msg);
+	}
+
+	auto info = stb_vorbis_get_info(vorbis);
+
+	UniqueSoundBuffer ret;
+	ret.channelCount = info.channels;
+	ret.rate = info.sample_rate;
+	ret.frameCount = stb_vorbis_stream_length_in_samples(vorbis);
+
+	std::size_t count = ret.channelCount * ret.frameCount;
+	ret.data = std::make_unique<float[]>(count);
+
+	auto ns = stb_vorbis_get_samples_float_interleaved(vorbis, info.channels,
+		ret.data.get(), count);
+	dlg_assert((std::size_t) ns == ret.frameCount);
+	stb_vorbis_close(vorbis);
 	return ret;
 }
 
@@ -178,18 +214,18 @@ void SoundBufferAudio::render(unsigned nb, float* buf, bool mix) {
 	// otherwise we get undefined data in the end
 	if(mix) {
 		for(auto i = 0u; i < ns; ++i) {
-			buf[i] += v * buffer_.data[i];
+			buf[i] += v * buffer_.data[frame_ * cc + i];
 		}
 	} else if(volume() != 1.f) {
 		auto i = 0u;
 		for(; i < ns; ++i) {
-			buf[i] = v * buffer_.data[i];
+			buf[i] = v * buffer_.data[frame_ * cc + i];
 		}
 		for(; i < tf * cc; ++i) {
 			buf[i] = 0.f;
 		}
 	} else {
-		memcpy(buf, buffer_.data, ns * sizeof(float));
+		memcpy(buf, buffer_.data + frame_ * cc, ns * sizeof(float));
 		memset(buf + ns, 0x0, (tf - nf) * sizeof(float));
 	}
 
@@ -215,9 +251,20 @@ StreamedVorbisAudio::StreamedVorbisAudio(nytl::StringParam file, unsigned rate,
 
 	rate_ = rate;
 	channels_ = channels;
+
+	auto info = stb_vorbis_get_info(vorbis_);
+	if(info.sample_rate != rate_) {
+		int err {};
+		speex_ = speex_resampler_init(info.channels,
+			info.sample_rate, rate_, SPEEX_RESAMPLER_QUALITY_DESKTOP, &err);
+		dlg_assert(speex_ && !err);
+	}
 }
 
 StreamedVorbisAudio::~StreamedVorbisAudio() {
+	if(speex_) {
+		speex_resampler_destroy(speex_);
+	}
 	if(vorbis_) {
 		stb_vorbis_close(vorbis_);
 	}
@@ -250,7 +297,7 @@ void StreamedVorbisAudio::update() {
 		ns = std::floor(ns * ((double) info.sample_rate / rate_));
 	}
 
-	auto b0 = bufCacheR.get(0, ns).data();
+	auto b0 = bufCacheU.get(0, ns).data();
 	auto read = stb_vorbis_get_samples_float_interleaved(vorbis_,
 		info.channels, b0, ns);
 	if(read == 0) { // stream finished, no samples left
@@ -271,9 +318,16 @@ void StreamedVorbisAudio::update() {
 		dst.channelCount = channels_;
 		dst.frameCount = std::ceil(read * ((double)rate_ / src.rate));
 		dst.rate = rate_;
-		dst.data = bufCacheR.get(1, dst.frameCount * channels_).data();
+		dst.data = bufCacheU.get(1, dst.frameCount * channels_).data();
 
-		resample(dst, src);
+		if(speex_) {
+			if(resample(speex_, dst, src)) {
+				dst.frameCount--;
+			}
+		} else {
+			resample(dst, src);
+		}
+
 		auto count = dst.channelCount * dst.frameCount;
 		auto written = buffer_.enqueue(dst.data, count);
 		dlg_assertm(written == count && written == cap, "{} {} {}",
@@ -303,12 +357,15 @@ void StreamedVorbisAudio::render(unsigned nb, float* buf, bool mix) {
 	if(mix) {
 		auto b0 = bufCacheR.get(0, ns).data();
 		auto count = buffer_.dequeue(b0, ns);
+		dlg_assertl(dlg_level_warn, count == ns);
 		for(auto i = 0u; i < count; ++i) {
 			buf[i] += v * b0[i];
 		}
+
 	} else if(v != 1.f) {
 		auto b0 = bufCacheR.get(0, ns).data();
 		auto count = buffer_.dequeue(b0, ns);
+		dlg_assertl(dlg_level_warn, count == ns);
 		auto i = 0u;
 		for(; i < count; ++i) {
 			buf[i] = v * b0[i];
@@ -318,6 +375,7 @@ void StreamedVorbisAudio::render(unsigned nb, float* buf, bool mix) {
 		}
 	} else {
 		auto count = buffer_.dequeue(buf, ns);
+		dlg_assertl(dlg_level_warn, count == ns);
 		memset(buf + count, 0x0, ns - count);
 	}
 }

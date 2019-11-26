@@ -9,6 +9,8 @@
 #define STB_VORBIS_HEADER_ONLY
 #include <stb_vorbis.h>
 
+typedef struct SpeexResamplerState_ SpeexResamplerState;
+
 namespace tkn {
 
 struct UniqueSoundBuffer {
@@ -37,10 +39,15 @@ struct SoundBufferView {
 // Expects dst to be able to hold enough frames.
 // Will not read from `dst.data` and not write to `src.data`.
 void resample(SoundBufferView dst, SoundBufferView src);
+int resample(SpeexResamplerState*, SoundBufferView dst, SoundBufferView src);
 
 // - fr: frame rate in Hz
 // - nc: number channels
 UniqueSoundBuffer resample(SoundBufferView, unsigned fr, unsigned nc);
+
+// Loads a SoundBuffer from a vorbis file.
+// Throws on error
+UniqueSoundBuffer loadVorbis(nytl::StringParam file);
 
 /// Generates audio from a midi file and a soundfont.
 class MidiAudio : public AudioSource {
@@ -93,6 +100,8 @@ public:
 
 protected:
 	stb_vorbis* vorbis_ {};
+	SpeexResamplerState* speex_ {};
+
 	std::atomic<float> volume_ {1.f};
 	std::unique_ptr<float[]> resampleBuf_ {};
 	unsigned rate_ {};
@@ -121,7 +130,7 @@ public:
 
 protected:
 	SoundBufferView buffer_;
-	std::size_t frame_ {};
+	std::size_t frame_ {0};
 	std::atomic<float> volume_ {1.f};
 };
 

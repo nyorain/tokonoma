@@ -9,6 +9,8 @@
 
 namespace tkn {
 
+IPLAudioFormat stereoFormat();
+
 /// Always outputs interleaved stereo.
 class Audio3D {
 public:
@@ -23,9 +25,10 @@ public:
 	// void process(unsigned nb, const IPLSource& source, float* buf);
 
 	// detailed
-	void applyDirectEffect(unsigned nb, float* in, float* out,
+	void applyDirectEffect(IPLhandle directEffect,
+			unsigned nb, float* in, float* out,
 			const IPLDirectSoundPath& path);
-	void applyHRTF(unsigned nb, float* in, float* out, IPLVector3 dir);
+	void applyHRTF(IPLhandle effect, unsigned nb, float* in, float* out, IPLVector3 dir);
 
 	// TODO: cheaper than hrtf; good for distant sources
 	// void applyPanning(unsigned nb, float* in, float* out, IPLVector3 dir);
@@ -33,6 +36,7 @@ public:
 	// any thread
 	IPLhandle context() const { return context_; }
 	IPLhandle envRenderer() const { return envRenderer_; }
+	IPLhandle binauralRenderer() const { return binaural_.renderer; }
 	IPLhandle environment() const { return env_; }
 
 	// main/other threads
@@ -47,11 +51,11 @@ protected:
 	IPLhandle context_;
 	IPLhandle env_;
 	IPLhandle envRenderer_;
-	IPLhandle directEffect_;
+	// IPLhandle directEffect_;
 
 	struct {
 		IPLhandle renderer {};
-		IPLhandle effect {};
+		// IPLhandle effect {};
 	} binaural_;
 
 	IPLVector3 listenerPos_;
@@ -77,6 +81,13 @@ public:
 		sourceInfo_.ahead = {0.f, 0.f, -1.f};
 		sourceInfo_.up = {0.f, 1.f, 0.f};
 		sourceInfo_.directivity.dipoleWeight = 0.f;
+
+		auto format = stereoFormat();
+		iplCreateDirectSoundEffect(audio.envRenderer(), format, format,
+			&directEffect_);
+
+		iplCreateBinauralEffect(audio.binauralRenderer(), format, format,
+			&binauralEffect_);
 	}
 
 	Source& inner() { return source_; }
@@ -98,17 +109,18 @@ public:
 		auto* b0 = bufCache.get(0, ns).data();
 		auto* b1 = bufCache.get(1, ns).data();
 
+		// no mixing here, overwrite b0 contents
 		source_.render(nb, b0, false);
 		auto path = audio_->path(sourceInfo_, radius_);
-		audio_->applyDirectEffect(nb, b0, b1, path);
+		audio_->applyDirectEffect(directEffect_, nb, b0, b1, path);
 
 		if(mix) {
-			audio_->applyHRTF(nb, b1, b0, path.direction);
+			audio_->applyHRTF(binauralEffect_, nb, b1, b0, path.direction);
 			for(auto i = 0u; i < ns; ++i) {
 				buf[i] += b0[i];
 			}
 		} else {
-			audio_->applyHRTF(nb, b1, buf, path.direction);
+			audio_->applyHRTF(binauralEffect_, nb, b1, buf, path.direction);
 		}
 	}
 
@@ -124,6 +136,9 @@ protected:
 	IPLSource sourceInfo_ {};
 	float radius_ {0.5f}; // TODO: make variable
 	tkn::Shared<nytl::Vec3f> updatePos_;
+
+	IPLhandle directEffect_ {};
+	IPLhandle binauralEffect_ {};
 };
 
 } // namespace tkn

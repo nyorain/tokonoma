@@ -19,7 +19,6 @@ typedef struct cubeb_stream cubeb_stream;
 // - block: a set of frames with a fixed size. Usually frames are
 //   not rendered/processed one-by-one but rather in blocks of fixed
 //   sizes, allowing for optimizied processing algorithms.
-// TODO: make use consistent
 
 namespace tkn {
 
@@ -30,20 +29,22 @@ class AudioEffect;
 class AudioPlayer {
 public:
 	// How many frames are packed together in a block.
-	// Will always render/process audio blocks of this size.
+	// The player will always render/process audio blocks of this size.
 	static constexpr auto blockSize = 1024u;
 
+	// Building block for our lock-free linked list data structure.
 	struct Audio {
+		// The AudioSource implementation
 		std::unique_ptr<AudioSource> source;
 
-		/// Lock-free owned linked list used by AudioPlayer for update and render
-		/// iterations. If AudioSource wasn't destroyed yet, next_ can be thought
-		/// of as owned pointer.
+		// Lock-free owned linked list used by AudioPlayer for update and render
+		// iterations. If AudioSource wasn't destroyed yet, next_ can be thought
+		// of as owned pointer.
 		std::atomic<Audio*> next {nullptr};
 
-		/// 0 when the audio was not destroyed.
-		/// Otherwise the AudioPlayer::renderIteration_ in which it was destroyed.
-		/// The AudioPlayer keeps it alive for this iteration.
+		// 0 when the audio was not destroyed.
+		// Otherwise the AudioPlayer::renderIteration_ in which it was destroyed.
+		// The AudioPlayer keeps it alive for this iteration.
 		std::atomic<std::uint64_t> destroyed {0};
 	};
 
@@ -94,7 +95,7 @@ public:
 protected:
 	void updateThread();
 	void unlink(Audio& link, Audio* prev, std::atomic<Audio*>& head);
-	long dataCb(void* buffer, long nsamples);
+	long dataCb(void* buffer, long nframes);
 	void stateCb(unsigned);
 
 	virtual void renderUpdate() {}
@@ -141,6 +142,23 @@ class AudioSource {
 public:
 	virtual ~AudioSource() = default;
 
+	/// Renders a given number of blocks of its sound into the provided buffer.
+	/// The sample/frame rate, channel count and block size must have
+	/// been previously configured via implementation-specific means.
+	/// This is done so they can't be changed in every single call
+	/// to render, i.e. allow audio sources to preconfigure complex
+	/// computations based on the setup.
+	/// Note that this function is always called in a separate
+	/// audio thread and must synchronize itself internally.
+	/// It must not block at all and should therefore use mechanisms
+	/// like (lock-free) ring buffers.
+	/// - nb: Number of blocks to render into `buf`.
+	/// - buf: Buffer of interleaved samples
+	/// - mix: Whether to mix or overwrite the audio in `buf`.
+	///   When this is true, the AudioSource must just add itself
+	///   to the values in the buffer, otherwise it must overwrite them.
+	virtual void render(unsigned nb, float* buf, bool mix) = 0;
+
 	/// This function is called regularly from a thread in which
 	/// more expensive operations are permitted.
 	/// No guarantees about the thread are made, except that this function
@@ -154,105 +172,28 @@ public:
 	/// of time (more than a couple of milliseconds is definitely too
 	/// much).
 	virtual void update() {}
-
-	/// Renders a given number of blocks into the provided buffer.
-	/// The sample rate, channel count and block size must have
-	/// been previously configured via implementation-specific means.
-	/// This is done so they can't be changed in every single call
-	/// to render, i.e. allow audio sources to preconfigure complex
-	/// computations based on the setup.
-	/// - nb: Number of blocks to render into `buf`.
-	/// - buf: Buffer of interleaved samples
-	/// - mix: Whether to mix or overwrite the audio in `buf`.
-	///   When this is true, the AudioSource must just add itself
-	///   to the values in the buffer, otherwise it must overwrite them.
-	virtual void render(unsigned nb, float* buf, bool mix) = 0;
-
-private:
-	friend class AudioPlayer;
-
-	/// Lock-free owned linked list used by AudioPlayer for update and render
-	/// iterations. If AudioSource wasn't destroyed yet, next_ can be thought
-	/// of as owned pointer.
-	std::atomic<AudioSource*> next_ {};
-
-	/// 0 when the audio was not destroyed.
-	/// Otherwise the AudioPlayer::renderIteration_ in which it was destroyed.
-	/// The AudioPlayer keeps it alive for this iteration.
-	std::atomic<std::uint64_t> destroyed_ {};
 };
-
-/*
-/// Interface for playing a sound.
-/// Could be implemented e.g. by a fixed audio buffer,
-/// an audio stream or a synthesizer.
-class Audio {
-public:
-	/// When an Audio implementation is destroyed in response to
-	/// AudioPlayer::remove, destruction may be deferred and happen
-	/// in a different thread.
-	virtual ~Audio() = default;
-
-	/// This function is called regularly from a thread in which
-	/// more expensive operations are permitted by the AudioPlayer
-	/// it is associated with. No guarantees about the thread are
-	/// made, except that this function isn't called more than
-	/// once at a time. It might be called simultaneously with `render`.
-	/// It should prepare audio data to be written in render, if needed.
-	/// Implementations can depend on this function being called
-	/// a couple of times per second, i.e. an appropriate amount of
-	/// data to prepare for rendering would be the samples for one second.
-	/// In turn, implementations must not take extreme amounts
-	/// of time (more than a couple of milliseconds is definitely too
-	/// much).
-	virtual void update(const AudioPlayer&) {};
-
-	/// Renders its own sound into the described buffer. Must add itself to
-	/// the existent values and not just overwrite the already present values.
-	/// Note that this function is always called in a separate
-	/// audio thread and must synchronize itself internally.
-	/// It must not block at all and should therefore use mechanisms
-	/// like (lock-free) ring buffers. The output buffer will always
-	/// be interleaved with stereo format.
-	/// - ap: The associated audio player from which the sampling
-	///   rate and channel count can be recevied.
-	/// - buf: Tightly packed interleaved stereo audio data.
-	///   References at least 'ap.channels() * sizeof(float) * nf' bytes.
-	/// - ns: The number of samples to write (per channel).
-	virtual void render(const AudioPlayer& pl, float* buf, unsigned ns) = 0;
-
-private:
-	friend class AudioPlayer;
-
-	/// Lock-free owned linked list used by AudioPlayer for update and render
-	/// iterations. If Audio wasn't destroyed yet, next_ can be thought
-	/// of as owned pointer.
-	std::atomic<Audio*> next_ {};
-
-	/// 0 when the audio was not destroyed.
-	/// Otherwise the AudioPlayer::renderIteration_ in which it was destroyed.
-	/// The AudioPlayer keeps it alive for this iteration.
-	std::atomic<std::uint64_t> destroyed_ {};
-};
-*/
 
 /// Class for a general audio effect that modifies audio buffers.
 class AudioEffect {
 public:
 	virtual ~AudioEffect() = default;
 
-	/// Applies the effect.
+	/// Applies the effect to the input and renders it into an output buffer.
 	/// - rate: sampling rate in Hz
 	/// - nc: number channels in input and output buffer
-	/// - ns: number of samples per input and output buffer
+	/// - nf: number of frames per input and output buffer
 	/// - in: input buffer to read
-	/// - out: output buffer with undefined contents that should be overriden
+	/// - out: output buffer for writing.
+	///   Initial contents are undefined, they must be overriden.
 	/// The buffers are interleaved. Input and output buffers must not
 	/// overlap.
-	virtual void apply(unsigned rate, unsigned nc, unsigned ns,
+	virtual void apply(unsigned rate, unsigned nc, unsigned nf,
 		const float* in, float* out) = 0;
 };
 
+/// Buffer cache with exactly 2 growing buffers.
+/// Useful for ping-pong audio manipulation.
 struct BufCache {
 	std::array<std::vector<float>, 2> bufs;
 	std::vector<float>& get(unsigned i, std::size_t size) {

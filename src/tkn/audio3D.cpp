@@ -19,7 +19,7 @@ static const char* name(IPLerror err) {
 	} \
 } while(0)
 
-constexpr IPLAudioFormat stereoFormat() {
+IPLAudioFormat stereoFormat() {
 	IPLAudioFormat format {};
 	format.channelLayoutType = IPL_CHANNELLAYOUTTYPE_SPEAKERS;
 	format.channelLayout = IPL_CHANNELLAYOUT_STEREO;
@@ -57,26 +57,28 @@ Audio3D::Audio3D(unsigned frameRate) {
 	IPLHrtfParams hrtfParams {IPL_HRTFDATABASETYPE_DEFAULT, nullptr, nullptr};
 	iplCheck(iplCreateBinauralRenderer(context_, rsettings, hrtfParams,
 		&binaural_.renderer));
-	iplCheck(iplCreateBinauralEffect(binaural_.renderer, format, format,
-		&binaural_.effect));
+	// iplCheck(iplCreateBinauralEffect(binaural_.renderer, format, format,
+	// 	&binaural_.effect));
 
 	// direct
-	iplCheck(iplCreateDirectSoundEffect(envRenderer_, format, format,
-		&directEffect_));
+	// iplCheck(iplCreateDirectSoundEffect(envRenderer_, format, format,
+	// 	&directEffect_));
 }
 
 Audio3D::~Audio3D() {
-	if(directEffect_) iplDestroyDirectSoundEffect(&directEffect_);
+	// if(directEffect_) iplDestroyDirectSoundEffect(&directEffect_);
 	if(envRenderer_) iplDestroyEnvironmentalRenderer(&envRenderer_);
 	if(env_) iplDestroyEnvironment(&env_);
-	if(binaural_.effect) iplDestroyBinauralEffect(&binaural_.effect);
+	// if(binaural_.effect) iplDestroyBinauralEffect(&binaural_.effect);
 	if(binaural_.renderer) iplDestroyBinauralRenderer(&binaural_.renderer);
 	if(context_) iplDestroyContext(&context_);
 	iplCleanup();
 }
 
 void Audio3D::log(char* msg) {
-	dlg_infot(("phonon"), "phonon: {}", msg);
+	auto nl = std::strchr(msg, '\n');
+	auto len = nl ? nl - msg : std::strlen(msg);
+	dlg_infot(("phonon"), "phonon: {}", std::string_view(msg, len));
 }
 
 // all methods only for render thread
@@ -97,7 +99,8 @@ void Audio3D::update() {
 	}
 }
 
-void Audio3D::applyDirectEffect(unsigned nb, float* in, float* out,
+void Audio3D::applyDirectEffect(IPLhandle directEffect,
+		unsigned nb, float* in, float* out,
 		const IPLDirectSoundPath& path) {
 	int bs = tkn::AudioPlayer::blockSize;
 	auto format = stereoFormat();
@@ -109,17 +112,17 @@ void Audio3D::applyDirectEffect(unsigned nb, float* in, float* out,
 	for(auto i = 0u; i < nb; ++i) {
 		IPLAudioBuffer inb{format, bs, ((float*) in + i * bs * 2), nullptr};
 		IPLAudioBuffer outb{format, bs, out + i * bs * 2, nullptr};
-		iplApplyDirectSoundEffect(directEffect_, inb, path, opts, outb);
+		iplApplyDirectSoundEffect(directEffect, inb, path, opts, outb);
 	}
 }
 
-void Audio3D::applyHRTF(unsigned nb, float* in, float* out, IPLVector3 dir) {
+void Audio3D::applyHRTF(IPLhandle effect, unsigned nb, float* in, float* out, IPLVector3 dir) {
 	int bs = tkn::AudioPlayer::blockSize;
 	auto format = stereoFormat();
 	for(auto i = 0u; i < nb; ++i) {
 		IPLAudioBuffer inb{format, bs, ((float*) in + i * bs * 2), nullptr};
 		IPLAudioBuffer outb{format, bs, out + i * bs * 2, nullptr};
-		iplApplyBinauralEffect(binaural_.effect, binaural_.renderer, inb, dir,
+		iplApplyBinauralEffect(effect, binaural_.renderer, inb, dir,
 			IPL_HRTFINTERPOLATION_BILINEAR, outb);
 	}
 }

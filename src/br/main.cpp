@@ -64,8 +64,34 @@ public:
 		auto& ap = audio_.player;
 		dlg_assert(ap.channels() == 2);
 		audio_.d3.emplace(ap.rate());
-		audio_.music = &ap.create<Source>(*audio_.d3, "test48khz.ogg",
+
+		// audio_.music = &ap.create<Source>(*audio_.d3, "test.ogg",
+		// 	ap.rate(), ap.channels());
+		// audio_.music->position({100.f, 0.f, 0.f});
+
+		// static auto buf = tkn::loadVorbis("test48khz.ogg");
+		// static auto buf2 = resample(buf, ap.rate(), 2);
+		// ap.create<tkn::SoundBufferAudio>(buf2);
+
+		// ap.create<tkn::StreamedVorbisAudio>("test48khz.ogg",
+		// 	ap.rate(), ap.channels());
+
+		using Source = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
+		auto& a1 = ap.create<Source>(*audio_.d3,
+		// auto& a1 = ap.create<tkn::StreamedVorbisAudio>(
+			TKN_BASE_DIR "/assets/punch.ogg", ap.rate(), ap.channels());
+		a1.position({5.f, 0.f, 0.f});
+		a1.inner().volume(0.4);
+
+		auto& a2 = ap.create<Source>(*audio_.d3, "test48khz.ogg",
 			ap.rate(), ap.channels());
+		a2.position({-5.f, 0.f, 0.f});
+
+		auto& a3 = ap.create<Source>(*audio_.d3,
+		// auto& a3 = ap.create<tkn::StreamedVorbisAudio>(
+			"test.ogg", ap.rate(), ap.channels());
+		a3.position({0.f, 10.f, 0.f});
+		a3.inner().volume(3.0);
 
 		ap.audio = &*audio_.d3;
 
@@ -689,11 +715,9 @@ protected:
 
 	vpp::SubBuffer boxIndices_;
 
-	using Source = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
 	struct {
 		AudioPlayer player;
 		std::optional<tkn::Audio3D> d3;
-		Source* music;
 	} audio_;
 };
 
