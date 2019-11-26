@@ -114,7 +114,6 @@ void Audio3D::applyDirectEffect(unsigned nb, float* in, float* out,
 }
 
 void Audio3D::applyHRTF(unsigned nb, float* in, float* out, IPLVector3 dir) {
-	dlg_info("dir: {} {} {}", dir.x, dir.y, dir.z);
 	int bs = tkn::AudioPlayer::blockSize;
 	auto format = stereoFormat();
 	for(auto i = 0u; i < nb; ++i) {

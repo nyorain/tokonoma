@@ -64,7 +64,7 @@ public:
 		auto& ap = audio_.player;
 		dlg_assert(ap.channels() == 2);
 		audio_.d3.emplace(ap.rate());
-		audio_.music = &ap.create<Source>(*audio_.d3, "test.ogg",
+		audio_.music = &ap.create<Source>(*audio_.d3, "test48khz.ogg",
 			ap.rate(), ap.channels());
 
 		ap.audio = &*audio_.d3;
@@ -435,21 +435,6 @@ public:
 			auto up = nytl::normalized(nytl::cross(right, c.dir));
 			audio_.d3->updateListener(c.pos, c.dir, up);
 		}
-
-		// if(camera_.update) {
-		// 	const auto audioPos = nytl::Vec3f {0.f, 0.f, 0.f};
-		// 	auto& c = camera_;
-		// 	auto viewMat = tkn::lookAtRH(c.pos, c.pos + c.dir, c.up);
-		// 	auto p = tkn::multPos(viewMat, audioPos);
-		// 	p = normalized(p); // unit vector. But steamaudio examples doesn't care
-		// 	// auto dir = c.dir;
-		// 	// auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-		// 	// auto right = nytl::normalized(nytl::cross(c.dir, yUp));
-		// 	// auto up = nytl::normalized(nytl::cross(c.dir, right));
-		// 	// auto p = -camera_.pos;
-		// 	IPLVector3 vec {p.x, p.y, p.z};
-		// 	dlg_assert(audioEffect_->updateDir.enqueue(vec));
-		// }
 
 		// we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {

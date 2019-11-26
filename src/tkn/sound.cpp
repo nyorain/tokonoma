@@ -247,13 +247,13 @@ void StreamedVorbisAudio::update() {
 		// result in more upsampled samples than there is capacity.
 		// We choose exactly so many source samples that the upsampled
 		// result will fill the remaining capacity
-		ns = std::floor(ns * (info.sample_rate / rate_));
+		ns = std::floor(ns * ((double) info.sample_rate / rate_));
 	}
 
 	auto b0 = bufCacheR.get(0, ns).data();
-	auto written = stb_vorbis_get_samples_float_interleaved(vorbis_,
+	auto read = stb_vorbis_get_samples_float_interleaved(vorbis_,
 		info.channels, b0, ns);
-	if(written == 0) { // stream finished, no samples left
+	if(read == 0) { // stream finished, no samples left
 		stb_vorbis_seek_start(vorbis_);
 		volume_.store(0.f);
 		return;
@@ -261,24 +261,27 @@ void StreamedVorbisAudio::update() {
 
 	unsigned c = info.channels;
 	if(rate_ != info.sample_rate || channels_ != c) {
-		auto b1 = bufCacheR.get(1, cap).data();
-
 		SoundBufferView src;
 		src.channelCount = info.channels;
-		src.frameCount = written;
+		src.frameCount = read;
 		src.rate = info.sample_rate;
 		src.data = b0;
 
 		SoundBufferView dst;
 		dst.channelCount = channels_;
-		dst.frameCount = std::ceil(written * ((double)rate_ / src.rate));
+		dst.frameCount = std::ceil(read * ((double)rate_ / src.rate));
 		dst.rate = rate_;
-		dst.data = b1;
+		dst.data = bufCacheR.get(1, dst.frameCount * channels_).data();
 
 		resample(dst, src);
-		buffer_.enqueue(dst.data, dst.channelCount * dst.frameCount);
+		auto count = dst.channelCount * dst.frameCount;
+		auto written = buffer_.enqueue(dst.data, count);
+		dlg_assertm(written == count && written == cap, "{} {} {}",
+			written, count, cap);
 	} else {
-		buffer_.enqueue(b0, written * channels_);
+		auto count = read * channels_;
+		auto written = buffer_.enqueue(b0, count);
+		dlg_assert(written == count && written == cap);
 	}
 
 #ifndef NDEBUG
