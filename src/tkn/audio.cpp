@@ -61,29 +61,12 @@ AudioPlayer::AudioPlayer(const char* name) {
 		throw std::runtime_error("Could not open audio stream");
 	}
 
-	// NOTE(optimization): we could only start the stream when
-	// audios are added and stop it when there are no audios.
-	// Not so easy to implement though, we should still destroy
-	// audios in destroyed_.
-	// And then we should probably also add `bool Audio::active() const`
-	// that returns whether the audio is currently active or e.g.
-	// paused/stopped and only have the stream playing if we have
-	// and active audio.
-	rv = cubeb_stream_start(stream_);
-	if(rv != CUBEB_OK) {
-		throw std::runtime_error("Could not start stream");
-	}
-
 	rv = cubeb_stream_get_latency(stream_, &latencyFrames);
 	if(rv == CUBEB_OK) {
 		dlg_info("Audio stream latency frames: {}", latencyFrames);
 	} else {
 		dlg_warn("Could not get audio stream latency");
 	}
-
-	// start update thread
-	run_.store(true);
-	updateThread_ = std::thread{[this]{ this->updateThread(); }};
 }
 
 AudioPlayer::~AudioPlayer() {
@@ -100,16 +83,35 @@ AudioPlayer::~AudioPlayer() {
 	// no thread is accessing them anymore
 	auto it = audios_.load();
 	while(it) {
-		auto next = it->next_.load();
+		auto next = it->next.load();
 		delete it;
 		it = next;
 	}
 }
 
-Audio& AudioPlayer::add(std::unique_ptr<Audio> audio) {
+void AudioPlayer::start() {
+	// NOTE(optimization): we could only start the stream when
+	// audios are added and stop it when there are no audios.
+	// Not so easy to implement though, we should still destroy
+	// audios in destroyed_.
+	// And then we should probably also add `bool Audio::active() const`
+	// that returns whether the audio is currently active or e.g.
+	// paused/stopped and only have the stream playing if we have
+	// and active audio.
+	int rv = cubeb_stream_start(stream_);
+	if(rv != CUBEB_OK) {
+		throw std::runtime_error("Could not start stream");
+	}
+
+	// start update thread
+	run_.store(true);
+	updateThread_ = std::thread{[this]{ this->updateThread(); }};
+}
+
+AudioSource& AudioPlayer::add(std::unique_ptr<AudioSource> audio) {
 	dlg_assert(audio);
-	dlg_assert(!audio->next_);
-	dlg_assert(!audio->destroyed_.load());
+	// dlg_assert(!audio->next_);
+	// dlg_assert(!audio->destroyed_.load());
 
 	// Call update the first time since the update thread
 	// may only pick it up the next iteration and update
@@ -117,11 +119,13 @@ Audio& AudioPlayer::add(std::unique_ptr<Audio> audio) {
 	// Important that we do this *before* the audio is in the list
 	// since otherwise it might be called here and by the update
 	// thread.
-	audio->update(*this);
+	audio->update();
 
 	auto& ret = *audio;
-	audio->next_ = audios_.load();
-	audios_.store(audio.release());
+	auto na = new Audio;
+	na->source = std::move(audio);
+	na->next.store(audios_.load());
+	audios_.store(na);
 
 	return ret;
 }
@@ -135,14 +139,14 @@ void AudioPlayer::effect(std::unique_ptr<AudioEffect> effect) {
 
 void AudioPlayer::unlink(Audio& link, Audio* prev, std::atomic<Audio*>& head) {
 	if(&link == head.load()) {
-		head.store(link.next_.load());
+		head.store(link.next.load());
 	} else {
 		dlg_assert(prev);
-		prev->next_.store(link.next_.load());
+		prev->next.store(link.next.load());
 	}
 }
 
-bool AudioPlayer::remove(Audio& audio) {
+bool AudioPlayer::remove(AudioSource& audio) {
 	// find 'audio' is 'audios_', unlink it there and move
 	// it to 'destroyed_'. We furthermore set the 'destroyed_'
 	// field of audio to the current render iteration, so we can
@@ -162,9 +166,9 @@ bool AudioPlayer::remove(Audio& audio) {
 	auto it = audios_.load();
 	auto prev = decltype(it) {nullptr};
 	while(it) {
-		if(it == &audio) {
+		if(it->source.get() == &audio) {
 			unlink(*it, prev, audios_);
-			it->destroyed_.store(renderIteration_.load());
+			it->destroyed.store(renderIteration_.load());
 
 			std::lock_guard lock(dmutex_);
 			destroyed_.push_back(std::unique_ptr<Audio>(it));
@@ -172,7 +176,7 @@ bool AudioPlayer::remove(Audio& audio) {
 		}
 
 		prev = it;
-		it = it->next_;
+		it = it->next;
 	}
 
 	return false;
@@ -197,12 +201,12 @@ void AudioPlayer::updateThread() {
 			std::lock_guard lock(dmutex_);
 			for(auto it = destroyed_.begin(); it < destroyed_.end();) {
 				auto& audio = **it;
-				dlg_assert(audio.destroyed_.load());
+				dlg_assert(audio.destroyed.load());
 				// Using '<' as comparison makes more sense logically but
 				// like this, we can also work with iteration count wrapping.
 				// And otherwise, the render iteration count is monotonically
 				// increasing anyways.
-				if(audio.destroyed_ != c) {
+				if(audio.destroyed != c) {
 					it = destroyed_.erase(it);
 				} else {
 					++it;
@@ -211,8 +215,8 @@ void AudioPlayer::updateThread() {
 		}
 
 		// upate all active audios
-		for(auto it = audios_.load(); it; it = it->next_.load()) {
-			it->update(*this);
+		for(auto it = audios_.load(); it; it = it->next.load()) {
+			it->source->update();
 		}
 
 		// sleep
@@ -249,6 +253,8 @@ long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
 		leftOff_ += nsamples;
 		left_ -= nsamples;
 	} else {
+		renderUpdate();
+
 		if(left_ > 0) {
 			memcpy(buffer, renderBuf_.data() + leftOff_ * channels(),
 				left_ * channels() * sizeof(float));
@@ -257,6 +263,7 @@ long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
 		// create new samples
 		auto neededSamples = nsamples - left_;
 		auto renderSamples = align(neededSamples, blockSize);
+		auto nb = renderSamples / blockSize;
 
 		std::size_t needed = channels() * renderSamples;
 		if(renderBuf_.size() < needed) {
@@ -272,8 +279,8 @@ long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
 		}
 
 		std::memset(renderBuf, 0x0, renderSamples * channels() * sizeof(float));
-		for(auto it = audios_.load(); it; it = it->next_.load()) {
-			it->render(*this, renderBuf, renderSamples);
+		for(auto it = audios_.load(); it; it = it->next.load()) {
+			it->source->render(nb, renderBuf, true);
 		}
 
 		// apply effect
@@ -299,6 +306,13 @@ long AudioPlayer::dataCb(void* vbuffer, long nsamples) {
 		if(!std::atomic_compare_exchange_strong(&effect_, &neffect, effect)) {
 			delete effect;
 		}
+	}
+
+	// we do this here again so audios that were removed while we were
+	// rendering can immediately be removed and don't have to wait for
+	// our next iteration
+	if(++renderIteration_ == 0) {
+		++renderIteration_;
 	}
 
 	return nsamples;

@@ -305,8 +305,6 @@ ReadError readKtx(nytl::StringParam path, KtxReader& reader) {
 		return ReadError::unexpectedEnd;
 	}
 
-	dlg_trace("KTX header:\n {}", header);
-
 	if(header.endianness != ktxEndianess) {
 		// In this case the file was written in non-native endianess
 		// we could support it but that will be a lot of work

@@ -16,7 +16,7 @@ bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
 
 	auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
 	auto right = nytl::normalized(nytl::cross(c.dir, yUp));
-	auto up = nytl::normalized(nytl::cross(c.dir, right));
+	auto up = nytl::normalized(nytl::cross(right, c.dir));
 	bool update = false;
 	if(kc.pressed(ny::Keycode::d)) { // right
 		c.pos += fac * right;
@@ -26,20 +26,20 @@ bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
 		c.pos += -fac * right;
 		update = true;
 	}
-	if(kc.pressed(ny::Keycode::w)) {
+	if(kc.pressed(ny::Keycode::w)) { // forward
 		c.pos += fac * c.dir;
 		update = true;
 	}
-	if(kc.pressed(ny::Keycode::s)) {
+	if(kc.pressed(ny::Keycode::s)) { // backwards
 		c.pos += -fac * c.dir;
 		update = true;
 	}
 	if(kc.pressed(ny::Keycode::q)) { // up
-		c.pos += -fac * up;
+		c.pos += fac * up;
 		update = true;
 	}
 	if(kc.pressed(ny::Keycode::e)) { // down
-		c.pos += fac * up;
+		c.pos += -fac * up;
 		update = true;
 	}
 

@@ -342,7 +342,6 @@ bool App::init(nytl::Span<const char*> args) {
 		instanceInfo.ppEnabledLayerNames = layers.data();
 	}
 
-	dlg_trace("trying to create vulkan instance");
 	try {
 		impl_->instance = {instanceInfo};
 		if(!impl_->instance.vkInstance()) {
@@ -356,7 +355,6 @@ bool App::init(nytl::Span<const char*> args) {
 		dlg_error("This application requires vulkan to work");
 		return false;
 	}
-	dlg_trace("vulkan instance created!");
 
 	// debug callback
 	auto& ini = impl_->instance;

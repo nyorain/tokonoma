@@ -13,6 +13,10 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //
 // Taken from cubeb. https://github.com/kinetiknz/cubeb.
+// Slightly changed.
+//
+// TODO: do own custom implementation using
+// https://www.snellman.net/blog/archive/2016-12-13-ring-buffers/
 
 #pragma once
 
@@ -29,45 +33,41 @@ namespace util {
 
 /** Similar to memcpy, but accounts for the size of an element. */
 template<typename T>
-void PodCopy(T * destination, const T * source, size_t count)
-{
-  static_assert(std::is_trivial<T>::value, "Requires trivial type");
-  assert(destination && source);
-  std::memcpy(destination, source, count * sizeof(T));
+void PodCopy(T * destination, const T * source, size_t count) {
+	static_assert(std::is_trivial<T>::value, "Requires trivial type");
+	assert(destination && source);
+	std::memcpy(destination, source, count * sizeof(T));
 }
 
 /** Similar to memmove, but accounts for the size of an element. */
 template<typename T>
-void PodMove(T * destination, const T * source, size_t count)
-{
-  static_assert(std::is_trivial<T>::value, "Requires trivial type");
-  assert(destination && source);
-  std::memmove(destination, source, count * sizeof(T));
+void PodMove(T * destination, const T * source, size_t count) {
+	static_assert(std::is_trivial<T>::value, "Requires trivial type");
+	assert(destination && source);
+	std::memmove(destination, source, count * sizeof(T));
 }
 
 /** Similar to a memset to zero, but accounts for the size of an element. */
 template<typename T>
-void PodZero(T * destination, size_t count)
-{
-  static_assert(std::is_trivial<T>::value, "Requires trivial type");
-  assert(destination);
-  std::memset(destination, 0,  count * sizeof(T));
+void PodZero(T * destination, size_t count) {
+	static_assert(std::is_trivial<T>::value, "Requires trivial type");
+	assert(destination);
+	std::memset(destination, 0,  count * sizeof(T));
 }
 
 namespace {
 template<typename T, typename Trait>
-void Copy(T * destination, const T * source, size_t count, Trait)
-{
-  for (size_t i = 0; i < count; i++) {
-    destination[i] = source[i];
-  }
+void Move(T * destination, T * source, size_t count, Trait) {
+	for(size_t i = 0; i < count; i++) {
+		destination[i] = std::move(source[i]);
+	}
 }
 
 template<typename T>
-void Copy(T * destination, const T * source, size_t count, std::true_type)
-{
-  PodCopy(destination, source, count);
+void Move(T * destination, T * source, size_t count, std::true_type) {
+	PodCopy(destination, source, count);
 }
+
 }
 
 /**
@@ -76,27 +76,24 @@ void Copy(T * destination, const T * source, size_t count, std::true_type)
  * calls the constructors and destructors otherwise.
  */
 template<typename T>
-void Copy(T * destination, const T * source, size_t count)
-{
-  assert(destination && source);
-  Copy(destination, source, count, typename std::is_trivial<T>::type());
+void Move(T * destination, T * source, size_t count) {
+	assert(destination && source);
+	Move(destination, source, count, typename std::is_trivial<T>::type());
 }
 
 namespace {
 template<typename T, typename Trait>
-void ConstructDefault(T * destination, size_t count, Trait)
-{
-  for (size_t i = 0; i < count; i++) {
-    destination[i] = T();
-  }
+void ConstructDefault(T * destination, size_t count, Trait) {
+	for (size_t i = 0; i < count; i++) {
+		destination[i] = T();
+	}
 }
 
 template<typename T>
-void ConstructDefault(T * destination,
-                      size_t count, std::true_type)
-{
-  PodZero(destination, count);
+void ConstructDefault(T * destination, size_t count, std::true_type) {
+	PodZero(destination, count);
 }
+
 }
 
 /**
@@ -104,11 +101,9 @@ void ConstructDefault(T * destination,
  * elements calling the constructors and destructors if necessary.
  */
 template<typename T>
-void ConstructDefault(T * destination, size_t count)
-{
-  assert(destination);
-  ConstructDefault(destination, count,
-                   typename std::is_arithmetic<T>::type());
+void ConstructDefault(T * destination, size_t count) {
+	assert(destination);
+	ConstructDefault(destination, count, std::is_arithmetic_v<T>);
 }
 
 /**
@@ -145,310 +140,269 @@ void ConstructDefault(T * destination, size_t count)
  *   data for further processing.
  */
 template <typename T>
-class ring_buffer_base
-{
+class RingBuffer {
 public:
-  /**
-   * Constructor for a ring buffer.
-   *
-   * This performs an allocation, but is the only allocation that will happen
-   * for the life time of a `ring_buffer_base`.
-   *
-   * @param capacity The maximum number of element this ring buffer will hold.
-   */
-  ring_buffer_base(int capacity)
-    /* One more element to distinguish from empty and full buffer. */
-    : capacity_(capacity + 1)
-  {
-    assert(storage_capacity() <
-           std::numeric_limits<int>::max() / 2 &&
-           "buffer too large for the type of index used.");
-    assert(capacity_ > 0);
+	// One more element to distinguish from empty and full buffer.
+	RingBuffer(int capacity) : capacity_(capacity + 1) {
+		assert(storage_capacity() <
+				std::numeric_limits<int>::max() / 2 &&
+				"buffer too large for the type of index used.");
+		assert(capacity_ > 0);
 
-    data_.reset(new T[storage_capacity()]);
-    /* If this queue is using atomics, initializing those members as the last
-     * action in the constructor acts as a full barrier, and allow capacity() to
-     * be thread-safe. */
-    write_index_ = 0;
-    read_index_ = 0;
-  }
-  /**
-   * Push `count` zero or default constructed elements in the array.
-   *
-   * Only safely called on the producer thread.
-   *
-   * @param count The number of elements to enqueue.
-   * @return The number of element enqueued.
-   */
-  int enqueue_default(int count)
-  {
-    return enqueue(nullptr, count);
-  }
-  /**
-   * @brief Put an element in the queue
-   *
-   * Only safely called on the producer thread.
-   *
-   * @param element The element to put in the queue.
-   *
-   * @return 1 if the element was inserted, 0 otherwise.
-   */
-  int enqueue(T& element)
-  {
-    return enqueue(&element, 1);
-  }
-  /**
-   * Push `count` elements in the ring buffer.
-   *
-   * Only safely called on the producer thread.
-   *
-   * @param elements a pointer to a buffer containing at least `count` elements.
-   * If `elements` is nullptr, zero or default constructed elements are enqueued.
-   * @param count The number of elements to read from `elements`
-   * @return The number of elements successfully coped from `elements` and inserted
-   * into the ring buffer.
-   */
-  int enqueue(T * elements, int count)
-  {
+		data_.reset(new T[storage_capacity()]);
+		/* If this queue is using atomics, initializing those members as the last
+		 * action in the constructor acts as a full barrier, and allow capacity() to
+		 * be thread-safe. */
+		write_index_ = 0;
+		read_index_ = 0;
+	}
+
+	/**
+	 * Push `count` zero or default constructed elements in the array.
+	 * Only safely called on the producer thread.
+	 * @param count The number of elements to enqueue.
+	 * @return The number of element enqueued.
+	 */
+	unsigned enqueue_default(int count) {
+		return enqueue(nullptr, count);
+	}
+
+	/**
+	 * @brief Put an element in the queue
+	 * Only safely called on the producer thread.
+	 * @param element The element to put in the queue.
+	 * @return 1 if the element was inserted, 0 otherwise.
+	 */
+	unsigned enqueue(T& element) {
+		return enqueue(&element, 1);
+	}
+
+	/**
+	 * Push `count` elements in the ring buffer.
+	 * Only safely called on the producer thread.
+	 * @param elements a pointer to a buffer containing at least `count` elements.
+	 * If `elements` is nullptr, zero or default constructed elements are enqueued.
+	 * @param count The number of elements to read from `elements`
+	 * @return The number of elements successfully coped from `elements` and inserted
+	 * into the ring buffer.
+	 */
+	unsigned enqueue(T * elements, int count) {
 #ifndef NDEBUG
-    assert_correct_thread(producer_id);
+		assert_correct_thread(producer_id);
 #endif
 
-    int rd_idx = read_index_.load(std::memory_order::memory_order_relaxed);
-    int wr_idx = write_index_.load(std::memory_order::memory_order_relaxed);
+		int rd_idx = read_index_.load(std::memory_order::memory_order_relaxed);
+		int wr_idx = write_index_.load(std::memory_order::memory_order_relaxed);
 
-    if (full_internal(rd_idx, wr_idx)) {
-      return 0;
-    }
+		if (full_internal(rd_idx, wr_idx)) {
+			return 0;
+		}
 
-    int to_write =
-      std::min(available_write_internal(rd_idx, wr_idx), count);
+		int to_write = std::min(available_write_internal(rd_idx, wr_idx), count);
 
-    /* First part, from the write index to the end of the array. */
-    int first_part = std::min(storage_capacity() - wr_idx,
-                                          to_write);
-    /* Second part, from the beginning of the array */
-    int second_part = to_write - first_part;
+		/* First part, from the write index to the end of the array. */
+		int first_part = std::min(storage_capacity() - wr_idx, to_write);
+		/* Second part, from the beginning of the array */
+		int second_part = to_write - first_part;
 
-    if (elements) {
-      Copy(data_.get() + wr_idx, elements, first_part);
-      Copy(data_.get(), elements + first_part, second_part);
-    } else {
-      ConstructDefault(data_.get() + wr_idx, first_part);
-      ConstructDefault(data_.get(), second_part);
-    }
+		if (elements) {
+			Move(data_.get() + wr_idx, elements, first_part);
+			Move(data_.get(), elements + first_part, second_part);
+		} else {
+			ConstructDefault(data_.get() + wr_idx, first_part);
+			ConstructDefault(data_.get(), second_part);
+		}
 
-    write_index_.store(increment_index(wr_idx, to_write), std::memory_order::memory_order_release);
+		write_index_.store(increment_index(wr_idx, to_write),
+			std::memory_order::memory_order_release);
 
-    return to_write;
-  }
-  /**
-   * Retrieve at most `count` elements from the ring buffer, and copy them to
-   * `elements`, if non-null.
-   *
-   * Only safely called on the consumer side.
-   *
-   * @param elements A pointer to a buffer with space for at least `count`
-   * elements. If `elements` is `nullptr`, `count` element will be discarded.
-   * @param count The maximum number of elements to dequeue.
-   * @return The number of elements written to `elements`.
-   */
-  int dequeue(T * elements, int count)
-  {
+		return to_write;
+	}
+
+	/**
+	 * Retrieve at most `count` elements from the ring buffer, and copy them to
+	 * `elements`, if non-null.
+	 *
+	 * Only safely called on the consumer side.
+	 *
+	 * @param elements A pointer to a buffer with space for at least `count`
+	 * elements. If `elements` is `nullptr`, `count` element will be discarded.
+	 * @param count The maximum number of elements to dequeue.
+	 * @return The number of elements written to `elements`.
+	 */
+	unsigned dequeue(T * elements, int count) {
 #ifndef NDEBUG
-    assert_correct_thread(consumer_id);
+		assert_correct_thread(consumer_id);
 #endif
 
-    int wr_idx = write_index_.load(std::memory_order::memory_order_acquire);
-    int rd_idx = read_index_.load(std::memory_order::memory_order_relaxed);
+		int wr_idx = write_index_.load(std::memory_order::memory_order_acquire);
+		int rd_idx = read_index_.load(std::memory_order::memory_order_relaxed);
 
-    if (empty_internal(rd_idx, wr_idx)) {
-      return 0;
-    }
+		if (empty_internal(rd_idx, wr_idx)) {
+			return 0;
+		}
 
-    int to_read =
-      std::min(available_read_internal(rd_idx, wr_idx), count);
+		int to_read =
+			std::min(available_read_internal(rd_idx, wr_idx), count);
 
-    int first_part = std::min(storage_capacity() - rd_idx, to_read);
-    int second_part = to_read - first_part;
+		int first_part = std::min(storage_capacity() - rd_idx, to_read);
+		int second_part = to_read - first_part;
 
-    if (elements) {
-      Copy(elements, data_.get() + rd_idx, first_part);
-      Copy(elements + first_part, data_.get(), second_part);
-    }
+		if (elements) {
+			Move(elements, data_.get() + rd_idx, first_part);
+			Move(elements + first_part, data_.get(), second_part);
+		}
 
-    read_index_.store(increment_index(rd_idx, to_read), std::memory_order::memory_order_relaxed);
+		read_index_.store(increment_index(rd_idx, to_read), std::memory_order::memory_order_relaxed);
 
-    return to_read;
-  }
-  /**
-   * Get the number of available element for consuming.
-   *
-   * Only safely called on the consumer thread.
-   *
-   * @return The number of available elements for reading.
-   */
-  int available_read() const
-  {
+		return to_read;
+	}
+	/**
+	 * Get the number of available element for consuming.
+	 * Only safely called on the consumer thread.
+	 * @return The number of available elements for reading.
+	 */
+	unsigned available_read() const {
 #ifndef NDEBUG
-    assert_correct_thread(consumer_id);
+		assert_correct_thread(consumer_id);
 #endif
-    return available_read_internal(read_index_.load(std::memory_order::memory_order_relaxed),
-                                   write_index_.load(std::memory_order::memory_order_relaxed));
-  }
-  /**
-   * Get the number of available elements for writing.
-   *
-   * Only safely called on the producer thread.
-   *
-   * @return The number of empty slots in the buffer, available for writing.
-   */
-  int available_write() const
-  {
+		return available_read_internal(
+			read_index_.load(std::memory_order::memory_order_relaxed),
+			write_index_.load(std::memory_order::memory_order_relaxed));
+	}
+	/**
+	 * Get the number of available elements for writing.
+	 * Only safely called on the producer thread.
+	 * @return The number of empty slots in the buffer, available for writing.
+	 */
+	unsigned available_write() const {
 #ifndef NDEBUG
-    assert_correct_thread(producer_id);
+		assert_correct_thread(producer_id);
 #endif
-    return available_write_internal(read_index_.load(std::memory_order::memory_order_relaxed),
-                                    write_index_.load(std::memory_order::memory_order_relaxed));
-  }
-  /**
-   * Get the total capacity, for this ring buffer.
-   *
-   * Can be called safely on any thread.
-   *
-   * @return The maximum capacity of this ring buffer.
-   */
-  int capacity() const
-  {
-    return storage_capacity() - 1;
-  }
-  /**
-   * Reset the consumer and producer thread identifier, in case the thread are
-   * being changed. This has to be externally synchronized. This is no-op when
-   * asserts are disabled.
-   */
-  void reset_thread_ids()
-  {
+		return available_write_internal(read_index_.load(std::memory_order::memory_order_relaxed),
+				write_index_.load(std::memory_order::memory_order_relaxed));
+	}
+	/**
+	 * Get the total capacity, for this ring buffer.
+	 * Can be called safely on any thread.
+	 * @return The maximum capacity of this ring buffer.
+	 */
+	unsigned capacity() const {
+		return storage_capacity() - 1;
+	}
+	/**
+	 * Reset the consumer and producer thread identifier, in case the thread are
+	 * being changed. This has to be externally synchronized. This is no-op when
+	 * asserts are disabled.
+	 */
+	void reset_thread_ids() {
 #ifndef NDEBUG
-    consumer_id = producer_id = std::thread::id();
+		consumer_id = producer_id = std::thread::id();
 #endif
   }
 private:
-  /** Return true if the ring buffer is empty.
-   *
-   * @param read_index the read index to consider
-   * @param write_index the write index to consider
-   * @return true if the ring buffer is empty, false otherwise.
-   **/
-  bool empty_internal(int read_index,
-                      int write_index) const
-  {
-    return write_index == read_index;
-  }
-  /** Return true if the ring buffer is full.
-   *
-   * This happens if the write index is exactly one element behind the read
-   * index.
-   *
-   * @param read_index the read index to consider
-   * @param write_index the write index to consider
-   * @return true if the ring buffer is full, false otherwise.
-   **/
-  bool full_internal(int read_index,
-                     int write_index) const
-  {
-    return (write_index + 1) % storage_capacity() == read_index;
-  }
-  /**
-   * Return the size of the storage. It is one more than the number of elements
-   * that can be stored in the buffer.
-   *
-   * @return the number of elements that can be stored in the buffer.
-   */
-  int storage_capacity() const
-  {
-    return capacity_;
-  }
-  /**
-   * Returns the number of elements available for reading.
-   *
-   * @return the number of available elements for reading.
-   */
-  int
-  available_read_internal(int read_index,
-                          int write_index) const
-  {
-    if (write_index >= read_index) {
-      return write_index - read_index;
-    } else {
-      return write_index + storage_capacity() - read_index;
-    }
-  }
-  /**
-   * Returns the number of empty elements, available for writing.
-   *
-   * @return the number of elements that can be written into the array.
-   */
-  int
-  available_write_internal(int read_index,
-                           int write_index) const
-  {
-    /* We substract one element here to always keep at least one sample
-     * free in the buffer, to distinguish between full and empty array. */
-    int rv = read_index - write_index - 1;
-    if (write_index >= read_index) {
-      rv += storage_capacity();
-    }
-    return rv;
-  }
-  /**
-   * Increments an index, wrapping it around the storage.
-   *
-   * @param index a reference to the index to increment.
-   * @param increment the number by which `index` is incremented.
-   * @return the new index.
-   */
-  int
-  increment_index(int index, int increment) const
-  {
-    assert(increment >= 0);
-    return (index + increment) % storage_capacity();
-  }
-  /**
-   * @brief This allows checking that enqueue (resp. dequeue) are always called
-   * by the right thread.
-   *
-   * @param id the id of the thread that has called the calling method first.
-   */
+	/** Return true if the ring buffer is empty.
+	* @param read_index the read index to consider
+	* @param write_index the write index to consider
+	* @return true if the ring buffer is empty, false otherwise.
+	**/
+	bool empty_internal(int read_index, int write_index) const {
+		return write_index == read_index;
+	}
+
+	/** Return true if the ring buffer is full.
+	* This happens if the write index is exactly one element behind the read
+	* index.
+	* @param read_index the read index to consider
+	* @param write_index the write index to consider
+	* @return true if the ring buffer is full, false otherwise.
+	**/
+	bool full_internal(int read_index, int write_index) const {
+		return (write_index + 1) % storage_capacity() == read_index;
+	}
+	/**
+	* Return the size of the storage. It is one more than the number of elements
+	* that can be stored in the buffer.
+	* @return the number of elements that can be stored in the buffer.
+	*/
+	int storage_capacity() const {
+		return capacity_;
+	}
+
+	/**
+	* Returns the number of elements available for reading.
+	* @return the number of available elements for reading.
+	*/
+	int
+	available_read_internal(int read_index, int write_index) const {
+		if (write_index >= read_index) {
+			return write_index - read_index;
+		} else {
+			return write_index + storage_capacity() - read_index;
+		}
+	}
+
+	/**
+	* Returns the number of empty elements, available for writing.
+	* @return the number of elements that can be written into the array.
+	*/
+	int
+	available_write_internal(int read_index, int write_index) const {
+		/* We substract one element here to always keep at least one sample
+		 * free in the buffer, to distinguish between full and empty array. */
+		int rv = read_index - write_index - 1;
+		if (write_index >= read_index) {
+			rv += storage_capacity();
+		}
+		return rv;
+	}
+	/**
+	* Increments an index, wrapping it around the storage.
+	* @param index a reference to the index to increment.
+	* @param increment the number by which `index` is incremented.
+	* @return the new index.
+	*/
+	int increment_index(int index, int increment) const {
+		assert(increment >= 0);
+		return (index + increment) % storage_capacity();
+	}
+
+	/**
+	* @brief This allows checking that enqueue (resp. dequeue) are always called
+	* by the right thread.
+	* @param id the id of the thread that has called the calling method first.
+	*/
 #ifndef NDEBUG
-  static void assert_correct_thread(std::thread::id& id)
-  {
-    if (id == std::thread::id()) {
-      id = std::this_thread::get_id();
-      return;
-    }
-    assert(id == std::this_thread::get_id());
-  }
+	static void assert_correct_thread(std::thread::id& id) {
+	  if (id == std::thread::id()) {
+		  id = std::this_thread::get_id();
+		  return;
+	  }
+	  assert(id == std::this_thread::get_id());
+	}
 #endif
-  /** Index at which the oldest element is at, in samples. */
-  std::atomic<int> read_index_;
-  /** Index at which to write new elements. `write_index` is always at
-   * least one element ahead of `read_index_`. */
-  std::atomic<int> write_index_;
-  /** Maximum number of elements that can be stored in the ring buffer. */
-  const int capacity_;
-  /** Data storage */
-  std::unique_ptr<T[]> data_;
+
+	/** Index at which the oldest element is at, in samples. */
+	std::atomic<int> read_index_;
+	/** Index at which to write new elements. `write_index` is always at
+	* least one element ahead of `read_index_`. */
+	std::atomic<int> write_index_;
+	/** Maximum number of elements that can be stored in the ring buffer. */
+	const int capacity_;
+	/** Data storage */
+	std::unique_ptr<T[]> data_;
+
 #ifndef NDEBUG
-  /** The id of the only thread that is allowed to read from the queue. */
-  mutable std::thread::id consumer_id;
-  /** The id of the only thread that is allowed to write from the queue. */
-  mutable std::thread::id producer_id;
+public:
+	/** The id of the only thread that is allowed to read from the queue. */
+	mutable std::thread::id consumer_id;
+	/** The id of the only thread that is allowed to write from the queue. */
+	mutable std::thread::id producer_id;
 #endif
 };
 
 } // namespace util
 
-using util::ring_buffer_base;
+using util::RingBuffer;
 
 } // namespace tkn

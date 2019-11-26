@@ -37,6 +37,7 @@ tkn_src = [
 	'defer.cpp',
 	'f16.cpp',
 	'util.cpp',
+	'headeronly.cpp',
 
 	'scene/scene.cpp',
 	'scene/material.cpp',
@@ -61,9 +62,19 @@ endif
 
 tkn_audio = false
 if dep_cubeb.found()
-	tkn_src += 'audio.cpp'
+	tkn_src += [
+		'audio.cpp',
+		'sound.cpp',
+	]
 	tkn_deps += dep_cubeb
 	tkn_audio = true
+endif
+
+if dep_steamaudio.found()
+	tkn_src += [
+		'audio3D.cpp',
+	]
+	tkn_deps += dep_steamaudio
 endif
 
 if dep_b2d.found()

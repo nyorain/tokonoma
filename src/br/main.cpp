@@ -62,12 +62,12 @@ public:
 
 		// audio
 		auto& ap = audio_.player;
-		audio_.phonon.emplace(audio_.player);
-		audio_.hrtf.emplace(audio_.phonon->context(), ap.rate());
-		audio_.directEffect.emplace(audio_.phonon->envRenderer());
+		dlg_assert(ap.channels() == 2);
+		audio_.d3.emplace(ap.rate());
+		audio_.music = &ap.create<Source>(*audio_.d3, "test.ogg",
+			ap.rate(), ap.channels());
 
-		audio_.music = &ap.create<StreamedVorbisAudio>("test.ogg",
-			*audio_.hrtf, *audio_.directEffect, audio_.phonon->environment());
+		ap.audio = &*audio_.d3;
 
 		// init pipeline
 		auto& dev = vulkanDevice();
@@ -303,6 +303,7 @@ public:
 		pointLight_.instanceID = scene_.addInstance(spherePrimitiveID_,
 			pointLightObjMatrix(), pointLight_.materialID);
 
+		ap.start();
 		return true;
 	}
 
@@ -426,16 +427,13 @@ public:
 			updateLight_ = true;
 		}
 
-		if(camera_.update) {
+		// if(camera_.update) {
+		{
 			auto& c = camera_;
-			// auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-			// auto dir = c.dir;
-			// auto right = nytl::normalized(nytl::cross(c.dir, yUp));
-			// auto up = nytl::normalized(nytl::cross(c.dir, right));
-
-			// TODO: racy
-			audio_.music->listenerPos = {c.pos.x, c.pos.y, c.pos.z};
-			audio_.music->listenerDir = {c.dir.x, c.dir.y, c.dir.z};
+			auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+			auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+			auto up = nytl::normalized(nytl::cross(right, c.dir));
+			audio_.d3->updateListener(c.pos, c.dir, up);
 		}
 
 		// if(camera_.update) {
@@ -706,12 +704,11 @@ protected:
 
 	vpp::SubBuffer boxIndices_;
 
+	using Source = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
 	struct {
-		tkn::AudioPlayer player;
-		std::optional<PhononSetup> phonon;
-		std::optional<HRTF> hrtf;
-		std::optional<DirectSoundEffect> directEffect;
-		StreamedVorbisAudio* music;
+		AudioPlayer player;
+		std::optional<tkn::Audio3D> d3;
+		Source* music;
 	} audio_;
 };
 

@@ -10,7 +10,9 @@
 #include <dlg/dlg.hpp>
 #include <cstdio>
 
-// make stbi std::unique_ptr<std::byte[]> compatible
+// Make stbi std::unique_ptr<std::byte[]> compatible.
+// Needed since calling delete on a pointer allocated with malloc
+// is undefined behavior.
 namespace {
 void* stbiRealloc(void* old, std::size_t newSize) {
 	delete[] (std::byte*) old;
