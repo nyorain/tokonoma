@@ -1,6 +1,5 @@
 #pragma once
 
-#include <chrono>
 #include <memory>
 #include <vector>
 #include <atomic>
@@ -13,8 +12,8 @@ typedef struct cubeb_stream cubeb_stream;
 
 namespace tkn {
 
-using Clock = std::chrono::high_resolution_clock;
 class Audio;
+class AudioEffect;
 
 /// Combines audio output.
 class AudioPlayer {
@@ -44,6 +43,9 @@ public:
 	/// after this.
 	bool remove(Audio&);
 
+	/// Changes the active effect. Will destroy the previous effect, if any.
+	void effect(std::unique_ptr<AudioEffect> effect);
+
 	/// Returns the number of channels.
 	unsigned channels() const { return channels_; }
 
@@ -53,7 +55,7 @@ public:
 
 protected:
 	void updateThread();
-	long dataCb(void* buffer, long nframes);
+	long dataCb(void* buffer, long nsamples);
 	void stateCb(unsigned);
 
 	void unlink(Audio& link, Audio* prev, std::atomic<Audio*>& head);
@@ -75,6 +77,9 @@ protected:
 	std::vector<std::unique_ptr<Audio>> destroyed_ {};
 	std::mutex dmutex_ {};
 
+	// Owned
+	std::atomic<AudioEffect*> effect_ {};
+
 	std::atomic<std::uint64_t> renderIteration_ {1};
 	std::atomic<bool> run_;
 
@@ -83,6 +88,14 @@ protected:
 	unsigned rate_;
 	unsigned channels_;
 	std::thread updateThread_;
+
+	// owned by render thread
+	std::vector<float> renderBuf_;
+	std::vector<float> renderBufPost_;
+
+	// in samples
+	unsigned left_ {0};
+	unsigned leftOff_ {0};
 };
 
 /// Interface for playing a sound.
@@ -103,7 +116,7 @@ public:
 	/// It should prepare audio data to be written in render, if needed.
 	/// Implementations can depend on this function being called
 	/// a couple of times per second, i.e. an appropriate amount of
-	/// data to prepare for rendering would be the frames for one second.
+	/// data to prepare for rendering would be the samples for one second.
 	/// In turn, implementations must not take extreme amounts
 	/// of time (more than a couple of milliseconds is definitely too
 	/// much).
@@ -120,8 +133,8 @@ public:
 	///   rate and channel count can be recevied.
 	/// - buf: Tightly packed interleaved stereo audio data.
 	///   References at least 'ap.channels() * sizeof(float) * nf' bytes.
-	/// - nf: The number of frames to write.
-	virtual void render(const AudioPlayer& pl, float* buf, unsigned nf) = 0;
+	/// - ns: The number of samples to write (per channel).
+	virtual void render(const AudioPlayer& pl, float* buf, unsigned ns) = 0;
 
 private:
 	friend class AudioPlayer;
@@ -135,6 +148,23 @@ private:
 	/// Otherwise the AudioPlayer::renderIteration_ in which it was destroyed.
 	/// The AudioPlayer keeps it alive for this iteration.
 	std::atomic<std::uint64_t> destroyed_ {};
+};
+
+/// Class for a general audio effect that modifies audio buffers.
+class AudioEffect {
+public:
+	virtual ~AudioEffect() = default;
+
+	/// Applies the effect.
+	/// - rate: sampling rate in Hz
+	/// - nc: number channels in input and output buffer
+	/// - ns: number of samples per input and output buffer
+	/// - in: input buffer to read
+	/// - out: output buffer with undefined contents that should be overriden
+	/// The buffers are interleaved. Input and output buffers must not
+	/// overlap.
+	virtual void apply(unsigned rate, unsigned nc, unsigned ns,
+		const float* in, float* out) = 0;
 };
 
 } // namespace tkn

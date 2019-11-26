@@ -62,7 +62,7 @@ using namespace tkn::types;
 class ViewApp : public tkn::App {
 public:
 	static constexpr auto snapFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto snapSize = vk::Extent2D {2 * 4096, 2 * 4096};
+	static constexpr auto snapSize = vk::Extent2D {4096, 4096};
 
 public:
 	bool init(nytl::Span<const char*> args) override {

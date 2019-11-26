@@ -11,7 +11,9 @@
 -I./subprojects/bullet/include/bullet
 -I./subprojects/steamaudio_api/include
 -I./subprojects/vui/include
+-I./subprojects/cubeb/include
 -I./build/subprojects/vkpp/include
+-I./build/subprojects/cubeb
 -I./build/subprojects/ny/include
 -I./build/subprojects/vpp/include
 -I./build/assets

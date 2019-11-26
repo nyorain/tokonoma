@@ -1,5 +1,6 @@
 // Simple forward renderer mainly as reference for other rendering
-// concepts.
+// concepts. Also serves as 3D audio for some reason.
+#include "audio.hpp"
 
 #include <tkn/camera.hpp>
 #include <tkn/app.hpp>
@@ -58,6 +59,14 @@ public:
 
 		camera_.perspective.near = 0.01f;
 		camera_.perspective.far = 10.f;
+
+		// audio
+		// audioPlayer_.create<MidiAudio>();
+		audioPlayer_.create<StreamedVorbisAudio>("test.ogg");
+
+		auto effect = std::make_unique<AudioEffectHTRF>(audioPlayer_);
+		audioEffect_ = effect.get();
+		audioPlayer_.effect(std::move(effect));
 
 		// init pipeline
 		auto& dev = vulkanDevice();
@@ -416,6 +425,24 @@ public:
 			updateLight_ = true;
 		}
 
+		if(camera_.update) {
+			const auto audioPos = nytl::Vec3f {0.f, 0.f, 0.f};
+
+			auto& c = camera_;
+			auto viewMat = tkn::lookAtRH(c.pos, c.pos + c.dir, c.up);
+			auto p = tkn::multPos(viewMat, audioPos);
+			p = normalized(p); // unit vector. But steamaudio examples doesn't care
+
+			// auto dir = c.dir;
+			// auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+			// auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+			// auto up = nytl::normalized(nytl::cross(c.dir, right));
+			// auto p = -camera_.pos;
+
+			IPLVector3 vec {p.x, p.y, p.z};
+			dlg_assert(audioEffect_->updateDir.enqueue(vec));
+		}
+
 		// we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
 		// 	App::scheduleRedraw();
@@ -668,6 +695,10 @@ protected:
 	float sceneScale_ {1.f};
 
 	vpp::SubBuffer boxIndices_;
+
+	// audio
+	tkn::AudioPlayer audioPlayer_;
+	AudioEffectHTRF* audioEffect_;
 };
 
 int main(int argc, const char** argv) {
