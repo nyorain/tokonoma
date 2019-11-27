@@ -82,8 +82,8 @@ void Environment::createPipe(const vpp::Device& dev,
 	gpi.depthStencil.depthWriteEnable = false;
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 	// culling not really needed here
-	// gpi.rasterization.cullMode = vk::CullModeBits::back;
-	// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+	gpi.rasterization.cullMode = vk::CullModeBits::back;
+	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 	gpi.blend.attachmentCount = battachments.size();
 	gpi.blend.pAttachments = battachments.begin();

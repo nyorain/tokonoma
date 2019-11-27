@@ -34,12 +34,17 @@ struct SoundBufferView {
 		data(rhs.data.get()) {}
 };
 
-
 // Resamples (if needed) the data in `src` into the data in `dst`.
-// Expects dst to be able to hold enough frames.
+// Expects dst to be able to hold enough frames, i.e. it should hold
+// ceil(src.frameCount * ((double) dst.rate / src.rate)) frames.
 // Will not read from `dst.data` and not write to `src.data`.
-void resample(SoundBufferView dst, SoundBufferView src);
-int resample(SpeexResamplerState*, SoundBufferView dst, SoundBufferView src);
+// Will return the number of samples written to dst.
+unsigned resample(SoundBufferView dst, SoundBufferView src);
+
+// This overload should be used when continously resampling
+// smaller pieces of a stream. The speex resampler state must have
+// created been with parameters matching the parameters in dst and src.
+unsigned resample(SpeexResamplerState*, SoundBufferView dst, SoundBufferView src);
 
 // - fr: frame rate in Hz
 // - nc: number channels

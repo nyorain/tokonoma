@@ -60,41 +60,6 @@ public:
 		camera_.perspective.near = 0.01f;
 		camera_.perspective.far = 10.f;
 
-		// audio
-		auto& ap = audio_.player;
-		dlg_assert(ap.channels() == 2);
-		audio_.d3.emplace(ap.rate());
-
-		// audio_.music = &ap.create<Source>(*audio_.d3, "test.ogg",
-		// 	ap.rate(), ap.channels());
-		// audio_.music->position({100.f, 0.f, 0.f});
-
-		// static auto buf = tkn::loadVorbis("test48khz.ogg");
-		// static auto buf2 = resample(buf, ap.rate(), 2);
-		// ap.create<tkn::SoundBufferAudio>(buf2);
-
-		// ap.create<tkn::StreamedVorbisAudio>("test48khz.ogg",
-		// 	ap.rate(), ap.channels());
-
-		using Source = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
-		auto& a1 = ap.create<Source>(*audio_.d3,
-		// auto& a1 = ap.create<tkn::StreamedVorbisAudio>(
-			TKN_BASE_DIR "/assets/punch.ogg", ap.rate(), ap.channels());
-		a1.position({5.f, 0.f, 0.f});
-		a1.inner().volume(0.4);
-
-		auto& a2 = ap.create<Source>(*audio_.d3, "test48khz.ogg",
-			ap.rate(), ap.channels());
-		a2.position({-5.f, 0.f, 0.f});
-
-		auto& a3 = ap.create<Source>(*audio_.d3,
-		// auto& a3 = ap.create<tkn::StreamedVorbisAudio>(
-			"test.ogg", ap.rate(), ap.channels());
-		a3.position({0.f, 10.f, 0.f});
-		a3.inner().volume(3.0);
-
-		ap.audio = &*audio_.d3;
-
 		// init pipeline
 		auto& dev = vulkanDevice();
 		auto hostMem = dev.hostMemoryTypes();
@@ -328,6 +293,113 @@ public:
 		pointLight_.materialID = scene_.addMaterial(lmat);
 		pointLight_.instanceID = scene_.addInstance(spherePrimitiveID_,
 			pointLightObjMatrix(), pointLight_.materialID);
+
+		// audio
+		constexpr std::array<u16, 36> boxIndices = {
+			0, 1, 2,  2, 1, 3, // front
+			1, 5, 3,  3, 5, 7, // right
+			2, 3, 6,  6, 3, 7, // top
+			4, 0, 6,  6, 0, 2, // left
+			4, 5, 0,  0, 5, 1, // bottom
+			5, 4, 7,  7, 4, 6, // back
+		};
+
+		std::vector<IPLVector3> positions;
+		std::vector<IPLTriangle> tris;
+
+		auto low = std::numeric_limits<float>::min();
+		auto high = std::numeric_limits<float>::max();
+		for(auto& ini : scene_.instances()) {
+			auto& primitive = scene_.primitives()[ini.primitiveID];
+			auto& mat = ini.matrix;
+
+			IPLint32 off = positions.size();
+			for(auto& p : primitive.positions) {
+				auto pos = tkn::multPos(mat, p);
+				positions.push_back({pos.x, pos.y, pos.z});
+			}
+
+			for(auto i = 0u; i < primitive.indices.size(); i += 3) {
+				tris.push_back({
+					primitive.indices[i + 0] + off,
+					primitive.indices[i + 1] + off,
+					primitive.indices[i + 2] + off});
+			}
+
+			/*
+			// find absolute bounds
+			using namespace nytl::vec::cw;
+			auto vmax = nytl::Vec3f{low, low, low};
+			auto vmin = nytl::Vec3f{high, high, high};
+			for(auto& p : primitive.positions) {
+				auto pos = tkn::multPos(mat, p);
+				vmax = max(vmax, pos);
+				vmin = min(vmin, pos);
+			}
+
+			dlg_info("min: {}, max: {}", vmin, vmax);
+
+			IPLint32 off = positions.size();
+			positions.push_back({vmin.x, vmin.y, vmin.z});
+			positions.push_back({vmax.x, vmin.y, vmin.z});
+			positions.push_back({vmin.x, vmax.y, vmin.z});
+			positions.push_back({vmax.x, vmax.y, vmin.z});
+
+			positions.push_back({vmin.x, vmin.y, vmax.z});
+			positions.push_back({vmax.x, vmin.y, vmax.z});
+			positions.push_back({vmin.x, vmax.y, vmax.z});
+			positions.push_back({vmax.x, vmax.y, vmax.z});
+
+			for(auto i = 0u; i < boxIndices.size(); i += 3) {
+				tris.push_back({
+					boxIndices[i + 0] + off,
+					boxIndices[i + 1] + off,
+					boxIndices[i + 2] + off});
+			}
+			*/
+		}
+
+		std::vector<IPLint32> matIDs(tris.size(), 0);
+
+		auto& ap = audio_.player;
+		dlg_assert(ap.channels() == 2);
+
+		audio_.d3.emplace(ap.rate(), positions, tris, matIDs);
+		ap.audio = &*audio_.d3;
+
+		// IPLhandle mesh;
+		// int err = iplCreateStaticMesh(audio_.d3->scene(), positions.size(),
+		// 	tris.size(), positions.data(), tris.data(), matIDs.data(),
+		// 	&mesh);
+		// dlg_assert(err == IPL_STATUS_SUCCESS);
+
+		// audio_.music = &ap.create<Source>(*audio_.d3, "test.ogg",
+		// 	ap.rate(), ap.channels());
+		// audio_.music->position({100.f, 0.f, 0.f});
+
+		// static auto buf = tkn::loadVorbis("test48khz.ogg");
+		// static auto buf2 = resample(buf, ap.rate(), 2);
+		// ap.create<tkn::SoundBufferAudio>(buf2);
+
+		// ap.create<tkn::StreamedVorbisAudio>("test48khz.ogg",
+		// 	ap.rate(), ap.channels());
+
+		using Source = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
+		// auto& a1 = ap.create<Source>(*audio_.d3,
+		// 	TKN_BASE_DIR "/assets/punch.ogg", ap.rate(), ap.channels());
+		// a1.position({5.f, 0.f, 0.f});
+		// a1.inner().volume(0.3);
+
+		auto& a2 = ap.create<Source>(*audio_.d3, "test48khz.ogg",
+			ap.rate(), ap.channels());
+		a2.position({-5.f, 0.f, 0.f});
+
+		// auto& a3 = ap.create<Source>(*audio_.d3,
+		// 	"test.ogg", ap.rate(), ap.channels());
+		// a3.position({0.f, 10.f, 0.f});
+		// a3.inner().volume(1.0);
+
+		auto& conv = ap.create<tkn::ConvolutionAudio>(*audio_.d3);
 
 		ap.start();
 		return true;

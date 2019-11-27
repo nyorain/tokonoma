@@ -73,7 +73,7 @@ AudioPlayer::AudioPlayer(const char* name) {
 	}
 
 	// forcing the rate for debugging
-	rate = 44100;
+	// rate = 44100;
 
 	output_params.rate = rate;
 	rate_ = output_params.rate;
@@ -85,7 +85,7 @@ AudioPlayer::AudioPlayer(const char* name) {
 	}
 
 	dlg_info("min latency frames: {}", latencyFrames);
-	latencyFrames = std::max<unsigned>(latencyFrames, 4096u);
+	latencyFrames = std::max<unsigned>(latencyFrames, 2048);
 
 	rv = cubeb_stream_init(cubeb_, &stream_, "tkn::AudioPlayer",
 		NULL, NULL, NULL, &output_params,
@@ -361,9 +361,9 @@ long AudioPlayer::dataCb(void* vbuffer, long nframes) {
 
 	// TODO: buffer and log from another thread!
 	// cubeb already implements that
-	auto dur = Clock::now() - start;
-	dlg_info("Needed {} ms for audio rendering",
-		duration_cast<microseconds>(dur).count() / 1000.f);
+	// auto dur = Clock::now() - start;
+	// dlg_info("Needed {} ms for audio rendering",
+	// 	duration_cast<microseconds>(dur).count() / 1000.f);
 
 	return nframes;
 }

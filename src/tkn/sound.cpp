@@ -6,7 +6,7 @@
 namespace tkn {
 
 // resampling
-void resample(SoundBufferView dst, SoundBufferView src) {
+unsigned resample(SoundBufferView dst, SoundBufferView src) {
 	if(dst.rate == src.rate) {
 		dlg_assert(dst.frameCount == src.frameCount);
 		if(dst.channelCount == src.channelCount) {
@@ -21,23 +21,24 @@ void resample(SoundBufferView dst, SoundBufferView src) {
 			}
 		}
 
-		return;
+		return dst.frameCount;
 	}
 
 	int err {};
 	auto speex = speex_resampler_init(src.channelCount,
 		src.rate, dst.rate, SPEEX_RESAMPLER_QUALITY_DESKTOP, &err);
 	dlg_assert(speex && !err);
-	resample(speex, dst, src);
+	auto ret = resample(speex, dst, src);
 	speex_resampler_destroy(speex);
+	return ret;
 }
 
-int resample(SpeexResamplerState* speex,
+unsigned resample(SpeexResamplerState* speex,
 		SoundBufferView dst, SoundBufferView src) {
 	int err;
 	speex_resampler_set_input_stride(speex, src.channelCount);
 	speex_resampler_set_output_stride(speex, dst.channelCount);
-	int uff = 0;
+	unsigned ret = 0xFFFFFFFFu;
 	for(auto i = 0u; i < dst.channelCount; ++i) {
 		spx_uint32_t in_len = src.frameCount;
 		spx_uint32_t out_len = dst.frameCount;
@@ -52,12 +53,12 @@ int resample(SpeexResamplerState* speex,
 		dlg_assertm(!err, "{}", err);
 		dlg_assertm(in_len == src.frameCount, "{} vs {}",
 			in_len, src.frameCount);
-		dlg_assertm(out_len == dst.frameCount, "{} vs {}",
-			out_len, dst.frameCount);
-		if(out_len < dst.frameCount) uff = 1;
+		dlg_assertm(out_len == dst.frameCount || out_len == dst.frameCount - 1,
+			"{} vs {}", out_len, dst.frameCount);
+		ret = out_len;
 	}
 
-	return uff;
+	return ret;
 }
 
 UniqueSoundBuffer resample(SoundBufferView view, unsigned rate,
@@ -321,17 +322,14 @@ void StreamedVorbisAudio::update() {
 		dst.data = bufCacheU.get(1, dst.frameCount * channels_).data();
 
 		if(speex_) {
-			if(resample(speex_, dst, src)) {
-				dst.frameCount--;
-			}
-		} else {
+			dst.frameCount = resample(speex_, dst, src);
+		} else { // we only "resample" channels
 			resample(dst, src);
 		}
 
 		auto count = dst.channelCount * dst.frameCount;
 		auto written = buffer_.enqueue(dst.data, count);
-		dlg_assertm(written == count && written == cap, "{} {} {}",
-			written, count, cap);
+		dlg_assertm(written == count, "{} {}", written, count);
 	} else {
 		auto count = read * channels_;
 		auto written = buffer_.enqueue(b0, count);

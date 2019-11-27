@@ -10,11 +10,15 @@
 namespace tkn {
 
 IPLAudioFormat stereoFormat();
+IPLAudioFormat ambisonicsFormat();
 
 /// Always outputs interleaved stereo.
 class Audio3D {
 public:
-	Audio3D(unsigned rate);
+	Audio3D(unsigned rate,
+			std::vector<IPLVector3> positions,
+			std::vector<IPLTriangle> tris,
+			std::vector<IPLint32> mats);
 	~Audio3D();
 
 	// all methods only for render thread
@@ -26,9 +30,10 @@ public:
 
 	// detailed
 	void applyDirectEffect(IPLhandle directEffect,
-			unsigned nb, float* in, float* out,
-			const IPLDirectSoundPath& path);
-	void applyHRTF(IPLhandle effect, unsigned nb, float* in, float* out, IPLVector3 dir);
+		unsigned nb, float* in, float* out,
+		const IPLDirectSoundPath& path);
+	void applyHRTF(IPLhandle effect, unsigned nb, float* in, float* out,
+		IPLVector3 dir);
 
 	// TODO: cheaper than hrtf; good for distant sources
 	// void applyPanning(unsigned nb, float* in, float* out, IPLVector3 dir);
@@ -36,8 +41,14 @@ public:
 	// any thread
 	IPLhandle context() const { return context_; }
 	IPLhandle envRenderer() const { return envRenderer_; }
-	IPLhandle binauralRenderer() const { return binaural_.renderer; }
+	IPLhandle binauralRenderer() const { return binauralRenderer_; }
 	IPLhandle environment() const { return env_; }
+	IPLhandle scene() const { return scene_; }
+
+	// render thread
+	IPLVector3 listenerPos() const { return listenerPos_; }
+	IPLVector3 listenerUp() const { return listenerUp_; }
+	IPLVector3 listenerDir() const { return listenerDir_; }
 
 	// main/other threads
 	void updateListener(nytl::Vec3f pos, nytl::Vec3f dir, nytl::Vec3f up) {
@@ -45,18 +56,23 @@ public:
 		updateListener_.enqueue(l);
 	}
 
+protected:
 	static void log(char* msg);
+
+	static void closestHit(const IPLfloat32* origin, const IPLfloat32* direction,
+		const IPLfloat32 minDistance, const IPLfloat32 maxDistance,
+		IPLfloat32* hitDistance, IPLfloat32* hitNormal,
+		IPLMaterial** hitMaterial, IPLvoid* userData);
+	static void anyHit(const IPLfloat32* origin, const IPLfloat32* direction,
+		const IPLfloat32 minDistance, const IPLfloat32 maxDistance,
+		IPLint32* hitExists, IPLvoid* userData);
 
 protected:
 	IPLhandle context_;
 	IPLhandle env_;
 	IPLhandle envRenderer_;
-	// IPLhandle directEffect_;
-
-	struct {
-		IPLhandle renderer {};
-		// IPLhandle effect {};
-	} binaural_;
+	IPLhandle binauralRenderer_;
+	IPLhandle scene_;
 
 	IPLVector3 listenerPos_;
 	IPLVector3 listenerUp_;
@@ -80,14 +96,22 @@ public:
 		sourceInfo_.position = {0.f, 0.f, 0.f};
 		sourceInfo_.ahead = {0.f, 0.f, -1.f};
 		sourceInfo_.up = {0.f, 1.f, 0.f};
+		sourceInfo_.right = {1.f, 0.f, 0.f};
 		sourceInfo_.directivity.dipoleWeight = 0.f;
 
+		IPLerror err;
 		auto format = stereoFormat();
-		iplCreateDirectSoundEffect(audio.envRenderer(), format, format,
+		err = iplCreateDirectSoundEffect(audio.envRenderer(), format, format,
 			&directEffect_);
-
-		iplCreateBinauralEffect(audio.binauralRenderer(), format, format,
+		dlg_assert(!err);
+		err = iplCreateBinauralEffect(audio.binauralRenderer(), format, format,
 			&binauralEffect_);
+		dlg_assert(!err);
+
+		auto aformat = ambisonicsFormat();
+		err = iplCreateConvolutionEffect(audio.envRenderer(), {}, IPL_SIMTYPE_REALTIME,
+			format, aformat, &convolutionEffect_);
+		dlg_assert(!err);
 	}
 
 	Source& inner() { return source_; }
@@ -111,6 +135,15 @@ public:
 
 		// no mixing here, overwrite b0 contents
 		source_.render(nb, b0, false);
+
+		// add output to environment
+		auto format = stereoFormat();
+		IPLint32 bs = AudioPlayer::blockSize;
+		for(auto i = 0u; i < nb; ++i) {
+			IPLAudioBuffer ab {format, bs, b0 + i * bs * 2, nullptr};
+			iplSetDryAudioForConvolutionEffect(convolutionEffect_, sourceInfo_, ab);
+		}
+
 		auto path = audio_->path(sourceInfo_, radius_);
 		audio_->applyDirectEffect(directEffect_, nb, b0, b1, path);
 
@@ -134,11 +167,27 @@ protected:
 	Audio3D* audio_ {};
 
 	IPLSource sourceInfo_ {};
-	float radius_ {0.5f}; // TODO: make variable
+	float radius_ {2.f}; // TODO: make variable
 	tkn::Shared<nytl::Vec3f> updatePos_;
 
 	IPLhandle directEffect_ {};
 	IPLhandle binauralEffect_ {};
+	IPLhandle convolutionEffect_ {};
+};
+
+class ConvolutionAudio : public AudioSource {
+public:
+	// TODO
+	BufCache bufCache;
+
+public:
+	ConvolutionAudio(Audio3D& audio);
+	void render(unsigned nb, float* buf, bool mix) override;
+
+protected:
+	Audio3D* audio_;
+	IPLhandle binauralEffect_ {};
+	int delay_ {0};
 };
 
 } // namespace tkn
