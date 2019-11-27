@@ -85,7 +85,7 @@ AudioPlayer::AudioPlayer(const char* name) {
 	}
 
 	dlg_info("min latency frames: {}", latencyFrames);
-	latencyFrames = std::max<unsigned>(latencyFrames, 2048);
+	latencyFrames = std::max<unsigned>(latencyFrames, 2 * blockSize);
 
 	rv = cubeb_stream_init(cubeb_, &stream_, "tkn::AudioPlayer",
 		NULL, NULL, NULL, &output_params,

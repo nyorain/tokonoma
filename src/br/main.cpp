@@ -57,8 +57,8 @@ public:
 			return false;
 		}
 
-		camera_.perspective.near = 0.01f;
-		camera_.perspective.far = 10.f;
+		camera_.perspective.near = 0.05f;
+		camera_.perspective.far = 25.f;
 
 		// init pipeline
 		auto& dev = vulkanDevice();
@@ -384,22 +384,27 @@ public:
 		// ap.create<tkn::StreamedVorbisAudio>("test48khz.ogg",
 		// 	ap.rate(), ap.channels());
 
-		using Source = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
 		// auto& a1 = ap.create<Source>(*audio_.d3,
 		// 	TKN_BASE_DIR "/assets/punch.ogg", ap.rate(), ap.channels());
 		// a1.position({5.f, 0.f, 0.f});
 		// a1.inner().volume(0.3);
 
-		auto& a2 = ap.create<Source>(*audio_.d3, "test48khz.ogg",
+		// NOTE: avoid conversion if possible.
+		// But make sure to test it once in a while
+		auto src = ap.rate() == 48000 ? "test48khz.ogg" : "test.ogg";
+
+		auto& a2 = ap.create<ASource>(*audio_.d3, src,
+		// auto& a2 = ap.create<ASource>(*audio_.d3, "test48khz.ogg",
 			ap.rate(), ap.channels());
 		a2.position({-5.f, 0.f, 0.f});
+		audio_.source = &a2;
 
 		// auto& a3 = ap.create<Source>(*audio_.d3,
 		// 	"test.ogg", ap.rate(), ap.channels());
 		// a3.position({0.f, 10.f, 0.f});
 		// a3.inner().volume(1.0);
 
-		auto& conv = ap.create<tkn::ConvolutionAudio>(*audio_.d3);
+		ap.create<tkn::ConvolutionAudio>(*audio_.d3);
 
 		ap.start();
 		return true;
@@ -531,7 +536,7 @@ public:
 			auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
 			auto right = nytl::normalized(nytl::cross(c.dir, yUp));
 			auto up = nytl::normalized(nytl::cross(right, c.dir));
-			audio_.d3->updateListener(c.pos, c.dir, up);
+			audio_.d3->updateListener(c.pos, c.dir, yUp);
 		}
 
 		// we currently always redraw to see consistent fps
@@ -552,6 +557,12 @@ public:
 		}
 
 		switch(ev.keycode) {
+			case ny::Keycode::i: // toggle indirect audio
+				audio_.d3->toggleIndirect();
+				return true;
+			case ny::Keycode::o: // move audio source here
+				audio_.source->position(camera_.pos);
+				return true;
 			case ny::Keycode::m: // move light here
 				moveLight_ = false;
 				dirLight_.data.dir = -camera_.pos;
@@ -787,8 +798,10 @@ protected:
 
 	vpp::SubBuffer boxIndices_;
 
+	using ASource = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
 	struct {
 		AudioPlayer player;
+		ASource* source;
 		std::optional<tkn::Audio3D> d3;
 	} audio_;
 };

@@ -45,10 +45,18 @@ public:
 	IPLhandle environment() const { return env_; }
 	IPLhandle scene() const { return scene_; }
 
+	void toggleIndirect() {
+		indirect_ ^= 1; // toggle
+		flushIndirect_ = 1;
+	}
+
 	// render thread
 	IPLVector3 listenerPos() const { return listenerPos_; }
 	IPLVector3 listenerUp() const { return listenerUp_; }
 	IPLVector3 listenerDir() const { return listenerDir_; }
+
+	bool indirect() const { return indirect_.load(); }
+	bool flushIndirect() const { return flushIndirect_.load() == 1; }
 
 	// main/other threads
 	void updateListener(nytl::Vec3f pos, nytl::Vec3f dir, nytl::Vec3f up) {
@@ -77,6 +85,9 @@ protected:
 	IPLVector3 listenerPos_;
 	IPLVector3 listenerUp_;
 	IPLVector3 listenerDir_;
+
+	std::atomic<int> indirect_ {0};
+	std::atomic<int> flushIndirect_ {0};
 
 	tkn::Shared<std::array<nytl::Vec3f, 3>> updateListener_;
 };
@@ -137,12 +148,21 @@ public:
 		source_.render(nb, b0, false);
 
 		// add output to environment
-		auto format = stereoFormat();
-		IPLint32 bs = AudioPlayer::blockSize;
-		for(auto i = 0u; i < nb; ++i) {
-			IPLAudioBuffer ab {format, bs, b0 + i * bs * 2, nullptr};
-			iplSetDryAudioForConvolutionEffect(convolutionEffect_, sourceInfo_, ab);
+		if(audio_->flushIndirect()) {
+			iplFlushConvolutionEffect(convolutionEffect_);
 		}
+
+		if(audio_->indirect()) {
+			auto format = stereoFormat();
+			IPLint32 bs = AudioPlayer::blockSize;
+			for(auto i = 0u; i < nb; ++i) {
+				IPLAudioBuffer ab {format, bs, b0 + i * bs * 2, nullptr};
+				iplSetDryAudioForConvolutionEffect(convolutionEffect_, sourceInfo_, ab);
+			}
+		}
+
+		// for testing: no direct audio at all
+		// return;
 
 		auto path = audio_->path(sourceInfo_, radius_);
 		audio_->applyDirectEffect(directEffect_, nb, b0, b1, path);
@@ -167,7 +187,7 @@ protected:
 	Audio3D* audio_ {};
 
 	IPLSource sourceInfo_ {};
-	float radius_ {2.f}; // TODO: make variable
+	float radius_ {0.25f}; // TODO: make variable
 	tkn::Shared<nytl::Vec3f> updatePos_;
 
 	IPLhandle directEffect_ {};
@@ -179,6 +199,9 @@ class ConvolutionAudio : public AudioSource {
 public:
 	// TODO
 	BufCache bufCache;
+
+	// TODO: add that to AudioSource3D as well
+	static constexpr auto useHRTF = true;
 
 public:
 	ConvolutionAudio(Audio3D& audio);
