@@ -12,7 +12,7 @@ layout(location = 5) in flat uint inModelID;
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 _proj;
-	vec3 viewPos; // camera position. For specular light
+	vec3 viewPos;
 	float near, far;
 } scene;
 
@@ -40,8 +40,5 @@ void main() {
 	if(albedo.a < material.alphaCutoff) {
 		discard;
 	}
-
-	// lienar depth
-	// gl_FragDepth = depthtoz(gl_FragCoord.z, scene.near, scene.far);
 }
 

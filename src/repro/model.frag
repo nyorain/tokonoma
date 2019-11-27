@@ -5,6 +5,9 @@
 #include "scene.glsl"
 #include "scene.frag.glsl"
 
+const float snapSpeed = 5; // in world units per second
+const float snapLength = 20; // valid how long, in seconds
+
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord0;
@@ -12,12 +15,18 @@ layout(location = 3) in vec2 inTexCoord1;
 layout(location = 4) in flat uint inMatID;
 layout(location = 5) in flat uint inModelID;
 
-layout(location = 0) out vec4 outCol;
+layout(location = 0) out float outCol;
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 _proj;
-	vec3 viewPos; // camera position. For specular light
+	vec3 camPos;
+	float time;
+
+	mat4 snapVP;
+	float snapTime;
+
 	float near, far;
+	float exposure;
 } scene;
 
 // material
@@ -28,47 +37,20 @@ layout(set = 1, binding = 2, std430) buffer Materials {
 layout(set = 1, binding = 3) uniform texture2D textures[imageCount];
 layout(set = 1, binding = 4) uniform sampler samplers[samplerCount];
 
-// this simple forward renderer only supports one point and one
-// dir light (optionally)
-// directional light
-layout(set = 2, binding = 0, row_major) uniform DirLightBuf {
-	DirLight dirLight;
-};
-
-layout(set = 2, binding = 1) uniform sampler2DArrayShadow shadowMap;
-
-// point light
-layout(set = 3, binding = 0, row_major) uniform PointLightBuf {
-	PointLight pointLight;
-};
-layout(set = 3, binding = 1) uniform samplerCubeShadow shadowCube;
-
-layout(set = 4, binding = 0) uniform samplerCube envMap;
-layout(set = 4, binding = 1) uniform sampler2D brdfLut;
-layout(set = 4, binding = 2) uniform samplerCube irradianceMap;
-
-layout(set = 4, binding = 3) uniform Params {
-	uint mode;
-	float aoFac;
-	uint envLods;
-} params;
-
-const uint modeDirLight = (1u << 0);
-const uint modePointLight = (1u << 1);
-const uint modeSpecularIBL = (1u << 2);
-const uint modeIrradiance = (1u << 3);
+layout(set = 2, binding = 0) uniform sampler2D snapshotTex;
 
 vec4 readTex(MaterialTex tex) {
 	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
 	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
 }
 
+float mrandom(vec4 seed4) {
+	float dot_product = dot(seed4, vec4(12.9898,78.233,45.164,94.673));
+	return fract(sin(dot_product) * 43758.5453);
+}
+
 void main() {
 	Material material = materials[inMatID];
-
-	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
-		discard;
-	}
 
 	vec4 albedo = material.albedoFac * readTex(material.albedo);
 	if(albedo.a < material.alphaCutoff) {
@@ -83,87 +65,69 @@ void main() {
 		normal = tbnNormal(normal, inPos, tuv, 2.0 * n.xyz - 1.0);
 	}
 
-	if(!gl_FrontFacing) { // flip normal, see gltf spec
-		normal *= -1;
+	vec3 snapuv = sceneMap(scene.snapVP, inPos);
+	if(snapuv.xy != clamp(snapuv.xy, 0, 1)) {
+		discard;
 	}
 
-	vec3 color = vec3(0.0);
+	const vec2 poissonDisk[16] = vec2[]( 
+	   vec2( -0.94201624, -0.39906216 ), 
+	   vec2( 0.94558609, -0.76890725 ), 
+	   vec2( -0.094184101, -0.92938870 ), 
+	   vec2( 0.34495938, 0.29387760 ), 
+	   vec2( -0.91588581, 0.45771432 ), 
+	   vec2( -0.81544232, -0.87912464 ), 
+	   vec2( -0.38277543, 0.27676845 ), 
+	   vec2( 0.97484398, 0.75648379 ), 
+	   vec2( 0.44323325, -0.97511554 ), 
+	   vec2( 0.53742981, -0.47373420 ), 
+	   vec2( -0.26496911, -0.41893023 ), 
+	   vec2( 0.79197514, 0.19090188 ), 
+	   vec2( -0.24188840, 0.99706507 ), 
+	   vec2( -0.81409955, 0.91437590 ), 
+	   vec2( 0.19984126, 0.78641367 ), 
+	   vec2( 0.14383161, -0.14100790 ));
 
-	vec3 viewDir = normalize(inPos - scene.viewPos);
-	vec4 mr = readTex(material.metalRough);
-	float metalness = material.metallicFac * mr.b;
-	float roughness = material.roughnessFac * mr.g;
-	if(bool(params.mode & modeDirLight)) {
-		float between;
-		float linearz = depthtoz(gl_FragCoord.z, scene.near, scene.far);
-		uint index = getCascadeIndex(dirLight, linearz, between);
-
-		bool pcf = bool(dirLight.flags & lightPcf);
-		float shadow = dirShadowIndex(dirLight, shadowMap, inPos, index, int(pcf));
-
-		vec3 ldir = normalize(dirLight.dir);
-		vec3 light = cookTorrance(normal, -ldir, -viewDir, roughness,
-			metalness, albedo.xyz);
-		light *= shadow;
-		color.rgb += dirLight.color * light;
+	float fac = 0.0;
+	int count = 8;
+	for(int i = 0; i < count; i++) {
+		// we could make the length dependent on the
+		// distance behind the first sample or something... (i.e.
+		// make the shadow smoother when further away from
+		// shadow caster).
+		float len = 4 * mrandom(vec4(gl_FragCoord.xyy + 100 * inPos.xyz, i));
+		float rid = mrandom(vec4(0.1 * gl_FragCoord.yxy - 32 * inPos.yzx, i));
+		int id = int(16.0 * rid) % 16;
+		vec2 off = len * poissonDisk[id] / textureSize(snapshotTex, 0).xy;
+		// float z = texture(snapshotTex, snap.xy + off).w;
+		// float z = depthtoz(texture(snapshotTex, snap.xy + off).r, ubo.near, ubo.far);
+		float z = texture(snapshotTex, snapuv.xy + off).r;
+		float f = snapuv.z < z ? 1.f : 0.f;
+		fac += f / count;
 	}
 
-	if(bool(params.mode & modePointLight)) {
-		vec3 ldir = inPos - pointLight.pos;
-		float lightDist = length(ldir);
-		if(lightDist < pointLight.radius) {
-			ldir /= lightDist;	
-			// TODO(perf): we could probably re-use some of the values
-			// from the directional light shading, just do them once
-			vec3 light = cookTorrance(normal, -ldir, -viewDir, roughness,
-				metalness, albedo.xyz);
-			light *= defaultAttenuation(lightDist, pointLight.radius);
-			// light *= attenuation(lightDist, pointLight.attenuation);
-			if(bool(pointLight.flags & lightPcf)) {
-				// TODO: make radius parameters configurable,
-				float viewDistance = length(scene.viewPos - inPos);
-				float radius = (1.0 + (viewDistance / 30.0)) / 100.0;  
-				light *= pointShadowSmooth(shadowCube, pointLight.pos,
-					pointLight.radius, inPos, radius);
-			} else {
-				light *= pointShadow(shadowCube, pointLight.pos,
-					pointLight.radius, inPos);
-			}
-
-			color.rgb += pointLight.color * light;
-		}
+	if(fac == 0.0) {
+		discard;
 	}
 
-	vec3 f0 = vec3(0.04);
-	f0 = mix(f0, albedo.rgb, metalness);
-	float ambientFac = params.aoFac * readTex(material.occlusion).r;
+	float dt = scene.time - scene.snapTime;
+	float result = distance(scene.camPos, inPos);
 
-	// NOTE: when specular IBL isn't enabled we could put all the
-	// energy into diffuse IBL or the other way around. Would look
-	// somewhat weird though probably
-	float cosTheta = clamp(dot(normal, -viewDir), 0.0, 1);
-	vec3 kS = fresnelSchlickRoughness(cosTheta, f0, roughness);
-	// vec3 kS = vec3(0.5);
-	vec3 kD = 1.0 - kS;
-	kD *= 1.0 - metalness;
-	if(bool(params.mode & modeSpecularIBL)) {
-		vec3 R = reflect(viewDir, normal);
-		float lod = roughness * params.envLods;
-		vec3 filtered = textureLod(envMap, R, lod).rgb;
-		vec2 brdfParams = vec2(cosTheta, roughness);
-		vec2 brdf = texture(brdfLut, brdfParams).rg;
-		vec3 specular = filtered * (kS * brdf.x + brdf.y);
-		color.rgb += ambientFac * specular;
+	if(dt * snapSpeed < result) {
+		discard;
 	}
 
-	if(bool(params.mode & modeIrradiance)) {
-		vec3 irradiance = texture(irradianceMap, normal).rgb;
-		vec3 diffuse = kD * irradiance * albedo.rgb;
-		color.rgb += ambientFac * diffuse;
-	}
+	float low = result / snapSpeed;
+	float high = result / snapSpeed + snapLength;
+	fac *= 1 - smoothstep(low, high, dt);
+	// float dv = clamp(dot(normalize(scene.camPos - inPos), normalize(inNormal)), 0, 1);
+	// float dv = smoothstep(-1, 1, dot(normalize(scene.camPos - inPos), normalize(inNormal)));
+	float dv = smoothstep(-1, 1, dot(normalize(scene.camPos - inPos), normal));
 
-	// store linear depth in alpha channel
-	float z = depthtoz(gl_FragCoord.z, scene.near, scene.far);
-	// gl_FragDepth = z;
-	outCol = vec4(color, z);
+	float zcurrent = distance(inPos, scene.camPos);
+	float zsnap = depthtoz(snapuv.z, scene.near, scene.far);
+	// outCol = fac * exp(-scene.exposure * (0.1 + zcurrent) * zsnap);
+	// outCol = fac * exp(-scene.exposure * pow(zcurrent, 2) * zsnap);
+	// outCol = fac * (1.5 - dv) * exp(-scene.exposure * zcurrent * zsnap);
+	outCol = fac * (0.1 + dv) * exp(-scene.exposure * zcurrent * zsnap);
 }
