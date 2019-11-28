@@ -243,5 +243,6 @@ protected:
 // Tries to parse the given string as path or filename of a gltf/gltb file
 // and parse it. On success, also returns the base path as second parameter
 std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam);
+std::optional<gltf::Model> loadGltf(nytl::Span<const std::byte> buffer);
 
 } // namespace tkn

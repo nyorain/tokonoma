@@ -4,7 +4,9 @@
 # $SDK: full path of android sdk root
 # $BT: path to sdk build tools folder
 # $PLATFORM: path to sdk android platform folder to use
-arch=arm64-v8a
+
+# arch=arm64-v8a
+arch=armeabi-v7a
 
 if [ $# -lt 2 ]; then
 	echo "Usage: build.sh <absolute module path> <output path>"

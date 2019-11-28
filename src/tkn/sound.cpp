@@ -262,6 +262,28 @@ StreamedVorbisAudio::StreamedVorbisAudio(nytl::StringParam file, unsigned rate,
 	}
 }
 
+StreamedVorbisAudio::StreamedVorbisAudio(nytl::Span<const std::byte> buf,
+		unsigned rate, unsigned channels) {
+	int error = 0;
+	auto data = (const unsigned char*) buf.data();
+	vorbis_ = stb_vorbis_open_memory(data, buf.size(), &error, nullptr);
+	if(!vorbis_) {
+		auto msg = std::string("StreamVorbisAudio: failed to load from memory");
+		throw std::runtime_error(msg);
+	}
+
+	rate_ = rate;
+	channels_ = channels;
+
+	auto info = stb_vorbis_get_info(vorbis_);
+	if(info.sample_rate != rate_) {
+		int err {};
+		speex_ = speex_resampler_init(info.channels,
+			info.sample_rate, rate_, SPEEX_RESAMPLER_QUALITY_DESKTOP, &err);
+		dlg_assert(speex_ && !err);
+	}
+}
+
 StreamedVorbisAudio::~StreamedVorbisAudio() {
 	if(speex_) {
 		speex_resampler_destroy(speex_);

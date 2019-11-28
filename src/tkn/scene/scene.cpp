@@ -1237,7 +1237,6 @@ const vk::PipelineVertexInputStateCreateInfo& Scene::vertexInfo() {
 
 // util
 std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam at) {
-
 	// Load Model
 	// fallback
 	std::string path = "../assets/gltf/";
@@ -1286,10 +1285,10 @@ std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam a
 	gltf::Model model;
 	std::string err;
 	std::string warn;
+	bool res;
 
 	auto full = std::string(path);
 	full += file;
-	bool res;
 	if(binary) {
 		res = loader.LoadBinaryFromFile(&model, &err, &warn, full.c_str());
 	} else {
@@ -1326,6 +1325,46 @@ std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam a
 	}
 
 	return {model, path};
+}
+
+std::optional<gltf::Model> loadGltf(nytl::Span<const std::byte> buffer) {
+	gltf::TinyGLTF loader;
+	gltf::Model model;
+	std::string err, warn;
+
+	auto bytes = (const unsigned char*) buffer.data();
+	auto res = loader.LoadBinaryFromMemory(&model, &err, &warn, bytes, buffer.size());
+
+	// error, warnings
+	auto pos = 0u;
+	auto end = warn.npos;
+	while((end = warn.find_first_of('\n', pos)) != warn.npos) {
+		auto d = warn.data() + pos;
+		dlg_warn("  {}", std::string_view{d, end - pos});
+		pos = end + 1;
+	}
+
+	pos = 0u;
+	while((end = err.find_first_of('\n', pos)) != err.npos) {
+		auto d = err.data() + pos;
+		dlg_error("  {}", std::string_view{d, end - pos});
+		pos = end + 1;
+	}
+
+	if(!res) {
+		dlg_fatal(">> Failed to parse model");
+		return {};
+	}
+
+	dlg_info(">> Parsing Succesful...");
+
+	// traverse nodes
+	if(model.scenes.empty()) {
+		dlg_fatal(">> Model has no scenes");
+		return {};
+	}
+
+	return {model};
 }
 
 // Sampler

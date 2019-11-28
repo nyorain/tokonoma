@@ -1,0 +1,17 @@
+[binaries]
+name = 'android'
+c = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi24-clang'
+cpp = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi24-clang++'
+ar = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/arm-linux-androideabi-ar'
+ld = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/arm-linux-androideabi-ld'
+strip = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/arm-linux-androideabi-strip'
+
+[properties]
+root = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'arm'
+cpu = 'armeabi' # Not sure if correct.
+endian = 'big' # not sure
+

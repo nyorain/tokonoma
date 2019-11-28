@@ -288,7 +288,8 @@ long AudioPlayer::dataCb(void* vbuffer, long nframes) {
 	// if so, we move it to this thread, so it won't be deleted.
 	// We will check later if it was changed in the meantime
 	AudioEffect* effect = effect_.load();
-	while(!std::atomic_compare_exchange_weak(&effect_, &effect, nullptr));
+	AudioEffect* en = nullptr;
+	while(!std::atomic_compare_exchange_weak(&effect_, &effect, en));
 
 	// first, copy the samples we already have
 	if(left_ > nframes) { // may be enough in certain cases

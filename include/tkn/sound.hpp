@@ -3,6 +3,7 @@
 #include <tkn/audio.hpp>
 #include <tkn/ringbuffer.hpp>
 #include <nytl/stringParam.hpp>
+#include <nytl/span.hpp>
 #include <tml.h>
 #include <tsf.h>
 
@@ -91,8 +92,16 @@ public:
 	BufCache bufCacheU;
 
 public:
-	StreamedVorbisAudio(nytl::StringParam file, unsigned rate,
-		unsigned channels);
+	/// Opens a vorbis file for streaming.
+	/// - rate: frame rate in khz for output
+	/// - nc: number of channels for output
+	StreamedVorbisAudio(nytl::StringParam file, unsigned rate, unsigned nc);
+
+	/// Opens an in-memory buffer for streaming.
+	/// The buffer must remaing valid for the lifetime of this object.
+	/// - rate: frame rate in khz for output
+	/// - nc: number of channels for output
+	StreamedVorbisAudio(nytl::Span<const std::byte>, unsigned rate, unsigned nc);
 	~StreamedVorbisAudio();
 
 	void update() override;

@@ -6,6 +6,7 @@
 #include <thread>
 #include <mutex>
 #include <functional>
+#include <array>
 
 // cubeb fwd decls
 typedef struct cubeb cubeb;

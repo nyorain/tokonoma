@@ -4,7 +4,9 @@
 # $SDK: full path of android sdk root
 # $BT: path to sdk build tools folder
 # $PLATFORM: path to sdk android platform folder to use
-arch=arm64-v8a
+
+# arch=arm64-v8a
+arch=armeabi-v7a
 
 if [ $# -lt 3 ]; then
 	echo "Usage: setup.sh <AndroidManifest.xml.in path> <output path> <font file>"
@@ -23,7 +25,7 @@ cp $font assets/font.ttf
 
 # the first argument must be the full path of AndroidManifest.xml.in
 # we copy it to the build dir to allow using it in build.sh
-cp $1 .
+cp $1 ./AndroidManifest.xml.in
 
 # link libraries to the lib/$arch dir since they
 # have to be there when packaged with aapt
@@ -32,6 +34,7 @@ ln -sf \
 	lib/$arch
 
 d="$(pwd)/.."
+b="$d/../.."
 ln -sf \
 	$d/src/tkn/libtinygltf.so \
 	$d/src/tkn/libtkn.so \
@@ -43,6 +46,9 @@ ln -sf \
 	$d/subprojects/libpng-1.6.37/libpng16.so.16 \
 	$d/subprojects/vkpp/libvkpp.so \
 	$d/subprojects/vui/src/vui/libvui.so \
+	$d/subprojects/cubeb/libcubeb.so \
+	$d/subprojects/b2d/Box2D/libBox2D.so \
+	$b/subprojects/steamaudio_api/lib/Android/libphonon.so \
 	lib/$arch
 
 # generate dummy apk
@@ -70,4 +76,9 @@ $BT/aapt add $apk \
 	lib/$arch/libpng16.so.16 \
 	lib/$arch/libvkpp.so \
 	lib/$arch/libvui.so \
-	assets/font.ttf
+	lib/$arch/libBox2D.so \
+	lib/$arch/libcubeb.so \
+	lib/$arch/libphonon.so \
+	assets/font.ttf \
+	assets/test.ogg \
+	assets/sponza.glb

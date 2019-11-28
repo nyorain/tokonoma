@@ -11,6 +11,6 @@ root = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot'
 
 [host_machine]
 system = 'linux'
-cpu_family = 'arm'
+cpu_family = 'aarch64'
 cpu = 'armv8' # Not sure if correct.
 endian = 'big' # not sure
