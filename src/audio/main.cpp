@@ -66,11 +66,11 @@ int main() {
 	}
 	*/
 
-	tkn::Buffers bufs;
+	// tkn::Buffers bufs;
 	// auto& a = ap.create<tkn::StreamedResampler<tkn::MP3Decoder>>(bufs,
 	// 	ap.rate(), ap.channels(), "test.mp3");
-	auto& a = ap.create<tkn::StreamedResampler<tkn::VorbisDecoder>>(bufs,
-		ap.rate(), ap.channels(), "test48khz.ogg");
+	// auto& a = ap.create<tkn::StreamedResampler<tkn::VorbisDecoder>>(bufs,
+		// ap.rate(), ap.channels(), "test48khz.ogg");
 	// auto& a = ap.create<tkn::StreamedMP3Audio>("test.mp3");
 
 	ap.start();

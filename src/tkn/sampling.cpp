@@ -275,7 +275,7 @@ UniqueSoundBuffer resample(SoundBufferView view, unsigned rate, unsigned nc) {
 // writing
 void writeSamples(unsigned nf, float* buf, RingBuffer<float>& rb,
 		bool mix, unsigned srcChannels, unsigned dstChannels,
-		Buffers::Buf& tmpbuf, float volume) {
+		BufCache& tmpbuf, float volume) {
 	dlg_assert(srcChannels <= dstChannels);
 	auto dns = dstChannels * nf;
 	if(volume <= 0.f) {

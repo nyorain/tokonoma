@@ -19,6 +19,7 @@ static const char* name(IPLerror err) {
 	} \
 } while(0)
 
+static constexpr auto ambisonicsOrder = 1u;
 IPLAudioFormat stereoFormat() {
 	IPLAudioFormat format {};
 	format.channelLayoutType = IPL_CHANNELLAYOUTTYPE_SPEAKERS;
@@ -30,7 +31,7 @@ IPLAudioFormat stereoFormat() {
 IPLAudioFormat ambisonicsFormat() {
 	IPLAudioFormat format {};
 	format.channelLayoutType = IPL_CHANNELLAYOUTTYPE_AMBISONICS;
-	format.ambisonicsOrder = 1;
+	format.ambisonicsOrder = ambisonicsOrder;
 	format.ambisonicsOrdering = IPL_AMBISONICSORDERING_ACN;
 	format.ambisonicsNormalization = IPL_AMBISONICSNORMALIZATION_N3D;
 	format.channelOrder = IPL_CHANNELORDER_INTERLEAVED;
@@ -60,10 +61,10 @@ Audio3D::Audio3D(unsigned frameRate,
 	// ssettings.numThreads = 3;
 	// ssettings.irDuration = 1.5;
 
-	ssettings.ambisonicsOrder = 1;
+	ssettings.ambisonicsOrder = ambisonicsOrder;
 	ssettings.numRays = 8 * 4096;
 	ssettings.numDiffuseSamples = 1024;
-	ssettings.numBounces = 8;
+	ssettings.numBounces = 6;
 	ssettings.numThreads = 6;
 	ssettings.irDuration = 2;
 
@@ -113,21 +114,6 @@ void Audio3D::log(char* msg) {
 	auto nl = std::strchr(msg, '\n');
 	auto len = nl ? nl - msg : std::strlen(msg);
 	dlg_infot(("phonon"), "phonon: {}", std::string_view(msg, len));
-}
-
-void Audio3D::closestHit(const IPLfloat32* origin, const IPLfloat32* direction,
-		const IPLfloat32 minDistance, const IPLfloat32 maxDistance,
-		IPLfloat32* hitDistance, IPLfloat32* hitNormal,
-		IPLMaterial** hitMaterial, IPLvoid* userData) {
-	dlg_info("closestHit");
-	*hitDistance = -1.f;
-}
-
-void Audio3D::anyHit(const IPLfloat32* origin, const IPLfloat32* direction,
-		const IPLfloat32 minDistance, const IPLfloat32 maxDistance,
-		IPLint32* hitExists, IPLvoid* userData) {
-	dlg_info("anyHit");
-	*hitExists = 0;
 }
 
 // all methods only for render thread
@@ -187,7 +173,8 @@ void Audio3D::applyHRTF(IPLhandle effect, unsigned nb, float* in, float* out,
 }
 
 // ConvolutionAudio
-ConvolutionAudio::ConvolutionAudio(Audio3D& audio) : audio_(&audio) {
+ConvolutionAudio::ConvolutionAudio(Audio3D& audio, BufCaches bc) :
+		audio_(&audio), bufs_(bc) {
 	if(useHRTF) {
 		iplCheck(iplCreateAmbisonicsBinauralEffect(audio.binauralRenderer(),
 			ambisonicsFormat(), stereoFormat(), &binauralEffect_));
@@ -216,8 +203,8 @@ void ConvolutionAudio::render(unsigned nb, float* buf, bool mix) {
 
 	if(mix) {
 		// No idea what is actually needed tbh
-		auto b0 = bufCache.get(0, 64 * bs).data();
-		auto b1 = bufCache.get(1, 2 * bs).data();
+		auto b0 = bufs_.render.get<0>(64 * bs).data();
+		auto b1 = bufs_.render.get<1>(2 * bs).data();
 
 		IPLAudioBuffer ab {ambisonicsFormat(), bs, b0, nullptr};
 		IPLAudioBuffer ab2 {stereoFormat(), bs, b1, nullptr};
@@ -241,7 +228,7 @@ void ConvolutionAudio::render(unsigned nb, float* buf, bool mix) {
 			}
 
 			for(auto j = 0; j < 2 * bs; ++j) {
-				buf[j] += b1[j];
+				buf[j] += factor * b1[j];
 			}
 			buf += 2 * bs;
 		}

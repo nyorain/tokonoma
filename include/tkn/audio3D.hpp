@@ -15,6 +15,7 @@ IPLAudioFormat ambisonicsFormat();
 /// Always outputs interleaved stereo.
 class Audio3D {
 public:
+	// TODO: move mesh construction outside
 	Audio3D(unsigned rate,
 			std::vector<IPLVector3> positions,
 			std::vector<IPLTriangle> tris,
@@ -25,6 +26,7 @@ public:
 	IPLDirectSoundPath path(const IPLSource& source, float radius) const;
 	void update();
 
+	// TODO: they probably all shouldn't be here at all
 	// TODO: high level interface applying everything
 	// void process(unsigned nb, const IPLSource& source, float* buf);
 
@@ -67,14 +69,6 @@ public:
 protected:
 	static void log(char* msg);
 
-	static void closestHit(const IPLfloat32* origin, const IPLfloat32* direction,
-		const IPLfloat32 minDistance, const IPLfloat32 maxDistance,
-		IPLfloat32* hitDistance, IPLfloat32* hitNormal,
-		IPLMaterial** hitMaterial, IPLvoid* userData);
-	static void anyHit(const IPLfloat32* origin, const IPLfloat32* direction,
-		const IPLfloat32 minDistance, const IPLfloat32 maxDistance,
-		IPLint32* hitExists, IPLvoid* userData);
-
 protected:
 	IPLhandle context_;
 	IPLhandle env_;
@@ -95,9 +89,6 @@ protected:
 template<typename Source>
 class AudioSource3D : public tkn::AudioSource {
 public:
-	// TODO
-	BufCache bufCache;
-
 	std::atomic<bool> direct {true};
 	std::atomic<bool> indirect {true};
 
@@ -105,8 +96,8 @@ public:
 	/// The source must be set up with the same channel count
 	/// and sampling rate as the Audio3D object.
 	template<typename... Args>
-	AudioSource3D(Audio3D& audio, Args&&... args) :
-			source_(std::forward<Args>(args)...), audio_(&audio) {
+	AudioSource3D(Audio3D& audio, BufCaches bc, Args&&... args) :
+			source_(std::forward<Args>(args)...), audio_(&audio), bufs_(bc) {
 		sourceInfo_.position = {0.f, 0.f, 0.f};
 		sourceInfo_.ahead = {0.f, 0.f, -1.f};
 		sourceInfo_.up = {0.f, 1.f, 0.f};
@@ -144,8 +135,8 @@ public:
 		}
 
 		auto ns = nb * tkn::AudioPlayer::blockSize * 2;
-		auto* b0 = bufCache.get(0, ns).data();
-		auto* b1 = bufCache.get(1, ns).data();
+		auto* b0 = bufs_.render.get<0>(ns).data();
+		auto* b1 = bufs_.render.get<1>(ns).data();
 
 		memset(b0, 0x0, ns * sizeof(float));
 		memset(b1, 0x0, ns * sizeof(float));
@@ -206,24 +197,24 @@ protected:
 	IPLhandle directEffect_ {};
 	IPLhandle binauralEffect_ {};
 	IPLhandle convolutionEffect_ {};
+	BufCaches bufs_;
 };
 
 class ConvolutionAudio : public AudioSource {
 public:
-	// TODO
-	BufCache bufCache;
-
 	// TODO: add that to AudioSource3D as well
 	static constexpr auto useHRTF = true;
+	static constexpr float factor = 1.f;
 
 public:
-	ConvolutionAudio(Audio3D& audio);
+	ConvolutionAudio(Audio3D& audio, BufCaches bc);
 	void render(unsigned nb, float* buf, bool mix) override;
 
 protected:
 	Audio3D* audio_;
 	IPLhandle binauralEffect_ {};
 	int delay_ {0};
+	BufCaches bufs_;
 };
 
 } // namespace tkn

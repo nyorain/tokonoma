@@ -15,7 +15,7 @@ namespace tkn {
 // Will apply the given 'volume' and use 'tmpbuf' for temporary buffers.
 void writeSamples(unsigned nf, float* buf, RingBuffer<float>& rb,
 	bool mix, unsigned srcChannels, unsigned dstChannels,
-	Buffers::Buf& tmpbuf, float volume);
+	BufCache& tmpbuf, float volume);
 
 /// Downmixing works in place.
 /// Template only implemented for supported conversions.
@@ -65,6 +65,8 @@ unsigned resample(SpeexResamplerState*, SoundBufferView dst, SoundBufferView src
 // - nc: destination number of channels
 UniqueSoundBuffer resample(SoundBufferView, unsigned rate, unsigned nc);
 
+// Wraps an object of type 'T' into a streamed AudioSource.
+// Will resample the audio as needed.
 // Expects T with the following public interface:
 // - int get(float* buf, unsigned nf)
 //   Reads at max 'nf' frames into buf.
@@ -76,19 +78,19 @@ UniqueSoundBuffer resample(SoundBufferView, unsigned rate, unsigned nc);
 // - unsigned rate() const
 //   Returns the sampling rate in Hz. Must not change.
 template<typename T>
-class StreamedResampler : public AudioSource {
+class Streamed : public AudioSource {
 public:
-	/// - bufs: The buffer cache to use during rendering/updating
-	/// - rate: The rate in hz this source should output. If it doesn't
+	/// - bc: The buffer cache to use during rendering/updating
+	/// - hz: The rate in hz this source should output. If it doesn't
 	///   match the rate of the inner object, it will be resampled.
 	/// - nc: The number of channels this source should output. If it doesn't
 	///   match the number of channels the inner object outputs, the
 	///   audio will be remixed.
 	/// - args: The arguments to forward to the inner object.
 	template<typename... Args>
-	StreamedResampler(Buffers& bufs, unsigned rate, unsigned nc, Args&&... args) :
-			inner_(std::forward<Args>(args)...), bufs_(bufs),
-			rate_(rate), channels_(nc) {
+	Streamed(BufCaches bc, unsigned hz, unsigned nc, Args&&... args) :
+			inner_(std::forward<Args>(args)...), bufs_(bc),
+			rate_(hz), channels_(nc) {
 		if(inner_.rate() != rate_) {
 			int err {};
 			speex_ = speex_resampler_init(inner_.channels(),
@@ -98,11 +100,11 @@ public:
 	}
 
 	template<typename... Args>
-	StreamedResampler(tkn::AudioPlayer& ap, Args&&... args) :
-		StreamedResampler(ap.bufferCache(), ap.rate(), ap.channels(),
+	Streamed(tkn::AudioPlayer& ap, Args&&... args) :
+		Streamed(ap.bufCaches(), ap.rate(), ap.channels(),
 			std::forward<Args>(args)...) {}
 
-	~StreamedResampler() {
+	~Streamed() {
 		if(speex_) {
 			speex_resampler_destroy(speex_);
 		}
@@ -188,7 +190,7 @@ private:
 	unsigned rate_ {};
 	unsigned channels_ {};
 	std::atomic<float> volume_ {1.f};
-	Buffers bufs_;
+	BufCaches bufs_;
 	SpeexResamplerState* speex_ {};
 
 	static constexpr auto bufSize = 48000 * 2;
@@ -196,7 +198,7 @@ private:
 	tkn::RingBuffer<float> buffer_{bufSize};
 };
 
-// using StreamedVorbisAudio = tkn::StreamedResampler<tkn::VorbisDecoder>;
-// using StreamedMP3Audio = tkn::StreamedResampler<tkn::MP3Decoder>;
+using StreamedVorbisAudio = tkn::Streamed<tkn::VorbisDecoder>;
+using StreamedMP3Audio = tkn::Streamed<tkn::MP3Decoder>;
 
 } // namespace tkn

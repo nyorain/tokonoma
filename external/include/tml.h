@@ -139,6 +139,12 @@ enum TMLController
 	TML_POLY_ON
 };
 
+#if defined(__GNUC__)
+#define TML_UNION_EXT __extension__
+#else
+#define TML_UNION_EXT
+#endif
+
 // A single MIDI message linked to the next message in time
 typedef struct tml_message
 {
@@ -155,10 +161,13 @@ typedef struct tml_message
 	// - program for TML_PROGRAM_CHANGE messages
 	// - channel_pressure for TML_CHANNEL_PRESSURE messages
 	// - pitch_bend for TML_PITCH_BEND messages
-	union
-	{
-		struct { union { char key, control, program, channel_pressure; }; union { char velocity, key_pressure, control_value; }; };
-		struct { unsigned short pitch_bend; };
+	TML_UNION_EXT union {
+		TML_UNION_EXT struct {
+			union { char key, control, program, channel_pressure; };
+			union { char velocity, key_pressure, control_value; };
+		};
+
+		unsigned short pitch_bend;
 	};
 
 	// The pointer to the next message in time following this event

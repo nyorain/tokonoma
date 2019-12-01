@@ -7,6 +7,7 @@
 #include <mutex>
 #include <functional>
 #include <array>
+#include <cassert>
 
 // cubeb fwd decls
 typedef struct cubeb cubeb;
@@ -29,6 +30,46 @@ namespace tkn {
 
 class AudioSource;
 class AudioEffect;
+
+/// Buffer cache with exactly 2 non-owned dynamic-sized buffers.
+/// Useful for ping-pong audio manipulation.
+struct BufCache {
+	std::array<std::vector<float>, 2>* bufs;
+
+	BufCache(std::array<std::vector<float>, 2>& ref) : bufs(&ref) {}
+	BufCache(const BufCache& rhs) : bufs(rhs.bufs) {}
+
+	template<unsigned I = 0>
+	std::vector<float>& get(std::size_t size) {
+		static_assert(I < 2);
+		auto& b = (*bufs)[I];
+		if(b.size() < size) b.resize(size);
+		return b;
+	}
+
+	std::vector<float>& get(unsigned i, std::size_t size) {
+		assert(i < 2);
+		auto& b = (*bufs)[i];
+		if(b.size() < size) b.resize(size);
+		return b;
+	}
+};
+
+/// Holds two separate BufCache objects to be used by render and
+/// update thread, respectively.
+struct BufCaches {
+	BufCache render;
+	BufCache update;
+};
+
+struct OwnedBufCaches : public BufCaches {
+	std::array<std::vector<float>, 2> orender;
+	std::array<std::vector<float>, 2> oupdate;
+
+	OwnedBufCaches() : BufCaches{orender, oupdate} {}
+	OwnedBufCaches(OwnedBufCaches&&) = delete;
+	OwnedBufCaches& operator=(OwnedBufCaches&&) = delete;
+};
 
 /// Combines audio output.
 class AudioPlayer {
@@ -60,6 +101,11 @@ public:
 		unsigned channels = 2, // num channels
 		unsigned latencyBlocks = 1); // minimum render latency in blocks
 	virtual ~AudioPlayer();
+
+	/// Starts playback.
+	/// Must only be called once from the main thread after the
+	/// AudioPlayer was created to start it.
+	void start();
 
 	/// Adds the given Audio implementation to the list of audios
 	/// to render. Must be called from the thread that created this player.
@@ -95,10 +141,7 @@ public:
 	/// Guaranteed to stay constant and not change randomly.
 	unsigned rate() const { return rate_; };
 
-	/// Starts playback.
-	/// Must only be called once from the main thread after the
-	/// AudioPlayer was created to start it.
-	void start();
+	BufCaches bufCaches() const { return bufCaches_; }
 
 protected:
 	void updateThread();
@@ -148,6 +191,8 @@ protected:
 	// how many frames are left in renderBuf_ (at leftOff_)
 	unsigned left_ {0};
 	unsigned leftOff_ {0};
+
+	OwnedBufCaches bufCaches_;
 };
 
 class AudioSource {
@@ -202,42 +247,6 @@ public:
 	/// overlap.
 	virtual void apply(unsigned rate, unsigned nc, unsigned nf,
 		const float* in, float* out) = 0;
-};
-
-/// Buffer cache with exactly 2 growing buffers.
-/// Useful for ping-pong audio manipulation.
-struct BufCache {
-	std::array<std::vector<float>, 2> bufs;
-	std::vector<float>& get(unsigned i, std::size_t size) {
-		auto& b = bufs[i];
-		if(b.size() < size) b.resize(size);
-		return b;
-	}
-};
-
-struct Buffers {
-	struct Buf {
-		std::array<std::vector<float>, 2>* bufs;
-		std::array<std::vector<float>, 2> owned;
-
-		Buf() : bufs(&owned) {}
-		Buf(const Buf& rhs) : bufs(rhs.bufs) {}
-
-		template<unsigned I = 0>
-		std::vector<float>& get(std::size_t size) {
-			static_assert(I < 2);
-
-			auto& b = (*bufs)[I];
-			if(b.size() < size) {
-				b.resize(size);
-			}
-
-			return b;
-		}
-	};
-
-	Buf render;
-	Buf update;
 };
 
 } // namespace tkn

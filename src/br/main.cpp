@@ -373,45 +373,17 @@ public:
 		// 	&mesh);
 		// dlg_assert(err == IPL_STATUS_SUCCESS);
 
-		// audio_.music = &ap.create<Source>(*audio_.d3, "test.ogg",
-		// 	ap.rate(), ap.channels());
-		// audio_.music->position({100.f, 0.f, 0.f});
+		// create sources
+		auto& s1 = ap.create<ASource>(*audio_.d3, ap.bufCaches(), ap, "test48khz.ogg");
+		s1.position({-5.f, 0.f, 0.f});
+		audio_.source = &s1;
 
-		// static auto buf = tkn::loadVorbis("test48khz.ogg");
-		// static auto buf2 = resample(buf, ap.rate(), 2);
-		// ap.create<tkn::SoundBufferAudio>(buf2);
+		using MP3Source = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
+		auto& s2 = ap.create<MP3Source>(*audio_.d3, ap.bufCaches(), ap, "test.mp3");
+		s2.inner().volume(0.25f);
+		s2.position({10.f, 10.f, 0.f});
 
-		// ap.create<tkn::StreamedVorbisAudio>("test48khz.ogg",
-		// 	ap.rate(), ap.channels());
-
-		// auto& a1 = ap.create<Source>(*audio_.d3,
-		// 	TKN_BASE_DIR "/assets/punch.ogg", ap.rate(), ap.channels());
-		// a1.position({5.f, 0.f, 0.f});
-		// a1.inner().volume(0.3);
-
-		// NOTE: avoid conversion if possible.
-		// But make sure to test it once in a while
-		// auto src = ap.rate() == 48000 ? "test48khz.ogg" : "test.ogg";
-		// auto src = "test.mp3";
-		auto src = "test48khz.ogg";
-
-		// auto& a2 = ap.create<tkn::StreamedVorbisAudio>(src, ap.rate(), ap.channels());
-		auto& a2 = ap.create<ASource>(*audio_.d3, src,
-			ap.rate(), ap.channels());
-		// auto& a2 = ap.create<ASource>(*audio_.d3, src);
-		// dlg_assert(a2.inner().channels() == ap.channels());
-		// dlg_assert(a2.inner().rate() == ap.rate());
-		a2.position({-5.f, 0.f, 0.f});
-		audio_.source = &a2;
-		// auto& a2 = ap.create<tkn::StreamedMP3Audio>(src);
-		// a2.volume(0.01);
-
-		// auto& a3 = ap.create<Source>(*audio_.d3,
-		// 	"test.ogg", ap.rate(), ap.channels());
-		// a3.position({0.f, 10.f, 0.f});
-		// a3.inner().volume(1.0);
-
-		ap.create<tkn::ConvolutionAudio>(*audio_.d3);
+		ap.create<tkn::ConvolutionAudio>(*audio_.d3, ap.bufCaches());
 
 		auto& c = camera_;
 		auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
@@ -817,9 +789,9 @@ protected:
 	using ASource = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
 	// using ASource = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
 	struct {
-		AudioPlayer player;
 		ASource* source;
 		std::optional<tkn::Audio3D> d3;
+		AudioPlayer player;
 	} audio_;
 };
 
