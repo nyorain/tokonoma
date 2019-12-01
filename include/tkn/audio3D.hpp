@@ -82,9 +82,9 @@ protected:
 	IPLhandle binauralRenderer_;
 	IPLhandle scene_;
 
-	IPLVector3 listenerPos_;
-	IPLVector3 listenerUp_;
-	IPLVector3 listenerDir_;
+	IPLVector3 listenerPos_ {0.f, 0.f, 0.f};
+	IPLVector3 listenerUp_ {0.f, 1.f, 0.f};
+	IPLVector3 listenerDir_ {0.f, 0.f, -1.f};
 
 	std::atomic<int> indirect_ {0};
 	std::atomic<int> flushIndirect_ {0};
@@ -97,6 +97,9 @@ class AudioSource3D : public tkn::AudioSource {
 public:
 	// TODO
 	BufCache bufCache;
+
+	std::atomic<bool> direct {true};
+	std::atomic<bool> indirect {true};
 
 public:
 	/// The source must be set up with the same channel count
@@ -144,6 +147,9 @@ public:
 		auto* b0 = bufCache.get(0, ns).data();
 		auto* b1 = bufCache.get(1, ns).data();
 
+		memset(b0, 0x0, ns * sizeof(float));
+		memset(b1, 0x0, ns * sizeof(float));
+
 		// no mixing here, overwrite b0 contents
 		source_.render(nb, b0, false);
 
@@ -152,7 +158,7 @@ public:
 			iplFlushConvolutionEffect(convolutionEffect_);
 		}
 
-		if(audio_->indirect()) {
+		if(audio_->indirect() && this->indirect.load()) {
 			auto format = stereoFormat();
 			IPLint32 bs = AudioPlayer::blockSize;
 			for(auto i = 0u; i < nb; ++i) {
@@ -162,7 +168,13 @@ public:
 		}
 
 		// for testing: no direct audio at all
-		// return;
+		if(!this->direct.load()) {
+			if(!mix) {
+				std::memset(buf, 0x0, ns * sizeof(float));
+			}
+
+			return;
+		}
 
 		auto path = audio_->path(sourceInfo_, radius_);
 		audio_->applyDirectEffect(directEffect_, nb, b0, b1, path);
@@ -172,6 +184,7 @@ public:
 			for(auto i = 0u; i < ns; ++i) {
 				buf[i] += b0[i];
 			}
+
 		} else {
 			audio_->applyHRTF(binauralEffect_, nb, b1, buf, path.direction);
 		}

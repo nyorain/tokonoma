@@ -32,7 +32,6 @@ IPLAudioFormat ambisonicsFormat() {
 	format.channelLayoutType = IPL_CHANNELLAYOUTTYPE_AMBISONICS;
 	format.ambisonicsOrder = 1;
 	format.ambisonicsOrdering = IPL_AMBISONICSORDERING_ACN;
-	// format.ambisonicsOrdering = IPL_AMBISONICSORDERING_FURSEMALHAM;
 	format.ambisonicsNormalization = IPL_AMBISONICSNORMALIZATION_N3D;
 	format.channelOrder = IPL_CHANNELORDER_INTERLEAVED;
 	return format;
@@ -47,33 +46,44 @@ Audio3D::Audio3D(unsigned frameRate,
 
 	// scene
 	IPLSimulationSettings ssettings {};
-	ssettings.sceneType = IPL_SCENETYPE_PHONON;
+	ssettings.sceneType = IPL_SCENETYPE_EMBREE;
+	// ssettings.sceneType = IPL_SCENETYPE_PHONON;
 	ssettings.numOcclusionSamples = 128;
+	ssettings.maxConvolutionSources = 4u;
+	ssettings.irradianceMinDistance = 1.0;
+
 	// higher values here seems to cause *way* higher latency for
 	// the indirect sound
-	ssettings.numRays = 4096;
-	ssettings.numDiffuseSamples = 512;
-	ssettings.numBounces = 8;
-	ssettings.numThreads = 3;
-	ssettings.irDuration = 1.5;
+	// ssettings.numRays = 4096;
+	// ssettings.numDiffuseSamples = 512;
+	// ssettings.numBounces = 8;
+	// ssettings.numThreads = 3;
+	// ssettings.irDuration = 1.5;
+
 	ssettings.ambisonicsOrder = 1;
-	ssettings.maxConvolutionSources = 4u;
-	ssettings.irradianceMinDistance = 0.01;
+	ssettings.numRays = 8 * 4096;
+	ssettings.numDiffuseSamples = 1024;
+	ssettings.numBounces = 8;
+	ssettings.numThreads = 6;
+	ssettings.irDuration = 2;
 
 	// generic material
 	IPLMaterial material {0.1f,0.2f,0.3f,0.05f,0.100f,0.050f,0.030f};
 
+	// brick
+	material = {0.03f,0.04f,0.07f,0.05f,0.015f,0.015f,0.015f};
+
 	iplCheck(iplCreateScene(context_, nullptr, ssettings, 1, &material,
 		nullptr, nullptr, nullptr, nullptr, this, &scene_));
+
+	// environment
+	iplCheck(iplCreateEnvironment(context_, nullptr, ssettings, scene_,
+		nullptr, &env_));
 
 	IPLhandle mesh;
 	iplCheck(iplCreateStaticMesh(scene_, positions.size(),
 		tris.size(), positions.data(), tris.data(), mats.data(),
 		&mesh));
-
-	// environment
-	iplCheck(iplCreateEnvironment(context_, nullptr, ssettings, scene_,
-		nullptr, &env_));
 
 	IPLRenderingSettings rsettings {};
 	rsettings.samplingRate = frameRate;
@@ -216,6 +226,9 @@ void ConvolutionAudio::render(unsigned nb, float* buf, bool mix) {
 				audio_->listenerPos(),
 				audio_->listenerDir(),
 				audio_->listenerUp(), ab);
+
+			// TODO: do we have to rotate the output ambisonic audio?
+			// wouldn't make such sense though i guess?
 
 			if(useHRTF) {
 				iplApplyAmbisonicsBinauralEffect(binauralEffect_,

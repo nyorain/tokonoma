@@ -391,13 +391,20 @@ public:
 
 		// NOTE: avoid conversion if possible.
 		// But make sure to test it once in a while
-		auto src = ap.rate() == 48000 ? "test48khz.ogg" : "test.ogg";
+		// auto src = ap.rate() == 48000 ? "test48khz.ogg" : "test.ogg";
+		// auto src = "test.mp3";
+		auto src = "test48khz.ogg";
 
+		// auto& a2 = ap.create<tkn::StreamedVorbisAudio>(src, ap.rate(), ap.channels());
 		auto& a2 = ap.create<ASource>(*audio_.d3, src,
-		// auto& a2 = ap.create<ASource>(*audio_.d3, "test48khz.ogg",
 			ap.rate(), ap.channels());
+		// auto& a2 = ap.create<ASource>(*audio_.d3, src);
+		// dlg_assert(a2.inner().channels() == ap.channels());
+		// dlg_assert(a2.inner().rate() == ap.rate());
 		a2.position({-5.f, 0.f, 0.f});
 		audio_.source = &a2;
+		// auto& a2 = ap.create<tkn::StreamedMP3Audio>(src);
+		// a2.volume(0.01);
 
 		// auto& a3 = ap.create<Source>(*audio_.d3,
 		// 	"test.ogg", ap.rate(), ap.channels());
@@ -405,6 +412,12 @@ public:
 		// a3.inner().volume(1.0);
 
 		ap.create<tkn::ConvolutionAudio>(*audio_.d3);
+
+		auto& c = camera_;
+		auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+		auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+		auto up = nytl::normalized(nytl::cross(right, c.dir));
+		audio_.d3->updateListener(c.pos, c.dir, up);
 
 		ap.start();
 		return true;
@@ -536,7 +549,7 @@ public:
 			auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
 			auto right = nytl::normalized(nytl::cross(c.dir, yUp));
 			auto up = nytl::normalized(nytl::cross(right, c.dir));
-			audio_.d3->updateListener(c.pos, c.dir, yUp);
+			audio_.d3->updateListener(c.pos, c.dir, up);
 		}
 
 		// we currently always redraw to see consistent fps
@@ -559,6 +572,9 @@ public:
 		switch(ev.keycode) {
 			case ny::Keycode::i: // toggle indirect audio
 				audio_.d3->toggleIndirect();
+				return true;
+			case ny::Keycode::u: // toggle direct audio on source
+				audio_.source->direct = !audio_.source->direct;
 				return true;
 			case ny::Keycode::o: // move audio source here
 				audio_.source->position(camera_.pos);
@@ -799,6 +815,7 @@ protected:
 	vpp::SubBuffer boxIndices_;
 
 	using ASource = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
+	// using ASource = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
 	struct {
 		AudioPlayer player;
 		ASource* source;

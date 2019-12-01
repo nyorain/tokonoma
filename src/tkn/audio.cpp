@@ -123,6 +123,10 @@ AudioPlayer::~AudioPlayer() {
 }
 
 void AudioPlayer::start() {
+	// since the first iteration of rendering can sometimes take
+	// longer, we could already execute it here, i.e. fill renderBuf_
+	// fill(blockSize * 2);
+
 	// NOTE(optimization): we could only start the stream when
 	// audios are added and stop it when there are no audios.
 	// Not so easy to implement though, we should still destroy
@@ -271,6 +275,56 @@ constexpr auto align(A offset, B alignment) {
 	return rest ? A(offset + (alignment - rest)) : A(offset);
 }
 
+void AudioPlayer::fill(unsigned nf) {
+	renderUpdate();
+
+	// check if there is an active effect
+	// if so, we move it to this thread, so it won't be deleted.
+	// We will check later if it was changed in the meantime
+	AudioEffect* effect = effect_.load();
+	AudioEffect* en = nullptr;
+	while(!std::atomic_compare_exchange_weak(&effect_, &effect, en));
+
+	auto renderFrames = align(nf, blockSize);
+	auto nb = renderFrames / blockSize;
+
+	std::size_t needed = channels() * renderFrames;
+	if(renderBuf_.size() < needed) {
+		renderBuf_.resize(needed);
+	}
+
+	auto* renderBuf = renderBuf_.data();
+	if(effect) {
+		if(renderBufTmp_.size() < needed) {
+			renderBufTmp_.resize(needed);
+		}
+		renderBuf = renderBufTmp_.data();
+	}
+
+	std::memset(renderBuf, 0x0, renderFrames * channels() * sizeof(float));
+	for(auto it = audios_.load(); it; it = it->next.load()) {
+		it->source->render(nb, renderBuf, true);
+	}
+
+	// apply effect
+	if(effect) {
+		effect->apply(rate(), channels(), renderFrames,
+			renderBufTmp_.data(), renderBuf_.data());
+
+		// write back the effect
+		// but if it was changed in the meantime, we have to delete the old
+		// effect instead of writing it back, it's not needed anymore.
+		// It's important that we use a strong compare_exchange here
+		AudioEffect* neffect = nullptr;
+		if(!std::atomic_compare_exchange_strong(&effect_, &neffect, effect)) {
+			delete effect;
+		}
+	}
+
+	leftOff_ = 0;
+	left_ = renderFrames;
+}
+
 long AudioPlayer::dataCb(void* vbuffer, long nframes) {
 	using namespace std::chrono;
 	using Clock = high_resolution_clock;
@@ -284,73 +338,27 @@ long AudioPlayer::dataCb(void* vbuffer, long nframes) {
 		++renderIteration_;
 	}
 
-	// check if there is an active effect
-	// if so, we move it to this thread, so it won't be deleted.
-	// We will check later if it was changed in the meantime
-	AudioEffect* effect = effect_.load();
-	AudioEffect* en = nullptr;
-	while(!std::atomic_compare_exchange_weak(&effect_, &effect, en));
-
 	// first, copy the samples we already have
-	if(left_ > nframes) { // may be enough in certain cases
+	if(left_ >= nframes) { // may be enough in certain cases
 		memcpy(buffer, renderBuf_.data() + leftOff_ * channels(),
 			nframes * channels() * sizeof(float));
 		leftOff_ += nframes;
 		left_ -= nframes;
 	} else {
-		renderUpdate();
+		memcpy(buffer, renderBuf_.data() + leftOff_ * channels(),
+			left_ * channels() * sizeof(float));
 
-		if(left_ > 0) {
-			memcpy(buffer, renderBuf_.data() + leftOff_ * channels(),
-				left_ * channels() * sizeof(float));
-		}
-
-		// create new samples
+		// in this case we need additional frames.
+		// Make sure we fill renderBuf_ with enough samples
 		auto neededFrames = nframes - left_;
-		auto renderFrames = align(neededFrames, blockSize);
-		auto nb = renderFrames / blockSize;
-
-		std::size_t needed = channels() * renderFrames;
-		if(renderBuf_.size() < needed) {
-			renderBuf_.resize(needed);
-		}
-
-		auto* renderBuf = renderBuf_.data();
-		if(effect) {
-			if(renderBufTmp_.size() < needed) {
-				renderBufTmp_.resize(needed);
-			}
-			renderBuf = renderBufTmp_.data();
-		}
-
-		std::memset(renderBuf, 0x0, renderFrames * channels() * sizeof(float));
-		for(auto it = audios_.load(); it; it = it->next.load()) {
-			it->source->render(nb, renderBuf, true);
-		}
-
-		// apply effect
-		if(effect) {
-			effect->apply(rate(), channels(), renderFrames,
-				renderBufTmp_.data(), renderBuf_.data());
-		}
+		auto left = left_;
+		fill(neededFrames);
 
 		// output remaining samples
-		memcpy(buffer + left_ * channels(),
-			renderBuf_.data(),
+		memcpy(buffer + left * channels(), renderBuf_.data(),
 			sizeof(float) * channels() * neededFrames);
-		leftOff_ = neededFrames;
-		left_ = renderFrames - neededFrames;
-	}
-
-	if(effect) {
-		// write back the effect
-		// but if it was changed in the meantime, we have to delete the old
-		// effect instead of writing it back, it's not needed anymore.
-		// It's important that we use a strong compare_exchange here
-		AudioEffect* neffect = nullptr;
-		if(!std::atomic_compare_exchange_strong(&effect_, &neffect, effect)) {
-			delete effect;
-		}
+		leftOff_ += neededFrames;
+		left_ -= neededFrames;
 	}
 
 	// we do this here again so audios that were removed while we were
@@ -365,6 +373,16 @@ long AudioPlayer::dataCb(void* vbuffer, long nframes) {
 	// auto dur = Clock::now() - start;
 	// dlg_info("Needed {} ms for audio rendering",
 	// 	duration_cast<microseconds>(dur).count() / 1000.f);
+
+	// NOTE: debugging: output number of non-zero samples
+	// useful in certain scenarios to find buffers with invalid data
+	// auto c = 0u;
+	// for(auto i = 0u; i < channels() * nframes; ++i) {
+	// 	if(buffer[i] != 0.f) {
+	// 		++c;
+	// 	}
+	// }
+	// dlg_debug("{} c non-zero samples", c);
 
 	return nframes;
 }

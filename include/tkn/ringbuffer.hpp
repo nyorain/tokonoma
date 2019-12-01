@@ -219,6 +219,18 @@ public:
 		return to_write;
 	}
 
+	unsigned enque(T * elements, int count) {
+		auto ret = enqueue(elements, count);
+		assert(ret == count);
+		return ret;
+	}
+
+	unsigned deque(T * elements, int count) {
+		auto ret = dequeue(elements, count);
+		assert(ret == count);
+		return ret;
+	}
+
 	/**
 	 * Retrieve at most `count` elements from the ring buffer, and copy them to
 	 * `elements`, if non-null.
@@ -374,11 +386,11 @@ private:
 	*/
 #ifndef NDEBUG
 	static void assert_correct_thread(std::thread::id& id) {
-	  if (id == std::thread::id()) {
-		  id = std::this_thread::get_id();
-		  return;
-	  }
-	  assert(id == std::this_thread::get_id());
+	  // if (id == std::thread::id()) {
+		  // id = std::this_thread::get_id();
+		  // return;
+	  // }
+	  // assert(id == std::this_thread::get_id());
 	}
 #endif
 

@@ -1,9 +1,29 @@
 #include <tkn/sound.hpp>
 #include <speex_resampler.h>
 #include <dlg/dlg.hpp>
+#include <nytl/scope.hpp>
 #include <cmath>
 
+#define STB_VORBIS_HEADER_ONLY
+#include <stb_vorbis.h>
+#include <minimp3.h>
+
 namespace tkn {
+namespace {
+
+// Returns 0 for no error, 1 for eof and -e for error e.
+// Outputs warning on error
+int check(std::FILE* f) {
+	int e = std::ferror(f);
+	if(e) {
+		dlg_warn("File error: {} ({})", std::strerror(e), e);
+		return -e;
+	}
+
+	return std::feof(f) != 0;
+}
+
+} // anon namespace
 
 // resampling
 unsigned resample(SoundBufferView dst, SoundBufferView src) {
@@ -77,7 +97,7 @@ UniqueSoundBuffer loadVorbis(nytl::StringParam file) {
 	int error = 0;
 	auto vorbis = stb_vorbis_open_filename(file.c_str(), &error, nullptr);
 	if(!vorbis) {
-		auto msg = std::string("loadVorbis: failed to load");
+		auto msg = std::string("loadVorbis: failed to load ");
 		msg += file.c_str();
 		throw std::runtime_error(msg);
 	}
@@ -96,6 +116,94 @@ UniqueSoundBuffer loadVorbis(nytl::StringParam file) {
 		ret.data.get(), count);
 	dlg_assert((std::size_t) ns == ret.frameCount);
 	stb_vorbis_close(vorbis);
+	return ret;
+}
+
+// mp3
+UniqueSoundBuffer loadMP3(nytl::StringParam file) {
+	// TODO: not tested
+	dlg_warn("NOT TESTED");
+
+	auto f = std::fopen(file.c_str(), "r");
+	if(!f) {
+		auto msg = std::string("loadMP3: failed to load ");
+		msg += file.c_str();
+		throw std::runtime_error(msg);
+	}
+
+	mp3dec_t decoder;
+	mp3dec_init(&decoder);
+
+	UniqueSoundBuffer ret {};
+	mp3dec_frame_info_t fi;
+	std::vector<std::uint8_t> rbuf(16 * 1024);
+	auto rbufSize = 0u;
+
+	size_t dataSamples = 10 * MINIMP3_MAX_SAMPLES_PER_FRAME;
+	ret.data = std::make_unique<float[]>(dataSamples);
+
+	while(true) {
+		auto off = ret.frameCount * ret.channelCount;
+		if(off + MINIMP3_MAX_SAMPLES_PER_FRAME > dataSamples) {
+			dataSamples *= 4;
+			auto nd = std::make_unique<float[]>(dataSamples);
+			memcpy(nd.get(), ret.data.get(), off * sizeof(float));
+			ret.data = std::move(nd);
+		}
+
+		// TODO: could be done more efficiently with mmap
+		// decode first frame
+		auto size = rbuf.size() - rbufSize;
+		int num = std::fread(rbuf.data() + rbufSize, 1, size, f);
+		if(num == 0) {
+			dlg_assert(!ferror(f));
+			break;
+		}
+
+		rbufSize += num;
+		int nf = mp3dec_decode_frame(&decoder, rbuf.data(), rbufSize,
+			ret.data.get() + off, &fi);
+
+		// TODO: increase probably not needed. Just fail when
+		// not possible
+		auto maxs = 1024u * 1024u;
+		while(nf == 0 && fi.frame_bytes == 0 && rbuf.size() < maxs) {
+			rbuf.resize(2 * rbuf.size());
+			dlg_debug("increasing read buffer size to {}", rbuf.size());
+			auto size = 2 * rbuf.size() - rbufSize;
+			num = std::fread(rbuf.data() + rbufSize, 1, size, f);
+			if(num == 0) {
+				dlg_assert(!ferror(f));
+				dlg_warn("MP3 file incomplete");
+				return {};
+			}
+
+			rbufSize += num;
+			nf = mp3dec_decode_frame(&decoder, rbuf.data(), rbufSize,
+				ret.data.get() + off, &fi);
+		}
+
+		if(rbuf.size() >= maxs) {
+			dlg_warn("MP3 file has too long blocks of invalid data");
+			return {};
+		}
+
+		if(nf > 0) {
+			if(!ret.rate) {
+				ret.channelCount = fi.channels;
+				ret.rate = fi.hz;
+			}
+
+			dlg_assert(ret.channelCount == (unsigned) fi.channels);
+			dlg_assert(ret.rate == (unsigned) fi.hz);
+			ret.frameCount += nf;
+			rbufSize -= fi.frame_bytes;
+
+			auto size = rbufSize - fi.frame_bytes;
+			std::memmove(rbuf.data(), rbuf.data() + fi.frame_bytes, size);
+		}
+	}
+
 	return ret;
 }
 
@@ -166,7 +274,13 @@ void MidiAudio::handle(const tml_message& msg) {
 
 void MidiAudio::render(unsigned nb, float* buf, bool mix) {
 	auto v = volume_.load();
+	auto nf = tkn::AudioPlayer::blockSize * nb;
+	auto ns = nf * 2u;
 	if(v <= 0.f) {
+		if(!mix) {
+			std::memset(buf, 0x0, ns * sizeof(float));
+		}
+
 		return;
 	}
 
@@ -189,7 +303,6 @@ void MidiAudio::render(unsigned nb, float* buf, bool mix) {
 		break;
 	}
 
-	auto nf = tkn::AudioPlayer::blockSize * nb;
 	tsf_render_float(tsf_, buf, nf, mix);
 
 	time_ += 1000 * (double(nf) / rate_);
@@ -199,6 +312,11 @@ void MidiAudio::render(unsigned nb, float* buf, bool mix) {
 void SoundBufferAudio::render(unsigned nb, float* buf, bool mix) {
 	auto v = volume_.load();
 	if(v <= 0.f) {
+		if(!mix) {
+			auto ns = nb * AudioPlayer::blockSize * buffer_.channelCount;
+			std::memset(buf, 0x0, ns * sizeof(float));
+		}
+
 		return;
 	}
 
@@ -227,7 +345,7 @@ void SoundBufferAudio::render(unsigned nb, float* buf, bool mix) {
 		}
 	} else {
 		memcpy(buf, buffer_.data + frame_ * cc, ns * sizeof(float));
-		memset(buf + ns, 0x0, (tf - nf) * sizeof(float));
+		std::memset(buf + ns, 0x0, (tf - nf) * sizeof(float));
 	}
 
 	frame_ += nf;
@@ -301,7 +419,8 @@ void StreamedVorbisAudio::update() {
 	// manages the switch of the producer switch but it defies
 	// the debug check logic in the threadbuffer
 #ifndef NDEBUG
-	auto resetThreads = (buffer_.producer_id == std::thread::id{});
+	auto resetThreads = (buffer_.consumer_id == std::thread::id{});
+	auto sg = nytl::ScopeGuard {[&]{ if(resetThreads) buffer_.reset_thread_ids(); }};
 #endif
 
 	auto cap = buffer_.available_write();
@@ -357,22 +476,19 @@ void StreamedVorbisAudio::update() {
 		auto written = buffer_.enqueue(b0, count);
 		dlg_assert(written == count && written == cap);
 	}
-
-#ifndef NDEBUG
-	if(resetThreads) {
-		buffer_.reset_thread_ids();
-	}
-#endif // NDEBUG
 }
 
 void StreamedVorbisAudio::render(unsigned nb, float* buf, bool mix) {
-	auto v = volume_.load();
-	if(v <= 0.f) {
-		return;
-	}
-
 	auto nf = AudioPlayer::blockSize * nb;
 	auto ns = nf * channels_;
+	auto v = volume_.load();
+	if(v <= 0.f) {
+		if(!mix) {
+			std::memset(buf, 0x0, ns * sizeof(float));
+		}
+
+		return;
+	}
 
 	if(mix) {
 		auto b0 = bufCacheR.get(0, ns).data();
@@ -396,8 +512,145 @@ void StreamedVorbisAudio::render(unsigned nb, float* buf, bool mix) {
 	} else {
 		auto count = buffer_.dequeue(buf, ns);
 		dlg_assertl(dlg_level_warn, count == ns);
-		memset(buf + count, 0x0, ns - count);
+		std::memset(buf + count, 0x0, (ns - count) * sizeof(float));
 	}
 }
+
+// StreamedMP3Audio
+StreamedMP3Audio::StreamedMP3Audio(nytl::StringParam file) {
+	mp3dec_init(&mp3_);
+	file_ = std::fopen(file.c_str(), "r");
+	if(!file_) {
+		auto msg = std::string("failed to open streamed mp3 file ");
+		msg += file.c_str();
+		throw std::runtime_error(msg);
+	}
+
+	// parse frames until we get for the first time.
+	// only this way we can know the files channel count and rate
+	rbuf_.resize(16 * 1024);
+	mp3dec_frame_info_t fi {};
+	int nf = 0u;
+	auto maxs = MINIMP3_MAX_SAMPLES_PER_FRAME;
+	auto samples = bufCacheU.get(0, maxs).data();
+
+	while(nf == 0) {
+		auto size = rbuf_.size() - rbufSize_;
+		auto n = std::fread(rbuf_.data() + rbufSize_, 1, size, file_);
+		if(n == 0) {
+			check(file_);
+			auto msg = std::string("invalid mp3 file (reading failed) ");
+			msg += file.c_str();
+			throw std::runtime_error(msg);
+		}
+
+		rbufSize_ += n;
+		nf = mp3dec_decode_frame(&mp3_, rbuf_.data(), rbufSize_, samples, &fi);
+		if(fi.frame_bytes == 0) {
+			auto msg = std::string("invalid mp3 file (large invalid chunk) ");
+			msg += file.c_str();
+			throw msg;
+		}
+
+		rbufSize_ -= fi.frame_bytes;
+		std::memmove(rbuf_.data(), rbuf_.data() + fi.frame_bytes, rbufSize_);
+	}
+
+	channels_ = fi.channels;
+	rate_ = fi.hz;
+	buffer_.enque(samples, channels_ * nf);
+
+#ifndef NDEBUG
+	buffer_.reset_thread_ids();
+#endif
+}
+
+StreamedMP3Audio::~StreamedMP3Audio() {
+	if(file_) {
+		std::fclose(file_);
+	}
+}
+
+void StreamedMP3Audio::update() {
+#ifndef NDEBUG
+	auto resetThreads = (buffer_.consumer_id == std::thread::id{});
+	auto sg = nytl::ScopeGuard {[&]{ if(resetThreads) buffer_.reset_thread_ids(); }};
+#endif
+
+	if(buffer_.available_write() < minWrite) {
+		return;
+	}
+
+	unsigned maxs = MINIMP3_MAX_SAMPLES_PER_FRAME;
+	auto samples = bufCacheU.get(0, maxs).data();
+	mp3dec_frame_info_t fi {};
+	int nf = 0u;
+
+	while(buffer_.available_write() >= maxs) {
+		// fill read buffer
+		auto size = rbuf_.size() - rbufSize_;
+		if(size > 0) {
+			int n = std::fread(rbuf_.data() + rbufSize_, 1, size, file_);
+			if(n == 0) {
+				check(file_);
+				dlg_trace("stream done");
+				std::fseek(file_, 0, SEEK_SET);
+				volume_.store(0.f);
+				break;
+			}
+			rbufSize_ += n;
+		}
+
+		// decode and enqueue frames, if any
+		nf = mp3dec_decode_frame(&mp3_, rbuf_.data(), rbufSize_, samples, &fi);
+
+		if(nf > 0) {
+			dlg_assert((unsigned) fi.channels == channels_);
+			dlg_assert((unsigned) fi.hz == rate_);
+			buffer_.enque(samples, channels_ * nf);
+		}
+
+		rbufSize_ -= fi.frame_bytes;
+		std::memmove(rbuf_.data(), rbuf_.data() + fi.frame_bytes, rbufSize_);
+	}
+}
+
+void StreamedMP3Audio::render(unsigned nb, float* buf, bool mix) {
+	auto v = volume_.load();
+	auto ns = nb * AudioPlayer::blockSize * channels_;
+	if(v <= 0.f) {
+		if(!mix) {
+			std::memset(buf, 0x0, ns * sizeof(float));
+		}
+
+		return;
+	}
+
+	if(mix) {
+		auto b0 = bufCacheR.get(0, ns).data();
+		auto count = buffer_.dequeue(b0, ns);
+		dlg_assertl(dlg_level_warn, count == ns);
+		for(auto i = 0u; i < count; ++i) {
+			buf[i] += v * b0[i];
+		}
+
+	} else if(v != 1.f) {
+		auto b0 = bufCacheR.get(0, ns).data();
+		auto count = buffer_.dequeue(b0, ns);
+		dlg_assertl(dlg_level_warn, count == ns);
+		auto i = 0u;
+		for(; i < count; ++i) {
+			buf[i] = v * b0[i];
+		}
+		for(; i < ns; ++i) {
+			buf[i] = 0.f;
+		}
+	} else {
+		auto count = buffer_.dequeue(buf, ns);
+		dlg_assertl(dlg_level_warn, count == ns);
+		std::memset(buf + count, 0x0, (ns - count) * sizeof(float));
+	}
+}
+
 
 } // namespace tkn

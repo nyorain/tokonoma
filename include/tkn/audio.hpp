@@ -21,6 +21,10 @@ typedef struct cubeb_stream cubeb_stream;
 //   not rendered/processed one-by-one but rather in blocks of fixed
 //   sizes, allowing for optimizied processing algorithms.
 
+// TODO: specify what happens with exceptions from AudioSource and
+// AudioEffect. Just catch them in the audio player? destroy/disable
+// sources/effects after they've thrown? or mark the interfaces noexcept?
+
 namespace tkn {
 
 class AudioSource;
@@ -98,6 +102,10 @@ protected:
 	void unlink(Audio& link, Audio* prev, std::atomic<Audio*>& head);
 	long dataCb(void* buffer, long nframes);
 	void stateCb(unsigned);
+
+	// makes sure renderBuf_ contains at least nf frames
+	// assumes that renderBuf_ is empty
+	void fill(unsigned nf);
 
 	virtual void renderUpdate() {}
 
@@ -202,6 +210,31 @@ struct BufCache {
 		if(b.size() < size) b.resize(size);
 		return b;
 	}
+};
+
+struct Buffers {
+	struct Buf {
+		std::array<std::vector<float>, 2>* bufs;
+		std::array<std::vector<float>, 2> owned;
+
+		Buf() : bufs(&owned) {}
+		Buf(const Buf& rhs) : bufs(rhs.bufs) {}
+
+		template<unsigned I = 0>
+		std::vector<float>& get(std::size_t size) {
+			static_assert(I < bufs->size());
+
+			auto& b = (*bufs)[I];
+			if(b.size() < size) {
+				b.resize(size);
+			}
+
+			return b;
+		}
+	};
+
+	Buf render;
+	Buf update;
 };
 
 } // namespace tkn
