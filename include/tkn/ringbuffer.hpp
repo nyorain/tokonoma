@@ -17,6 +17,8 @@
 //
 // TODO: do own custom implementation using
 // https://www.snellman.net/blog/archive/2016-12-13-ring-buffers/
+// TODO: allow direct insertion and reading, without copying.
+// can reduce the number of copies made significantly
 
 #pragma once
 

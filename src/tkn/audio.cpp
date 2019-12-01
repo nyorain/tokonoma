@@ -50,7 +50,8 @@ struct AudioPlayer::Util {
 	}
 };
 
-AudioPlayer::AudioPlayer(const char* name) {
+AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
+		unsigned latencyBlocks) {
 	int rv = cubeb_set_log_callback(CUBEB_LOG_VERBOSE, Util::log);
 
 	cubeb_init(&cubeb_, name, NULL);
@@ -60,20 +61,21 @@ AudioPlayer::AudioPlayer(const char* name) {
 
 	cubeb_stream_params output_params;
 	output_params.format = CUBEB_SAMPLE_FLOAT32NE;
-	output_params.channels = 2;
+	output_params.channels = channels;
 	output_params.layout = CUBEB_LAYOUT_UNDEFINED;
 	output_params.prefs = CUBEB_STREAM_PREF_NONE;
 
 	channels_ = output_params.channels;
 
-	uint32_t rate;
-	rv = cubeb_get_preferred_sample_rate(cubeb_, &rate);
-	if(rv != CUBEB_OK) {
-		throw std::runtime_error("Could not get preferred sample rate");
-	}
+	if(rate == 0) {
+		uint32_t prate;
+		rv = cubeb_get_preferred_sample_rate(cubeb_, &prate);
+		if(rv != CUBEB_OK) {
+			throw std::runtime_error("Could not get preferred sample rate");
+		}
 
-	// forcing the rate for debugging
-	// rate = 44100;
+		rate = prate;
+	}
 
 	output_params.rate = rate;
 	rate_ = output_params.rate;
@@ -85,7 +87,8 @@ AudioPlayer::AudioPlayer(const char* name) {
 	}
 
 	dlg_info("min latency frames: {}", latencyFrames);
-	latencyFrames = std::max<unsigned>(latencyFrames, 2 * blockSize);
+	latencyFrames = std::max<unsigned>(latencyFrames, latencyBlocks * blockSize);
+	dlg_info("using latency: {}", latencyFrames);
 
 	rv = cubeb_stream_init(cubeb_, &stream_, "tkn::AudioPlayer",
 		NULL, NULL, NULL, &output_params,

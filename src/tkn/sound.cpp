@@ -1,4 +1,5 @@
 #include <tkn/sound.hpp>
+#include <tkn/sampling.hpp>
 #include <speex_resampler.h>
 #include <dlg/dlg.hpp>
 #include <nytl/scope.hpp>
@@ -24,74 +25,6 @@ int check(std::FILE* f) {
 }
 
 } // anon namespace
-
-// resampling
-unsigned resample(SoundBufferView dst, SoundBufferView src) {
-	if(dst.rate == src.rate) {
-		dlg_assert(dst.frameCount == src.frameCount);
-		if(dst.channelCount == src.channelCount) {
-			auto nbytes = dst.frameCount * src.channelCount * sizeof(float);
-			memcpy(dst.data, src.data, nbytes);
-		} else {
-			auto nbytes = dst.frameCount * sizeof(float);
-			for(auto i = 0u; i < dst.channelCount; ++i) {
-				// TODO: not sure if that is a good idea, see below
-				auto srcc = i % src.channelCount;
-				memcpy(dst.data + i, src.data + srcc, nbytes);
-			}
-		}
-
-		return dst.frameCount;
-	}
-
-	int err {};
-	auto speex = speex_resampler_init(src.channelCount,
-		src.rate, dst.rate, SPEEX_RESAMPLER_QUALITY_DESKTOP, &err);
-	dlg_assert(speex && !err);
-	auto ret = resample(speex, dst, src);
-	speex_resampler_destroy(speex);
-	return ret;
-}
-
-unsigned resample(SpeexResamplerState* speex,
-		SoundBufferView dst, SoundBufferView src) {
-	int err;
-	speex_resampler_set_input_stride(speex, src.channelCount);
-	speex_resampler_set_output_stride(speex, dst.channelCount);
-	unsigned ret = 0xFFFFFFFFu;
-	for(auto i = 0u; i < dst.channelCount; ++i) {
-		spx_uint32_t in_len = src.frameCount;
-		spx_uint32_t out_len = dst.frameCount;
-		// TODO: not sure if that is a good idea.
-		// could be optimized in that case anyways, we don't
-		// have to resample the same channel multiple times.
-		// Lookup surround sound mixing.
-		auto srcc = i % src.channelCount;
-		err = speex_resampler_process_float(speex, srcc,
-			src.data + srcc, &in_len, dst.data + i, &out_len);
-
-		dlg_assertm(!err, "{}", err);
-		dlg_assertm(in_len == src.frameCount, "{} vs {}",
-			in_len, src.frameCount);
-		dlg_assertm(out_len == dst.frameCount || out_len == dst.frameCount - 1,
-			"{} vs {}", out_len, dst.frameCount);
-		ret = out_len;
-	}
-
-	return ret;
-}
-
-UniqueSoundBuffer resample(SoundBufferView view, unsigned rate,
-		unsigned channels) {
-	UniqueSoundBuffer ret;
-	ret.channelCount = channels;
-	ret.rate = rate;
-	ret.frameCount = std::ceil(view.frameCount * ((double)rate / view.rate));
-	auto count = ret.frameCount * ret.channelCount;
-	ret.data = std::make_unique<float[]>(count);
-	resample(ret, view);
-	return ret;
-}
 
 UniqueSoundBuffer loadVorbis(nytl::StringParam file) {
 	int error = 0;
@@ -652,5 +585,166 @@ void StreamedMP3Audio::render(unsigned nb, float* buf, bool mix) {
 	}
 }
 
+// MP3Decoder
+MP3Decoder::MP3Decoder(nytl::StringParam file) {
+	mp3dec_init(&mp3_);
+	file_ = std::fopen(file.c_str(), "r");
+	if(!file_) {
+		auto msg = std::string("failed to open streamed mp3 file ");
+		msg += file.c_str();
+		throw std::runtime_error(msg);
+	}
+
+	// parse frames until we get for the first time.
+	// only this way we can know the files channel count and rate
+	rbuf_ = std::make_unique<std::uint8_t[]>(readSize);
+	mp3dec_frame_info_t fi {};
+	int nf = 0u;
+	auto maxs = MINIMP3_MAX_SAMPLES_PER_FRAME;
+	samples_.resize(maxs);
+
+	while(nf == 0) {
+		auto size = readSize - rbufSize_;
+		auto n = std::fread(rbuf_.get() + rbufSize_, 1, size, file_);
+		if(n == 0) {
+			check(file_);
+			auto msg = std::string("invalid mp3 file (reading failed) ");
+			msg += file.c_str();
+			throw std::runtime_error(msg);
+		}
+
+		rbufSize_ += n;
+		nf = mp3dec_decode_frame(&mp3_, rbuf_.get(), rbufSize_,
+			samples_.data(), &fi);
+		if(fi.frame_bytes == 0) {
+			auto msg = std::string("invalid mp3 file (large invalid chunk) ");
+			msg += file.c_str();
+			throw msg;
+		}
+
+		rbufSize_ -= fi.frame_bytes;
+		std::memmove(rbuf_.get(), rbuf_.get() + fi.frame_bytes, rbufSize_);
+	}
+
+	channels_ = fi.channels;
+	rate_ = fi.hz;
+	samplesCount_ = nf * channels_;
+}
+
+MP3Decoder::~MP3Decoder() {
+	if(file_) {
+		std::fclose(file_);
+	}
+}
+
+int MP3Decoder::get(float* buf, unsigned nf) {
+	auto ns = nf * channels_;
+	auto rem = ns;
+
+	// copy remaining
+	auto count = std::min<unsigned>(rem, samplesCount_);
+	if(count) {
+		std::memcpy(buf, samples_.data() + samplesOff_, count * sizeof(float));
+		buf += count;
+		samplesOff_ += count;
+		samplesCount_ -= count;
+		rem -= count;
+	}
+
+	mp3dec_frame_info_t fi {};
+	while(rem) {
+		// fill read buffer
+		auto size = readSize - rbufSize_;
+		if(size > 0) {
+			int n = std::fread(rbuf_.get() + rbufSize_, 1, size, file_);
+			if(n == 0) {
+				auto c = check(file_);
+				if(c < 0) {
+					return c;
+				}
+
+				auto ret = (ns - rem) / channels_;
+				if(ret == 0) {
+					std::fseek(file_, 0, SEEK_SET);
+				}
+				return ret;
+			}
+
+			rbufSize_ += n;
+		}
+
+		// decode and enqueue frames, if any
+		auto nf = mp3dec_decode_frame(&mp3_, rbuf_.get(), rbufSize_,
+			samples_.data(), &fi);
+
+		if(nf > 0) {
+			dlg_assert((unsigned) fi.channels == channels_);
+			dlg_assert((unsigned) fi.hz == rate_);
+			auto rns = nf * channels_;
+			auto count = std::min<unsigned>(rem, rns);
+			std::memcpy(buf, samples_.data(), count * sizeof(float));
+			rem -= count;
+			buf += count;
+
+			samplesOff_ = count;
+			samplesCount_ = rns - count;
+		}
+
+		rbufSize_ -= fi.frame_bytes;
+
+		// NOTE: this could hurt performance. We move *all* the remaining
+		// data every frame. We could instead make the read buffer 32kb
+		// and read-append/only move once the offset is over 16kb
+		std::memmove(rbuf_.get(), rbuf_.get() + fi.frame_bytes, rbufSize_);
+	}
+
+	return nf;
+}
+
+// VorbisDecoder
+VorbisDecoder::VorbisDecoder(nytl::StringParam file) {
+	int error = 0;
+	vorbis_ = stb_vorbis_open_filename(file.c_str(), &error, nullptr);
+	if(!vorbis_) {
+		auto msg = std::string("StreamVorbisAudio: failed to load ");
+		msg += file.c_str();
+		msg += ": ";
+		msg += std::to_string(error);
+		throw std::runtime_error(msg);
+	}
+}
+
+VorbisDecoder::VorbisDecoder(nytl::Span<const std::byte> buf) {
+	int error = 0;
+	auto data = (const unsigned char*) buf.data();
+	vorbis_ = stb_vorbis_open_memory(data, buf.size(), &error, nullptr);
+	if(!vorbis_) {
+		auto msg = std::string("StreamVorbisAudio: failed to load from memory");
+		throw std::runtime_error(msg);
+	}
+}
+
+VorbisDecoder::~VorbisDecoder() {
+	if(vorbis_) {
+		stb_vorbis_close(vorbis_);
+	}
+}
+
+int VorbisDecoder::get(float* buf, unsigned nf) {
+	auto info = stb_vorbis_get_info(vorbis_);
+	auto read = stb_vorbis_get_samples_float_interleaved(vorbis_,
+		info.channels, buf, nf * info.channels);
+	return read;
+}
+
+unsigned VorbisDecoder::rate() const {
+	auto info = stb_vorbis_get_info(vorbis_);
+	return info.sample_rate;
+}
+
+unsigned VorbisDecoder::channels() const {
+	auto info = stb_vorbis_get_info(vorbis_);
+	return info.channels;
+}
 
 } // namespace tkn

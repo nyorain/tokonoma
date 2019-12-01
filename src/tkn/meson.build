@@ -65,6 +65,7 @@ if dep_cubeb.found()
 	tkn_src += [
 		'audio.cpp',
 		'sound.cpp',
+		'sampling.cpp',
 	]
 	tkn_deps += dep_cubeb
 	tkn_audio = true

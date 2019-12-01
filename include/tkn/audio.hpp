@@ -55,7 +55,10 @@ public:
 
 public:
 	/// Throws std::runtime_error if something could not be initialized.
-	AudioPlayer(const char* name = "tkn");
+	AudioPlayer(const char* name = "tkn", // stream name sent to backend
+		unsigned rate = 0, // rate to use. 0 for default/preferred rate
+		unsigned channels = 2, // num channels
+		unsigned latencyBlocks = 1); // minimum render latency in blocks
 	virtual ~AudioPlayer();
 
 	/// Adds the given Audio implementation to the list of audios
@@ -222,7 +225,7 @@ struct Buffers {
 
 		template<unsigned I = 0>
 		std::vector<float>& get(std::size_t size) {
-			static_assert(I < bufs->size());
+			static_assert(I < 2);
 
 			auto& b = (*bufs)[I];
 			if(b.size() < size) {
