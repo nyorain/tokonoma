@@ -24,6 +24,14 @@ if android
 	# on android. I guess libvulkan are just stubs for everything
 	# but instance creation proc address loading
 	add_global_arguments('-DVKPP_DYNAMIC_DISPATCH', language: ['cpp', 'c'])
+
+	# See https://github.com/android/ndk/issues/289
+	add_global_link_arguments([
+		'-lgcc',
+		'-Wl,--exclude-libs,libgcc_real.a',
+		'-Wl,--exclude-libs,libunwind.a',
+	], language: ['cpp', 'c'])
+
 	# there are no native executables for apk's on android
 	# shared_module instead of shared_library so that export 'main'
 	# which is needed by ny

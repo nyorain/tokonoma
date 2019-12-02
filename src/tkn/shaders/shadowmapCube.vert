@@ -4,6 +4,7 @@
 #include "scene.glsl"
 
 layout(location = 0) in vec3 inPos;
+layout(location = 1) in vec3 inNormal; // unused
 layout(location = 2) in vec2 inTexCoord0;
 layout(location = 3) in vec2 inTexCoord1;
 

@@ -8,9 +8,11 @@ class AudioPlayer : public tkn::AudioPlayer {
 public:
 	using tkn::AudioPlayer::AudioPlayer;
 
-	tkn::Audio3D* audio;
+	tkn::Audio3D* audio {};
 	void renderUpdate() override {
-		audio->update();
+		if(audio) {
+			audio->update();
+		}
 	}
 };
 

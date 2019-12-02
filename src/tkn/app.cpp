@@ -13,6 +13,7 @@
 #include <vpp/vk.hpp>
 #include <vpp/submit.hpp>
 #include <vpp/debug.hpp>
+#include <vpp/debugReport.hpp>
 #include <ny/appContext.hpp>
 #include <ny/asyncRequest.hpp>
 #include <ny/backend.hpp>
@@ -230,6 +231,7 @@ struct App::Impl {
 	vpp::Instance instance;
 	std::optional<vpp::Device> device;
 	std::optional<vpp::DebugMessenger> debugMessenger;
+	std::optional<vpp::DebugCallback> debugCallback;
 
 	std::optional<MainWindow> window;
 	std::optional<RenderImpl> renderer;
@@ -316,6 +318,10 @@ bool App::init(nytl::Span<const char*> args) {
 		iniExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 	}
 
+#ifdef __ANDROID__
+	iniExtensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+#endif
+
 	// if(android) {
 	// 	iniExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 	// }
@@ -362,6 +368,10 @@ bool App::init(nytl::Span<const char*> args) {
 	if(args_.layers) {
 		impl_->debugMessenger.emplace(ini);
 	}
+
+#ifdef __ANDROID__
+		impl_->debugCallback.emplace(ini);
+#endif
 
 	// init ny window
 	impl_->window.emplace(*impl_->ac, ini);
@@ -539,6 +549,10 @@ bool App::init(nytl::Span<const char*> args) {
 		rvgcs.samples = samples();
 		rvgcs.clipDistanceEnable = impl_->clipDistance;
 
+#ifdef __ANDROID__
+		rvgcs.antiAliasing = false;
+#endif // __ANDROID__
+
 		impl_->rvgContext.emplace(vulkanDevice(), rvgcs);
 		impl_->windowTransform = {rvgContext()};
 		impl_->fontAtlas.emplace(rvgContext());
@@ -645,6 +659,7 @@ bool App::features(Features& enable, const Features& supported) {
 }
 
 void App::record(const RenderBuffer& buf) {
+	rerecord_ = false;
 	const auto width = impl_->scInfo.imageExtent.width;
 	const auto height = impl_->scInfo.imageExtent.height;
 

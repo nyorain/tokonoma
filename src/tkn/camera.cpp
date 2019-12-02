@@ -156,4 +156,117 @@ Frustum ndcFrustum() {
 	}};
 }
 
+void init(TouchCameraController& tc, tkn::Camera& cam, rvg::Context& rvgctx) {
+	tc.cam = &cam;
+	tc.paint = {rvgctx, rvg::colorPaint({255, 200, 200, 40})};
+
+	rvg::DrawMode dm;
+#ifndef __ANDROID__
+	dm.aaFill = true;
+#endif // __ANDROID__
+	dm.fill = true;
+	dm.deviceLocal = true;
+	tc.move.circle = {rvgctx, {}, 20.f, dm};
+	tc.move.circle.disable(true);
+	tc.rotate.circle = {rvgctx, {}, 20.f, dm};
+	tc.rotate.circle.disable(true);
+}
+
+void touchBegin(TouchCameraController& tc, const ny::TouchBeginEvent& ev,
+		nytl::Vec2ui windowSize) {
+	constexpr auto invalidID = TouchCameraController::invalidID;
+	using namespace nytl::vec::cw::operators;
+	auto rp = ev.pos / windowSize;
+	if(rp.x < 0.5f && tc.move.id == invalidID) {
+		tc.move.id = ev.id;
+		tc.move.pos = ev.pos;
+		tc.move.start = ev.pos;
+
+		tc.move.circle.disable(false);
+		tc.move.circle.change()->center = ev.pos;
+	} else if(rp.x > 0.5f && tc.rotate.id == invalidID) {
+		tc.rotate.id = ev.id;
+		tc.rotate.pos = ev.pos;
+		tc.rotate.start = ev.pos;
+
+		tc.rotate.circle.disable(false);
+		tc.rotate.circle.change()->center = ev.pos;
+	}
+}
+
+void touchEnd(TouchCameraController& tc, const ny::TouchEndEvent& ev) {
+	constexpr auto invalidID = TouchCameraController::invalidID;
+	if(ev.id == tc.rotate.id) {
+		tc.rotate.id = invalidID;
+		tc.rotate.circle.disable(true);
+	} else if(ev.id == tc.move.id) {
+		tc.move.id = invalidID;
+		tc.move.circle.disable(true);
+	}
+}
+
+void touchUpdate(TouchCameraController& tc, const ny::TouchUpdateEvent& ev) {
+	dlg_assert(tc.cam);
+	if(ev.id == tc.rotate.id) {
+		auto delta = ev.pos - tc.rotate.pos;
+		tc.rotate.pos = ev.pos;
+
+		if(!tc.alt) {
+			tkn::rotateView(*tc.cam, 0.005 * delta.x, 0.005 * delta.y);
+		}
+	} else if(ev.id == tc.move.id) {
+		auto delta = ev.pos - tc.move.pos;
+		tc.move.pos = ev.pos;
+
+		if(!tc.alt) {
+			auto& c = *tc.cam;
+			auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+			auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+
+			auto fac = 0.01f;
+			c.pos += fac * delta.x * right;
+			c.pos -= fac * delta.y * c.dir; // y input coords have top-left origin
+			c.update = true;
+		}
+	}
+}
+
+void update(TouchCameraController& tc, double dt) {
+	dlg_assert(tc.cam);
+	constexpr auto invalidID = TouchCameraController::invalidID;
+	if(tc.alt) {
+		auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
+		auto cut = [&](auto f) {
+			auto off = 20.f;
+			if(std::abs(f) < off) return 0.f;
+			return f - sign(f) * off;
+		};
+
+		if(tc.move.id != invalidID) {
+			auto& c = *tc.cam;
+			auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
+			auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+
+			nytl::Vec2f delta = tc.move.pos - tc.move.start;
+			delta = {cut(delta.x), cut(delta.y)};
+			delta.x = sign(delta.x) * std::pow(std::abs(delta.x), 1.65);
+			delta.y = sign(delta.y) * std::pow(std::abs(delta.y), 1.65);
+			delta *= 0.0005f * dt;
+
+			c.pos += delta.x * right;
+			c.pos -= delta.y * c.dir; // y input coords have top-left origin
+			c.update = true;
+		}
+		if(tc.rotate.id != invalidID) {
+			nytl::Vec2f delta = tc.rotate.pos - tc.rotate.start;
+			delta = {cut(delta.x), cut(delta.y)};
+			delta.x = sign(delta.x) * std::pow(std::abs(delta.x), 1.65);
+			delta.y = sign(delta.y) * std::pow(std::abs(delta.y), 1.65);
+			delta *= 0.0004f * dt;
+
+			tkn::rotateView(*tc.cam, delta.x, delta.y);
+		}
+	}
+}
+
 } // namespace tkn

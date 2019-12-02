@@ -80,7 +80,7 @@ protected:
 	IPLVector3 listenerUp_ {0.f, 1.f, 0.f};
 	IPLVector3 listenerDir_ {0.f, 0.f, -1.f};
 
-	std::atomic<int> indirect_ {0};
+	std::atomic<int> indirect_ {1};
 	std::atomic<int> flushIndirect_ {0};
 
 	tkn::Shared<std::array<nytl::Vec3f, 3>> updateListener_;

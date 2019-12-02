@@ -56,15 +56,16 @@ Audio3D::Audio3D(unsigned frameRate,
 
 	// scene
 	IPLSimulationSettings ssettings {};
-	ssettings.sceneType = IPL_SCENETYPE_EMBREE;
+	// ssettings.sceneType = IPL_SCENETYPE_EMBREE;
+	ssettings.sceneType = IPL_SCENETYPE_PHONON;
 	ssettings.numOcclusionSamples = 128;
 	ssettings.maxConvolutionSources = 4u;
 	ssettings.irradianceMinDistance = 1.0;
 
 	// higher values here seems to cause *way* higher latency for
 	// the indirect sound
-	ssettings.numRays = 4096;
-	ssettings.numDiffuseSamples = 512;
+	ssettings.numRays = 4096 / 4;
+	ssettings.numDiffuseSamples = 512 / 2;
 	ssettings.numBounces = 6;
 	ssettings.numThreads = 4;
 	ssettings.irDuration = 1.5;
@@ -82,6 +83,7 @@ Audio3D::Audio3D(unsigned frameRate,
 	// brick
 	material = {0.03f,0.04f,0.07f,0.05f,0.015f,0.015f,0.015f};
 
+	dlg_info("creating scene");
 	auto ir = iplCreateScene(context_, nullptr, ssettings, 1, &material,
 		nullptr, nullptr, nullptr, nullptr, this, &scene_);
 	if(ir != IPL_STATUS_SUCCESS) {
@@ -92,9 +94,11 @@ Audio3D::Audio3D(unsigned frameRate,
 	}
 
 	// environment
+	dlg_info("creating env");
 	iplCheck(iplCreateEnvironment(context_, nullptr, ssettings, scene_,
 		nullptr, &env_));
 
+	dlg_info("creating mesh");
 	IPLhandle mesh;
 	iplCheck(iplCreateStaticMesh(scene_, positions.size(),
 		tris.size(), positions.data(), tris.data(), mats.data(),
@@ -105,11 +109,13 @@ Audio3D::Audio3D(unsigned frameRate,
 	rsettings.frameSize = tkn::AudioPlayer::blockSize;
 	rsettings.convolutionType = IPL_CONVOLUTIONTYPE_PHONON;
 
+	dlg_info("creating env renderer");
 	// auto format = stereoFormat();
 	auto aformat = ambisonicsFormat();
 	iplCheck(iplCreateEnvironmentalRenderer(context_, env_, rsettings,
 		aformat, nullptr, nullptr, &envRenderer_));
 
+	dlg_info("creating binaural renderer");
 	// binaural
 	IPLHrtfParams hrtfParams {IPL_HRTFDATABASETYPE_DEFAULT, nullptr, nullptr};
 	iplCheck(iplCreateBinauralRenderer(context_, rsettings, hrtfParams,

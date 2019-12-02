@@ -69,8 +69,8 @@ class Scene {
 public:
 	// NOTE: this is important for TAA but causes worse result without it
 	static constexpr auto mipLodBias = -1.f;
-	static constexpr auto imageCount = 96u;
-	static constexpr auto samplerCount = 8u;
+	static constexpr auto imageCount = 32u;
+	static constexpr auto samplerCount = 4u;
 	using Index = u32; // for indices
 	using ModelID = u32;
 
