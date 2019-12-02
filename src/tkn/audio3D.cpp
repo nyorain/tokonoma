@@ -15,6 +15,15 @@ static const char* name(IPLerror err) {
 #define iplCheck(x) do { \
 	auto res = (x); \
 	if(res != IPL_STATUS_SUCCESS) { \
+		std::string msg = #x ": "; \
+		msg += name(res); \
+		throw std::runtime_error(msg); \
+	} \
+} while(0)
+
+#define iplCheckError(x) do { \
+	auto res = (x); \
+	if(res != IPL_STATUS_SUCCESS) { \
 		dlg_error("ipl returned {}", name(res)); \
 	} \
 } while(0)
@@ -48,25 +57,24 @@ Audio3D::Audio3D(unsigned frameRate,
 	// scene
 	IPLSimulationSettings ssettings {};
 	ssettings.sceneType = IPL_SCENETYPE_EMBREE;
-	// ssettings.sceneType = IPL_SCENETYPE_PHONON;
 	ssettings.numOcclusionSamples = 128;
 	ssettings.maxConvolutionSources = 4u;
 	ssettings.irradianceMinDistance = 1.0;
 
 	// higher values here seems to cause *way* higher latency for
 	// the indirect sound
-	// ssettings.numRays = 4096;
-	// ssettings.numDiffuseSamples = 512;
-	// ssettings.numBounces = 8;
-	// ssettings.numThreads = 3;
-	// ssettings.irDuration = 1.5;
-
-	ssettings.ambisonicsOrder = ambisonicsOrder;
-	ssettings.numRays = 8 * 4096;
-	ssettings.numDiffuseSamples = 1024;
+	ssettings.numRays = 4096;
+	ssettings.numDiffuseSamples = 512;
 	ssettings.numBounces = 6;
-	ssettings.numThreads = 6;
-	ssettings.irDuration = 2;
+	ssettings.numThreads = 4;
+	ssettings.irDuration = 1.5;
+
+	// ssettings.ambisonicsOrder = ambisonicsOrder;
+	// ssettings.numRays = 8 * 4096;
+	// ssettings.numDiffuseSamples = 1024;
+	// ssettings.numBounces = 6;
+	// ssettings.numThreads = 6;
+	// ssettings.irDuration = 2;
 
 	// generic material
 	IPLMaterial material {0.1f,0.2f,0.3f,0.05f,0.100f,0.050f,0.030f};
@@ -74,8 +82,14 @@ Audio3D::Audio3D(unsigned frameRate,
 	// brick
 	material = {0.03f,0.04f,0.07f,0.05f,0.015f,0.015f,0.015f};
 
-	iplCheck(iplCreateScene(context_, nullptr, ssettings, 1, &material,
-		nullptr, nullptr, nullptr, nullptr, this, &scene_));
+	auto ir = iplCreateScene(context_, nullptr, ssettings, 1, &material,
+		nullptr, nullptr, nullptr, nullptr, this, &scene_);
+	if(ir != IPL_STATUS_SUCCESS) {
+		dlg_info("failed to initialize ipl with embree");
+		ssettings.sceneType = IPL_SCENETYPE_PHONON;
+		iplCheck(iplCreateScene(context_, nullptr, ssettings, 1, &material,
+			nullptr, nullptr, nullptr, nullptr, this, &scene_));
+	}
 
 	// environment
 	iplCheck(iplCreateEnvironment(context_, nullptr, ssettings, scene_,

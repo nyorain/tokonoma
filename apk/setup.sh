@@ -81,4 +81,7 @@ $BT/aapt add $apk \
 	lib/$arch/libphonon.so \
 	assets/font.ttf \
 	assets/test.ogg \
-	assets/sponza.glb
+	assets/model.glb \
+	assets/brdflut.ktx \
+	assets/convolution.ktx \
+	assets/irradiance.ktx

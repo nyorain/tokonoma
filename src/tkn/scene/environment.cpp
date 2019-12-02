@@ -26,17 +26,24 @@ namespace tkn {
 void Environment::create(InitData& data, const WorkBatcher& wb,
 		nytl::StringParam envMapPath, nytl::StringParam irradiancePath,
 		vk::Sampler linear) {
+	auto envMap = tkn::read(envMapPath, true);
+	auto irradiance = tkn::read(irradiancePath, true);
+	create(data, wb, std::move(envMap), std::move(irradiance), linear);
+}
+
+void Environment::create(InitData& data, const WorkBatcher& wb,
+		std::unique_ptr<ImageProvider> envMap,
+		std::unique_ptr<ImageProvider> irradiance,
+		vk::Sampler linear) {
 	auto& dev = wb.dev;
 
 	// textures
 	tkn::TextureCreateParams params;
 	params.cubemap = true;
 	params.format = vk::Format::r16g16b16a16Sfloat;
-	auto envProvider = tkn::read(envMapPath, true);
-	convolutionMipmaps_ = envProvider->mipLevels();
-	envMap_ = {data.initEnvMap, wb, std::move(envProvider), params};
-	irradiance_ = {data.initIrradiance, wb, tkn::read(irradiancePath, true),
-		params};
+	convolutionMipmaps_ = envMap->mipLevels();
+	envMap_ = {data.initEnvMap, wb, std::move(envMap), params};
+	irradiance_ = {data.initIrradiance, wb, std::move(irradiance), params};
 
 	// pipe
 	// ds layout

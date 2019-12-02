@@ -1,6 +1,11 @@
 // Simple forward renderer mainly as reference for other rendering
 // concepts. Also serves as 3D audio for some reason.
+
+// #define BR_AUDIO
+
+#ifdef BR_AUDIO
 #include "audio.hpp"
+#endif
 
 #include <tkn/camera.hpp>
 #include <tkn/app.hpp>
@@ -48,6 +53,13 @@
 #include <vector>
 #include <string>
 
+#ifdef __ANDROID__
+#include <ny/android/appContext.hpp>
+#include <android/native_activity.h>
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
+#endif
+
 using namespace tkn::types;
 
 class ViewApp : public tkn::App {
@@ -80,7 +92,7 @@ public:
 			}
 		};
 
-		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
+		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read(openAsset("brdflut.ktx")));
 		brdfLut_ = initBrdfLut.init(batch);
 
 		// tex sampler
@@ -113,7 +125,21 @@ public:
 			dummyTex_.vkImageView(),
 			samplerAnisotropy, false, multiDrawIndirect_
 		};
+
+#ifdef __ANDROID__
+		auto& ac = dynamic_cast<ny::AndroidAppContext&>(appContext());
+		auto* mgr = ac.nativeActivity()->assetManager;
+		auto asset = AAssetManager_open(mgr, "model.glb", AASSET_MODE_BUFFER);
+
+		std::size_t len = AAsset_getLength(asset);
+		auto buf = (std::byte*) AAsset_getBuffer(asset);
+
+		auto omodel = tkn::loadGltf({buf, len});
+		auto path = "";
+#else
 		auto [omodel, path] = tkn::loadGltf(modelname_);
+#endif
+
 		if(!omodel) {
 			return false;
 		}
@@ -139,7 +165,9 @@ public:
 		cameraDsLayout_ = {dev, cameraBindings};
 
 		tkn::Environment::InitData initEnv;
-		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", sampler_);
+		env_.create(initEnv, batch,
+			tkn::read(openAsset("convolution.ktx")),
+			tkn::read(openAsset("irradiance.ktx")), sampler_);
 		env_.createPipe(device(), cameraDsLayout_, renderPass(), 0u, samples());
 		env_.init(initEnv, batch);
 
@@ -294,6 +322,7 @@ public:
 		pointLight_.instanceID = scene_.addInstance(spherePrimitiveID_,
 			pointLightObjMatrix(), pointLight_.materialID);
 
+#ifdef BR_AUDIO
 		// audio
 		constexpr std::array<u16, 36> boxIndices = {
 			0, 1, 2,  2, 1, 3, // front
@@ -321,9 +350,9 @@ public:
 
 			for(auto i = 0u; i < primitive.indices.size(); i += 3) {
 				tris.push_back({
-					primitive.indices[i + 0] + off,
-					primitive.indices[i + 1] + off,
-					primitive.indices[i + 2] + off});
+					(IPLint32) primitive.indices[i + 0] + off,
+					(IPLint32) primitive.indices[i + 1] + off,
+					(IPLint32) primitive.indices[i + 2] + off});
 			}
 
 			/*
@@ -374,14 +403,18 @@ public:
 		// dlg_assert(err == IPL_STATUS_SUCCESS);
 
 		// create sources
-		auto& s1 = ap.create<ASource>(*audio_.d3, ap.bufCaches(), ap, "test48khz.ogg");
+		auto& s1 = ap.create<ASource>(*audio_.d3, ap.bufCaches(), ap,
+			openAsset("test.ogg"));
 		s1.position({-5.f, 0.f, 0.f});
 		audio_.source = &s1;
 
+		/*
 		using MP3Source = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
-		auto& s2 = ap.create<MP3Source>(*audio_.d3, ap.bufCaches(), ap, "test.mp3");
+		auto& s2 = ap.create<MP3Source>(*audio_.d3, ap.bufCaches(), ap,
+			openAsset("test.mp3"));
 		s2.inner().volume(0.25f);
 		s2.position({10.f, 10.f, 0.f});
+		*/
 
 		ap.create<tkn::ConvolutionAudio>(*audio_.d3, ap.bufCaches());
 
@@ -392,6 +425,8 @@ public:
 		audio_.d3->updateListener(c.pos, c.dir, up);
 
 		ap.start();
+#endif // BR_AUDIO
+
 		return true;
 	}
 
@@ -515,6 +550,7 @@ public:
 			updateLight_ = true;
 		}
 
+#ifdef BR_AUDIO
 		// if(camera_.update) {
 		{
 			auto& c = camera_;
@@ -523,6 +559,7 @@ public:
 			auto up = nytl::normalized(nytl::cross(right, c.dir));
 			audio_.d3->updateListener(c.pos, c.dir, up);
 		}
+#endif // BR_AUDIO
 
 		// we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
@@ -542,6 +579,7 @@ public:
 		}
 
 		switch(ev.keycode) {
+#ifdef BR_AUDIO
 			case ny::Keycode::i: // toggle indirect audio
 				audio_.d3->toggleIndirect();
 				return true;
@@ -551,6 +589,7 @@ public:
 			case ny::Keycode::o: // move audio source here
 				audio_.source->position(camera_.pos);
 				return true;
+#endif // BR_AUDIO
 			case ny::Keycode::m: // move light here
 				moveLight_ = false;
 				dirLight_.data.dir = -camera_.pos;
@@ -786,6 +825,7 @@ protected:
 
 	vpp::SubBuffer boxIndices_;
 
+#ifdef BR_AUDIO
 	using ASource = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
 	// using ASource = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
 	struct {
@@ -793,6 +833,7 @@ protected:
 		std::optional<tkn::Audio3D> d3;
 		AudioPlayer player;
 	} audio_;
+#endif // BR_AUDIO
 };
 
 int main(int argc, const char** argv) {

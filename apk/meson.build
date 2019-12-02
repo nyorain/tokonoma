@@ -21,6 +21,7 @@ apks = {
 	'fluid': fluid,
 	'particles': particles,
 	'volume': volume,
+	'br': br,
 }
 
 foreach name, mod : apks

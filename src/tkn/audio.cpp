@@ -54,10 +54,17 @@ AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
 		unsigned latencyBlocks) {
 	int rv = cubeb_set_log_callback(CUBEB_LOG_VERBOSE, Util::log);
 
-	cubeb_init(&cubeb_, name, NULL);
+	rv = cubeb_init(&cubeb_, name, NULL);
+	if(rv) {
+		throw std::runtime_error("Failed to initialize cubeb");
+	}
+
 	uint32_t latencyFrames;
 
-	dlg_info("cubeb backend: {}", cubeb_get_backend_id(cubeb_));
+	auto bid = cubeb_get_backend_id(cubeb_);
+	if(bid) {
+		dlg_info("cubeb backend: {}", bid);
+	}
 
 	cubeb_stream_params output_params;
 	output_params.format = CUBEB_SAMPLE_FLOAT32NE;

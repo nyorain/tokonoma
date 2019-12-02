@@ -31,6 +31,7 @@
 #include <argagg.hpp>
 #include <optional>
 #include <thread>
+#include <cstdio>
 
 #ifdef __ANDROID__
 #include <ny/android/appContext.hpp>
@@ -1292,6 +1293,48 @@ void App::touchUpdate(const ny::TouchUpdateEvent& ev) {
 	if(impl_->gui) {
 		gui().mouseMove({static_cast<nytl::Vec2f>(ev.pos)});
 	}
+}
+
+#ifdef __ANDROID__
+namespace android {
+static int read(void* cookie, char* buf, int size) {
+    return AAsset_read((AAsset*)cookie, buf, size);
+}
+
+static int write(void* cookie, const char* buf, int size) {
+    return EACCES; // can't provide write access to the apk
+}
+
+static fpos_t seek(void* cookie, fpos_t offset, int whence) {
+    return AAsset_seek((AAsset*)cookie, offset, whence);
+}
+
+static int close(void* cookie) {
+    AAsset_close((AAsset*)cookie);
+    return 0;
+}
+} // namespace android
+#endif
+
+// TODO: make this a free function (independent from App) that
+// just uses ny::android::Instance. Not exposed publicly atm though.
+// Wait for switch to swa?
+File App::openAsset(nytl::StringParam path, bool binary) {
+#ifdef __ANDROID__
+	auto& ac = dynamic_cast<ny::AndroidAppContext&>(appContext());
+	auto* mgr = ac.nativeActivity()->assetManager;
+	auto asset = AAssetManager_open(mgr, path.c_str(), 0);
+	return File(::funopen(asset, android::read, android::write,
+		android::seek, android::close));
+#else
+	auto mode = binary ? "rb" : "r";
+	if(auto f = std::fopen(path.c_str(), mode); f) {
+		return File(f);
+	}
+
+	auto path2 = std::string(TKN_BASE_DIR "/assets/") + path.c_str();
+	return File(path2, mode);
+#endif
 }
 
 // free util

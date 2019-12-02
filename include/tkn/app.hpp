@@ -1,5 +1,6 @@
 #pragma once
 
+#include <tkn/file.hpp>
 #include <nytl/span.hpp>
 #include <nytl/nonCopyable.hpp>
 
@@ -165,6 +166,12 @@ protected:
 	// (in the given stage).
 	void addSemaphore(vk::Semaphore, vk::PipelineStageFlags waitDst);
 	void callUpdate();
+
+	/// Utility function that opens an asset for reading.
+	/// When on desktop, will try to open the file in the current directory
+	/// or the asset/ source dir, while on android, it will use the asset
+	/// manager.
+	File openAsset(nytl::StringParam path, bool binary = true);
 
 	// events
 	virtual void resize(const ny::SizeEvent&);
