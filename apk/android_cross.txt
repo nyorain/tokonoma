@@ -1,7 +1,7 @@
 [binaries]
 name = 'android'
-c = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang'
-cpp = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++'
+c = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang'
+cpp = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang++'
 ar = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android-ar'
 ld = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android-ld'
 strip = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android-strip'
@@ -9,8 +9,12 @@ strip = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linu
 [properties]
 root = '/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot'
 
+tkn_android_buildtools = '/opt/android-sdk/build-tools/28.0.3'
+tkn_android_platform = '/opt/android-sdk/platforms/android-28'
+tkn_android_suffix = ''
+
 [host_machine]
 system = 'linux'
 cpu_family = 'aarch64'
-cpu = 'armv8' # Not sure if correct.
+cpu = 'arm64-v8a'
 endian = 'big' # not sure

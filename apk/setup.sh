@@ -1,31 +1,36 @@
 #!/bin/bash
 
-# expected environment:
-# $SDK: full path of android sdk root
-# $BT: path to sdk build tools folder
-# $PLATFORM: path to sdk android platform folder to use
+# Expected arguments
+# 1. architecture (e.g. arm64-v8a)
+# 2. path to buildtools dir 
+# 3. path to android platform folder to use
+# 4. path to AndroidManifest.xml.in
+# 5. path to output folder
+# 6. path of font file to use as 'font.ttf'
 
-# arch=arm64-v8a
-arch=armeabi-v7a
-
-if [ $# -lt 3 ]; then
-	echo "Usage: setup.sh <AndroidManifest.xml.in path> <output path> <font file>"
+if [ $# -lt 6 ]; then
+	echo "setup.sh: Invalid arguments"
 	exit 1
 fi
 
-out=$2
+arch=$1
+BT=$2
+PLATFORM=$3
+manifestInput=$4
+out=$5
+font=$6
+
 cd $out
 
 mkdir -p lib/$arch
 mkdir -p assets
 
 # copy assets
-font=$3
 cp $font assets/font.ttf
 
 # the first argument must be the full path of AndroidManifest.xml.in
 # we copy it to the build dir to allow using it in build.sh
-cp $1 ./AndroidManifest.xml.in
+cp $manifestInput ./AndroidManifest.xml.in
 
 # link libraries to the lib/$arch dir since they
 # have to be there when packaged with aapt
@@ -55,12 +60,8 @@ ln -sf \
 apk=base.tkn.apk
 rm -f $apk
 
-sed "s/%appname%/DUMMY/g; \
-	s/%libname%/DUMMY/g; \
-	s/%pkgname%/DUMMY/g" \
-	AndroidManifest.xml.in > AndroidManifest.xml
-
-"${BT}/aapt" package -f -M AndroidManifest.xml \
+cp AndroidManifest.xml.in AndroidManifest.xml
+$BT/aapt package -f -M AndroidManifest.xml \
 	-I "${PLATFORM}/android.jar" \
 	-F $apk 
 
@@ -80,8 +81,8 @@ $BT/aapt add $apk \
 	lib/$arch/libcubeb.so \
 	lib/$arch/libphonon.so \
 	assets/font.ttf \
-	assets/test.ogg \
-	assets/model.glb \
-	assets/brdflut.ktx \
-	assets/convolution.ktx \
-	assets/irradiance.ktx
+	assets/test.ogg
+	# assets/model.glb \
+	# assets/brdflut.ktx \
+	# assets/convolution.ktx \
+	# assets/irradiance.ktx

@@ -25,6 +25,8 @@ if android
 	# but instance creation proc address loading
 	add_global_arguments('-DVKPP_DYNAMIC_DISPATCH', language: ['cpp', 'c'])
 
+	aapiv = cc.get_define('__ANDROID_API__')
+
 	# See https://github.com/android/ndk/issues/289
 	add_global_link_arguments([
 		'-lgcc',
@@ -162,6 +164,11 @@ if tkn_audio
 	executable('soundfont',
 		'src/soundfont/main.cpp',
 		dependencies: tkn_dep)
+
+	daudio = build_target('daudio', [
+			'src/daudio/main.cpp',
+		], dependencies: tkn_dep,
+		target_type: exetarget)
 endif
 
 executable('dummy',
