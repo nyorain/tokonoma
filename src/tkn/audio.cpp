@@ -70,9 +70,8 @@ AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
 	}
 
 	auto bid = cubeb_get_backend_id(cubeb_);
-	if(bid) {
-		dlg_info("cubeb backend: {}", bid);
-	}
+	dlg_assert(bid);
+	dlg_info("cubeb backend: {}", bid);
 
 	cubeb_stream_params output_params;
 	output_params.format = CUBEB_SAMPLE_FLOAT32NE;
@@ -125,6 +124,7 @@ AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
 }
 
 AudioPlayer::~AudioPlayer() {
+	cubeb_stream_stop(stream_);
 	cubeb_stream_destroy(stream_);
 	cubeb_destroy(cubeb_);
 
@@ -159,6 +159,7 @@ void AudioPlayer::start() {
 	// and active audio.
 	int rv = cubeb_stream_start(stream_);
 	if(rv != CUBEB_OK) {
+		dlg_error("Could not start stream");
 		throw std::runtime_error("Could not start stream");
 	}
 

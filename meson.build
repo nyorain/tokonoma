@@ -169,6 +169,11 @@ if tkn_audio
 			'src/daudio/main.cpp',
 		], dependencies: tkn_dep,
 		target_type: exetarget)
+
+	daudiorc = build_target('daudiorc', [
+			'src/daudio/cubeb.cpp',
+		], dependencies: tkn_dep,
+		target_type: exetarget)
 endif
 
 executable('dummy',

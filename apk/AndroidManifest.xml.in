@@ -6,8 +6,9 @@
 	versionName="1.0" >
 	<uses-sdk
         android:minSdkVersion="24"
-        android:targetSdkVersion="24" />
+        android:targetSdkVersion="28" />
 
+	<uses-permission android:name="android.permission.RECORD_AUDIO"/>
 	<application 
 		android:label="TKN_APPTKN_SUFFIX"
 		android:hasCode="false"
