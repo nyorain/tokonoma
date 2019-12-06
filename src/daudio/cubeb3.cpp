@@ -8,63 +8,26 @@
 #include <dlg/dlg.hpp>
 #include <atomic>
 
-struct AudioData {
-	std::atomic<bool> swap {false};
-	std::atomic<bool> drain {false};
-	bool record {false};
-
-	std::vector<float> lastBuf;
-	unsigned pos {0};
-
-	std::vector<float> newBuf;
-};
-
+std::atomic<bool> gdrain {false};
 constexpr auto numChannels = 2u;
-long dataCb(cubeb_stream*, void* user, const void* inBuf,
-		void* outBuf, long nframes) {
-	auto nc = numChannels;
+constexpr auto rate = 44100;
 
-	auto& data = *static_cast<AudioData*>(user);
-	if(data.drain.load()) {
-		data.drain.store(false);
+long dataCb(cubeb_stream*, void*, const void* inBuf, void*, long nframes) {
+	if(gdrain.load()) {
+		gdrain.store(false);
 		return 0;
 	}
 
-	if(data.swap.load()) {
-		data.swap.store(false);
-		data.record ^= true;
-		if(!data.record) {
-			data.lastBuf = std::move(data.newBuf);
-		}
-		dlg_info("recording: {}", data.record);
-	}
 
-	if(data.record) {
-		auto ib = (float*) inBuf;
-		data.newBuf.insert(data.newBuf.end(), ib, ib + nc * nframes);
-
-		float avg = 0.0;
-		for(auto i = 0u; i < nframes; ++i) {
-			avg += ib[i];
-		}
-		dlg_info("record avg: {}", avg / nframes);
-	}
-
-	auto rem = nframes * nc;
-	auto ob = (float*) outBuf;
-	if(data.lastBuf.empty()) {
-		auto frameSize = sizeof(float) * numChannels;
-		std::memset(ob, 0x0, nframes * frameSize);
-	} else {
-		while(rem > 0) {
-			auto count = std::min<std::size_t>(rem, data.lastBuf.size() - data.pos);
-			std::memcpy(ob, data.lastBuf.data() + data.pos, count * sizeof(float));
-			data.pos = (data.pos + count) % data.lastBuf.size();
-			rem -= count;
-			ob += count;
+	const float* buf = static_cast<const float*>(inBuf);
+	double avg = 0.0;
+	for(auto i = 0u; i < nframes; ++i) {
+		for(auto c = 0u; c < numChannels; ++c) {
+			avg += buf[i * numChannels + c];
 		}
 	}
 
+	dlg_info("record avg of {} frames: {}", nframes, avg / (nframes * numChannels));
 	return nframes;
 }
 
@@ -133,22 +96,15 @@ public:
 		dlg_assert(bid);
 		dlg_info("cubeb backend: {}", bid);
 
-		cubeb_stream_params output_params;
-		output_params.format = CUBEB_SAMPLE_FLOAT32NE;
-		output_params.channels = numChannels;
-		output_params.layout = CUBEB_LAYOUT_UNDEFINED;
-		output_params.prefs = CUBEB_STREAM_PREF_NONE;
-		output_params.rate = 44100;
-
 		cubeb_stream_params input_params;
 		input_params.format = CUBEB_SAMPLE_FLOAT32NE;
 		input_params.channels = numChannels;
 		input_params.layout = CUBEB_LAYOUT_UNDEFINED;
 		input_params.prefs = CUBEB_STREAM_PREF_NONE;
-		input_params.rate = 44100;
+		input_params.rate = rate;
 
 		uint32_t latencyFrames = 0;
-		rv = cubeb_get_min_latency(cubeb_, &output_params, &latencyFrames);
+		rv = cubeb_get_min_latency(cubeb_, &input_params, &latencyFrames);
 		if(rv != CUBEB_OK) {
 			dlg_warn("Could not get minimum latency");
 		} else {
@@ -160,8 +116,8 @@ public:
 
 		rv = cubeb_stream_init(cubeb_, &stream_, "tkn::AudioPlayer",
 			NULL, &input_params,
-			NULL, &output_params,
-			latencyFrames, dataCb, stateCb, &data_);
+			NULL, NULL,
+			latencyFrames, dataCb, stateCb, NULL);
 		if(rv != CUBEB_OK) {
 			dlg_error("Could not open audio stream");
 			return false;
@@ -201,9 +157,7 @@ public:
 		} else if(rp.x < 0.2 && rp.y > 0.8) {
 			cubeb_stream_stop(stream_);
 	 	} else if(rp.x < 0.2 && rp.y < 0.1) {
-			data_.drain.store(true);
-		} else {
-			data_.swap.store(true);
+			gdrain.store(true);
 		}
 	}
 
@@ -232,7 +186,6 @@ public:
 protected:
 	cubeb* cubeb_ {};
 	cubeb_stream* stream_ {};
-	AudioData data_;
 };
 
 int main(int argc, const char** argv) {
@@ -243,5 +196,3 @@ int main(int argc, const char** argv) {
 
 	app.run();
 }
-
-
