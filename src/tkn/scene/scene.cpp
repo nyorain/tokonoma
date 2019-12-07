@@ -1,3 +1,4 @@
+#define VPP_NO_DEBUG_MARKER
 #include <tkn/scene/scene.hpp>
 #include <tkn/scene/shape.hpp>
 #include <tkn/quaternion.hpp>

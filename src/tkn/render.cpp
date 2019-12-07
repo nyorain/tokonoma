@@ -85,7 +85,6 @@ vk::Extent2D mipmapSize(vk::Extent2D full, unsigned i) {
 
 void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 		unsigned genLevels) {
-	vpp::DebugLabel(cb, "tkn::downscale");
 	dlg_assert(cb && target.image && target.layerCount);
 	dlg_assert(genLevels > 0);
 
@@ -182,6 +181,12 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 	// 	vk::PipelineStageBits::transfer,
 	// 	vk::PipelineStageBits::allCommands,
 	// 	{}, {}, {}, {{barrier}});
+}
+
+void downscale(const vpp::Device& dev, vk::CommandBuffer cb,
+		const DownscaleTarget& target, unsigned genLevels) {
+	vpp::DebugLabel(dev, cb, "tkn::downscale");
+	downscale(cb, target, genLevels);
 }
 
 } // namespace tkn

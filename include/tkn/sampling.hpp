@@ -161,9 +161,9 @@ public:
 			dst.frameCount = resample(speex_, dst, src);
 
 			auto count = dst.channelCount * dst.frameCount;
-			auto written = buffer_.enque(dst.data, count);
+			buffer_.enque(dst.data, count);
 		} else {
-			auto written = buffer_.enque(b0, nf * srcChannels);
+			buffer_.enque(b0, nf * srcChannels);
 		}
 	}
 
@@ -187,10 +187,10 @@ public:
 
 private:
 	T inner_;
+	BufCaches bufs_;
 	unsigned rate_ {};
 	unsigned channels_ {};
 	std::atomic<float> volume_ {1.f};
-	BufCaches bufs_;
 	SpeexResamplerState* speex_ {};
 
 	static constexpr auto bufSize = 48000 * 2;

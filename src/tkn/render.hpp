@@ -58,5 +58,7 @@ struct DownscaleTarget {
 /// for more details/example.
 void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 		unsigned genLevels);
+void downscale(const vpp::Device& dev, vk::CommandBuffer cb,
+		const DownscaleTarget& target, unsigned genLevels);
 
 } // namespace tkn

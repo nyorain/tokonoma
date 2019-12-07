@@ -106,14 +106,6 @@ inline LineIntersection intersection(Line2f line, Ray2f ray) {
     return li;
 }
 
-/// 2-dimensional cross product.
-/// Is the same as the dot of a with the normal of b.
-template<typename T>
-[[deprecated("Use the nytl/vecOps version instead")]]
-constexpr T cross(nytl::Vec<2, T> a, nytl::Vec<2, T> b) {
-    return a[0] * b[1] - a[1] * b[0];
-}
-
 /// Returns whether value is in range of [start,end]
 template<typename T1, typename T2, typename T3>
 constexpr bool inRange(T1 value, T2 start, T3 end) {

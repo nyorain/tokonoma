@@ -165,7 +165,7 @@ public:
 	 * @param count The number of elements to enqueue.
 	 * @return The number of element enqueued.
 	 */
-	unsigned enqueue_default(int count) {
+	unsigned enqueue_default(unsigned count) {
 		return enqueue(nullptr, count);
 	}
 
@@ -188,11 +188,7 @@ public:
 	 * @return The number of elements successfully coped from `elements` and inserted
 	 * into the ring buffer.
 	 */
-	unsigned enqueue(T * elements, int count) {
-#ifndef NDEBUG
-		assert_correct_thread(producer_id);
-#endif
-
+	unsigned enqueue(T * elements, unsigned count) {
 		int rd_idx = read_index_.load(std::memory_order::memory_order_relaxed);
 		int wr_idx = write_index_.load(std::memory_order::memory_order_relaxed);
 
@@ -221,13 +217,13 @@ public:
 		return to_write;
 	}
 
-	unsigned enque(T * elements, int count) {
+	unsigned enque(T * elements, unsigned count) {
 		auto ret = enqueue(elements, count);
 		assert(ret == count);
 		return ret;
 	}
 
-	unsigned deque(T * elements, int count) {
+	unsigned deque(T * elements, unsigned count) {
 		auto ret = dequeue(elements, count);
 		assert(ret == count);
 		return ret;
@@ -244,11 +240,7 @@ public:
 	 * @param count The maximum number of elements to dequeue.
 	 * @return The number of elements written to `elements`.
 	 */
-	unsigned dequeue(T * elements, int count) {
-#ifndef NDEBUG
-		assert_correct_thread(consumer_id);
-#endif
-
+	unsigned dequeue(T * elements, unsigned count) {
 		int wr_idx = write_index_.load(std::memory_order::memory_order_acquire);
 		int rd_idx = read_index_.load(std::memory_order::memory_order_relaxed);
 
@@ -277,9 +269,6 @@ public:
 	 * @return The number of available elements for reading.
 	 */
 	unsigned available_read() const {
-#ifndef NDEBUG
-		assert_correct_thread(consumer_id);
-#endif
 		return available_read_internal(
 			read_index_.load(std::memory_order::memory_order_relaxed),
 			write_index_.load(std::memory_order::memory_order_relaxed));
@@ -290,9 +279,6 @@ public:
 	 * @return The number of empty slots in the buffer, available for writing.
 	 */
 	unsigned available_write() const {
-#ifndef NDEBUG
-		assert_correct_thread(producer_id);
-#endif
 		return available_write_internal(read_index_.load(std::memory_order::memory_order_relaxed),
 				write_index_.load(std::memory_order::memory_order_relaxed));
 	}
@@ -304,16 +290,6 @@ public:
 	unsigned capacity() const {
 		return storage_capacity() - 1;
 	}
-	/**
-	 * Reset the consumer and producer thread identifier, in case the thread are
-	 * being changed. This has to be externally synchronized. This is no-op when
-	 * asserts are disabled.
-	 */
-	void reset_thread_ids() {
-#ifndef NDEBUG
-		consumer_id = producer_id = std::thread::id();
-#endif
-  }
 private:
 	/** Return true if the ring buffer is empty.
 	* @param read_index the read index to consider
@@ -347,7 +323,7 @@ private:
 	* Returns the number of elements available for reading.
 	* @return the number of available elements for reading.
 	*/
-	int
+	unsigned
 	available_read_internal(int read_index, int write_index) const {
 		if (write_index >= read_index) {
 			return write_index - read_index;
@@ -360,7 +336,7 @@ private:
 	* Returns the number of empty elements, available for writing.
 	* @return the number of elements that can be written into the array.
 	*/
-	int
+	unsigned
 	available_write_internal(int read_index, int write_index) const {
 		/* We substract one element here to always keep at least one sample
 		 * free in the buffer, to distinguish between full and empty array. */
@@ -381,21 +357,6 @@ private:
 		return (index + increment) % storage_capacity();
 	}
 
-	/**
-	* @brief This allows checking that enqueue (resp. dequeue) are always called
-	* by the right thread.
-	* @param id the id of the thread that has called the calling method first.
-	*/
-#ifndef NDEBUG
-	static void assert_correct_thread(std::thread::id& id) {
-	  // if (id == std::thread::id()) {
-		  // id = std::this_thread::get_id();
-		  // return;
-	  // }
-	  // assert(id == std::this_thread::get_id());
-	}
-#endif
-
 	/** Index at which the oldest element is at, in samples. */
 	std::atomic<int> read_index_;
 	/** Index at which to write new elements. `write_index` is always at
@@ -405,14 +366,6 @@ private:
 	const int capacity_;
 	/** Data storage */
 	std::unique_ptr<T[]> data_;
-
-#ifndef NDEBUG
-public:
-	/** The id of the only thread that is allowed to read from the queue. */
-	mutable std::thread::id consumer_id;
-	/** The id of the only thread that is allowed to write from the queue. */
-	mutable std::thread::id producer_id;
-#endif
 };
 
 } // namespace util

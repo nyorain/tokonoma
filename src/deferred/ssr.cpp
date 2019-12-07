@@ -106,7 +106,7 @@ void SSRPass::initBuffers(InitBufferData& data, vk::ImageView ldepth,
 
 void SSRPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,
 		vk::Extent2D size) {
-	vpp::DebugLabel debugLabel(cb, "SSRPass");
+	vpp::DebugLabel debugLabel(pipe_.device(), cb, "SSRPass");
 
 	vk::ImageMemoryBarrier barrier;
 	barrier.image = target_.image();

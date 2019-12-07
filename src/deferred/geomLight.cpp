@@ -506,7 +506,8 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		nytl::Span<const tkn::DirLight*> dirLights, vpp::BufferSpan boxIndices,
 		vk::DescriptorSet envCamDs, const tkn::Environment* env,
 		TimeWidget* time) {
-	vpp::DebugLabel(cb, "GeomLightPass");
+	auto& dev = rp_.device();
+	vpp::DebugLabel(dev, cb, "GeomLightPass");
 	auto width = size.width;
 	auto height = size.height;
 
@@ -523,7 +524,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 	}, {});
 
 	{
-		vpp::DebugLabel(cb, "geometry pass");
+		vpp::DebugLabel(dev, cb, "geometry pass");
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, geomPipe_);
 		tkn::cmdBindGraphicsDescriptors(cb, geomPipeLayout_, 0, {camDs});
 		scene.render(cb, geomPipeLayout_, false); // opaque
@@ -535,7 +536,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 	vk::cmdNextSubpass(cb, vk::SubpassContents::eInline);
 
 	{
-		vpp::DebugLabel(cb, "light pass");
+		vpp::DebugLabel(dev, cb, "light pass");
 		tkn::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 0, {camDs, lightDs_});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pointLightPipe_);
 		vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
@@ -556,7 +557,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 			time->addTimestamp(cb);
 		}
 		if(renderAO()) {
-			vpp::DebugLabel(cb, "ao pass");
+			vpp::DebugLabel(dev, cb, "ao pass");
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, aoPipe_);
 			tkn::cmdBindGraphicsDescriptors(cb, aoPipeLayout_, 0, {camDs, aoDs_});
 			vk::cmdPushConstants(cb, aoPipeLayout_, vk::ShaderStageBits::fragment,

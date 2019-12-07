@@ -136,7 +136,7 @@ void LightScatterPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 
 void LightScatterPass::record(vk::CommandBuffer cb, vk::Extent2D size,
 		vk::DescriptorSet scene, vk::DescriptorSet light) {
-	vpp::DebugLabel label(cb, "LightScatterPass");
+	vpp::DebugLabel label(rp_.device(), cb, "LightScatterPass");
 	vk::cmdBeginRenderPass(cb, {
 		rp_, fb_,
 		{0u, 0u, size.width, size.height},

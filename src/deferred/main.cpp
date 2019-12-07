@@ -580,7 +580,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		timeWidget_.addTimestamp(cb);
 
 		// gui stuff
-		vpp::DebugLabel debugLabel(cb, "GUI");
+		vpp::DebugLabel debugLabel(device(), cb, "GUI");
 		rvgContext().bindDefaults(cb);
 		gui().draw(cb);
 

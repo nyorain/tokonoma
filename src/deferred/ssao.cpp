@@ -371,7 +371,7 @@ void SSAOPass::initBuffers(InitBufferData& data, vk::ImageView depth,
 
 void SSAOPass::record(vk::CommandBuffer cb,
 		vk::Extent2D size, vk::DescriptorSet sceneDs) {
-	vpp::DebugLabel debugLabel(cb, "SSAOPass");
+	vpp::DebugLabel debugLabel(rp_.device(), cb, "SSAOPass");
 	auto width = size.width;
 	auto height = size.height;
 

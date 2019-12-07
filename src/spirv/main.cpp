@@ -22,9 +22,8 @@ int main() {
 	auto spv = vpp::readFile("src/spirv/comp.spv", true);
 	dlg_assert(spv.size() % 4 == 0);
 	auto ptr = reinterpret_cast<const std::uint32_t*>(spv.data());
-	long size = spv.size() / 4;
 
-	vpp::ShaderModule shader(dev, {ptr, size});
+	vpp::ShaderModule shader(dev, {ptr, spv.size() / 4});
 	vk::ComputePipelineCreateInfo cpi;
 	cpi.layout = pipeLayout;
 	cpi.stage.module = shader;

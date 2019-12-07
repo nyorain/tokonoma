@@ -8,6 +8,7 @@
 #include <algorithm>
 
 namespace tkn {
+using nytl::cross;
 
 LineIntersection intersection(Line2f lineA, Line2f lineB) {
     dlg_assert(lineB.direction != nytl::approx(nytl::Vec2f {0, 0}));

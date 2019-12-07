@@ -197,7 +197,7 @@ vpp::Framebuffer PostProcessPass::initFramebuffer(vk::ImageView output,
 }
 
 void PostProcessPass::record(vk::CommandBuffer cb, u32 mode) {
-	vpp::DebugLabel debugLabel(cb, "PostProcessPass");
+	vpp::DebugLabel debugLabel(pipe_.device(), cb, "PostProcessPass");
 	if(mode == modeDefault) {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});

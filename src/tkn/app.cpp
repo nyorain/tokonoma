@@ -70,14 +70,17 @@ void translate(nytl::Mat4<T>& mat, nytl::Vec3<T> move) {
 // allow to set breakpoint for errors/warnings
 static unsigned dlgErrors = 0;
 static unsigned dlgWarnings = 0;
-void dlgHandler(const struct dlg_origin* origin, const char* string, void* data) {
+static dlg_handler old_dlg_handler = NULL;
+static void* old_dlg_data = NULL;
+
+void dlgHandler(const struct dlg_origin* origin, const char* string, void*) {
 	if(origin->level == dlg_level_error) {
 		++dlgErrors;
 	} else if(origin->level == dlg_level_warn) {
 		++dlgWarnings;
 	}
 
-	dlg_default_output(origin, string, data);
+	old_dlg_handler(origin, string, old_dlg_data);
 }
 
 /// GuiListener
@@ -262,6 +265,9 @@ App::~App() = default;
 bool App::init(nytl::Span<const char*> args) {
 	impl_ = std::make_unique<Impl>();
 
+	old_dlg_handler = dlg_get_handler(&old_dlg_data);
+	dlg_set_handler(dlgHandler, nullptr);
+
 #ifdef __ANDROID__
 	// TODO: workaround atm, this seems to be needed since sometimes global
 	// state isn't reset when the app is reloaded?
@@ -383,11 +389,10 @@ bool App::init(nytl::Span<const char*> args) {
 		surface_ = false;
 		impl_->renderer.reset();
 	};
-	window().onSurfaceCreated = [&](auto surface){
+	window().onSurfaceCreated = [&](auto vkSurf){
 		dlg_assert(!surface_);
 		surface_ = true;
 		auto size = window().size();
-		auto vkSurf = window().vkSurface();
 		auto prefs = swapchainPrefs();
 
 		// NOTE: we don't recreate the other resources here; we assume

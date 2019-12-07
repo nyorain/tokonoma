@@ -888,7 +888,7 @@ static int error(vorb *f, enum STBVorbisError e)
 #define array_size_required(count,size)  (count*(sizeof(void *)+(size)))
 
 #define temp_alloc(f,size)              (f->alloc.alloc_buffer ? setup_temp_malloc(f,size) : alloca(size))
-#define temp_free(f,p)                  0
+#define temp_free(f,p)                  (void) 0
 #define temp_alloc_save(f)              ((f)->temp_offset)
 #define temp_alloc_restore(f,p)         ((f)->temp_offset = (p))
 
@@ -3061,6 +3061,7 @@ typedef int YTYPE;
 #endif
 static int do_floor(vorb *f, Mapping *map, int i, int n, float *target, YTYPE *finalY, uint8 *step2_flag)
 {
+	(void) step2_flag;
    int n2 = n >> 1;
    int s = map->chan[i].mux, floor;
    floor = map->submap_floor[s];
@@ -3168,6 +3169,7 @@ static int vorbis_decode_initial(vorb *f, int *p_left_start, int *p_left_end, in
 
 static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start, int left_end, int right_start, int right_end, int *p_left)
 {
+	(void) left_end;
    Mapping *map;
    int i,j,k,n,n2;
    int zero_channel[256];

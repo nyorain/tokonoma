@@ -329,9 +329,9 @@ void AudioPlayer::fill(unsigned nf) {
 }
 
 long AudioPlayer::dataCb(void* vbuffer, long nframes) {
-	using namespace std::chrono;
-	using Clock = high_resolution_clock;
-	auto start = Clock::now();
+	// using namespace std::chrono;
+	// using Clock = high_resolution_clock;
+	// auto start = Clock::now();
 
 	// artifical delay for testing slow cpus
 	// std::this_thread::sleep_for(milliseconds(5));

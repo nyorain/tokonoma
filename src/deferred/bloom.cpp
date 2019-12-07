@@ -198,7 +198,8 @@ void BloomPass::initBuffers(InitBufferData& data, vk::ImageView lightInput) {
 }
 
 void BloomPass::recordBlur(vk::CommandBuffer cb, unsigned mip, vk::Extent2D size) {
-	vpp::DebugLabel debugLabel(cb, dlg::format("recordBlur:{}", mip).c_str());
+	auto lname = dlg::format("recordBlur:{}", mip);
+	vpp::DebugLabel debugLabel(target_.device(), cb, lname.c_str());
 
 	auto& tmpl = tmpLevels_[mip];
 	auto& targetl = targetLevels_[mip];
@@ -247,7 +248,7 @@ void BloomPass::recordBlur(vk::CommandBuffer cb, unsigned mip, vk::Extent2D size
 
 void BloomPass::record(vk::CommandBuffer cb, vk::Image emission,
 		vk::Extent2D size) {
-	vpp::DebugLabel debugLabel(cb, "BloomPass");
+	vpp::DebugLabel debugLabel(target_.device(), cb, "BloomPass");
 
 	unsigned w = size.width;
 	unsigned h = size.height;
