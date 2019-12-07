@@ -5,7 +5,10 @@
 #include <nytl/vecOps.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/matOps.hpp>
+#include <rvg/shapes.hpp>
+#include <rvg/paint.hpp>
 #include <ny/fwd.hpp>
+#include <ny/event.hpp>
 
 namespace tkn {
 
@@ -67,5 +70,28 @@ nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 // back (topleft, topright, bottomleft, bottomright)
 using Frustum = std::array<nytl::Vec3f, 8>;
 Frustum ndcFrustum(); // frustum in ndc space, i.e. [-1, 1]^3
+
+struct TouchCameraController {
+	static constexpr auto invalidID = 0xFFFFFFFFu;
+	struct TouchPoint {
+		unsigned id = invalidID;
+		nytl::Vec2f pos;
+		nytl::Vec2f start; // only for alt
+		rvg::CircleShape circle;
+	};
+
+	tkn::Camera* cam;
+	TouchPoint move;
+	TouchPoint rotate;
+	bool alt = true; // whether we use alternative controls
+	rvg::Paint paint;
+};
+
+void init(TouchCameraController&, tkn::Camera& cam, rvg::Context& rvgctx);
+void touchBegin(TouchCameraController&, const ny::TouchBeginEvent&,
+	nytl::Vec2ui windowSize);
+void touchEnd(TouchCameraController&, const ny::TouchEndEvent& ev);
+void touchUpdate(TouchCameraController&, const ny::TouchUpdateEvent& ev);
+void update(TouchCameraController&, double dt);
 
 } // namespace tkn

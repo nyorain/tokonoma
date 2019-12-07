@@ -422,17 +422,7 @@ public:
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 
-		touch_.paint = {rvgContext(), rvg::colorPaint({255, 200, 200, 40})};
-
-		rvg::DrawMode dm;
-		dm.aaFill = true;
-		dm.fill = true;
-		dm.deviceLocal = true;
-		touch_.move.circle = {rvgContext(), {}, 20.f, dm};
-		touch_.move.circle.disable(true);
-		touch_.rotate.circle = {rvgContext(), {}, 20.f, dm};
-		touch_.rotate.circle.disable(true);
-
+		tkn::init(touch_, camera_, rvgContext());
 		return true;
 	}
 
@@ -463,40 +453,7 @@ public:
 			tkn::checkMovement(camera_, *kc, dt);
 		}
 
-		if(touch_.alt) {
-			auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
-			auto cut = [&](auto f) {
-				auto off = 20.f;
-				if(std::abs(f) < off) return 0.f;
-				return f - sign(f) * off;
-			};
-
-			if(touch_.move.id != invalidID) {
-				auto& c = camera_;
-				auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-				auto right = nytl::normalized(nytl::cross(c.dir, yUp));
-
-				nytl::Vec2f delta = touch_.move.pos - touch_.move.start;
-				delta = {cut(delta.x), cut(delta.y)};
-				delta.x = sign(delta.x) * std::pow(std::abs(delta.x), 1.65);
-				delta.y = sign(delta.y) * std::pow(std::abs(delta.y), 1.65);
-				delta *= 0.0005f * dt;
-
-				c.pos += delta.x * right;
-				c.pos -= delta.y * c.dir; // y input coords have top-left origin
-				c.update = true;
-			}
-			if(touch_.rotate.id != invalidID) {
-				nytl::Vec2f delta = touch_.rotate.pos - touch_.rotate.start;
-				delta = {cut(delta.x), cut(delta.y)};
-				delta.x = sign(delta.x) * std::pow(std::abs(delta.x), 1.65);
-				delta.y = sign(delta.y) * std::pow(std::abs(delta.y), 1.65);
-				delta *= 0.0004f * dt;
-
-				tkn::rotateView(camera_, delta.x, delta.y);
-			}
-		}
-
+		tkn::update(touch_, dt);
 		if(camera_.update) {
 			App::scheduleRedraw();
 		}
@@ -549,51 +506,13 @@ public:
 			return true;
 		}
 
-		using namespace nytl::vec::cw::operators;
-		auto rp = ev.pos / window().size();
-		if(rp.x < 0.5f && touch_.move.id == invalidID) {
-			touch_.move.id = ev.id;
-			touch_.move.pos = ev.pos;
-			touch_.move.start = ev.pos;
-
-			touch_.move.circle.disable(false);
-			touch_.move.circle.change()->center = ev.pos;
-		} else if(rp.x > 0.5f && touch_.rotate.id == invalidID) {
-			touch_.rotate.id = ev.id;
-			touch_.rotate.pos = ev.pos;
-			touch_.rotate.start = ev.pos;
-
-			touch_.rotate.circle.disable(false);
-			touch_.rotate.circle.change()->center = ev.pos;
-		}
-
+		tkn::touchBegin(touch_, ev, window().size());
 		return true;
 	}
 
 	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
-		if(ev.id == touch_.rotate.id) {
-			auto delta = ev.pos - touch_.rotate.pos;
-			touch_.rotate.pos = ev.pos;
-
-			if(!touch_.alt) {
-				tkn::rotateView(camera_, 0.005 * delta.x, 0.005 * delta.y);
-				App::scheduleRedraw();
-			}
-		} else if(ev.id == touch_.move.id) {
-			auto delta = ev.pos - touch_.move.pos;
-			touch_.move.pos = ev.pos;
-
-			if(!touch_.alt) {
-				auto& c = camera_;
-				auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-				auto right = nytl::normalized(nytl::cross(c.dir, yUp));
-
-				auto fac = 0.01f;
-				c.pos += fac * delta.x * right;
-				c.pos -= fac * delta.y * c.dir; // y input coords have top-left origin
-				c.update = true;
-			}
-		}
+		tkn::touchUpdate(touch_, ev);
+		App::scheduleRedraw();
 	}
 
 	bool touchEnd(const ny::TouchEndEvent& ev) override {
@@ -601,16 +520,8 @@ public:
 			return true;
 		}
 
-		if(ev.id == touch_.rotate.id) {
-			touch_.rotate.id = invalidID;
-			touch_.rotate.circle.disable(true);
-			App::scheduleRedraw();
-		} else if(ev.id == touch_.move.id) {
-			touch_.move.id = invalidID;
-			touch_.move.circle.disable(true);
-			App::scheduleRedraw();
-		}
-
+		tkn::touchEnd(touch_, ev);
+		App::scheduleRedraw();
 		return true;
 	}
 
@@ -631,21 +542,7 @@ protected:
 	tkn::Camera camera_;
 	bool rotateView_ {};
 
-	static constexpr auto invalidID = 0xFFFFFFFFu;
-	struct TouchPoint {
-		unsigned id = invalidID;
-		nytl::Vec2f pos;
-		nytl::Vec2f start; // only for alt
-
-		rvg::CircleShape circle;
-	};
-
-	struct {
-		TouchPoint move;
-		TouchPoint rotate;
-		bool alt = true; // whether we use alternative controls
-		rvg::Paint paint;
-	} touch_;
+	tkn::TouchCameraController touch_;
 };
 
 int main(int argc, const char** argv) {

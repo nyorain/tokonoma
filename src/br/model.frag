@@ -10,7 +10,7 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord0;
 layout(location = 3) in vec2 inTexCoord1;
 layout(location = 4) in flat uint inMatID;
-layout(location = 5) in flat uint inModelID;
+// layout(location = 5) in flat uint inModelID;
 
 layout(location = 0) out vec4 outCol;
 
@@ -38,16 +38,16 @@ layout(set = 2, binding = 0, row_major) uniform DirLightBuf {
 layout(set = 2, binding = 1) uniform sampler2DArrayShadow shadowMap;
 
 // point light
-layout(set = 3, binding = 0, row_major) uniform PointLightBuf {
-	PointLight pointLight;
-};
-layout(set = 3, binding = 1) uniform samplerCubeShadow shadowCube;
+// layout(set = 3, binding = 0, row_major) uniform PointLightBuf {
+// 	PointLight pointLight;
+// };
+// layout(set = 3, binding = 1) uniform samplerCubeShadow shadowCube;
 
-layout(set = 4, binding = 0) uniform samplerCube envMap;
-layout(set = 4, binding = 1) uniform sampler2D brdfLut;
-layout(set = 4, binding = 2) uniform samplerCube irradianceMap;
+layout(set = 3, binding = 0) uniform samplerCube envMap;
+layout(set = 3, binding = 1) uniform sampler2D brdfLut;
+layout(set = 3, binding = 2) uniform samplerCube irradianceMap;
 
-layout(set = 4, binding = 3) uniform Params {
+layout(set = 3, binding = 3) uniform Params {
 	uint mode;
 	float aoFac;
 	uint envLods;
@@ -59,21 +59,25 @@ const uint modeSpecularIBL = (1u << 2);
 const uint modeIrradiance = (1u << 3);
 
 vec4 readTex(MaterialTex tex) {
-	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
+	// vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
+	vec2 tuv = inTexCoord0;
 	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
 }
 
 void main() {
+	// uint inMatID = 0u;
+	// uint inModelID = 0u;
+
 	Material material = materials[inMatID];
 
-	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
-		discard;
-	}
+	// if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
+	// 	discard;
+	// }
 
 	vec4 albedo = material.albedoFac * readTex(material.albedo);
-	if(albedo.a < material.alphaCutoff) {
-		discard;
-	}
+	// if(albedo.a < material.alphaCutoff) {
+	// 	discard;
+	// }
 
 	vec3 normal = normalize(inNormal);
 	if((material.flags & normalMap) != 0u) {
@@ -83,9 +87,9 @@ void main() {
 		normal = tbnNormal(normal, inPos, tuv, 2.0 * n.xyz - 1.0);
 	}
 
-	if(!gl_FrontFacing) { // flip normal, see gltf spec
-		normal *= -1;
-	}
+	// if(!gl_FrontFacing) { // flip normal, see gltf spec
+	// 	normal *= -1;
+	// }
 
 	vec3 color = vec3(0.0);
 
@@ -93,6 +97,8 @@ void main() {
 	vec4 mr = readTex(material.metalRough);
 	float metalness = material.metallicFac * mr.b;
 	float roughness = material.roughnessFac * mr.g;
+
+	/*
 	if(bool(params.mode & modeDirLight)) {
 		float between;
 		float linearz = depthtoz(gl_FragCoord.z, scene.near, scene.far);
@@ -116,7 +122,9 @@ void main() {
 		light *= shadow;
 		color.rgb += dirLight.color * light;
 	}
+	*/
 
+	/*
 	if(bool(params.mode & modePointLight)) {
 		vec3 ldir = inPos - pointLight.pos;
 		float lightDist = length(ldir);
@@ -142,6 +150,7 @@ void main() {
 			color.rgb += pointLight.color * light;
 		}
 	}
+	*/
 
 	vec3 f0 = vec3(0.04);
 	f0 = mix(f0, albedo.rgb, metalness);

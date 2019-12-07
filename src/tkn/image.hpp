@@ -1,5 +1,6 @@
 #pragma once
 
+#include <tkn/file.hpp>
 #include <nytl/stringParam.hpp>
 #include <functional>
 
@@ -102,17 +103,23 @@ ReadError readKtx(nytl::StringParam path, std::unique_ptr<ImageProvider>&);
 ReadError readJpeg(nytl::StringParam path, std::unique_ptr<ImageProvider>&);
 ReadError readPng(nytl::StringParam path, std::unique_ptr<ImageProvider>&);
 
+/// Transfers ownership of the file to the loader on success.
+ReadError readKtx(File&& file, std::unique_ptr<ImageProvider>&);
+ReadError readJpeg(File&& file, std::unique_ptr<ImageProvider>&);
+ReadError readPng(File&& file, std::unique_ptr<ImageProvider>&);
+
 /// STB babckend is a fallback since it supports additional formats.
 /// For !hdr, will always return r8g8b8a8Unorm as image format, the caller must
 /// know whether the image holds srgb data. For hdr, always returns
 /// vk::Format::r32g32b32a32Sfloat format.
-std::unique_ptr<ImageProvider> readStb(nytl::StringParam path,
-	bool hdr = false);
+std::unique_ptr<ImageProvider> readStb(nytl::StringParam path, bool hdr = false);
+std::unique_ptr<ImageProvider> readStb(File&& file, bool hdr = false);
 
 /// Tries to find the matching backend/loader for the image file at the
 /// given path. If no format/backend succeeds, the returned unique ptr will be
 /// empty. The hdr parameter is just for stb fallback.
 std::unique_ptr<ImageProvider> read(nytl::StringParam path, bool hdr = false);
+std::unique_ptr<ImageProvider> read(File&& file, bool hdr = false);
 
 /// Reads multiple images from the given paths.
 /// If asFaces is true, will load them as faces, otherwise as layers.
@@ -129,7 +136,6 @@ enum class WriteError {
 };
 
 WriteError writeKtx(nytl::StringParam path, ImageProvider&);
-
 
 
 /// More limited in-memory representation of an image.
@@ -149,11 +155,13 @@ Image readImage(ImageProvider&);
 /// know whether the image holds srgb data. For hdr, always returns
 /// vk::Format::r32g32b32a32Sfloat format.
 Image readImageStb(nytl::StringParam path, bool hdr = false);
+Image readImageStb(File&& file, bool hdr = false);
 
 /// Fully reads the image at the given path into memory and returns
 /// the image. Returns an empty image on error.
 /// The hdr parameter is just for stb fallback.
 Image readImage(nytl::StringParam path, bool hdr = false);
+Image readImage(File&& file, bool hdr = false);
 
 /// Transforms the given image into an image provider implementation.
 /// The provider will take ownership of the image.

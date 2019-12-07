@@ -16,7 +16,7 @@ namespace tkn {
 
 class PngReader : public ImageProvider {
 public:
-	std::FILE* file_ {};
+	File file_ {};
 	nytl::Vec2ui size_;
 	png_infop pngInfo_ {};
 	png_structp png_ {};
@@ -26,9 +26,6 @@ public:
 	~PngReader() {
 		if(png_) {
 			::png_destroy_read_struct(&png_, &pngInfo_, nullptr);
-		}
-		if(file_) {
-			std::fclose(file_);
 		}
 	}
 
@@ -72,14 +69,9 @@ public:
 	}
 };
 
-ReadError readPng(nytl::StringParam path, PngReader& reader) {
-	reader.file_ = ::fopen(path.c_str(), "rb");
-	if(!reader.file_) {
-		return ReadError::cantOpen;
-	}
-
+ReadError readPng(File&& file, PngReader& reader) {
 	unsigned char sig[8];
-	::fread(sig, 1, sizeof(sig), reader.file_);
+	std::fread(sig, 1, sizeof(sig), file);
 	if(::png_sig_cmp(sig, 0, sizeof(sig))) {
     	return ReadError::invalidType;
   	}
@@ -99,7 +91,7 @@ ReadError readPng(nytl::StringParam path, PngReader& reader) {
 		return ReadError::internal;
 	}
 
-	png_init_io(reader.png_, reader.file_);
+	png_init_io(reader.png_, file);
 	png_set_sig_bytes(reader.png_, sizeof(sig));
 	png_read_info(reader.png_, reader.pngInfo_);
 
@@ -137,17 +129,29 @@ ReadError readPng(nytl::StringParam path, PngReader& reader) {
 	}
 
 	png_read_update_info(reader.png_, reader.pngInfo_);
+	reader.file_ = std::move(file);
 	return ReadError::none;
 }
 
-ReadError readPng(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
+ReadError readPng(File&& file, std::unique_ptr<ImageProvider>& ret) {
+	std::rewind(file);
 	auto reader = std::make_unique<PngReader>();
-	auto err = readPng(path, *reader);
+	auto err = readPng(std::move(file), *reader);
 	if(err == ReadError::none) {
 		ret = std::move(reader);
 	}
 
 	return err;
+}
+
+ReadError readPng(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
+	auto file = File(path, "rb");
+	if(!file) {
+		dlg_debug("fopen: {}", std::strerror(errno));
+		return ReadError::cantOpen;
+	}
+
+	return readPng(std::move(file), ret);
 }
 
 } // namespace tkn

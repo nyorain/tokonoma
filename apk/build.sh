@@ -1,30 +1,37 @@
 #!/bin/bash
 
-# expected environment:
-# $SDK: full path of android sdk root
-# $BT: path to sdk build tools folder
-# $PLATFORM: path to sdk android platform folder to use
+# Expected arguments
+# 1. architecture (e.g. arm64-v8a)
+# 2. path to buildtools dir 
+# 3. path to android platform folder to use
+# 4. absolute module path
+# 5. output path
+# 6: tkn apk suffix
 
-# arch=arm64-v8a
-arch=armeabi-v7a
-
-if [ $# -lt 2 ]; then
-	echo "Usage: build.sh <absolute module path> <output path>"
+if [ $# -lt 6 ]; then
+	echo "build.sh: Invalid arguments"
 	exit 1
 fi
 
-libpath=$1
-out=$2
+arch=$1
+BT=$2
+PLATFORM=$3
+libpath=$4
+out=$5
+suffix=$6
+
 cd $out
 
+libpath=$libpath
 libfile=$(basename -- $libpath)
 libname=$(echo $libfile | sed -e "s/^lib//; s/\.so$//")
 pkgname=$libname
 name=${libname^}
 
-sed "s/%appname%/$name/g; \
-	s/%libname%/$libname/g; \
-	s/%pkgname%/$pkgname/g" \
+sed "s/TKN_APP/$name/g; \
+	s/TKN_LIB/$libname/g; \
+	s/TKN_SUFFIX/$suffix/g; \
+	s/TKN_PKG/$pkgname/g" \
 	AndroidManifest.xml.in > AndroidManifest.xml
 
 baseapk=base.tkn.apk
@@ -33,7 +40,7 @@ apk=$pkgname.tkn.apk
 
 # copy base apk and update manifest
 cp $baseapk $apku
-"${BT}/aapt" package -u -M AndroidManifest.xml \
+$BT/aapt package -u -M AndroidManifest.xml \
 	-I "${PLATFORM}/android.jar" \
 	-F $apku 
 
@@ -42,7 +49,7 @@ ln -sf $libpath lib/$arch
 $BT/aapt add $apku lib/$arch/$libfile
 
 # sign apk
-"${BT}/apksigner" sign --ks keystore.jks \
+$BT/apksigner sign --ks keystore.jks \
 	--ks-key-alias androidkey --ks-pass pass:android \
 	--key-pass pass:android --out $apk \
 	$apku

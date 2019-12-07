@@ -1,26 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-	package="org.example.tkn.%pkgname%"
+	package="org.example.tknTKN_SUFFIX.TKN_PKG"
 	versionCode="1"
 	versionName="1.0" >
 	<uses-sdk
         android:minSdkVersion="24"
-        android:targetSdkVersion="24" />
+        android:targetSdkVersion="28" />
 
+	<uses-permission android:name="android.permission.RECORD_AUDIO"/>
 	<application 
-		android:label="%appname%"
+		android:label="TKN_APPTKN_SUFFIX"
 		android:hasCode="false"
 		android:allowBackup="true"
 		android:debuggable="true">
 		<activity 
 			android:name="android.app.NativeActivity"
-			android:label="%appname%"
+			android:label="TKN_APPTKN_SUFFIX"
 			android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
 			android:configChanges="orientation|screenSize">
 			<meta-data 
 				android:name="android.app.lib_name" 
-				android:value="%libname%"/>
+				android:value="TKN_LIB"/>
 			<intent-filter>
 				<action android:name="android.intent.action.MAIN" />
 				<category android:name="android.intent.category.LAUNCHER" />

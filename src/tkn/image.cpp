@@ -44,6 +44,15 @@ std::unique_ptr<ImageProvider> readStb(nytl::StringParam path, bool hdr) {
 	return wrap(std::move(img));
 }
 
+std::unique_ptr<ImageProvider> readStb(File&& file, bool hdr) {
+	auto img = readImageStb(std::move(file), hdr);
+	if(!img.data) {
+		return {};
+	}
+
+	return wrap(std::move(img));
+}
+
 // TODO: the other loaders should respect hdr as well i guess...
 std::unique_ptr<ImageProvider> read(nytl::StringParam path, bool hdr) {
 	std::unique_ptr<ImageProvider> reader;
@@ -70,46 +79,54 @@ std::unique_ptr<ImageProvider> read(nytl::StringParam path, bool hdr) {
 	}
 
 	// then just try all remaining loaders
-	if(!triedpng) {
-		if(readPng(path, reader) == ReadError::none) {
-			return reader;
-		}
-	}
-	if(!triedjpg) {
-		if(readJpeg(path, reader) == ReadError::none) {
-			return reader;
-		}
-	}
-	if(!triedktx) {
-		if(readKtx(path, reader) == ReadError::none) {
-			return reader;
-		}
-	}
+	if(!triedpng && readPng(path, reader) == ReadError::none) return reader;
+	if(!triedjpg && readJpeg(path, reader) == ReadError::none) return reader;
+	if(!triedktx && readKtx(path, reader) == ReadError::none) return reader;
 
 	// stb is our last fallback
 	return readStb(path, hdr);
 }
 
+std::unique_ptr<ImageProvider> read(File&& file, bool hdr) {
+	std::unique_ptr<ImageProvider> reader;
+
+	if(readPng(std::move(file), reader) == ReadError::none) return reader;
+	if(readJpeg(std::move(file), reader) == ReadError::none) return reader;
+	if(readKtx(std::move(file), reader) == ReadError::none) return reader;
+
+	// stb is our last fallback
+	return readStb(std::move(file), hdr);
+}
+
 // Image api
 Image readImageStb(nytl::StringParam path, bool hdr) {
+	auto file = File(path, "rb");
+	if(!file) {
+		dlg_debug("fopen: {}", std::strerror(errno));
+		return {};
+	}
+
+	return readImageStb(std::move(file), hdr);
+}
+
+Image readImageStb(File&& file, bool hdr) {
+	std::rewind(file);
 	constexpr auto channels = 4u; // TODO: make configurable
 	int width, height, ch;
 	std::byte* data;
 	Image ret;
 	if(hdr) {
-		auto fd = stbi_loadf(path.c_str(), &width, &height, &ch, channels);
+		auto fd = stbi_loadf_from_file(file, &width, &height, &ch, channels);
 		data = reinterpret_cast<std::byte*>(fd);
 		ret.format = vk::Format::r32g32b32a32Sfloat;
 	} else {
-		auto cd = stbi_load(path.c_str(), &width, &height, &ch, channels);
+		auto cd = stbi_load_from_file(file, &width, &height, &ch, channels);
 		data = reinterpret_cast<std::byte*>(cd);
 		ret.format = vk::Format::r8g8b8a8Unorm;
 	}
 
 	if(!data) {
-		std::string err = "STB could not load image from ";
-		err += path;
-		err += ": ";
+		std::string err = "STB could not load image from file: ";
 		err += stbi_failure_reason();
 		dlg_warn("{}", err);
 		return ret;
@@ -118,12 +135,22 @@ Image readImageStb(nytl::StringParam path, bool hdr) {
 	ret.data.reset(data);
 	ret.size.x = width;
 	ret.size.y = height;
+	file = {}; // no longer needed
 	return ret;
 }
 
 
 Image readImage(nytl::StringParam path, bool hdr) {
 	auto provider = read(path, hdr);
+	if(!provider) {
+		return {};
+	}
+
+	return readImage(*provider);
+}
+
+Image readImage(File&& file, bool hdr) {
+	auto provider = read(std::move(file), hdr);
 	if(!provider) {
 		return {};
 	}

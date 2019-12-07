@@ -2,6 +2,7 @@
 
 #include <tkn/audio.hpp>
 #include <tkn/ringbuffer.hpp>
+#include <tkn/file.hpp>
 #include <nytl/stringParam.hpp>
 #include <nytl/span.hpp>
 #include <tml.h>
@@ -100,8 +101,9 @@ protected:
 // Continous decoder classes, to be used with tkn::Streamed.
 class VorbisDecoder {
 public:
-	VorbisDecoder(nytl::StringParam file);
-	VorbisDecoder(nytl::Span<const std::byte> buf);
+	explicit VorbisDecoder(nytl::StringParam file);
+	explicit VorbisDecoder(nytl::Span<const std::byte> buf);
+	explicit VorbisDecoder(File&& file);
 	~VorbisDecoder();
 
 	int get(float* buf, unsigned nf);
@@ -114,19 +116,21 @@ private:
 
 class MP3Decoder {
 public:
-	MP3Decoder(nytl::StringParam file);
-	~MP3Decoder();
+	explicit MP3Decoder(nytl::StringParam file);
+	explicit MP3Decoder(File&& file);
 
 	int get(float* buf, unsigned nf);
 	unsigned rate() const { return rate_; }
 	unsigned channels() const { return channels_; }
 
 private:
+	void init();
+
 	// How much we read from the file before trying to decode a frame.
 	// Follows the recommendation of minimp3
 	static constexpr auto readSize = 16 * 1024;
 
-	std::FILE* file_ {};
+	File file_;
 	mp3dec_t mp3_ {};
 	unsigned rate_ {};
 	unsigned channels_ {};

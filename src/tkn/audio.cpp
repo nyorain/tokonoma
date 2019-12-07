@@ -11,8 +11,17 @@ struct AudioPlayer::Util {
 	static long dataCb(cubeb_stream*, void* user, const void* inBuf,
 			void* outBuf, long nframes) {
 		(void) inBuf;
-		AudioPlayer* player = static_cast<AudioPlayer*>(user);
-		return player->dataCb(outBuf, nframes);
+		try {
+			AudioPlayer* player = static_cast<AudioPlayer*>(user);
+			return player->dataCb(outBuf, nframes);
+		} catch(const std::exception& err) {
+			dlg_error("caught exception in audio callback: {}", err.what());
+		} catch(...) {
+			dlg_error("caught exception in audio callback");
+		}
+
+		std::fflush(stdout);
+		return 0; // drain
 	}
 
 	static void stateCb(cubeb_stream*, void* user, cubeb_state state) {
@@ -54,10 +63,15 @@ AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
 		unsigned latencyBlocks) {
 	int rv = cubeb_set_log_callback(CUBEB_LOG_VERBOSE, Util::log);
 
-	cubeb_init(&cubeb_, name, NULL);
-	uint32_t latencyFrames;
+	rv = cubeb_init(&cubeb_, name, NULL);
+	if(rv) {
+		dlg_error("Failed to initialize cubeb");
+		throw std::runtime_error("Failed to initialize cubeb");
+	}
 
-	dlg_info("cubeb backend: {}", cubeb_get_backend_id(cubeb_));
+	auto bid = cubeb_get_backend_id(cubeb_);
+	dlg_assert(bid);
+	dlg_info("cubeb backend: {}", bid);
 
 	cubeb_stream_params output_params;
 	output_params.format = CUBEB_SAMPLE_FLOAT32NE;
@@ -71,22 +85,25 @@ AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
 		uint32_t prate;
 		rv = cubeb_get_preferred_sample_rate(cubeb_, &prate);
 		if(rv != CUBEB_OK) {
-			throw std::runtime_error("Could not get preferred sample rate");
+			dlg_warn("Could not get preferred sample rate");
+			rate = 44100;
+		} else {
+			rate = prate;
 		}
-
-		rate = prate;
 	}
 
 	output_params.rate = rate;
 	rate_ = output_params.rate;
 	dlg_info("Using rate: {}", rate);
 
+	uint32_t latencyFrames = 0;
 	rv = cubeb_get_min_latency(cubeb_, &output_params, &latencyFrames);
 	if(rv != CUBEB_OK) {
-		throw std::runtime_error("Could not get minimum latency");
+		dlg_warn("Could not get minimum latency");
+	} else {
+		dlg_info("min latency frames: {}", latencyFrames);
 	}
 
-	dlg_info("min latency frames: {}", latencyFrames);
 	latencyFrames = std::max<unsigned>(latencyFrames, latencyBlocks * blockSize);
 	dlg_info("using latency: {}", latencyFrames);
 
@@ -94,6 +111,7 @@ AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
 		NULL, NULL, NULL, &output_params,
 		latencyFrames, Util::dataCb, Util::stateCb, this);
 	if(rv != CUBEB_OK) {
+		dlg_error("Could not open audio stream");
 		throw std::runtime_error("Could not open audio stream");
 	}
 
@@ -106,6 +124,7 @@ AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
 }
 
 AudioPlayer::~AudioPlayer() {
+	cubeb_stream_stop(stream_);
 	cubeb_stream_destroy(stream_);
 	cubeb_destroy(cubeb_);
 
@@ -140,12 +159,21 @@ void AudioPlayer::start() {
 	// and active audio.
 	int rv = cubeb_stream_start(stream_);
 	if(rv != CUBEB_OK) {
+		dlg_error("Could not start stream");
 		throw std::runtime_error("Could not start stream");
 	}
 
 	// start update thread
 	run_.store(true);
-	updateThread_ = std::thread{[this]{ this->updateThread(); }};
+	updateThread_ = std::thread{[this]{
+		try {
+			this->updateThread();
+		} catch(const std::exception& err) {
+			dlg_error("caught exception in update thread: {}", err.what());
+		} catch(...) {
+			dlg_error("caught exception in update thread");
+		}
+	}};
 
 	// cubeb requires to first explicitly unset the logger
 	cubeb_set_log_callback(CUBEB_LOG_DISABLED, nullptr);

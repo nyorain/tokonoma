@@ -13,6 +13,7 @@
 #include <vpp/vk.hpp>
 #include <vpp/submit.hpp>
 #include <vpp/debug.hpp>
+#include <vpp/debugReport.hpp>
 #include <ny/appContext.hpp>
 #include <ny/asyncRequest.hpp>
 #include <ny/backend.hpp>
@@ -31,6 +32,7 @@
 #include <argagg.hpp>
 #include <optional>
 #include <thread>
+#include <cstdio>
 
 #ifdef __ANDROID__
 #include <ny/android/appContext.hpp>
@@ -232,6 +234,7 @@ struct App::Impl {
 	vpp::Instance instance;
 	std::optional<vpp::Device> device;
 	std::optional<vpp::DebugMessenger> debugMessenger;
+	std::optional<vpp::DebugCallback> debugCallback;
 
 	std::optional<MainWindow> window;
 	std::optional<RenderImpl> renderer;
@@ -321,6 +324,10 @@ bool App::init(nytl::Span<const char*> args) {
 		iniExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 	}
 
+#ifdef __ANDROID__
+	iniExtensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+#endif
+
 	// if(android) {
 	// 	iniExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 	// }
@@ -367,6 +374,10 @@ bool App::init(nytl::Span<const char*> args) {
 	if(args_.layers) {
 		impl_->debugMessenger.emplace(ini);
 	}
+
+#ifdef __ANDROID__
+		impl_->debugCallback.emplace(ini);
+#endif
 
 	// init ny window
 	impl_->window.emplace(*impl_->ac, ini);
@@ -543,6 +554,10 @@ bool App::init(nytl::Span<const char*> args) {
 		rvgcs.samples = samples();
 		rvgcs.clipDistanceEnable = impl_->clipDistance;
 
+#ifdef __ANDROID__
+		rvgcs.antiAliasing = false;
+#endif // __ANDROID__
+
 		impl_->rvgContext.emplace(vulkanDevice(), rvgcs);
 		impl_->windowTransform = {rvgContext()};
 		impl_->fontAtlas.emplace(rvgContext());
@@ -649,6 +664,7 @@ bool App::features(Features& enable, const Features& supported) {
 }
 
 void App::record(const RenderBuffer& buf) {
+	rerecord_ = false;
 	const auto width = impl_->scInfo.imageExtent.width;
 	const auto height = impl_->scInfo.imageExtent.height;
 
@@ -1297,6 +1313,48 @@ void App::touchUpdate(const ny::TouchUpdateEvent& ev) {
 	if(impl_->gui) {
 		gui().mouseMove({static_cast<nytl::Vec2f>(ev.pos)});
 	}
+}
+
+#ifdef __ANDROID__
+namespace android {
+static int read(void* cookie, char* buf, int size) {
+    return AAsset_read((AAsset*)cookie, buf, size);
+}
+
+static int write(void* cookie, const char* buf, int size) {
+    return EACCES; // can't provide write access to the apk
+}
+
+static fpos_t seek(void* cookie, fpos_t offset, int whence) {
+    return AAsset_seek((AAsset*)cookie, offset, whence);
+}
+
+static int close(void* cookie) {
+    AAsset_close((AAsset*)cookie);
+    return 0;
+}
+} // namespace android
+#endif
+
+// TODO: make this a free function (independent from App) that
+// just uses ny::android::Instance. Not exposed publicly atm though.
+// Wait for switch to swa?
+File App::openAsset(nytl::StringParam path, bool binary) {
+#ifdef __ANDROID__
+	auto& ac = dynamic_cast<ny::AndroidAppContext&>(appContext());
+	auto* mgr = ac.nativeActivity()->assetManager;
+	auto asset = AAssetManager_open(mgr, path.c_str(), 0);
+	return File(::funopen(asset, android::read, android::write,
+		android::seek, android::close));
+#else
+	auto mode = binary ? "rb" : "r";
+	if(auto f = std::fopen(path.c_str(), mode); f) {
+		return File(f);
+	}
+
+	auto path2 = std::string(TKN_BASE_DIR "/assets/") + path.c_str();
+	return File(path2, mode);
+#endif
 }
 
 // free util

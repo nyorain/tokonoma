@@ -54,7 +54,7 @@ UniqueSoundBuffer loadVorbis(nytl::StringParam file) {
 
 // mp3
 UniqueSoundBuffer loadMP3(nytl::StringParam file) {
-	auto f = std::fopen(file.c_str(), "r");
+	auto f = File(file, "rb");
 	if(!f) {
 		auto msg = std::string("loadMP3: failed to load ");
 		msg += file.c_str();
@@ -277,13 +277,22 @@ void SoundBufferAudio::render(unsigned nb, float* buf, bool mix) {
 // MP3Decoder
 MP3Decoder::MP3Decoder(nytl::StringParam file) {
 	mp3dec_init(&mp3_);
-	file_ = std::fopen(file.c_str(), "r");
+	file_ = File(file, "rb");
 	if(!file_) {
 		auto msg = std::string("failed to open streamed mp3 file ");
 		msg += file.c_str();
 		throw std::runtime_error(msg);
 	}
 
+	init();
+}
+
+MP3Decoder::MP3Decoder(File&& file) : file_(std::move(file)) {
+	dlg_assert(file);
+	init();
+}
+
+void MP3Decoder::init() {
 	// parse frames until we get for the first time.
 	// only this way we can know the files channel count and rate
 	rbuf_ = std::make_unique<std::uint8_t[]>(readSize);
@@ -297,8 +306,7 @@ MP3Decoder::MP3Decoder(nytl::StringParam file) {
 		auto n = std::fread(rbuf_.get() + rbufSize_, 1, size, file_);
 		if(n == 0) {
 			check(file_);
-			auto msg = std::string("invalid mp3 file (reading failed) ");
-			msg += file.c_str();
+			auto msg = std::string("invalid mp3 file (reading failed)");
 			throw std::runtime_error(msg);
 		}
 
@@ -306,8 +314,7 @@ MP3Decoder::MP3Decoder(nytl::StringParam file) {
 		nf = mp3dec_decode_frame(&mp3_, rbuf_.get(), rbufSize_,
 			samples_.data(), &fi);
 		if(fi.frame_bytes == 0) {
-			auto msg = std::string("invalid mp3 file (large invalid chunk) ");
-			msg += file.c_str();
+			auto msg = std::string("invalid mp3 file (large invalid chunk)");
 			throw msg;
 		}
 
@@ -318,12 +325,6 @@ MP3Decoder::MP3Decoder(nytl::StringParam file) {
 	channels_ = fi.channels;
 	rate_ = fi.hz;
 	samplesCount_ = nf * channels_;
-}
-
-MP3Decoder::~MP3Decoder() {
-	if(file_) {
-		std::fclose(file_);
-	}
 }
 
 int MP3Decoder::get(float* buf, unsigned nf) {
@@ -407,6 +408,15 @@ VorbisDecoder::VorbisDecoder(nytl::Span<const std::byte> buf) {
 	int error = 0;
 	auto data = (const unsigned char*) buf.data();
 	vorbis_ = stb_vorbis_open_memory(data, buf.size(), &error, nullptr);
+	if(!vorbis_) {
+		auto msg = std::string("StreamVorbisAudio: failed to load from memory");
+		throw std::runtime_error(msg);
+	}
+}
+
+VorbisDecoder::VorbisDecoder(File&& file) {
+	int error = 0;
+	vorbis_ = stb_vorbis_open_file(file.release(), true, &error, nullptr);
 	if(!vorbis_) {
 		auto msg = std::string("StreamVorbisAudio: failed to load from memory");
 		throw std::runtime_error(msg);

@@ -1124,7 +1124,7 @@ vk::Semaphore Scene::updateDevice(nytl::Mat4f proj) {
 }
 
 void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl, bool blend) const {
-	if(blend && !blendCount_) {
+	if((blend && !blendCount_) || (!blend && !opaqueCount_)) {
 		return;
 	}
 
@@ -1150,10 +1150,16 @@ void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl, bool blend) cons
 
 	vk::cmdBindVertexBuffers(cb, 0, bufs, offsets);
 	if(multiDrawIndirect_) {
+		dlg_info("{} {} {} {}", cb, cmds.buffer().vkHandle(), cmds.offset(), count);
+		std::fflush(stdout);
+
 		auto stride = sizeof(vk::DrawIndexedIndirectCommand);
 		vk::cmdDrawIndexedIndirect(cb, cmds.buffer(), cmds.offset(),
 			count, stride);
+
+		dlg_info("done");
 	} else {
+		dlg_info("uff");
 		auto off = cmds.offset();
 		for(auto i = 0u; i < count; ++i) {
 			vk::cmdDrawIndexedIndirect(cb, cmds.buffer(), off, 1u, 0u);

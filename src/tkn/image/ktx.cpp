@@ -140,17 +140,11 @@ public:
 	u32 mipLevels_;
 	u32 faces_;
 	u32 arrayElements_; // 0 for non array textures
-	std::FILE* file_;
+	File file_;
 	u64 dataBegin_;
 	std::vector<std::byte> tmpData_;
 
 public:
-	~KtxReader() {
-		if(file_) {
-			::fclose(file_);
-		}
-	}
-
 	u64 faceSize(unsigned mip) const {
 		auto w = std::max(size_.x >> mip, 1u);
 		auto h = std::max(size_.y >> mip, 1u);
@@ -282,26 +276,26 @@ std::ostream& operator<<(std::ostream& os, const KtxHeader& header) {
 	return os;
 }
 
-ReadError readKtx(nytl::StringParam path, KtxReader& reader) {
-	auto file = std::fopen(path.c_str(), "rb");
-	if(!file) {
-		return ReadError::cantOpen;
-	}
-
+ReadError readKtx(File&& file, KtxReader& reader) {
 	std::array<u8, 12> identifier;
 	if(std::fread(identifier.data(), 1, 12, file) < 12) {
-		std::fclose(file);
+		dlg_debug("KTX can't read identifier");
 		return ReadError::unexpectedEnd;
 	}
 
 	if(identifier != ktxIdentifier) {
-		std::fclose(file);
+		dlg_debug("KTX invalid identifier");
+		for(auto i = 0u; i < 12; ++i) {
+			dlg_debug("{}{} vs {}", std::hex,
+				(unsigned) identifier[i],
+				(unsigned) ktxIdentifier[i]);
+		}
 		return ReadError::invalidType;
 	}
 
 	KtxHeader header;
 	if(std::fread(&header, 1u, sizeof(KtxHeader), file) < sizeof(KtxHeader)) {
-		std::fclose(file);
+		dlg_debug("KTX can't read header");
 		return ReadError::unexpectedEnd;
 	}
 
@@ -310,29 +304,23 @@ ReadError readKtx(nytl::StringParam path, KtxReader& reader) {
 		// we could support it but that will be a lot of work
 		// Just error out for now
 		dlg_debug("KTX invalid endianess: {}{}", std::hex, header.endianness);
-		::fclose(file);
 		return ReadError::invalidEndianess;
 	}
 
 	if(header.pixelDepth > 1) {
 		dlg_warn("KTX pixelDepth {} > 1 unsupported", header.pixelDepth);
-		std::fclose(file);
 		return ReadError::ktxDepth;
 	}
 
 	if(header.pixelWidth == 0) {
 		dlg_debug("KTX pixelWidth == 0");
-		std::fclose(file);
 		return ReadError::empty;
 	}
 
 	if(header.glFormat == 0) {
 		dlg_warn("KTX compressed format, not supported yet");
-		std::fclose(file);
 		return ReadError::ktxInvalidFormat;
 	}
-
-	reader.file_ = file;
 
 	// numberArrayElements == 0 has a special meaning for the imageSize
 	// field, so don't set it to 1 if zero. Will be done in Reader
@@ -350,25 +338,35 @@ ReadError readKtx(nytl::StringParam path, KtxReader& reader) {
 	reader.format_ = vulkanFromGLFormat(glFormat);
 	if(reader.format_ == vk::Format::undefined) {
 		dlg_warn("unsupported ktx format: {}", glFormat);
-		std::fclose(file);
 		return ReadError::ktxInvalidFormat;
 	}
 
 	auto curr = std::ftell(file);
 	if(curr <= 0) {
 		dlg_warn("ftell: {} ({})", std::strerror(errno), curr);
-		std::fclose(file);
 		return ReadError::internal;
 	}
 
 	reader.dataBegin_ = curr + header.bytesKeyValueData;
+	reader.file_ = std::move(file);
 
 	return ReadError::none;
 }
 
 ReadError readKtx(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
+	auto file = File(path, "rb");
+	if(!file) {
+		dlg_debug("fopen: {}", std::strerror(errno));
+		return ReadError::cantOpen;
+	}
+
+	return readKtx(std::move(file), ret);
+}
+
+ReadError readKtx(File&& file, std::unique_ptr<ImageProvider>& ret) {
+	std::rewind(file);
 	auto reader = std::make_unique<KtxReader>();
-	auto err = readKtx(path, *reader);
+	auto err = readKtx(std::move(file), *reader);
 	if(err == ReadError::none) {
 		ret = std::move(reader);
 	}
@@ -378,14 +376,15 @@ ReadError readKtx(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
 
 // save
 WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
-	auto file = ::fopen(path.c_str(), "wb");
+	auto file = std::fopen(path.c_str(), "wb");
 	if(!file) {
+		dlg_debug("fopen: {}", std::strerror(errno));
 		return WriteError::cantOpen;
 	}
 
-	auto fileGuard = nytl::ScopeGuard([&]{ ::fclose(file); });
+	auto fileGuard = nytl::ScopeGuard([&]{ std::fclose(file); });
 #define write(data, size)\
-	if(::fwrite(data, size, 1, file) < 1) { \
+	if(std::fwrite(data, size, 1, file) < 1) { \
 		dlg_debug("fwrite failed"); \
 		return WriteError::cantWrite; \
 	}
@@ -459,7 +458,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 				write(span.data(), u64(span.size()));
 
 				// padding, align to 4
-				auto off = ::ftell(file);
+				auto off = std::ftell(file);
 				dlg_assert(off > 0);
 				u32 padding = vpp::align(off, 4u) - off;
 				if(padding > 0) {
@@ -469,7 +468,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 		}
 
 		// padding, align to 4
-		auto off = ::ftell(file);
+		auto off = std::ftell(file);
 		dlg_assert(off > 0);
 		u32 padding = vpp::align(off, 4u) - off;
 		if(padding > 0) {

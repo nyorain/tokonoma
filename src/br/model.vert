@@ -13,7 +13,7 @@ layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec2 outTexCoord0;
 layout(location = 3) out vec2 outTexCoord1;
 layout(location = 4) flat out uint outMatID;
-layout(location = 5) flat out uint outModelID;
+// layout(location = 5) flat out uint outModelID;
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj; // view and pojection
@@ -33,7 +33,7 @@ void main() {
 
 	uint id = modelIDs[gl_DrawID];
 	outMatID = uint(models[id].normal[0][3]);
-	outModelID = uint(models[id].normal[1][3]);
+	// outModelID = uint(models[id].normal[1][3]);
 	outNormal = mat3(models[id].normal) * inNormal;
 
 	vec4 m = models[id].matrix * vec4(inPos, 1.0);

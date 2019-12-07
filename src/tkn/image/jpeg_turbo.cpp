@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <tkn/image.hpp>
 #include <tkn/types.hpp>
 
@@ -10,6 +12,8 @@
 
 #include <cstdio>
 #include <vector>
+
+// on linux we use a mmap optimization
 #ifdef TKN_LINUX
 	#include <sys/mman.h>
 	#include <unistd.h>
@@ -25,33 +29,24 @@ public:
 	nytl::Vec2ui size_;
 	tjhandle jpeg_ {};
 	std::vector<std::byte> tmpData_;
-#ifdef TKN_LINUX
-	int fd_ {};
-#else
-	std::FILE* file_ {};
-#endif
-
+	File file_;
+	bool mapped_ {}; // whether data_ was mapped
 
 public:
 	~JpegReader() {
 		if(jpeg_) {
 			::tjDestroy(jpeg_);
 		}
+
 #ifdef TKN_LINUX
-		if(data_) {
+		if(mapped_ && data_) {
 			::munmap(data_, fileLength_);
 		}
-		if(fd_ > 0) {
-			::close(fd_);
-		}
-#else
-		if(data_) {
+#endif
+
+		if(!mapped_) {
 			std::free(data_);
 		}
-		if(file_) {
-			std::fclose(file_);
-		}
-#endif
 	}
 
 	vk::Format format() const override { return vk::Format::r8g8b8a8Srgb; }
@@ -83,54 +78,59 @@ public:
 	}
 };
 
-ReadError readJpeg(nytl::StringParam filename, JpegReader& reader) {
+ReadError readJpeg(File&& file, JpegReader& reader) {
+	int fd = -1;
 #ifdef TKN_LINUX
-	auto fd = ::open(filename.c_str(), O_RDONLY);
+	fd = fileno(file);
 	if(fd < 0) {
-		return ReadError::cantOpen;
-	}
-	reader.fd_ = fd;
+		// this may happen for custom FILE objects.
+		// It's not an error, we just fall back to the default non-mmap
+		// implementation
+		dlg_debug("fileno: {} ", std::strerror(errno));
+	} else {
+		auto length = ::lseek(fd, 0, SEEK_END);
+		if(length < 0) {
+			return ReadError::internal;
+		}
+		reader.fileLength_ = length;
 
-	auto length = ::lseek(reader.fd_, 0, SEEK_END);
-	if(length < 0) {
-		return ReadError::internal;
+		auto data = ::mmap(NULL, reader.fileLength_, PROT_READ, MAP_PRIVATE,
+			fd, 0);
+		if(data == MAP_FAILED || !data) {
+			dlg_error("mmap failed: {}", std::strerror(errno));
+			return ReadError::internal;
+		}
+		reader.mapped_ = true;
+		reader.data_ = static_cast<unsigned char*>(data); // const
 	}
-	reader.fileLength_ = length;
+#endif // TKN_LINUX
 
-	auto data = ::mmap(NULL, reader.fileLength_, PROT_READ, MAP_PRIVATE,
-		reader.fd_, 0);
-	if(data == MAP_FAILED || !data) {
-		return ReadError::internal;
-	}
-	reader.data_ = static_cast<unsigned char*>(data); // const
-#else
-	reader.file_ = std::fopen(filename.c_str(), "rb");
-	if(!reader.file_) {
-		return ReadError::cantOpen;
-	}
+	if(fd < 0) {
+		auto length = std::fseek(file, 0, SEEK_END);
+		if(length < 0) {
+			dlg_error("fseek: {}", std::strerror(errno));
+			return ReadError::internal;
+		}
+		reader.fileLength_ = length;
+		reader.data_ = (unsigned char*) std::malloc(reader.fileLength_);
+		if(!reader.data_) {
+			dlg_error("malloc: {}", std::strerror(errno));
+			return ReadError::internal;
+		}
 
-	// read data
-	auto length = std::fseek(reader.file_, 0, SEEK_END);
-	if(length < 0) {
-		return ReadError::internal;
-	}
-	reader.fileLength_ = length;
-	reader.data_ = (unsigned char*) std::malloc(reader.fileLength_);
-	if(!reader.data_) {
-		return ReadError::internal;
-	}
+		std::rewind(file);
 
-	std::rewind(reader.file_);
-	auto ret = std::fread(reader.data_, 1, reader.fileLength_, reader.file_);
-	if(ret != reader.fileLength_) {
-		dlg_warn("fread failed: {}", ret);
-		return ReadError::internal;
+		errno = 0;
+		auto ret = std::fread(reader.data_, 1, reader.fileLength_, file);
+		if(ret != reader.fileLength_) {
+			dlg_warn("fread failed: {} ({})", ret, std::strerror(errno));
+			return ReadError::internal;
+		}
 	}
-#endif
 
 	reader.jpeg_ = ::tjInitDecompress();
 	if(!reader.jpeg_) {
-		dlg_warn("Can't initialize jpeg decompressor ('{}')", filename);
+		dlg_warn("Can't initialize jpeg decompressor");
 		return ReadError::internal;
 	}
 
@@ -144,17 +144,29 @@ ReadError readJpeg(nytl::StringParam filename, JpegReader& reader) {
 
 	reader.size_.x = width;
 	reader.size_.y = height;
+	reader.file_ = std::move(file);
 	return ReadError::none;
 }
 
-ReadError readJpeg(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
+ReadError readJpeg(File&& file, std::unique_ptr<ImageProvider>& ret) {
+	std::rewind(file);
 	auto reader = std::make_unique<JpegReader>();
-	auto err = readJpeg(path, *reader);
+	auto err = readJpeg(std::move(file), *reader);
 	if(err == ReadError::none) {
 		ret = std::move(reader);
 	}
 
 	return err;
+}
+
+ReadError readJpeg(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
+	auto file = File(path, "rb");
+	if(!file) {
+		dlg_debug("fopen: {}", std::strerror(errno));
+		return ReadError::cantOpen;
+	}
+
+	return readJpeg(std::move(file), ret);
 }
 
 } // namespace tkn

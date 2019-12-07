@@ -227,7 +227,8 @@ foreach group, sources : shaders_src
 		data_name = group + '_' + name.underscorify() + '_data'
 		args = [glslang, '-V', '@INPUT@',
 			'-o', '@OUTPUT@',
-			'--target-env', 'vulkan1.1',
+			# '--target-env', 'vulkan1.1',
+			'--target-env', 'vulkan1.0',
 			'--vn', data_name,
 			'-I' + shader_inc_dir]
 		args += shader.get(3, [])
