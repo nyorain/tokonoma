@@ -37,7 +37,7 @@ public:
 	operator bool() const { return file_; }
 
 private:
-	std::FILE* file_;
+	std::FILE* file_ {};
 };
 
 } // namespace tkn

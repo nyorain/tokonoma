@@ -139,3 +139,35 @@ std::vector<Vec3f> subdivide(const Bezier<3>& bezier,
 	subdivideR(ret, bezier, 0, maxLevel, minSubdiv);
 	return ret;
 }
+
+
+// Subdivides a set of points (representing a b-spline of degree 3) once.
+std::vector<Vec3f> subdivide3(const std::vector<Vec3f>& points) {
+	std::vector<Vec3f> ret;
+	ret.reserve(points.size() * 2);
+	for(auto it = points.begin(); it < points.end() - 2; ++it) {
+		auto b0 = it[0];
+		auto b1 = it[1];
+		auto b2 = it[2];
+		auto bn0 = 0.125f * (b0 + 6 * b1 + b2);
+		auto bn1 = 0.5f * (b1 + b2);
+		ret.push_back(bn0);
+		ret.push_back(bn1);
+	}
+
+	return ret;
+}
+
+// Subdivides a set of points (representing a b-spline of degree 2) once.
+std::vector<Vec3f> subdivide2(const std::vector<Vec3f>& points) {
+	std::vector<Vec3f> ret;
+	ret.reserve(points.size() * 2);
+	for(auto it = points.begin(); it < points.end() - 1; ++it) {
+		auto b0 = it[0];
+		auto b1 = it[1];
+		ret.push_back(0.75f * b0 + 0.25f * b1);
+		ret.push_back(0.25f * b0 + 0.75f * b1);
+	}
+
+	return ret;
+}

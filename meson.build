@@ -6,7 +6,6 @@ project('tokonoma', ['cpp', 'c'],
 		'cpp_std=c++17',
 		'c_std=c99',
   		'warning_level=3',
-		# TODO: re-enable
   		'werror=false'])
 
 # options
@@ -35,15 +34,13 @@ if android
 	], language: ['cpp', 'c'])
 
 	# there are no native executables for apk's on android
-	# shared_module instead of shared_library so that export 'main'
+	# shared_module instead of shared_library so that they export 'main'
 	# which is needed by ny
 	exetarget = 'shared_module'
 endif
 
 # warnings
 warnings = [
-	'-Wall',
-	'-Wextra',
 	'-Wpedantic',
 	'-Wduplicated-cond',
 	'-Wrestrict',
@@ -112,6 +109,8 @@ dep_bullet = dependency('bullet',
 	required: false)
 
 # cubeb for audio
+# when not available (e.g. not possible to build), the audio
+# projects simply won't be built
 dep_cubeb = dependency('cubeb',
 	fallback: ['cubeb', 'cubeb_dep'],
 	required: false)
@@ -124,8 +123,6 @@ dep_steamaudio = dependency('steamaudio',
 	required: false)
 
 external_inc = include_directories('external/include')
-# libpath = join_paths(meson.source_root(), 'external', 'lib', host_machine.system())
-# message('libpath: ' + libpath)
 
 subdir('src/shaders')
 subdir('src/tkn')

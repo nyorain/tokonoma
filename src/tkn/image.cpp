@@ -89,6 +89,7 @@ std::unique_ptr<ImageProvider> read(nytl::StringParam path, bool hdr) {
 
 std::unique_ptr<ImageProvider> read(File&& file, bool hdr) {
 	std::unique_ptr<ImageProvider> reader;
+	dlg_assert(file);
 
 	if(readPng(std::move(file), reader) == ReadError::none) return reader;
 	if(readJpeg(std::move(file), reader) == ReadError::none) return reader;

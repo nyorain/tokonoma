@@ -72,7 +72,6 @@ public:
 			return false;
 		}
 
-		dlg_info(":start");
 		std::fflush(stdout);
 
 		camera_.perspective.near = 0.05f;
@@ -98,7 +97,13 @@ public:
 			}
 		};
 
-		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read(openAsset("brdflut.ktx")));
+		auto brdflutFile = openAsset("brdflut.ktx");
+		if(!brdflutFile) {
+			dlg_error("Couldn't find brdflut.ktx. Generate it using the pbr program");
+			return false;
+		}
+
+		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read(std::move(brdflutFile)));
 		brdfLut_ = initBrdfLut.init(batch);
 
 		// tex sampler
@@ -150,7 +155,6 @@ public:
 			return false;
 		}
 
-		dlg_info(":?");
 		std::fflush(stdout);
 
 		auto& model = *omodel;
@@ -161,7 +165,6 @@ public:
 			model, sc, mat, ri);
 		initScene.init(batch, dummyTex_.vkImageView());
 
-		dlg_info(":s");
 		std::fflush(stdout);
 
 		shadowData_ = tkn::initShadowData(dev, depthFormat(),
@@ -175,7 +178,6 @@ public:
 		};
 
 		cameraDsLayout_ = {dev, cameraBindings};
-		dlg_info(":0");
 		std::fflush(stdout);
 
 		tkn::Environment::InitData initEnv;
@@ -198,7 +200,6 @@ public:
 		};
 
 		aoDsLayout_ = {dev, aoBindings};
-		dlg_info(":1");
 		std::fflush(stdout);
 
 		// pipeline layout consisting of all ds layouts and pcrs
@@ -233,10 +234,7 @@ public:
 		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 		vpp::Pipeline ppp(dev, gpi.info());
-		dlg_info("pipe_ 0: {}", ppp.vkHandle());
-
 		pipe_ = std::move(ppp);
-		dlg_info("pipe_ 1: {}", pipe_.vkHandle());
 
 		gpi.depthStencil.depthWriteEnable = false;
 		blendPipe_ = {dev, gpi.info()};
@@ -427,17 +425,18 @@ public:
 		// dlg_assert(err == IPL_STATUS_SUCCESS);
 
 		// create sources
-		dlg_trace("creating audio source");
-		auto& s1 = ap.create<ASource>(*audio_.d3, ap.bufCaches(), ap,
-			openAsset("test.ogg"));
-		s1.position({-5.f, 0.f, 0.f});
-		audio_.source = &s1;
+		// dlg_trace("creating audio source");
+		// auto& s1 = ap.create<ASource>(*audio_.d3, ap.bufCaches(), ap,
+		// 	openAsset("test.ogg"));
+		// s1.position({-5.f, 0.f, 0.f});
+		// audio_.source = &s1;
 
-		// using MP3Source = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
-		// auto& s2 = ap.create<MP3Source>(*audio_.d3, ap.bufCaches(), ap,
-		// 	openAsset("test.mp3"));
-		// s2.inner().volume(0.25f);
-		// s2.position({10.f, 10.f, 0.f});
+		using MP3Source = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
+		auto& s2 = ap.create<MP3Source>(*audio_.d3, ap.bufCaches(), ap,
+			openAsset("test.mp3"));
+		s2.inner().volume(0.25f);
+		s2.position({10.f, 10.f, 0.f});
+		audio_.source = &s2;
 
 		// using MP3Source = tkn::StreamedMP3Audio;
 		// auto& s2 = ap.create<MP3Source>(ap, openAsset("test.mp3"));
@@ -897,8 +896,8 @@ protected:
 	vpp::SubBuffer boxIndices_;
 
 #ifdef BR_AUDIO
-	using ASource = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
-	// using ASource = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
+	// using ASource = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
+	using ASource = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
 	struct {
 		ASource* source;
 		std::optional<tkn::Audio3D> d3;

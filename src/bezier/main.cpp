@@ -15,9 +15,12 @@
 #include <ny/mouseButton.hpp>
 #include <ny/appContext.hpp>
 #include <ny/keyboardContext.hpp>
+#include <ny/key.hpp>
 #include <ny/event.hpp>
 #include <ny/windowContext.hpp>
 #include <ny/cursor.hpp>
+#include <argagg.hpp>
+#include <variant>
 
 #include <shaders/bezier.point.vert.h>
 #include <shaders/bezier.point.frag.h>
@@ -31,8 +34,8 @@
 //   when decreasing, approximate via least squares
 
 // ideas:
-// - implement b-splines (maybe better in seperate application though)
-//   (nurbs in general)
+// - better b-spline subdivision. Use dynamic condition
+// - implement nurbs instead of just b-splines
 // - using tensor products, implement bezier surfaces
 //   (-> also b-spline surfaces)
 // - using triangular bezier curves, implement bezier surfaces
@@ -52,12 +55,20 @@ public:
 			return false;
 		}
 
-		bezier_ = {{{
-			{0.f, 0.f, 0.f},
-			{0.f, 1.f, 0.f},
-			{1.f, 0.f, 0.f},
-			{1.f, 1.f, 0.f},
-		}}};
+		bool spline = (controlPoints_.index() == 1);
+		if(spline) {
+			auto zero = Vec3f {0.f, 0.f, 0.f};
+			controlPoints_ = std::vector<Vec3f>{
+				zero, zero, zero, zero, zero, zero, zero
+			};
+		} else {
+			controlPoints_ = Bezier<3>{{{
+				{0.f, 0.f, 0.f},
+				{0.f, 1.f, 0.f},
+				{1.f, 0.f, 0.f},
+				{1.f, 1.f, 0.f},
+			}}};
+		}
 
 		auto& dev = vulkanDevice();
 		auto bindings = {
@@ -128,7 +139,7 @@ public:
 		cameraUbo_ = {dev.bufferAllocator(), camUboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
-		auto pointsSize = sizeof(nytl::Vec3f) * bezier_.points.size();
+		auto pointsSize = sizeof(nytl::Vec3f) * points().size();
 		pointVerts_ = {dev.bufferAllocator(), pointsSize,
 			vk::BufferUsageBits::vertexBuffer, dev.hostMemoryTypes()};
 
@@ -150,12 +161,15 @@ public:
 		}
 
 		if(updateVerts_) {
-			auto nf = subdivide(bezier_, 12, 0.00001f);
-			if(nf.size() != flattened_.size()) {
-				// TODO use indirect drawing
-				App::scheduleRerecord();
+			if(auto* bezier = std::get_if<0>(&controlPoints_)) {
+				flattened_ = subdivide(*bezier, 12, 0.00001f);
+			} else {
+				flattened_ = std::get<1>(controlPoints_);
+				for(auto i = 0u; i < 4; ++i) {
+					flattened_ = subdivide3(flattened_);
+				}
 			}
-			flattened_ = std::move(nf);
+
 			App::scheduleRedraw();
 		}
 	}
@@ -173,9 +187,17 @@ public:
 
 		if(updateVerts_) {
 			updateVerts_ = false;
+			nytl::Span<const std::byte> points = nytl::as_bytes(this->points());
+			if(points.size() > pointVerts_.size()) {
+				u32 size = points.size() * 2;
+				pointVerts_ = {vulkanDevice().bufferAllocator(), size,
+					vk::BufferUsageBits::vertexBuffer,
+					vulkanDevice().hostMemoryTypes(), 8u};
+				App::scheduleRerecord();
+				dlg_info("recreated pointVerts_");
+			}
 			auto map = pointVerts_.memoryMap();
 			auto span = map.span();
-			auto points = tkn::bytes(bezier_.points);
 			tkn::write(span, points);
 			map.flush();
 
@@ -186,6 +208,7 @@ public:
 					vk::BufferUsageBits::vertexBuffer,
 					vulkanDevice().hostMemoryTypes(), 8u};
 				App::scheduleRerecord();
+				dlg_info("recreated flagVerts_");
 			}
 
 			map = flatVerts_.memoryMap();
@@ -195,20 +218,31 @@ public:
 		}
 	}
 
+	nytl::Span<Vec3f> points() {
+		if(auto* bezier = std::get_if<0>(&controlPoints_)) {
+			return bezier->points;
+		} else {
+			auto& pts = std::get<1>(controlPoints_);
+			return nytl::Span<Vec3f>(pts).subspan(3, pts.size() - 6);
+		}
+	}
+
 	void render(vk::CommandBuffer cb) override {
+		// control points
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pointPipe_);
 		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
 		vk::cmdBindVertexBuffers(cb, 0, {{pointVerts_.buffer()}},
 			{{pointVerts_.offset()}});
-		vk::cmdDraw(cb, bezier_.points.size(), 1, 0, 0);
+		vk::cmdDraw(cb, points().size(), 1, 0, 0);
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, linePipe_);
 		// support outlines
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, linePipe_);
 		nytl::Vec4f col = {0.f, 0.f, 0.f, 0.2f};
 		vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::fragment,
 			0, sizeof(nytl::Vec4f), &col);
-		vk::cmdDraw(cb, 4, 1, 0, 0);
+		vk::cmdDraw(cb, points().size(), 1, 0, 0);
 
+		// real curve
 		col = {0.1f, 0.1f, 0.1f, 1.f};
 		vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::fragment,
 			0, sizeof(nytl::Vec4f), &col);
@@ -224,8 +258,9 @@ public:
 		// TODO: depth sort? in case there are multiple points
 		// over each other. Not really a sort, just a "best
 		// (optional) candidate" iteration
-		for(auto i = 0u; i < bezier_.points.size(); ++i) {
-			auto ndc = tkn::multPos(proj, bezier_.points[i]);
+		auto points = this->points();
+		for(auto i = 0u; i < points.size(); ++i) {
+			auto ndc = tkn::multPos(proj, points[i]);
 			ndc.y = -ndc.y;
 			auto xy = 0.5f * nytl::Vec2f{ndc.x + 1, ndc.y + 1};
 			auto screen = window().size() * xy;
@@ -247,7 +282,16 @@ public:
 			xy.y = -xy.y;
 			auto invProj = nytl::Mat4f(nytl::inverse(matrix(camera_)));
 			auto world = tkn::multPos(invProj, Vec3f{xy.x, xy.y, drag_->depth});
-			bezier_.points[drag_->id] = world;
+			points()[drag_->id] = world;
+			if(auto* ppts = std::get_if<1>(&controlPoints_)) {
+				auto& pts = *ppts;
+				if(drag_->id == 0) {
+					pts[0] = pts[1] = pts[2] = world;
+				} else if(drag_->id == points().size() - 1) {
+					pts[pts.size() - 3] = pts[pts.size() - 2] = pts[pts.size() - 1] = world;
+				}
+			}
+
 			updateVerts_ = true;
 			return;
 		}
@@ -312,12 +356,62 @@ public:
 		return clearValues;
 	}
 
+	bool key(const ny::KeyEvent& ev) override {
+		if(App::key(ev)) {
+			return true;
+		}
+
+		if(!ev.pressed) {
+			return false;
+		}
+
+		if(ev.keycode == ny::Keycode::c) {
+			if(auto* ppts = std::get_if<1>(&controlPoints_)) {
+				auto& pts = *ppts;
+				auto p = camera_.pos + camera_.dir;
+				pts.push_back(p);
+				pts[pts.size() - 2] = p;
+				pts[pts.size() - 3] = p;
+				pts[pts.size() - 4] = p;
+				updateVerts_ = true;
+
+				// TODO: with indirect drawing we could get rid of this
+				App::scheduleRerecord();
+			}
+		}
+
+		return false;
+	}
+
+	argagg::parser argParser() const override {
+		auto parser = App::argParser();
+		parser.definitions.push_back({
+			"no-spline", {"--no-spline", "-b"},
+			"Use a simple bezier curve instead of a B-Spline", 0
+		});
+		return parser;
+	}
+
+	bool handleArgs(const argagg::parser_results& result) override {
+		if(!App::handleArgs(result)) {
+			return false;
+		}
+
+		if(result.has_option("no-spline")) {
+			controlPoints_ = Bezier<3> {};
+		} else {
+			controlPoints_ = std::vector<Vec3f> {};
+		}
+
+		return true;
+	}
+
 	const char* name() const override { return "bezier"; }
 	bool needsDepth() const override { return true; }
 
 protected:
 	tkn::Camera camera_;
-	Bezier<3> bezier_;
+	std::variant<Bezier<3>, std::vector<Vec3f>> controlPoints_;
 	bool rotateView_ {};
 	std::vector<Vec3f> flattened_;
 

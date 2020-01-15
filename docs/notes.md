@@ -16,6 +16,11 @@ Todo
   some cases.
   	- could re-add easy_profiler, that seems alright i guess
 
+- split tkn into smaller, static libraries for dependencies
+	- e.g. libtkn-audio libtkn-audio3D libtkn-physics2D libtkn-physics3D
+	  and so on
+	- allows to use/propagate disabler objects from the dependencies
+
 ## Full Android support
 
 - test audio with simply dummy audio-only app (that creates a window though)
