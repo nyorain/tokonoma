@@ -284,12 +284,12 @@ ReadError readKtx(File&& file, KtxReader& reader) {
 	}
 
 	if(identifier != ktxIdentifier) {
-		dlg_debug("KTX invalid identifier");
-		for(auto i = 0u; i < 12; ++i) {
-			dlg_debug("{}{} vs {}", std::hex,
-				(unsigned) identifier[i],
-				(unsigned) ktxIdentifier[i]);
-		}
+		// dlg_debug("KTX invalid identifier");
+		// for(auto i = 0u; i < 12; ++i) {
+		// 	dlg_debug("{}{} vs {}", std::hex,
+		// 		(unsigned) identifier[i],
+		// 		(unsigned) ktxIdentifier[i]);
+		// }
 		return ReadError::invalidType;
 	}
 

@@ -1,3 +1,4 @@
+#include <tkn/config.hpp>
 #include <tkn/app.hpp>
 #include <tkn/window.hpp>
 
@@ -763,9 +764,9 @@ vpp::ViewableImage App::createMultisampleTarget(const vk::Extent2D& size) {
 std::vector<vk::ClearValue> App::clearValues() {
 	std::vector<vk::ClearValue> clearValues;
 	clearValues.reserve(3);
-	vk::ClearValue c {{0.f, 0.f, 0.f, 0.5f}};
+	vk::ClearValue c {{0.2f, 0.2f, 0.2f, 1.f}};
 
-	clearValues.push_back(c); // clearColor
+	clearValues.push_back(c); // clearColor (value unused for msaa)
 	if(samples() != vk::SampleCountBits::e1) { // msaa attachment
 		clearValues.push_back({c});
 	}

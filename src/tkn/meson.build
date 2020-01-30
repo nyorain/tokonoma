@@ -53,6 +53,13 @@ tkn_src = [
 	tkn_shaders,
 ]
 
+# TODO: remove that. use own library
+# but tbh, the whole component is shit anyways
+if dep_b2d.found()
+	tkn_src += 'physics.cpp'
+	tkn_deps += dep_b2d
+endif
+
 if dep_turbojpeg.found()
 	tkn_src += 'image/jpeg_turbo.cpp'
 	tkn_deps += dep_turbojpeg
@@ -60,41 +67,44 @@ else
 	tkn_src += 'image/jpeg_dummy.cpp'
 endif
 
-tkn_audio = false
-if dep_cubeb.found()
-	tkn_src += [
-		'audio.cpp',
-		'sound.cpp',
-		'sampling.cpp',
-	]
-	tkn_deps += dep_cubeb
-	tkn_audio = true
-endif
-
-if dep_steamaudio.found()
-	tkn_src += [
-		'audio3D.cpp',
-	]
-	tkn_deps += dep_steamaudio
-endif
-
-if dep_b2d.found()
-	tkn_src += 'physics.cpp'
-	tkn_deps += dep_b2d
-endif
-
-tkn_args = []
-if build_machine.system() == 'linux'
-	tkn_args += '-DTKN_LINUX'
-endif
-
 tkn_lib = library('tkn',
 	sources: tkn_src,
 	dependencies: tkn_deps,
-	cpp_args: tkn_args,
 	include_directories: tkn_inc)
 
 tkn_dep = declare_dependency(
 	link_with: tkn_lib,
 	dependencies: tkn_deps,
 	include_directories: tkn_inc)
+
+# additional/optional libraries
+tkn_audio_dep = disabler()
+if with_audio
+	tkn_audio_lib = static_library('tkn_audio',
+		sources: [
+			'audio.cpp',
+			'sound.cpp',
+			'sampling.cpp',
+		],
+		dependencies: [tkn_dep, dep_cubeb]
+	)
+
+	tkn_audio_dep = declare_dependency(
+		link_with: tkn_audio_lib,
+		dependencies: dep_cubeb,
+		include_directories: tkn_inc)
+endif
+
+tkn_audio3D_dep = disabler()
+if with_audio3D
+	tkn_audio3D_lib = static_library('tkn_audio3D',
+		sources: ['audio3D.cpp'],
+		dependencies: [tkn_dep, tkn_audio_dep, dep_steamaudio]
+	)
+
+	tkn_audio3D_dep = declare_dependency(
+		link_with: tkn_audio3D_lib,
+		dependencies: dep_steamaudio,
+		include_directories: tkn_inc)
+endif
+

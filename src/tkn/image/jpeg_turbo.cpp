@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <tkn/config.hpp>
 #include <tkn/image.hpp>
 #include <tkn/types.hpp>
 

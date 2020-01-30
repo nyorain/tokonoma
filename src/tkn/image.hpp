@@ -13,6 +13,8 @@
 // TODO: inconsistent error handling return value vs exception,
 // clean that up (in implementations as well). Document when
 // exceptions might be thrown
+// TODO: support reading from memory buffers. Needed e.g. to use
+// this with tinygltf instead of the supplied stb loader (for speed).
 
 namespace tkn {
 

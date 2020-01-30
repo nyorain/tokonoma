@@ -25,6 +25,8 @@ typedef struct cubeb_stream cubeb_stream;
 // TODO: specify what happens with exceptions from AudioSource and
 // AudioEffect. Just catch them in the audio player? destroy/disable
 // sources/effects after they've thrown? or mark the interfaces noexcept?
+// TODO: change AudioEffect to use number blocks instead of number of frames.
+// fix that up/write examples in general. Or abolish it?
 
 namespace tkn {
 

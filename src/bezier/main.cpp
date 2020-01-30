@@ -34,6 +34,7 @@
 //   when decreasing, approximate via least squares
 
 // ideas:
+// - allow closed spline curves (e.g. via checkbox)
 // - better b-spline subdivision. Use dynamic condition
 // - implement nurbs instead of just b-splines
 // - using tensor products, implement bezier surfaces
@@ -237,7 +238,7 @@ public:
 
 		// support outlines
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, linePipe_);
-		nytl::Vec4f col = {0.f, 0.f, 0.f, 0.2f};
+		nytl::Vec4f col = {0.f, 0.f, 0.f, 1.f};
 		vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::fragment,
 			0, sizeof(nytl::Vec4f), &col);
 		vk::cmdDraw(cb, points().size(), 1, 0, 0);
@@ -344,12 +345,12 @@ public:
 		clearValues.reserve(3);
 		vk::ClearValue c {{0.7f, 0.7f, 0.7f, 1.f}};
 
-		clearValues.push_back(c); // clearColor
+		clearValues.push_back(c); // clearColor (value unused for msaa)
 		if(samples() != vk::SampleCountBits::e1) { // msaa attachment
 			clearValues.push_back({c});
 		}
 
-		if(depthFormat() != vk::Format::undefined) {
+		if(depthFormat() != vk::Format::undefined && needsDepth()) {
 			clearValues.emplace_back(c).depthStencil = {1.f, 0u};
 		}
 
@@ -407,7 +408,7 @@ public:
 	}
 
 	const char* name() const override { return "bezier"; }
-	bool needsDepth() const override { return true; }
+	bool needsDepth() const override { return false; }
 
 protected:
 	tkn::Camera camera_;

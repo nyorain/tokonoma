@@ -288,7 +288,7 @@ MP3Decoder::MP3Decoder(nytl::StringParam file) {
 }
 
 MP3Decoder::MP3Decoder(File&& file) : file_(std::move(file)) {
-	dlg_assert(file);
+	dlg_assert(file_);
 	init();
 }
 

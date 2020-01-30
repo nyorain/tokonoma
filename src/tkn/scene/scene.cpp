@@ -296,6 +296,23 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	uploadSemaphore_ = {device()};
 }
 
+void Scene::rescale(float s) {
+	auto size = max() - min();
+	auto md = std::max(size.x, std::max(size.y, size.z));
+	s = 2.f * s / md;
+	auto t = -s * (min() + 0.5f * size);
+	auto mat = nytl::Mat4f {
+		s, 0, 0, t.x,
+		0, s, 0, t.y,
+		0, 0, s, t.z,
+		0, 0, 0, 1
+	};
+
+	for(auto& ini : instances()) {
+		ini.matrix = mat * ini.matrix;
+	}
+}
+
 void Scene::loadMaterial(InitData&, const WorkBatcher&,
 		const gltf::Model& model, const gltf::Material& material,
 		const SceneRenderInfo&) {
@@ -1150,16 +1167,14 @@ void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl, bool blend) cons
 
 	vk::cmdBindVertexBuffers(cb, 0, bufs, offsets);
 	if(multiDrawIndirect_) {
-		dlg_info("{} {} {} {}", cb, cmds.buffer().vkHandle(), cmds.offset(), count);
+		// dlg_info("{} {} {} {}", cb, cmds.buffer().vkHandle(), cmds.offset(), count);
 		std::fflush(stdout);
 
 		auto stride = sizeof(vk::DrawIndexedIndirectCommand);
 		vk::cmdDrawIndexedIndirect(cb, cmds.buffer(), cmds.offset(),
 			count, stride);
 
-		dlg_info("done");
 	} else {
-		dlg_info("uff");
 		auto off = cmds.offset();
 		for(auto i = 0u; i < count; ++i) {
 			vk::cmdDrawIndexedIndirect(cb, cmds.buffer(), off, 1u, 0u);

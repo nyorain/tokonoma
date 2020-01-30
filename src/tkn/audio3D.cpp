@@ -28,7 +28,6 @@ static const char* name(IPLerror err) {
 	} \
 } while(0)
 
-static constexpr auto ambisonicsOrder = 1u;
 IPLAudioFormat stereoFormat() {
 	IPLAudioFormat format {};
 	format.channelLayoutType = IPL_CHANNELLAYOUTTYPE_SPEAKERS;
@@ -40,7 +39,7 @@ IPLAudioFormat stereoFormat() {
 IPLAudioFormat ambisonicsFormat() {
 	IPLAudioFormat format {};
 	format.channelLayoutType = IPL_CHANNELLAYOUTTYPE_AMBISONICS;
-	format.ambisonicsOrder = ambisonicsOrder;
+	format.ambisonicsOrder = Audio3D::ambisonicsOrder;
 	format.ambisonicsOrdering = IPL_AMBISONICSORDERING_ACN;
 	format.ambisonicsNormalization = IPL_AMBISONICSNORMALIZATION_N3D;
 	format.channelOrder = IPL_CHANNELORDER_INTERLEAVED;
@@ -48,35 +47,27 @@ IPLAudioFormat ambisonicsFormat() {
 }
 
 // Audio3D
-Audio3D::Audio3D(unsigned frameRate,
-			std::vector<IPLVector3> positions,
-			std::vector<IPLTriangle> tris,
-			std::vector<IPLint32> mats) {
+Audio3D::Audio3D(unsigned frameRate) {
 	iplCheck(iplCreateContext(&log, nullptr, nullptr, &context_));
 
 	// scene
 	IPLSimulationSettings ssettings {};
-	// ssettings.sceneType = IPL_SCENETYPE_EMBREE;
-	ssettings.sceneType = IPL_SCENETYPE_PHONON;
-	ssettings.numOcclusionSamples = 128;
-	ssettings.maxConvolutionSources = 4u;
-	ssettings.irradianceMinDistance = 1.0;
+	ssettings.sceneType = IPL_SCENETYPE_EMBREE;
+	ssettings.numOcclusionSamples = Settings::numOcclusionSamples;
+	ssettings.maxConvolutionSources = Settings::maxConvolutionSources;
+	ssettings.irradianceMinDistance = Settings::irradianceMinDistance;
 
 	// higher values here seems to cause *way* higher latency for
 	// the indirect sound
-	ssettings.numRays = 4096 / 4;
-	ssettings.numDiffuseSamples = 512 / 2;
-	ssettings.numBounces = 6;
-	ssettings.numThreads = 4;
-	ssettings.irDuration = 1.5;
+	ssettings.numRays = Settings::numRays;
+	ssettings.numDiffuseSamples = Settings::numDiffuseSamples;
+	ssettings.numBounces = Settings::numBounces;
+	ssettings.numThreads = Settings::numThreads;
+	ssettings.irDuration = Settings::irDuration;
+	ssettings.ambisonicsOrder = ambisonicsOrder;
 
-	// ssettings.ambisonicsOrder = ambisonicsOrder;
-	// ssettings.numRays = 8 * 4096;
-	// ssettings.numDiffuseSamples = 1024;
-	// ssettings.numBounces = 6;
-	// ssettings.numThreads = 6;
-	// ssettings.irDuration = 2;
 
+	// TODO: parameterize/allow multiple materials
 	// generic material
 	IPLMaterial material {0.1f,0.2f,0.3f,0.05f,0.100f,0.050f,0.030f};
 
@@ -94,28 +85,19 @@ Audio3D::Audio3D(unsigned frameRate,
 	}
 
 	// environment
-	dlg_info("creating env");
 	iplCheck(iplCreateEnvironment(context_, nullptr, ssettings, scene_,
 		nullptr, &env_));
-
-	dlg_info("creating mesh");
-	IPLhandle mesh;
-	iplCheck(iplCreateStaticMesh(scene_, positions.size(),
-		tris.size(), positions.data(), tris.data(), mats.data(),
-		&mesh));
 
 	IPLRenderingSettings rsettings {};
 	rsettings.samplingRate = frameRate;
 	rsettings.frameSize = tkn::AudioPlayer::blockSize;
 	rsettings.convolutionType = IPL_CONVOLUTIONTYPE_PHONON;
 
-	dlg_info("creating env renderer");
 	// auto format = stereoFormat();
 	auto aformat = ambisonicsFormat();
 	iplCheck(iplCreateEnvironmentalRenderer(context_, env_, rsettings,
 		aformat, nullptr, nullptr, &envRenderer_));
 
-	dlg_info("creating binaural renderer");
 	// binaural
 	IPLHrtfParams hrtfParams {IPL_HRTFDATABASETYPE_DEFAULT, nullptr, nullptr};
 	iplCheck(iplCreateBinauralRenderer(context_, rsettings, hrtfParams,
@@ -128,6 +110,19 @@ Audio3D::~Audio3D() {
 	if(binauralRenderer_) iplDestroyBinauralRenderer(&binauralRenderer_);
 	if(context_) iplDestroyContext(&context_);
 	iplCleanup();
+}
+
+void Audio3D::addStaticMesh(const std::vector<IPLVector3>& positions,
+		const std::vector<IPLTriangle>& tris,
+		const std::vector<IPLint32>& mats) {
+	IPLhandle mesh;
+	iplCheck(iplCreateStaticMesh(scene_,
+		positions.size(),
+		tris.size(),
+		const_cast<IPLVector3*>(positions.data()),
+		const_cast<IPLTriangle*>(tris.data()),
+		const_cast<IPLint32*>(mats.data()),
+		&mesh));
 }
 
 void Audio3D::log(char* msg) {
@@ -205,24 +200,21 @@ ConvolutionAudio::ConvolutionAudio(Audio3D& audio, BufCaches bc) :
 }
 
 void ConvolutionAudio::render(unsigned nb, float* buf, bool mix) {
-	// if(delay_ < 10) {
-	// 	delay_ += nb;
-	// 	return;
-	// }
-
 	if(audio_->flushIndirect()) {
 		iplFlushAmbisonicsBinauralEffect(binauralEffect_);
 	}
 
+	IPLint32 bs = AudioPlayer::blockSize;
 	if(!audio_->indirect()) {
-		// TODO: if mix is not set, we must clear the buffer!
+		if(!mix) {
+			memset(buf, 0x0, 2 * nb * bs);
+		}
 		return;
 	}
 
-	IPLint32 bs = AudioPlayer::blockSize;
 
 	if(mix) {
-		// No idea what is actually needed tbh
+		// TODO: No idea what buffer size is actually needed tbh
 		auto b0 = bufs_.render.get<0>(64 * bs).data();
 		auto b1 = bufs_.render.get<1>(2 * bs).data();
 
@@ -233,9 +225,6 @@ void ConvolutionAudio::render(unsigned nb, float* buf, bool mix) {
 				audio_->listenerPos(),
 				audio_->listenerDir(),
 				audio_->listenerUp(), ab);
-
-			// TODO: do we have to rotate the output ambisonic audio?
-			// wouldn't make such sense though i guess?
 
 			if(useHRTF) {
 				iplApplyAmbisonicsBinauralEffect(binauralEffect_,
@@ -253,6 +242,7 @@ void ConvolutionAudio::render(unsigned nb, float* buf, bool mix) {
 			buf += 2 * bs;
 		}
 	} else {
+		// TODO: implement!
 		dlg_fatal("Unimplemented");
 
 		// // write directly into the audio buffer

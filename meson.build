@@ -10,8 +10,18 @@ project('tokonoma', ['cpp', 'c'],
 
 # options
 profiling = get_option('profiling')
+with_playground = get_option('playground')
+
 if profiling
   add_global_arguments('-pg', language: 'cpp')
+endif
+
+# dummy/playground projects use this dependency.
+# quick way to disable building them at all
+if with_playground
+	dep_playground = []
+else
+	dep_playground = disabler()
 endif
 
 cc = meson.get_compiler('cpp')
@@ -19,12 +29,12 @@ android = (cc.get_define('__ANDROID__') != '')
 exetarget = 'executable'
 
 if android
+	aapiv = cc.get_define('__ANDROID_API__')
+
 	# Make sure that we dispatch vulkan dynamically, that is needed
 	# on android. I guess libvulkan are just stubs for everything
 	# but instance creation proc address loading
 	add_global_arguments('-DVKPP_DYNAMIC_DISPATCH', language: ['cpp', 'c'])
-
-	aapiv = cc.get_define('__ANDROID_API__')
 
 	# See https://github.com/android/ndk/issues/289
 	add_global_link_arguments([
@@ -98,7 +108,9 @@ dep_turbojpeg = dependency('libturbojpeg',
 # the last release (which was 2014 as of now)
 dep_b2d = dependency('b2d',
 	fallback: ['b2d', 'b2d_dep'],
-	required: false)
+	disabler: true,
+	required: get_option('b2d'))
+with_b2d = dep_b2d.found()
 
 # bullet for 3D physics
 # optional as well, the wrap i wrote ships pre-built binaries (since
@@ -106,21 +118,38 @@ dep_b2d = dependency('b2d',
 # but not for every platform.
 dep_bullet = dependency('bullet',
 	fallback: ['bullet', 'bullet_dep'],
-	required: false)
+	disabler: true,
+	required: get_option('bullet'))
+with_bullet = dep_bullet.found()
 
 # cubeb for audio
 # when not available (e.g. not possible to build), the audio
 # projects simply won't be built
 dep_cubeb = dependency('cubeb',
 	fallback: ['cubeb', 'cubeb_dep'],
-	required: false)
+	disabler: true,
+	required: get_option('audio'))
+with_audio = dep_cubeb.found()
 
 # steamaudio, optional, for 3D audio processing
 # the library isn't free/libre or open source!
 # But has a fairly permissive license.
-dep_steamaudio = dependency('steamaudio',
-	fallback: ['steamaudio', 'steamaudio_dep'],
-	required: false)
+dep_steamaudio = disabler()
+if with_audio
+	dep_steamaudio = dependency('steamaudio',
+		fallback: ['steamaudio', 'steamaudio_dep'],
+		disabler: true,
+		required: get_option('steamaudio'))
+endif
+with_audio3D = dep_steamaudio.found()
+
+cd = configuration_data()
+cd.set('TKN_LINUX', build_machine.system() == 'linux')
+cd.set('TKN_WITH_AUDIO', with_audio)
+cd.set('TKN_WITH_AUDIO3D', with_audio3D)
+cd.set('TKN_WITH_BULLET', with_bullet)
+cd.set('TKN_WITH_B2D', with_b2d)
+subdir('include/tkn')
 
 external_inc = include_directories('external/include')
 
@@ -144,6 +173,10 @@ subdir('src/deferred')
 subdir('src/cloth')
 subdir('src/spirv')
 
+# playground/dummy projects
+subdir('src/daudio')
+subdir('src/playground')
+
 # inline (for small projects)
 executable('pendulum',
 	'src/pendulum/main.cpp',
@@ -153,35 +186,13 @@ executable('dpend',
 	'src/dpend/main.cpp',
 	dependencies: tkn_dep)
 
-if tkn_audio
-	executable('audio',
-		'src/audio/main.cpp',
-		dependencies: tkn_dep)
+executable('audio',
+	'src/audio/main.cpp',
+	dependencies: [tkn_dep, tkn_audio_dep])
 
-	executable('soundfont',
-		'src/soundfont/main.cpp',
-		dependencies: tkn_dep)
-
-	daudio = build_target('daudio', [
-			'src/daudio/main.cpp',
-		], dependencies: tkn_dep,
-		target_type: exetarget)
-
-	daudiorc = build_target('daudiorc', [
-			'src/daudio/cubeb.cpp',
-		], dependencies: tkn_dep,
-		target_type: exetarget)
-
-	daudiosin = build_target('daudiosin', [
-			'src/daudio/cubeb2.cpp',
-		], dependencies: tkn_dep,
-		target_type: exetarget)
-
-	daudioravg = build_target('daudioravg', [
-			'src/daudio/cubeb3.cpp',
-		], dependencies: tkn_dep,
-		target_type: exetarget)
-endif
+executable('soundfont',
+	'src/soundfont/main.cpp',
+	dependencies: [tkn_dep, tkn_audio_dep])
 
 executable('dummy',
 	'src/dummy/main.cpp',
@@ -279,22 +290,6 @@ rays = build_target('rays', [
 		rays_shaders,
 	], dependencies: tkn_dep,
 	target_type: exetarget)
-
-executable('pg',
-	'src/playground/main6.cpp',
-	dependencies: tkn_dep)
-
-if dep_bullet.found()
-	executable('pg-bullet',
-		'src/playground/bullet.cpp',
-		dependencies: [tkn_dep, dep_bullet])
-endif
-
-if dep_steamaudio.found()
-	executable('pg-steamaudio',
-		'src/playground/steamaudio.cpp',
-		dependencies: [tkn_dep, dep_steamaudio])
-endif
 
 if android
 	subdir('apk')

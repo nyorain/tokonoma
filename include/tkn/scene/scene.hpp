@@ -17,7 +17,7 @@
 // TODO: fix updateDs returning in upload
 // TODO: dont require multidraw support, see gbuf.vert
 // TODO: update min_,max_ when matrix is changed, new primitive added?
-// IDEA: decouple scene and gltf loading, support .obj and other open formats
+// TODO: decouple scene and gltf loading, support .obj and other open formats
 // PERF: sorting primitives by how they are layed out in the vertex
 //   buffers (when there are no other creteria)? could improve cache locality
 // PERF: support basic AABB culling, always use indirect commands
@@ -69,7 +69,8 @@ class Scene {
 public:
 	// NOTE: this is important for TAA but causes worse result without it
 	static constexpr auto mipLodBias = -1.f;
-	static constexpr auto imageCount = 32u;
+	// static constexpr auto imageCount = 32u;
+	static constexpr auto imageCount = 96u;
 	static constexpr auto samplerCount = 4u;
 	using Index = u32; // for indices
 	using ModelID = u32;
@@ -133,6 +134,11 @@ public:
 	void create(InitData&, const WorkBatcher&, nytl::StringParam path,
 		const gltf::Model&, const gltf::Scene&, nytl::Mat4f matrix,
 		const SceneRenderInfo&);
+
+	// Expected to be called between create and init.
+	// Makes sure the scene is in bounds [-s, s] but will scale
+	// uniformly on all axis.
+	void rescale(float s = 1.f);
 	void init(InitData&, const WorkBatcher&, vk::ImageView dummyTex);
 	void createImage(unsigned id, bool srgb);
 

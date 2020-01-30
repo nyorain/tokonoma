@@ -17,6 +17,7 @@
 #include <tkn/camera.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/glsl.hpp>
+#include <ny/appContext.hpp>
 #include <shaders/terrain.sky.vert.h>
 
 #include <vpp/trackedDescriptor.hpp>
@@ -67,6 +68,11 @@ public:
 		vpp::DescriptorSetUpdate dsu(ds_);
 		dsu.uniform({{{ubo_}}});
 
+		// initial camera pos
+		const float planetRadius = 6300000;
+		nytl::Vec3f cpos = (planetRadius + 1) * nytl::Vec3f{0, 1, 0};
+		camera_.pos = cpos;
+
 		return true;
 	}
 
@@ -90,6 +96,10 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
+		checkMovement(camera_, *appContext().keyboardContext(), 10000 * dt);
+		if(camera_.update) {
+			App::scheduleRedraw();
+		}
 	}
 
 	void updateDevice() override {

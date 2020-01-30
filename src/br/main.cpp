@@ -1,12 +1,9 @@
 // Simple forward renderer mainly as reference for other rendering
 // concepts. Also serves as 3D audio for some reason.
+// TODO: severely crippled for android atm. Fix that.
+// See the fragment shader
 
-#define BR_AUDIO
-
-#ifdef BR_AUDIO
-#include "audio.hpp"
-#endif
-
+#include <tkn/config.hpp>
 #include <tkn/camera.hpp>
 #include <tkn/app.hpp>
 #include <tkn/render.hpp>
@@ -61,6 +58,14 @@
 #include <android/native_activity.h>
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
+#endif
+
+#ifdef TKN_WITH_AUDIO3D
+#define BR_AUDIO
+#include <tkn/audio.hpp>
+#include <tkn/audio3D.hpp>
+#include <tkn/sound.hpp>
+#include <tkn/sampling.hpp>
 #endif
 
 using namespace tkn::types;
@@ -126,8 +131,7 @@ public:
 		dummyTex_ = {batch, std::move(p), params};
 
 		// Load scene
-		auto s = sceneScale_;
-		auto mat = tkn::scaleMat<4, float>({s, s, s});
+		auto mat = nytl::identity<4, float>();
 		auto samplerAnisotropy = 1.f;
 		if(anisotropy_) {
 			samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
@@ -163,6 +167,7 @@ public:
 
 		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
 			model, sc, mat, ri);
+		initScene.object().rescale(4 * sceneScale_);
 		initScene.init(batch, dummyTex_.vkImageView());
 
 		std::fflush(stdout);
@@ -181,9 +186,20 @@ public:
 		std::fflush(stdout);
 
 		tkn::Environment::InitData initEnv;
+		auto convFile = openAsset("convolution.ktx");
+		auto irrFile = openAsset("irradiance.ktx");
+		if(!convFile) {
+			dlg_error("Coulnd't find convolution.ktx. Use the pbr program to generate it");
+			return false;
+		}
+		if(!irrFile) {
+			dlg_error("Coulnd't find irradiance.ktx. Use the pbr program to generate it");
+			return false;
+		}
+
 		env_.create(initEnv, batch,
-			tkn::read(openAsset("convolution.ktx")),
-			tkn::read(openAsset("irradiance.ktx")), sampler_);
+			tkn::read(std::move(convFile)),
+			tkn::read(std::move(irrFile)), sampler_);
 		env_.createPipe(device(), cameraDsLayout_, renderPass(), 0u, samples());
 		env_.init(initEnv, batch);
 
@@ -342,122 +358,52 @@ public:
 			pointLightObjMatrix(), pointLight_.materialID);
 
 #ifdef BR_AUDIO
-		// audio
-		constexpr std::array<u16, 36> boxIndices = {
-			0, 1, 2,  2, 1, 3, // front
-			1, 5, 3,  3, 5, 7, // right
-			2, 3, 6,  6, 3, 7, // top
-			4, 0, 6,  6, 0, 2, // left
-			4, 5, 0,  0, 5, 1, // bottom
-			5, 4, 7,  7, 4, 6, // back
-		};
+		if(!audio_.disable) {
+			// audio
+			std::vector<IPLVector3> positions;
+			std::vector<IPLTriangle> tris;
 
-		std::vector<IPLVector3> positions;
-		std::vector<IPLTriangle> tris;
+			for(auto& ini : scene_.instances()) {
+				auto& primitive = scene_.primitives()[ini.primitiveID];
+				auto& mat = ini.matrix;
 
-		auto low = std::numeric_limits<float>::min();
-		auto high = std::numeric_limits<float>::max();
-		for(auto& ini : scene_.instances()) {
-			auto& primitive = scene_.primitives()[ini.primitiveID];
-			auto& mat = ini.matrix;
+				IPLint32 off = positions.size();
+				for(auto& p : primitive.positions) {
+					auto pos = tkn::multPos(mat, p);
+					positions.push_back({pos.x, pos.y, pos.z});
+				}
 
-			IPLint32 off = positions.size();
-			for(auto& p : primitive.positions) {
-				auto pos = tkn::multPos(mat, p);
-				positions.push_back({pos.x, pos.y, pos.z});
+				for(auto i = 0u; i < primitive.indices.size(); i += 3) {
+					tris.push_back({
+						(IPLint32) primitive.indices[i + 0] + off,
+						(IPLint32) primitive.indices[i + 1] + off,
+						(IPLint32) primitive.indices[i + 2] + off});
+				}
 			}
 
-			for(auto i = 0u; i < primitive.indices.size(); i += 3) {
-				tris.push_back({
-					(IPLint32) primitive.indices[i + 0] + off,
-					(IPLint32) primitive.indices[i + 1] + off,
-					(IPLint32) primitive.indices[i + 2] + off});
-			}
+			std::vector<IPLint32> matIDs(tris.size(), 0);
 
-			/*
-			// find absolute bounds
-			using namespace nytl::vec::cw;
-			auto vmax = nytl::Vec3f{low, low, low};
-			auto vmin = nytl::Vec3f{high, high, high};
-			for(auto& p : primitive.positions) {
-				auto pos = tkn::multPos(mat, p);
-				vmax = max(vmax, pos);
-				vmin = min(vmin, pos);
-			}
+			audio_.player.emplace("uff");
+			auto& ap = *audio_.player;
+			dlg_assert(ap.channels() == 2);
 
-			dlg_info("min: {}, max: {}", vmin, vmax);
+			audio_.d3.emplace(ap.rate());
+			audio_.d3->addStaticMesh(positions, tris, matIDs);
+			ap.audio = &*audio_.d3;
 
-			IPLint32 off = positions.size();
-			positions.push_back({vmin.x, vmin.y, vmin.z});
-			positions.push_back({vmax.x, vmin.y, vmin.z});
-			positions.push_back({vmin.x, vmax.y, vmin.z});
-			positions.push_back({vmax.x, vmax.y, vmin.z});
+			using MP3Source = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
+			auto& s2 = ap.create<MP3Source>(*audio_.d3, ap.bufCaches(), ap,
+				openAsset("test.mp3"));
+			s2.inner().volume(0.25f);
+			s2.position({10.f, 10.f, 0.f});
+			audio_.source = &s2;
 
-			positions.push_back({vmin.x, vmin.y, vmax.z});
-			positions.push_back({vmax.x, vmin.y, vmax.z});
-			positions.push_back({vmin.x, vmax.y, vmax.z});
-			positions.push_back({vmax.x, vmax.y, vmax.z});
-
-			for(auto i = 0u; i < boxIndices.size(); i += 3) {
-				tris.push_back({
-					boxIndices[i + 0] + off,
-					boxIndices[i + 1] + off,
-					boxIndices[i + 2] + off});
-			}
-			*/
+			ap.create<tkn::ConvolutionAudio>(*audio_.d3, ap.bufCaches());
+			ap.start();
 		}
-
-		std::vector<IPLint32> matIDs(tris.size(), 0);
-
-		dlg_trace("constructing audio player");
-		audio_.player.emplace("uff");
-		auto& ap = *audio_.player;
-		dlg_assert(ap.channels() == 2);
-
-		dlg_trace("setting up phonon");
-		audio_.d3.emplace(ap.rate(), positions, tris, matIDs);
-		ap.audio = &*audio_.d3;
-
-		// IPLhandle mesh;
-		// int err = iplCreateStaticMesh(audio_.d3->scene(), positions.size(),
-		// 	tris.size(), positions.data(), tris.data(), matIDs.data(),
-		// 	&mesh);
-		// dlg_assert(err == IPL_STATUS_SUCCESS);
-
-		// create sources
-		// dlg_trace("creating audio source");
-		// auto& s1 = ap.create<ASource>(*audio_.d3, ap.bufCaches(), ap,
-		// 	openAsset("test.ogg"));
-		// s1.position({-5.f, 0.f, 0.f});
-		// audio_.source = &s1;
-
-		using MP3Source = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
-		auto& s2 = ap.create<MP3Source>(*audio_.d3, ap.bufCaches(), ap,
-			openAsset("test.mp3"));
-		s2.inner().volume(0.25f);
-		s2.position({10.f, 10.f, 0.f});
-		audio_.source = &s2;
-
-		// using MP3Source = tkn::StreamedMP3Audio;
-		// auto& s2 = ap.create<MP3Source>(ap, openAsset("test.mp3"));
-
-		// using OGGSource = tkn::StreamedVorbisAudio;
-		// ap.create<OGGSource>(ap, openAsset("test.ogg"));
-
-		ap.create<tkn::ConvolutionAudio>(*audio_.d3, ap.bufCaches());
-
-		// auto& c = camera_;
-		// auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-		// auto right = nytl::normalized(nytl::cross(c.dir, yUp));
-		// auto up = nytl::normalized(nytl::cross(right, c.dir));
-		// audio_.d3->updateListener(c.pos, c.dir, up);
-
-		dlg_trace("starting audio player");
-		ap.start();
 #endif // BR_AUDIO
 
 		tkn::init(touch_, camera_, rvgContext());
-		dlg_trace("finished initialization");
 		return true;
 	}
 
@@ -466,6 +412,13 @@ public:
 			return false;
 		}
 
+		if(!supported.base.features.shaderSampledImageArrayDynamicIndexing) {
+			dlg_fatal("Required feature shaderSampledImageArrayDynamicIndexing "
+				"not supported. Need it for texturing scenes");
+			return false;
+		}
+
+		enable.base.features.shaderSampledImageArrayDynamicIndexing = true;
 		if(supported.base.features.samplerAnisotropy) {
 			anisotropy_ = true;
 			enable.base.features.samplerAnisotropy = true;
@@ -507,6 +460,12 @@ public:
 			"scale", {"--scale"},
 			"Apply scale to whole scene", 1
 		});
+#ifdef BR_AUDIO
+		parser.definitions.push_back({
+			"no-audio", {"--no-audio"},
+			"Disable the whole audio part", 0
+		});
+#endif // BR_AUDIO
 		return parser;
 	}
 
@@ -521,6 +480,11 @@ public:
 		if(result.has_option("scale")) {
 			sceneScale_ = result["scale"].as<float>();
 		}
+#ifdef BR_AUDIO
+		if(result.has_option("no-audio")) {
+			audio_.disable = true;
+		}
+#endif // BR_AUDIO
 
 		return true;
 	}
@@ -626,13 +590,13 @@ public:
 		switch(ev.keycode) {
 #ifdef BR_AUDIO
 			case ny::Keycode::i: // toggle indirect audio
-				audio_.d3->toggleIndirect();
+				if(audio_.d3) audio_.d3->toggleIndirect();
 				return true;
 			case ny::Keycode::u: // toggle direct audio on source
-				audio_.source->direct = !audio_.source->direct;
+				if(audio_.source) audio_.source->direct = !audio_.source->direct;
 				return true;
 			case ny::Keycode::o: // move audio source here
-				audio_.source->position(camera_.pos);
+				if(audio_.source) audio_.source->position(camera_.pos);
 				return true;
 #endif // BR_AUDIO
 			case ny::Keycode::m: // move light here
@@ -896,12 +860,25 @@ protected:
 	vpp::SubBuffer boxIndices_;
 
 #ifdef BR_AUDIO
+	class AudioPlayer : public tkn::AudioPlayer {
+	public:
+		using tkn::AudioPlayer::AudioPlayer;
+
+		tkn::Audio3D* audio {};
+		void renderUpdate() override {
+			if(audio) {
+				audio->update();
+			}
+		}
+	};
+
 	// using ASource = tkn::AudioSource3D<tkn::StreamedVorbisAudio>;
 	using ASource = tkn::AudioSource3D<tkn::StreamedMP3Audio>;
 	struct {
 		ASource* source;
 		std::optional<tkn::Audio3D> d3;
 		std::optional<AudioPlayer> player;
+		bool disable {};
 	} audio_;
 #endif // BR_AUDIO
 };

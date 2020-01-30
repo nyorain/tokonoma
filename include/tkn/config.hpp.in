@@ -1,0 +1,5 @@
+#mesondefine TKN_LINUX
+#mesondefine TKN_WITH_AUDIO
+#mesondefine TKN_WITH_AUDIO3D
+#mesondefine TKN_WITH_BULLET
+#mesondefine TKN_WITH_B2D

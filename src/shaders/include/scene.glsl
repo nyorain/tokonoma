@@ -9,9 +9,9 @@ const uint lightShadow = (1u << 1); // use shadow
 const uint normalMap = (1u << 0);
 const uint doubleSided = (1u << 1);
 
-// const uint imageCount = 96u;
+const uint imageCount = 96u;
 // const uint samplerCount = 8u;
-const uint imageCount = 32u;
+// const uint imageCount = 32u;
 const uint samplerCount = 4u;
 
 // TODO: don't hardcode.

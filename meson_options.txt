@@ -1,1 +1,7 @@
 option('profiling', type: 'boolean', value : false)
+option('playground', type: 'boolean', value : false)
+
+option('audio', type: 'feature', value : 'auto')
+option('b2d', type: 'feature', value : 'auto')
+option('bullet', type: 'feature', value : 'auto')
+option('steamaudio', type: 'feature', value : 'auto')

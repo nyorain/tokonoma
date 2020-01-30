@@ -1002,29 +1002,7 @@ void ViewApp::initRenderData() {
 
 	tkn::Scene::InitData initScene;
 	scene_.create(initScene, batch, path, *omodel, sc, mat, ri);
-
-	// scale scene
-	// we want it to be within bounds [-2, 2] for scale 1 and the
-	// center to be in 0. But scale the scene the same along all axis.
-	auto min = scene_.min();
-	auto max = scene_.max();
-	dlg_info("scene min: {}", min);
-	dlg_info("scene max: {}", max);
-	auto size = max - min;
-
-	auto s = std::max(size.x, std::max(size.y, size.z));
-	s = 4.f * sceneScale_ / s;
-	auto t = -s * (min + 0.5f * size);
-	mat = nytl::Mat4f {
-		s, 0, 0, t.x,
-		0, s, 0, t.y,
-		0, 0, s, t.z,
-		0, 0, 0, 1
-	};
-
-	for(auto& ini : scene_.instances()) {
-		ini.matrix = mat * ini.matrix;
-	}
+	scene_.rescale(4 * sceneScale_);
 
 	shadowData_ = tkn::initShadowData(dev, depthFormat(),
 		scene_.dsLayout(), multiview_, depthClamp_);

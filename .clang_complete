@@ -17,6 +17,7 @@
 -I./build/subprojects/ny/include
 -I./build/subprojects/vpp/include
 -I./build/assets
+-I./build/include
 -I./build/src/
 -I./external/include
 -I./src

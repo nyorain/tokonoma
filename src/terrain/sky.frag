@@ -8,7 +8,7 @@ layout(location = 0) out vec4 fragColor;
 
 layout(set = 0, binding = 0, row_major) uniform Camera {
 	mat4 _VP;
-	vec3 _pos;
+	vec3 pos;
 	float time; // time of day, 0 - 1
 } ubo;
 
@@ -23,15 +23,17 @@ void main() {
 	sunDir = normalize(sunDir);
 
 	vec3 dir = normalize(pos);
-	vec3 cpos = (planetRadius + 1) * normalize(vec3(0, 1, 0));
+	// vec3 cpos = (planetRadius + 1) * normalize(vec3(0, 1, 0));
+	vec3 cpos = ubo.pos;
 
 	float te = intersectRaySphere(cpos, dir, vec3(0.0), planetRadius);
 	float ta = intersectRaySphere(cpos, dir, vec3(0.0), atmosphereRadius);
 
 	// viewing down on earth
 	if(te > 0.0 || ta < 0.0) {
-		fragColor = vec4(vec3(0.0), 1.0);
-		return;
+		// fragColor = vec4(vec3(0.0), 1.0);
+		// return;
+		ta = te;
 	}
 
 	float totalOD;

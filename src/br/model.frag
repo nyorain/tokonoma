@@ -70,14 +70,14 @@ void main() {
 
 	Material material = materials[inMatID];
 
-	// if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
-	// 	discard;
-	// }
+	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
+		discard;
+	}
 
 	vec4 albedo = material.albedoFac * readTex(material.albedo);
-	// if(albedo.a < material.alphaCutoff) {
-	// 	discard;
-	// }
+	if(albedo.a < material.alphaCutoff) {
+		discard;
+	}
 
 	vec3 normal = normalize(inNormal);
 	if((material.flags & normalMap) != 0u) {
@@ -87,9 +87,9 @@ void main() {
 		normal = tbnNormal(normal, inPos, tuv, 2.0 * n.xyz - 1.0);
 	}
 
-	// if(!gl_FrontFacing) { // flip normal, see gltf spec
-	// 	normal *= -1;
-	// }
+	if(!gl_FrontFacing) { // flip normal, see gltf spec
+		normal *= -1;
+	}
 
 	vec3 color = vec3(0.0);
 
