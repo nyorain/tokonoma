@@ -49,10 +49,12 @@ vec3 atmosphere(vec3 cpos, vec3 dir, vec3 sunDir, out bool visualizeSun) {
 	Inscatter inscatter = sampleRay(rayStart, rayEnd, sunDir, random(pos));
 
 	// outscatter
+	// we could move the phase functions out of the integration because
+	// we assume the sunlight direction to be constant (good enough in most
+	// cases).
 	vec3 color = inscatter.rayleigh * phaseRayleigh(dot(dir, sunDir)) * sunColor;
-	color += inscatter.mie * phase(dot(dir, sunDir), -0.792) * sunColor;
+	color += inscatter.mie * phase(dot(dir, sunDir), mieG) * sunColor;
 	return color;
-
 }
 
 void main() {
@@ -78,8 +80,7 @@ void main() {
 	// fragColor = vec4(vec3(0.00001 * totalOD), 1.0);
 
 	// visualize sun position
-	if(dot(-sunDir, dir) > 0.995 && visualizeSun) {
-		fragColor = mix(fragColor, vec4(0.1, 0.1, 0.0, 1.0), 0.5);
-		return;
-	}
+	// if(dot(-sunDir, dir) > 0.995 && visualizeSun) {
+	// 	fragColor = mix(fragColor, vec4(0.1, 0.1, 0.0, 1.0), 0.5);
+	// }
 }

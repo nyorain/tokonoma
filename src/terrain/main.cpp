@@ -35,6 +35,8 @@
 #include <shaders/terrain.sky.frag.h>
 #endif
 
+using tkn::glsl::fract;
+
 class TerrainApp : public tkn::App {
 public:
 	static constexpr float cameraPosMult = 10000;
@@ -84,7 +86,7 @@ public:
 
 		// initial camera pos
 		const float planetRadius = 6300000;
-		nytl::Vec3f cpos = (planetRadius + 1000) * nytl::Vec3f{0, 1, 0};
+		nytl::Vec3f cpos = (planetRadius + 10) * nytl::Vec3f{0, 1, 0};
 		camera_.pos = cpos;
 
 		touch_.positionMultiplier = 0.2 * cameraPosMult;
@@ -121,8 +123,14 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
+		if(playing_) {
+			time_ = fract(time_ - 0.05 * dt);
+			camera_.update = true; // write ubo
+		}
+
 		tkn::update(touch_, dt);
 		checkMovement(camera_, *appContext().keyboardContext(), cameraPosMult * dt);
+
 		if(camera_.update) {
 			App::scheduleRedraw();
 		}
@@ -185,7 +193,6 @@ public:
 			return false;
 		}
 
-		using tkn::glsl::fract;
 		if(ev.keycode == ny::Keycode::r) {
 #ifndef __ANDROID__
 			reload_ = true;
@@ -201,6 +208,8 @@ public:
 			dlg_info("time: {}", time_);
 			camera_.update = true; // write ubo
 			App::scheduleRedraw();
+		} else if(ev.keycode == ny::Keycode::p) {
+			playing_ = !playing_;
 		}
 
 		return false;
@@ -214,6 +223,13 @@ public:
 
 	bool touchBegin(const ny::TouchBeginEvent& ev) override {
 		if(App::touchBegin(ev)) {
+			return true;
+		}
+
+		using namespace nytl::vec::cw::operators;
+		auto mpos = ev.pos / window().size();
+		if(mpos.x > 0.9 && mpos.y > 0.95) {
+			playing_ = !playing_;
 			return true;
 		}
 
@@ -248,6 +264,7 @@ public:
 	vpp::ShaderModule skyVert_;
 	bool reload_ {false};
 	float time_ {0.25f}; // in range [0,1]
+	bool playing_ {false};
 
 	bool rotateView_ {};
 	tkn::Camera camera_;

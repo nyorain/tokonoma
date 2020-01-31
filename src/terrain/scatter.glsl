@@ -23,17 +23,21 @@ const float atmosphereRadius = 6400000;
 
 // rayleigh scattering coefficients roughly for RGB wavelengths, from
 // http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
+// TODO: g values for mie?
 const vec3 rayleighScatteringRGB = vec3(6.95e-6, 1.18e-5, 2.44e-5);
 
+const vec3 mieScatteringRGB0 = vec3(0, 0, 0);
 const vec3 mieScatteringRGB1 = vec3(2e-5, 3e-5, 4e-5);
 const vec3 mieScatteringRGB2 = vec3(8e-5, 1e-4, 1.2e-4);
 const vec3 mieScatteringRGB3 = vec3(9e-4, 1e-3, 1.1e-3);
 const vec3 mieScatteringRGB4 = vec3(1e-2, 1e-2, 1e-2); // 1e-5 as in paper for B?
 const vec3 mieScatteringRGB = mieScatteringRGB1;
-const float mieG = -10;
+const float mieG = -0.9f;
 
 // Returns the density at height h for particle scale height hscale.
 // h = 0 represents sea level, the base density.
+// The higher the scale, the faster the density goes to zero for
+// higher heights h.
 float density(float h, float hscale) {
 	return exp(-h / hscale);
 }
@@ -46,10 +50,16 @@ float density(float h, float hscale) {
 // Normalized so that the function integrated over the unit sphere
 // results in 1.
 float phase(float cosTheta, float g) {
-	const float fac = 0.11936620731; // 3 / (8 * pi) for normalization
 	float gg = g * g;
+
+	// from csp atmosphere and gpugems, normalized
+	const float fac = 0.11936620731; // 3 / (8 * pi) for normalization
 	float cc = cosTheta * cosTheta;
-	return fac * ((1 - gg) * 1 + cc) / ((2 + gg) * pow(1 + gg * - 2 * g * cosTheta, 1.5));
+	return fac * ((1 - gg) * (1 + cc)) / ((2 + gg) * pow(1 + gg - 2 * g * cosTheta, 1.5));
+	
+	// from the 2002 GDM paper. More colorful, maybe because it's
+	// not properly normalized?
+	// return (1 - g) * (1 - g) / (4 * pi * pow(1 + gg  - 2 * g * cosTheta, 1.5));
 }
 
 // optimized version of phase(cosTheta, g = 0)
@@ -65,7 +75,7 @@ float height(vec3 pos) {
 
 float opticalDepth(vec3 from, vec3 to, float hscale) {
 	// const uint numSteps = 1 + uint(clamp(2 * length(to - from) / (atmosphereRadius - planetRadius), 0, 4));
-	const uint numSteps = 6u;
+	const uint numSteps = 4u;
 
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
@@ -130,14 +140,13 @@ Inscatter sampleRay(vec3 from, vec3 to, vec3 sunDir, float noise) {
 	// const uint numSteps = 5 + uint(clamp(45 * length(to - from) / (atmosphereRadius - planetRadius), 0, 100));
 	// const uint numSteps = 50;
 	// const uint numSteps = 5 + uint(clamp(20 * length(to - from) / (atmosphereRadius - planetRadius), 0, 20));
-	// const uint numSteps = 10;
 	const uint numSteps = 20;
 
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
 	float dt = length(delta);
 	vec3 pos = from;
-	pos += 0.1 * (noise - 0.5) * delta;
+	pos += 0.05 * noise * delta;
 
 	vec3 resR = vec3(0.0);
 	vec3 resM = vec3(0.0);
@@ -146,10 +155,10 @@ Inscatter sampleRay(vec3 from, vec3 to, vec3 sunDir, float noise) {
 	float odM = 0.0; // optical depth along primary ray, mie
 
 	for(uint i = 0u; i < numSteps; ++i) {
-		float h = height(pos);
-		if(h < 0) {
-			break;
-		}
+		float h = max(height(pos), 0);
+		// if(h < 0) {
+		// 	break;
+		// }
 
 		pos += delta;
 
@@ -173,12 +182,22 @@ Inscatter sampleRay(vec3 from, vec3 to, vec3 sunDir, float noise) {
 			float odsunR = opticalDepth(pos, atmosLeave, rayleighH);
 			float odsunM = opticalDepth(pos, atmosLeave, mieH);
 
-			resR += dR * exp(-rayleighScatteringRGB * (odR + odsunR)) * dt;
-			resM += dM * exp(-mieScatteringRGB * (odM + odsunM)) * dt;
+			// those two are equivalent
+			// vec3 outScatter = exp(-rayleighScatteringRGB * (odR + odsunR)) * exp(-mieScatteringRGB * (odM + odsunM));
+			vec3 outd = rayleighScatteringRGB * (odR + odsunR) + mieScatteringRGB * (odM + odsunM);
+			vec3 outScatter = exp(-outd);
+
+			resR += dR * outScatter * dt;
+			resM += dM * outScatter * dt;
+
+			// incorrect: we have to consider both out-scattering for
+			// each in-scattering effect
+			// resR += dR * exp(-rayleighScatteringRGB * (odR + odsunR)) * dt;
+			// resM += dM * exp(-mieScatteringRGB * (odM + odsunM)) * dt;
 
 		// The branches below only exist for debugging. They are
 		// supposed to be no-ops
-		} else if(srs == -1.f) {
+		} /*else if(srs == -1.f) {
 			// no scattering: ray already outside atmosphere.
 			// this should never happen though
 			// res += vec3(0, 0, 0.1);
@@ -193,7 +212,7 @@ Inscatter sampleRay(vec3 from, vec3 to, vec3 sunDir, float noise) {
 		} else {
 			// weird case
 			// res = vec3(1, 1, 1);
-		}
+		}*/
 	}
 
 	resM *= mieScatteringRGB;
