@@ -24,7 +24,7 @@ public:
 	/// to rotate around the axis.
 	static Quaternion axisAngle(double ax, double ay, double az, double angle) {
 		auto ha = std::sin(angle / 2);
-		return {ax * ha, ay * ha, az * ha, std::cos(ha / 2)};
+		return {std::cos(angle / 2), ax * ha, ay * ha, az * ha};
 	}
 
 	/// Constructs a Quaternion by given angles (in degrees) to rotate around
@@ -37,11 +37,23 @@ public:
 		double cz = std::cos(rz * 0.5);
 		double sz = std::sin(rz * 0.5);
 
+		// return {
+		// 	cx * cy * cz + sx * sy * sz,
+		// 	sx * cy * cz - cx * sy * sz,
+		// 	cx * sy * cz + sx * cy * sz,
+		// 	cx * cy * sz - sx * sy * cz
+		// };
+		// return {
+		// 	cx * cy * cz + sx * sy * sz,
+		// 	cx * sy * cz - sx * cy * sz,
+		// 	cx * cy * sz + sx * sy * cz,
+		// 	sx * cy * cz - cx * sy * sz
+		// };
 		return {
 			cx * cy * cz + sx * sy * sz,
-			cx * sy * cz - sx * cy * sz,
-			cx * cy * sz + sx * sy * cz,
-			sx * cy * cz - cx * sy * sz
+			sx * cy * cz - cx * sy * sz,
+			sx * cy * sz + cx * sy * cz,
+			cx * cy * sz - sx * sy * cz,
 		};
 	}
 
@@ -49,30 +61,34 @@ public:
 	/// Default-constructs the Quaternion to a zero rotation.
 	Quaternion() noexcept = default;
 
-	Quaternion& operator+=(const Quaternion& lhs) {
-		x += lhs.x;
-		y += lhs.y;
-		z += lhs.z;
-		w += lhs.w;
+	Quaternion& operator+=(const Quaternion& rhs) {
+		x += rhs.x;
+		y += rhs.y;
+		z += rhs.z;
+		w += rhs.w;
 		return *this;
 	}
 
-	Quaternion& operator*=(const Quaternion& lhs) {
+	// hamilton product of quaternions
+	Quaternion& operator*=(const Quaternion& q) {
+		// lhs and rhs misnamed
 		const auto rhs = *this; // copy since this will be changed
-		x = rhs.x * lhs.x - rhs.y * lhs.y - rhs.z * lhs.z - rhs.w * lhs.w;
-		y = rhs.x * lhs.y + rhs.y * lhs.x + rhs.z * lhs.w - rhs.w * lhs.z;
-		z = rhs.x * lhs.z - rhs.y * lhs.w + rhs.z * lhs.x + rhs.w * lhs.y;
-		w = rhs.x * lhs.w + rhs.y * lhs.z - rhs.z * lhs.y + rhs.w * lhs.x;
+		const auto lhs = q; // might be the same as *this
+
+		w = rhs.w * lhs.w - rhs.x * lhs.x - rhs.y * lhs.y - rhs.z * lhs.z;
+		x = rhs.w * lhs.x + rhs.x * lhs.w + rhs.y * lhs.z - rhs.z * lhs.y;
+		y = rhs.w * lhs.y - rhs.x * lhs.z + rhs.y * lhs.w + rhs.z * lhs.x;
+		z = rhs.w * lhs.z + rhs.x * lhs.y - rhs.y * lhs.x + rhs.z * lhs.w;
 		return *this;
 	}
 
-	Quaternion& operator*=(double factor) {
-		x *= factor;
-		y *= factor;
-		z *= factor;
-		w *= factor;
-		return *this;
-	}
+	// Quaternion& operator*=(double factor) {
+	// 	// x *= factor;
+	// 	// y *= factor;
+	// 	// z *= factor;
+	// 	w *= factor;
+	// 	return *this;
+	// }
 };
 
 // - operators and functions -
@@ -129,23 +145,18 @@ inline double norm(const Quaternion& q) {
 inline Quaternion normalize(const Quaternion& q) {
 	auto l = norm(q);
 	if(l <= 0.0) return {1.0, 0.0, 0.0, 0.0};
-	return {q.w / l, q.x /l, q.y / l, q.z / l};
+	return {q.w / l, q.x / l, q.y / l, q.z / l};
 }
 
 /// Returns the given vector rotated by the rotation represented by the given
 /// Quaternion.
 template<typename T>
 nytl::Vec3<T> apply(const Quaternion& q, const nytl::Vec3<T>& v) {
-	// http://mathurl.com/bay6c8n.png, more efficient that treating the
-	// vec as quaternion and use the hamilton product.
-	auto uv = v[0] * q.x + v[1] * q.y + v[2] * q.z;
-	auto uu = q.x * q.x + q.y * q.y + q.z * q.z;
-
-	nytl::Vec3<T> ret;
-	ret[0] = 2 * uv * q.x + (q.w * q.w - uu) * v[0] + 2 * q.w * (q.y * v[2] - q.z - v[1]);
-	ret[1] = 2 * uv * q.y + (q.w * q.w - uu) * v[1] + 2 * q.w * (q.z * v[0] - q.x - v[2]);
-	ret[2] = 2 * uv * q.z + (q.w * q.w - uu) * v[2] + 2 * q.w * (q.x * v[1] - q.y - v[0]);
-	return ret;
+	// TODO: can probably be implemented more efficiently
+	auto qv = Quaternion{0.f, v.x, v.y, v.z};
+	auto qr = (q * qv) * conjugate(q);
+	// assert(qr.w == 0.f);
+	return {T(qr.x), T(qr.y), T(qr.z)};
 }
 
 /// Retrieves the roll (x-axis rotation) of the given Quaternion

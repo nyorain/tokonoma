@@ -14,7 +14,7 @@
 #include <tkn/app.hpp>
 #include <tkn/window.hpp>
 #include <tkn/render.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/qcamera.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/glsl.hpp>
 #include <shaders/terrain.sky.vert.h>
@@ -89,8 +89,8 @@ public:
 		nytl::Vec3f cpos = (planetRadius + 10) * nytl::Vec3f{0, 1, 0};
 		camera_.pos = cpos;
 
-		touch_.positionMultiplier = 0.2 * cameraPosMult;
-		tkn::init(touch_, camera_, rvgContext());
+		// touch_.positionMultiplier = 0.2 * cameraPosMult;
+		// tkn::init(touch_, camera_, rvgContext());
 
 		return true;
 	}
@@ -112,13 +112,13 @@ public:
 		// vk::cmdDraw(cb, size_.x * size_.y, 1, 0, 0);
 		vk::cmdDraw(cb, 14, 1, 0, 0); // magic box via vert shader
 
-		if(touch_.alt) {
-			rvgContext().bindDefaults(cb);
-			windowTransform().bind(cb);
-			touch_.paint.bind(cb);
-			touch_.move.circle.fill(cb);
-			touch_.rotate.circle.fill(cb);
-		}
+		// if(touch_.alt) {
+		// 	rvgContext().bindDefaults(cb);
+		// 	windowTransform().bind(cb);
+		// 	touch_.paint.bind(cb);
+		// 	touch_.move.circle.fill(cb);
+		// 	touch_.rotate.circle.fill(cb);
+		// }
 	}
 
 	void update(double dt) override {
@@ -128,7 +128,7 @@ public:
 			camera_.update = true; // write ubo
 		}
 
-		tkn::update(touch_, dt);
+		// tkn::update(touch_, dt);
 		checkMovement(camera_, *appContext().keyboardContext(), cameraPosMult * dt);
 
 		if(camera_.update) {
@@ -153,10 +153,18 @@ public:
 #endif
 
 		if(camera_.update) {
+			auto fov = 0.48 * nytl::constants::pi;
+			auto aspect = float(window().size().x) / window().size().y;
+			auto near = 0.01f;
+			auto far = 30.f;
+
 			camera_.update = false;
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, fixedMatrix(camera_));
+			// tkn::write(span, fixedMatrix(camera_));
+			auto V = fixedViewMatrix(camera_);
+			auto P = tkn::perspective3RH<float>(fov, aspect, near, far);
+			tkn::write(span, P * V);
 			tkn::write(span, camera_.pos);
 			tkn::write(span, time_);
 			map.flush();
@@ -166,9 +174,20 @@ public:
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			auto x = 0.005 * ev.delta.x, y = 0.005 * ev.delta.y;
+			if(std::abs(x) > std::abs(y)) y = 0; else x = 0;
+			tkn::rotateView(camera_, x, y, 0.f);
 			App::scheduleRedraw();
 		}
+	}
+
+	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
+		if(App::mouseWheel(ev)) {
+			return true;
+		}
+
+		tkn::rotateView(camera_, 0.f, 0.f, 0.1 * ev.value.x);
+		return true;
 	}
 
 	bool mouseButton(const ny::MouseButtonEvent& ev) override {
@@ -217,7 +236,7 @@ public:
 
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+		// camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 		camera_.update = true;
 	}
 
@@ -233,12 +252,12 @@ public:
 			return true;
 		}
 
-		tkn::touchBegin(touch_, ev, window().size());
+		// tkn::touchBegin(touch_, ev, window().size());
 		return true;
 	}
 
 	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
-		tkn::touchUpdate(touch_, ev);
+		// tkn::touchUpdate(touch_, ev);
 		App::scheduleRedraw();
 	}
 
@@ -247,7 +266,7 @@ public:
 			return true;
 		}
 
-		tkn::touchEnd(touch_, ev);
+		// tkn::touchEnd(touch_, ev);
 		App::scheduleRedraw();
 		return true;
 	}
@@ -267,9 +286,10 @@ public:
 	bool playing_ {false};
 
 	bool rotateView_ {};
-	tkn::Camera camera_;
+	// tkn::Camera camera_;
+	tkn::QuatCamera camera_;
 
-	tkn::TouchCameraController touch_;
+	// tkn::TouchCameraController touch_;
 
 	// vpp::SubBuffer vertices_;
 	// vpp::SubBuffer indices_;
