@@ -8,6 +8,7 @@ apks = {
 	'daudiorc': daudiorc,
 	'daudiosin': daudiosin,
 	'daudioravg': daudioravg,
+	'terrain': terrain,
 }
 
 setupsh = files('setup.sh')

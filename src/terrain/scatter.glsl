@@ -7,21 +7,30 @@
 // - https://github.com/OpenSpace/OpenSpace/blob/master/modules/atmosphere
 // - https://davidson16807.github.io/tectonics.js//2019/03/24/fast-atmospheric-scattering.html
 
-// TODO: number of samples probably shouldn't be constant and
+// number of samples probably shouldn't be constant and
 // instead be dependent on the depth to be sampled (to get constant
 // quality). When using compute shader, maybe use max operation
 // in subgroup?
+// Tried to do that, does help a little but not too much.
 
 const float pi = 3.1415926535897932;
 // scale height: how slow density of relevant particles 
 // decays when going up in atmosphere
 const float rayleighH = 7994;
+const float mieH = 1200;
 const float planetRadius = 6300000;
 const float atmosphereRadius = 6400000;
 
 // rayleigh scattering coefficients roughly for RGB wavelengths, from
 // http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
-const vec3 scatteringCoeffs = vec3(6.95e-6, 1.18e-5, 2.44e-5);
+const vec3 rayleighScatteringRGB = vec3(6.95e-6, 1.18e-5, 2.44e-5);
+
+const vec3 mieScatteringRGB1 = vec3(2e-5, 3e-5, 4e-5);
+const vec3 mieScatteringRGB2 = vec3(8e-5, 1e-4, 1.2e-4);
+const vec3 mieScatteringRGB3 = vec3(9e-4, 1e-3, 1.1e-3);
+const vec3 mieScatteringRGB4 = vec3(1e-2, 1e-2, 1e-2); // 1e-5 as in paper for B?
+const vec3 mieScatteringRGB = mieScatteringRGB1;
+const float mieG = -10;
 
 // Returns the density at height h for particle scale height hscale.
 // h = 0 represents sea level, the base density.
@@ -54,15 +63,17 @@ float height(vec3 pos) {
 	return length(pos) - planetRadius;
 }
 
-float opticalDepth(vec3 from, vec3 to) {
-	const uint numSteps = 8u;
+float opticalDepth(vec3 from, vec3 to, float hscale) {
+	// const uint numSteps = 1 + uint(clamp(2 * length(to - from) / (atmosphereRadius - planetRadius), 0, 4));
+	const uint numSteps = 6u;
+
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
 	float res = 0.0;
 	float ds = length(delta);
 	vec3 pos = from;
 	for(uint i = 0u; i < numSteps; ++i) {
-		res += density(height(pos), rayleighH);
+		res += density(height(pos), hscale);
 		pos += delta;
 	}
 
@@ -87,30 +98,65 @@ float intersectRaySphere(vec3 ro, vec3 rd, vec3 sc, float sr) {
 	return (r1 >= 0) ? r1 : -a + c;
 }
 
+float intersectRaySphereBack(vec3 ro, vec3 rd, vec3 sc, float sr) {
+	vec3 oc = ro - sc;
+	float a = dot(oc, rd); // p/2
+	float b = dot(oc, oc) - sr * sr; // q
+	float c = a * a - b; // (p/2)^2 - q
+
+	// for c == 0.0 there is exactly one intersection (tangent)
+	// for c > 0.0, there are two intersections
+	if(c < 0.0) {
+		return -1.0;
+	}
+
+	c = sqrt(c);
+	float r1 = -a - c;
+	return (r1 >= 0) ? -a + c : r1;
+}
+
+struct Inscatter {
+	vec3 rayleigh;
+	vec3 mie;
+};
+
 // sun here doesn't have a position but only a direction
 // this approximation probably isn't a good idea when one can leave
 // the atmosphere/scales unknown. Assumed to be normalized
 // NOTE: we assume here that the viewer is inside the atmosphere,
 // requires slight tweaks (e.g. for intersection) when that isn't the case
-vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir, out float totalOD) {
-	const uint numSteps = 20u;
+Inscatter sampleRay(vec3 from, vec3 to, vec3 sunDir, float noise) {
+	// const uint numSteps = 50u;
+	// const uint numSteps = 5 + uint(clamp(45 * length(to - from) / (atmosphereRadius - planetRadius), 0, 100));
+	// const uint numSteps = 50;
+	// const uint numSteps = 5 + uint(clamp(20 * length(to - from) / (atmosphereRadius - planetRadius), 0, 20));
+	// const uint numSteps = 10;
+	const uint numSteps = 20;
+
 	vec3 dir = to - from;
 	vec3 delta = dir / numSteps;
 	float dt = length(delta);
 	vec3 pos = from;
-	vec3 res = vec3(0.0);
-	float od = 0.0; // optical depth along primary ray
+	pos += 0.1 * (noise - 0.5) * delta;
 
-	totalOD = 0.0;
+	vec3 resR = vec3(0.0);
+	vec3 resM = vec3(0.0);
+
+	float odR = 0.0; // optical depth along primary ray, rayleigh
+	float odM = 0.0; // optical depth along primary ray, mie
+
 	for(uint i = 0u; i < numSteps; ++i) {
 		float h = height(pos);
 		if(h < 0) {
 			break;
 		}
 
-		float d = density(h, rayleighH);
-		od += d * dt;
 		pos += delta;
+
+		float dR = density(h, rayleighH);
+		float dM = density(h, mieH);
+		odR += dR * dt;
+		odM += dM * dt;
 
 		// sample incoming scattering of secondary ray at pos
 		// find the end of the secondary ray
@@ -119,24 +165,38 @@ vec3 sampleRay(vec3 from, vec3 to, vec3 sunDir, out float totalOD) {
 
 		// srs > 0.f: ray leaves the atmosphere (should always be the case
 		//   when the viewer is inside it
-		// sre < 0.f: the ray doesn't hit the planet (this is important
+		// sre < 0.f: the ray doesn't hit the planet (this is important to check
 		//   even if the viewer is inside the atmosphere, remember
 		//   this are secondary rays!)
 		if(srs >= 0.f && sre < 0.f) {
-			vec3 sre = pos - srs * sunDir;
-			float odsun = opticalDepth(pos, sre);
-			res += d * exp(-scatteringCoeffs * (od + odsun)) * dt;
+			vec3 atmosLeave = pos - srs * sunDir;
+			float odsunR = opticalDepth(pos, atmosLeave, rayleighH);
+			float odsunM = opticalDepth(pos, atmosLeave, mieH);
+
+			resR += dR * exp(-rayleighScatteringRGB * (odR + odsunR)) * dt;
+			resM += dM * exp(-mieScatteringRGB * (odM + odsunM)) * dt;
+
+		// The branches below only exist for debugging. They are
+		// supposed to be no-ops
 		} else if(srs == -1.f) {
+			// no scattering: ray already outside atmosphere.
+			// this should never happen though
 			// res += vec3(0, 0, 0.1);
 		} else if(srs < 0.f) {
+			// no scattering: ray already outside atmosphere.
+			// this should never happen though
 			// res += vec3(0.1, 0, 0);
 		} else if(sre > 0.f) {
+			// ray hits earth before going to the sun (e.g. if sun is
+			// on the other side of the planet)
 			// res += vec3(0, 0.1, 0);
 		} else {
+			// weird case
 			// res = vec3(1, 1, 1);
 		}
 	}
 
-	totalOD = od;
-	return res * scatteringCoeffs;
+	resM *= mieScatteringRGB;
+	resR *= rayleighScatteringRGB;
+	return Inscatter(resR, resM);
 }

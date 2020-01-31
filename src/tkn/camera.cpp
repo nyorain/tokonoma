@@ -251,7 +251,7 @@ void update(TouchCameraController& tc, double dt) {
 			delta = {cut(delta.x), cut(delta.y)};
 			delta.x = sign(delta.x) * std::pow(std::abs(delta.x), 1.65);
 			delta.y = sign(delta.y) * std::pow(std::abs(delta.y), 1.65);
-			delta *= 0.0005f * dt;
+			delta *= tc.positionMultiplier * 0.0005f * dt;
 
 			c.pos += delta.x * right;
 			c.pos -= delta.y * c.dir; // y input coords have top-left origin

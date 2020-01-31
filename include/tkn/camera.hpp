@@ -85,6 +85,8 @@ struct TouchCameraController {
 	TouchPoint rotate;
 	bool alt = true; // whether we use alternative controls
 	rvg::Paint paint;
+
+	float positionMultiplier = 1.f;
 };
 
 void init(TouchCameraController&, tkn::Camera& cam, rvg::Context& rvgctx);

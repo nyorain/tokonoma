@@ -257,33 +257,38 @@ volume = build_target('volume', [
 	], dependencies: tkn_dep,
 	target_type: exetarget)
 
-executable('bezier', [
+bezier = build_target('bezier', [
 		'src/bezier/main.cpp',
 		bezier_shaders,
-	], dependencies: tkn_dep)
+	], dependencies: tkn_dep,
+	target_type: exetarget)
 
 executable('tta',
 	'src/playground/tta.cpp',
 	dependencies: tkn_dep)
 
-executable('terrain', [
+terrain = build_target('terrain', [
 		'src/terrain/main.cpp',
 		terrain_shaders,
-	], dependencies: tkn_dep)
+	], dependencies: tkn_dep,
+	target_type: exetarget)
 
-executable('fem', [
+fem = build_target('fem', [
 		'src/fem/main.cpp',
 		fem_shaders,
-	], dependencies: tkn_dep)
+	], dependencies: tkn_dep,
+	target_type: exetarget)
 
-executable('hair', [
+hair = build_target('hair', [
 		'src/hair/main.cpp',
-	], dependencies: tkn_dep)
+	], dependencies: tkn_dep,
+	target_type: exetarget)
 
-executable('repro', [
+repro = build_target('repro', [
 		'src/repro/main.cpp',
 		repro_shaders,
-	], dependencies: tkn_dep)
+	], dependencies: tkn_dep,
+	target_type: exetarget)
 
 rays = build_target('rays', [
 		'src/rays/main.cpp',

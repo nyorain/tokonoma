@@ -189,7 +189,10 @@ shaders_src = {
 	],
 	'terrain': [
 		['sky.vert'],
-		# ['sky.frag', scatter_glsl],
+		# needed only on android, we realtime load it on other platforms
+		# probably could add a way to make shaders conditional, depending
+		# on the platform.
+		['sky.frag', scatter_glsl],
 	],
 	'rays': [
 		['rays.comp'],

@@ -17,7 +17,6 @@
 #include <tkn/camera.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/glsl.hpp>
-#include <ny/appContext.hpp>
 #include <shaders/terrain.sky.vert.h>
 
 #include <vpp/trackedDescriptor.hpp>
@@ -26,11 +25,20 @@
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
 #include <ny/mouseButton.hpp>
+#include <rvg/context.hpp>
+#include <ny/appContext.hpp>
 #include <ny/key.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/vec.hpp>
 
+#ifdef __ANDROID__
+#include <shaders/terrain.sky.frag.h>
+#endif
+
 class TerrainApp : public tkn::App {
+public:
+	static constexpr float cameraPosMult = 10000;
+
 public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!tkn::App::init(args)) {
@@ -49,13 +57,19 @@ public:
 
 		// pipeline
 		skyVert_ = {dev, terrain_sky_vert_data};
-		auto fragMod = tkn::loadShader(dev, "terrain/sky.frag");
-		if(!fragMod) {
+#ifdef __ANDROID__
+		auto fragMod = vpp::ShaderModule{dev, terrain_sky_frag_data};
+#else
+		auto pfragMod = tkn::loadShader(dev, "terrain/sky.frag");
+		if(!pfragMod) {
 			dlg_error("Failed to load shader");
 			return false;
 		}
 
-		createPipeline(*fragMod);
+		auto fragMod = std::move(*pfragMod);
+#endif
+
+		createPipeline(fragMod);
 
 		// ubo
 		auto uboSize = sizeof(nytl::Mat4f) + sizeof(nytl::Vec3f) + sizeof(float);
@@ -70,8 +84,11 @@ public:
 
 		// initial camera pos
 		const float planetRadius = 6300000;
-		nytl::Vec3f cpos = (planetRadius + 1) * nytl::Vec3f{0, 1, 0};
+		nytl::Vec3f cpos = (planetRadius + 1000) * nytl::Vec3f{0, 1, 0};
 		camera_.pos = cpos;
+
+		touch_.positionMultiplier = 0.2 * cameraPosMult;
+		tkn::init(touch_, camera_, rvgContext());
 
 		return true;
 	}
@@ -92,17 +109,29 @@ public:
 		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
 		// vk::cmdDraw(cb, size_.x * size_.y, 1, 0, 0);
 		vk::cmdDraw(cb, 14, 1, 0, 0); // magic box via vert shader
+
+		if(touch_.alt) {
+			rvgContext().bindDefaults(cb);
+			windowTransform().bind(cb);
+			touch_.paint.bind(cb);
+			touch_.move.circle.fill(cb);
+			touch_.rotate.circle.fill(cb);
+		}
 	}
 
 	void update(double dt) override {
 		App::update(dt);
-		checkMovement(camera_, *appContext().keyboardContext(), 10000 * dt);
+		tkn::update(touch_, dt);
+		checkMovement(camera_, *appContext().keyboardContext(), cameraPosMult * dt);
 		if(camera_.update) {
 			App::scheduleRedraw();
 		}
 	}
 
 	void updateDevice() override {
+		App::updateDevice();
+
+#ifndef __ANDROID__
 		if(reload_) {
 			reload_ = false;
 			auto fragMod = tkn::loadShader(device(), "terrain/sky.frag");
@@ -113,6 +142,7 @@ public:
 				App::scheduleRerecord();
 			}
 		}
+#endif
 
 		if(camera_.update) {
 			camera_.update = false;
@@ -157,15 +187,17 @@ public:
 
 		using tkn::glsl::fract;
 		if(ev.keycode == ny::Keycode::r) {
+#ifndef __ANDROID__
 			reload_ = true;
 			App::scheduleRedraw();
+#endif
 		} else if(ev.keycode == ny::Keycode::up) {
-			time_ = fract(time_ + 0.01);
+			time_ = fract(time_ + 0.0025);
 			dlg_info("time: {}", time_);
 			camera_.update = true; // write ubo
 			App::scheduleRedraw();
 		} else if(ev.keycode == ny::Keycode::down) {
-			time_ = fract(time_ - 0.01);
+			time_ = fract(time_ - 0.0025);
 			dlg_info("time: {}", time_);
 			camera_.update = true; // write ubo
 			App::scheduleRedraw();
@@ -178,6 +210,30 @@ public:
 		App::resize(ev);
 		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 		camera_.update = true;
+	}
+
+	bool touchBegin(const ny::TouchBeginEvent& ev) override {
+		if(App::touchBegin(ev)) {
+			return true;
+		}
+
+		tkn::touchBegin(touch_, ev, window().size());
+		return true;
+	}
+
+	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
+		tkn::touchUpdate(touch_, ev);
+		App::scheduleRedraw();
+	}
+
+	bool touchEnd(const ny::TouchEndEvent& ev) override {
+		if(App::touchEnd(ev)) {
+			return true;
+		}
+
+		tkn::touchEnd(touch_, ev);
+		App::scheduleRedraw();
+		return true;
 	}
 
 	const char* name() const override { return "terrain"; }
@@ -195,6 +251,8 @@ public:
 
 	bool rotateView_ {};
 	tkn::Camera camera_;
+
+	tkn::TouchCameraController touch_;
 
 	// vpp::SubBuffer vertices_;
 	// vpp::SubBuffer indices_;
