@@ -52,3 +52,165 @@ vec3 subd(in uint key, in vec3 v_in[3], in uint vid) {
 	mat3 xf = keyToMat(key);
 	return berp(v_in, (xf * subd_bvecs[vid]).xy);
 }
+
+
+
+// wip
+// from https://www.iquilezles.org/www/articles/gradientnoise/gradientnoise.htm
+vec3 noised( in vec2 p ) {
+    vec2 i = floor( p );
+    vec2 f = fract( p );
+
+    vec2 u = f*f*f*(f*(f*6.0-15.0)+10.0);
+    vec2 du = 30.0*f*f*(f*(f-2.0)+1.0);
+    
+    vec2 ga = random2( i + vec2(0.0,0.0) );
+    vec2 gb = random2( i + vec2(1.0,0.0) );
+    vec2 gc = random2( i + vec2(0.0,1.0) );
+    vec2 gd = random2( i + vec2(1.0,1.0) );
+    
+    float va = dot( ga, f - vec2(0.0,0.0) );
+    float vb = dot( gb, f - vec2(1.0,0.0) );
+    float vc = dot( gc, f - vec2(0.0,1.0) );
+    float vd = dot( gd, f - vec2(1.0,1.0) );
+
+    return vec3( va + u.x*(vb-va) + u.y*(vc-va) + u.x*u.y*(va-vb-vc+vd),   // value
+                 ga + u.x*(gb-ga) + u.y*(gc-ga) + u.x*u.y*(ga-gb-gc+gd) +  // derivatives
+                 du * (u.yx*(va-vb-vc+vd) + vec2(vb,vc) - va));
+}
+
+vec4 noised( in vec3 x )
+{
+    // grid
+    vec3 p = floor(x);
+    vec3 w = fract(x);
+    
+    // quintic interpolant
+    vec3 u = w*w*w*(w*(w*6.0-15.0)+10.0);
+    vec3 du = 30.0*w*w*(w*(w-2.0)+1.0);
+    
+    // gradients
+    vec3 ga = random3( p+vec3(0.0,0.0,0.0) );
+    vec3 gb = random3( p+vec3(1.0,0.0,0.0) );
+    vec3 gc = random3( p+vec3(0.0,1.0,0.0) );
+    vec3 gd = random3( p+vec3(1.0,1.0,0.0) );
+    vec3 ge = random3( p+vec3(0.0,0.0,1.0) );
+    vec3 gf = random3( p+vec3(1.0,0.0,1.0) );
+    vec3 gg = random3( p+vec3(0.0,1.0,1.0) );
+    vec3 gh = random3( p+vec3(1.0,1.0,1.0) );
+    
+    // projections
+    float va = dot( ga, w-vec3(0.0,0.0,0.0) );
+    float vb = dot( gb, w-vec3(1.0,0.0,0.0) );
+    float vc = dot( gc, w-vec3(0.0,1.0,0.0) );
+    float vd = dot( gd, w-vec3(1.0,1.0,0.0) );
+    float ve = dot( ge, w-vec3(0.0,0.0,1.0) );
+    float vf = dot( gf, w-vec3(1.0,0.0,1.0) );
+    float vg = dot( gg, w-vec3(0.0,1.0,1.0) );
+    float vh = dot( gh, w-vec3(1.0,1.0,1.0) );
+	
+    // interpolation
+    float v = va + 
+              u.x*(vb-va) + 
+              u.y*(vc-va) + 
+              u.z*(ve-va) + 
+              u.x*u.y*(va-vb-vc+vd) + 
+              u.y*u.z*(va-vc-ve+vg) + 
+              u.z*u.x*(va-vb-ve+vf) + 
+              u.x*u.y*u.z*(-va+vb+vc-vd+ve-vf-vg+vh);
+              
+    vec3 d = ga + 
+             u.x*(gb-ga) + 
+             u.y*(gc-ga) + 
+             u.z*(ge-ga) + 
+             u.x*u.y*(ga-gb-gc+gd) + 
+             u.y*u.z*(ga-gc-ge+gg) + 
+             u.z*u.x*(ga-gb-ge+gf) + 
+             u.x*u.y*u.z*(-ga+gb+gc-gd+ge-gf-gg+gh) +   
+             
+             du * (vec3(vb-va,vc-va,ve-va) + 
+                   u.yzx*vec3(va-vb-vc+vd,va-vc-ve+vg,va-vb-ve+vf) + 
+                   u.zxy*vec3(va-vb-ve+vf,va-vb-vc+vd,va-vc-ve+vg) + 
+                   u.yzx*u.zxy*(-va+vb+vc-vd+ve-vf-vg+vh));
+                   
+    return vec4( v, d );                   
+}
+
+vec3 gfbm(vec2 st) {
+	vec3 sum = vec3(0.f);
+	float lacunarity = 2.0;
+	float gain = 0.5;
+
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	for(int i = 0; i < 3; ++i) {
+		// sum += amp * noised(mod * st);
+		vec3 nd = noised(mod * st);
+		sum.x += amp * nd.x;
+		sum.yz += amp * mod * nd.yz;
+		mod *= lacunarity;
+		amp *= gain;
+		st = lacunarity * st;
+	}
+
+	return sum;
+}
+
+vec4 gfbm(vec3 st) {
+	vec4 sum = vec4(0.f);
+	float lacunarity = 2.0;
+	float gain = 0.5;
+
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	for(int i = 0; i < 3; ++i) {
+		// vec3 nd = noised(mod * st);
+		// sum.x += amp * nd.x;
+		// sum.yz += amp * mod * nd.yz;
+		sum += noised(mod * st);
+		mod *= lacunarity;
+		amp *= gain;
+		st = lacunarity * st;
+	}
+
+	return sum;
+}
+
+vec3 displace(vec3 pos, out vec3 normal, out float height) {
+	float fac = 4.0;
+
+	float theta = atan(pos.y, pos.x);
+	float phi = atan(length(pos.xy), pos.z);
+
+	// float a = sin(a1);
+	// float b = cos(a2);
+	normal = normalize(pos);
+
+	// vec3 f = 2 * gfbm(vec2(theta, phi));
+	// vec4 f = fac * gfbm(pos);
+	float off = fbm(1.5 * vec2(theta, phi));
+	pos += 2 * off * normal;
+	height = off;
+
+	// TODO: probably not correct. lookup normal blending/mixing
+	
+	/*
+	vec3 dtheta = vec3(
+		cos(theta) * cos(phi),
+		cos(theta) * sin(phi),
+		-sin(theta));
+	vec3 dphi = vec3(
+		-sin(theta) * sin(phi),
+		sin(theta) * cos(phi),
+		0);
+
+	// normal = normalize(normal + fac * f.yzw);
+	// normal = normalize(normal + fac * (f.y * dtheta + f.z * dphi));
+	normal = normalize(normal - f.y * dtheta - f.z * dphi);
+	// normal = normalize(cross(dtheta, dphi));
+	// normal = vec3(f.yz, 0);
+	// normal = normalize(pos);
+	// */
+	return pos;
+}
+

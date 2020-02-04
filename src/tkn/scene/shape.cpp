@@ -123,10 +123,6 @@ Shape generateUV(const Sphere& sphere, unsigned stackCount,
 	return shape;
 }
 
-// TODO
-// Shape generateIco(const Sphere& sphere, unsigned sub) {
-// }
-
 std::vector<Vec3f> areaSmoothNormals(nytl::Span<const Vec3f> positions,
 		nytl::Span<const u32> indices) {
 
@@ -151,5 +147,40 @@ std::vector<Vec3f> areaSmoothNormals(nytl::Span<const Vec3f> positions,
 
 	return normals;
 }
+
+// TODO: wip
+// Shape generateIco(unsigned subdivs) {
+// 	using nytl::constants::pi;
+//
+// 	// 1. generate basic icosahedron, 12 vertices
+// 	auto angleh = pi * 72.f / 180.f;
+// 	auto anglev = std::atan(1.f / 2);
+//
+// 	auto angle1 = -pi / 2 - angleh / 2;
+// 	auto angle2 = -pi / 2 - angleh / 2;
+//
+// 	std::vector<Vec3f> vertices;
+// 	vertices.push_back({0, 0, 1}); // top vertex
+// 	for(auto i = 0u; i < 5u; ++i) {
+// 		auto z = std::sin(angleh);
+// 		auto xy = std::cos(anglev);
+//
+// 		auto& v1 = vertices.emplace_back();
+// 		v1.x = xy * std::cos(angle1);
+// 		v1.y = xy * std::sin(angle1);
+// 		v1.z = z;
+//
+// 		auto& v2 = vertices.emplace_back();
+// 		v2.x = xy * std::cos(angle2);
+// 		v2.y = xy * std::sin(angle2);
+// 		v2.z = -z;
+//
+// 		angle1 += angleh;
+// 		angle2 += angleh;
+// 	}
+// 	vertices.push_back({0, 0, -1}); // bottom vertex
+//
+// 	// 2. subdivide it
+// }
 
 } // namespace tkn

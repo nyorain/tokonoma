@@ -1,7 +1,8 @@
 #include <tkn/app.hpp>
 #include <tkn/window.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/qcamera.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/scene/shape.hpp>
 #include <tkn/render.hpp>
 #include <tkn/types.hpp>
 #include <ny/mouseButton.hpp>
@@ -49,6 +50,27 @@ public:
 				vk::BufferUsageBits::transferDst,
 			dev.deviceMemoryTypes()};
 
+		// vertices/indices
+		auto planet = tkn::Sphere {{0.f, 0.f, 0.f}, {4.f, 4.f, 4.f}};
+		auto shape = tkn::generateUV(planet, 8, 8);
+		std::vector<nytl::Vec4f> vverts;
+		for(auto& v : shape.positions) vverts.emplace_back(v);
+		auto verts = tkn::bytes(vverts);
+		auto inds = tkn::bytes(shape.indices);
+
+		for(auto& i : shape.indices) {
+			dlg_info(i);
+		}
+
+		vertices_ = {dev.bufferAllocator(), verts.size(),
+			vk::BufferUsageBits::storageBuffer |
+				vk::BufferUsageBits::transferDst,
+			dev.deviceMemoryTypes()};
+		indices_ = {dev.bufferAllocator(), inds.size(),
+			vk::BufferUsageBits::storageBuffer |
+				vk::BufferUsageBits::transferDst,
+			dev.deviceMemoryTypes()};
+
 		// key buffers
 		// TODO: allow buffers to grow dynamically
 		// condition can simply be checked. Modify compute shaders
@@ -69,8 +91,11 @@ public:
 		// write(data0, 0.f); // padding
 		// initial triangle 0: the key is the root node (1) and
 		// the index is 0.
-		write(data0, nytl::Vec2u32 {1, 0});
-		write(data0, nytl::Vec2u32 {1, 1});
+		dlg_assert(shape.indices.size() % 3 == 0);
+		auto numTris = shape.indices.size() / 3;
+		for(auto i = 0u; i < numTris; ++i) {
+			write(data0, nytl::Vec2u32 {1, i});
+		}
 
 		struct {
 			vk::DrawIndirectCommand draw;
@@ -79,9 +104,9 @@ public:
 
 		cmds.draw.firstInstance = 0;
 		cmds.draw.firstVertex = 0;
-		cmds.draw.instanceCount = 2;
+		cmds.draw.instanceCount = numTris;
 		cmds.draw.vertexCount = 3; // triangle (list)
-		cmds.dispatch.x = 2; // initial triangles
+		cmds.dispatch.x = numTris;
 		cmds.dispatch.y = 1;
 		cmds.dispatch.z = 1;
 
@@ -92,6 +117,9 @@ public:
 
 		auto stage0 = vpp::fillStaging(cb, keys0_, data0.buffer);
 		auto stage1 = vpp::fillStaging(cb, comp_.dispatch, tkn::bytes(cmds));
+
+		auto stage3 = vpp::fillStaging(cb, vertices_, verts);
+		auto stage4 = vpp::fillStaging(cb, indices_, inds);
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
@@ -112,6 +140,8 @@ public:
 		auto& dev = vulkanDevice();
 		auto bindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer),
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer),
 		};
 
 		gfx_.dsLayout = {dev, bindings};
@@ -120,6 +150,8 @@ public:
 		gfx_.ds = {dev.descriptorAllocator(), gfx_.dsLayout};
 		vpp::DescriptorSetUpdate dsu(gfx_.ds);
 		dsu.uniform({{{ubo_}}});
+		dsu.storage({{{vertices_}}});
+		dsu.storage({{{indices_}}});
 	}
 
 	void initUpdateComp() {
@@ -128,6 +160,8 @@ public:
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // read
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // write
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer), // camera
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // verts
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // inds
 		};
 
 		comp_.update.dsLayout = {dev, bindings};
@@ -138,6 +172,8 @@ public:
 		dsu.storage({{{keys0_}}});
 		dsu.storage({{{keys1_}}});
 		dsu.uniform({{{ubo_}}});
+		dsu.storage({{{vertices_}}});
+		dsu.storage({{{indices_}}});
 	}
 
 	void initIndirectComp() {
@@ -215,8 +251,8 @@ public:
 			{modelFrag, vk::ShaderStageBits::fragment},
 		}}});
 
-		gpi.depthStencil.depthTestEnable = false;
-		gpi.depthStencil.depthWriteEnable = false;
+		gpi.depthStencil.depthTestEnable = true;
+		gpi.depthStencil.depthWriteEnable = true;
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 		gpi.rasterization.cullMode = vk::CullModeBits::none;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
@@ -242,6 +278,8 @@ public:
 			{wireGeom, vk::ShaderStageBits::geometry},
 			{wireFrag, vk::ShaderStageBits::fragment},
 		}}};
+		gpi.depthStencil.depthTestEnable = true;
+		gpi.depthStencil.depthWriteEnable = false;
 		gpi.rasterization.polygonMode = vk::PolygonMode::line;
 		gfx_.wirePipe = {vulkanDevice(), gpi.info()};
 
@@ -333,18 +371,30 @@ public:
 		vk::cmdBindVertexBuffers(cb, 0, {{keys0_.buffer()}},
 			{{keys0_.offset()}}); // skip counter and padding
 
-		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
-		// vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
-
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.wirePipe);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
 		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
+
+		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.wirePipe);
+		// vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
 	}
 
 	void update(double dt) override {
 		App::update(dt);
 		auto kc = appContext().keyboardContext();
 		if(kc) {
-			tkn::checkMovement(camera_, *kc, dt);
+			// tkn::checkMovement(camera_, *kc, dt);
+			tkn::QuatCameraMovement movement {};
+			movement.fastMult = 30.f;
+			movement.slowMult = 0.2f;
+			checkMovement(camera_, *kc, dt, movement);
+		}
+
+		if(rotateView_) {
+			auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
+			auto delta = mpos_ - mposStart_;
+			auto yaw = 4 * dt * sign(delta.x) * std::pow(std::abs(delta.x), 1);
+			auto pitch = 4 * dt * sign(delta.y) * std::pow(std::abs(delta.y), 1);
+			tkn::rotateView(camera_, yaw, pitch, 0.f);
 		}
 
 		if(camera_.update) {
@@ -361,9 +411,16 @@ public:
 		if(camera_.update) {
 			camera_.update = false;
 
+			auto fov = 0.35 * nytl::constants::pi;
+			auto aspect = float(window().size().x) / window().size().y;
+			auto near = 0.01f;
+			auto far = 30.f;
+
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, matrix(camera_));
+			auto V = viewMatrix(camera_);
+			auto P = tkn::perspective3RH<float>(fov, aspect, near, far);
+			tkn::write(span, P * V);
 			tkn::write(span, camera_.pos);
 			tkn::write(span, u32(updateStep_));
 		}
@@ -379,10 +436,22 @@ public:
 
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
-			App::scheduleRedraw();
+		// if(rotateView_) {
+			// tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			// App::scheduleRedraw();
+		// }
+
+		using namespace nytl::vec::cw::operators;
+		mpos_ = nytl::Vec2f(ev.position) / window().size();
+	}
+
+	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
+		if(App::mouseWheel(ev)) {
+			return true;
 		}
+
+		tkn::rotateView(camera_, 0.f, 0.f, 0.1 * ev.value.x);
+		return true;
 	}
 
 	bool mouseButton(const ny::MouseButtonEvent& ev) override {
@@ -390,8 +459,11 @@ public:
 			return true;
 		}
 
+		using namespace nytl::vec::cw::operators;
+		auto mpos = nytl::Vec2f(ev.position) / window().size();
 		if(ev.button == ny::MouseButton::left) {
 			rotateView_ = ev.pressed;
+			mposStart_ = mpos;
 			return true;
 		}
 
@@ -428,7 +500,7 @@ public:
 
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+		// camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 		camera_.update = true;
 	}
 
@@ -439,6 +511,9 @@ protected:
 	vpp::SubBuffer ubo_;
 	vpp::SubBuffer keys0_;
 	vpp::SubBuffer keys1_; // temporary buffer we write updates to
+
+	vpp::SubBuffer indices_;
+	vpp::SubBuffer vertices_;
 
 	struct {
 		vpp::PipelineLayout pipeLayout;
@@ -467,7 +542,10 @@ protected:
 	} comp_;
 
 	bool rotateView_ {};
-	tkn::Camera camera_ {};
+	nytl::Vec2f mposStart_ {};
+	nytl::Vec2f mpos_ {};
+
+	tkn::QuatCamera camera_ {};
 	bool reload_ {};
 
 	bool update_ {false};

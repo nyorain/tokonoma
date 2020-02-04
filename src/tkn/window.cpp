@@ -105,7 +105,7 @@ void MainWindow::key(const ny::KeyEvent& ev) {
 
 	auto keycode = ev.keycode;
 	auto mods = appContext().keyboardContext()->modifiers();
-	if(ev.pressed && (mods & ny::KeyboardModifier::shift)) {
+	if(ev.pressed && (mods & ny::KeyboardModifier::alt)) {
 		if(keycode == ny::Keycode::f) {
 			dlg_debug("f pressed. Fullscreen");
 			if(state_ != ny::ToplevelState::fullscreen) {
@@ -132,9 +132,9 @@ void MainWindow::key(const ny::KeyEvent& ev) {
 			state_ = ny::ToplevelState::minimized;
 			windowContext().minimize();
 		} else if(keycode == ny::Keycode::d) {
-			dlg_debug("d pressed. Trying to toggle decorations");
-			auto cd = windowContext().customDecorated();
-			windowContext().customDecorated(!cd);
+			// dlg_debug("d pressed. Trying to toggle decorations");
+			// auto cd = windowContext().customDecorated();
+			// windowContext().customDecorated(!cd);
 		}
 	}
 }

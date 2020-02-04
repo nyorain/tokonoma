@@ -8,13 +8,13 @@
 namespace tkn {
 
 struct Cube {
-	Vec3f pos;
-	Vec3f size; // total size
+	Vec3f pos {0.f, 0.f, 0.f}; // center
+	Vec3f size {1.f, 1.f, 1.f}; // total size
 };
 
 struct Sphere {
-	Vec3f pos;
-	Vec3f radius;
+	Vec3f pos {0.f, 0.f, 0.f}; // center
+	Vec3f radius {1.f, 1.f, 1.f};
 };
 
 struct Shape {
