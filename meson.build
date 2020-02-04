@@ -177,6 +177,13 @@ subdir('src/spirv')
 subdir('src/daudio')
 subdir('src/playground')
 
+# erase shader dependencies only needed on android
+if not android
+	terrain_shaders = [terrain_shaders[0]]
+	tess_shaders = []
+	subd_shaders = []
+endif
+
 # inline (for small projects)
 executable('pendulum',
 	'src/pendulum/main.cpp',
@@ -295,6 +302,19 @@ rays = build_target('rays', [
 		rays_shaders,
 	], dependencies: tkn_dep,
 	target_type: exetarget)
+
+tess = build_target('tess', [
+		'src/tess/main.cpp',
+		tess_shaders,
+	], dependencies: [tkn_dep, dep_playground],
+	target_type: exetarget)
+
+subd = build_target('subd', [
+		'src/subd/main.cpp',
+		subd_shaders,
+	], dependencies: [tkn_dep],
+	target_type: exetarget)
+
 
 if android
 	subdir('apk')

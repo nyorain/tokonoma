@@ -1,0 +1,107 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#include "subd.glsl"
+
+layout(set = 0, binding = 0) readonly buffer OldKeys {
+	// uint counter;
+	// float _pad;
+	uvec2 keys[];
+} old;
+
+layout(set = 0, binding = 1) buffer NewKeys {
+	uint counter;
+	uint _pad;
+	uvec2 keys[];
+} new;
+
+// NOTE: investigate already computing clipping and culling stuff here.
+// We might need more update iterations per frame then, otherwise
+// we get popping artifacts
+layout(set = 0, binding = 2, row_major) uniform Scene {
+	mat4 _vp;
+	vec3 pos;
+	uint update;
+} scene;
+
+// for a real scene:
+//
+// layout(set = 1, binding = 1) buffer Vertices { vec3 vertices[]; };
+// layout(set = 1, binding = 2) buffer Indices { uint indices[]; };
+// 
+// // per-instance input
+// layout(location = 0) in uint triID;
+
+// enough for our small dummy scene
+const vec3 vertices[] = {
+	{-1, 0, -1}, // 4 outlining points ...
+	{1, 0, -1},
+	{1, 0, 1},
+	{-1, 0, 1},
+};
+
+const uint indices[] = {
+	0, 1, 2,
+	0, 2, 3
+};
+
+// TODO: don't hardcode this stuff
+const float fov = 0.48 * 3.141;
+const float targetPixelSize = 1.f;
+const float screenResolution = 10000.f;
+
+// clamps to valid range (e.g. < 31)
+float distanceToLOD(float z) {
+	float s = max(2 * z * tan(fov / 2), 0.001);
+	float tmp = s * targetPixelSize / screenResolution;
+	return clamp(-log2(clamp(tmp, 0.0, 1.0)), 1, 31);
+}
+
+float desiredLOD(uint key, uint ini) {
+	vec3 v_in[3] = vec3[3](
+		vertices[indices[3 * ini + 0]],
+		vertices[indices[3 * ini + 1]],
+		vertices[indices[3 * ini + 2]]
+	);
+
+	vec3 tri[3];
+	subd(key, v_in, tri);
+	vec3 hyp = 0.5 * (tri[1] + tri[2]);
+	return distanceToLOD(distance(scene.pos, hyp));
+}
+
+void main() {
+	uint id = gl_GlobalInvocationID.x;
+
+	// assert(id < old.counter);
+	uvec2 oldkey = old.keys[id];
+	uint key = oldkey.x;
+	uint ini = oldkey.y;
+
+	uint clod = findMSB(key);
+	uint dlod = uint(desiredLOD(key, ini));
+
+	// TODO: this is only for debugging/visualization
+	// if we don't want to do the update step for performance reasons
+	// we obviously shouldn't dispatch at all... but then also
+	// not copy the dst buffer, i.e. requires to modify command buffer.
+	// shame there is no such thing as indirect buffer copies
+	if(scene.update == 0 || clod == dlod) {
+		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
+	} else if(clod < dlod) {
+		// lod too low.
+		// subdivide, i.e. add two children
+		uint idx = atomicAdd(new.counter, 2);
+		new.keys[idx + 0] = uvec2((key << 1u) | 0u, ini);
+		new.keys[idx + 1] = uvec2((key << 1u) | 1u, ini);
+	} else if(clod > dlod) {
+		// lod too high, we don't need that much subdivision.
+		// only one of the children will insert parent key
+		if((key & 1u) == 1u) {
+			key = key >> 1u; // get parent
+			new.keys[atomicAdd(new.counter, 1u)] = uvec2(key, ini);
+		}
+	} else {
+		// error
+	}
+}

@@ -201,6 +201,21 @@ shaders_src = {
 		['tss.comp'],
 		['pp.frag'],
 	],
+	'tess': [
+		['model.vert'],
+		['model.frag'],
+		['normal.vert'],
+		['normal.geom'],
+		['normal.frag'],
+		['model.tesc'],
+		['model.tese'],
+	],
+	'subd': [
+		['model.vert'],
+		['model.frag'],
+		['update.comp'],
+		['dispatch.comp'],
+	],
 }
 
 # build them

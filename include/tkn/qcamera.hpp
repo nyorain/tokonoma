@@ -56,7 +56,7 @@ inline void rotateView(QuatCamera& c, float yaw, float pitch, float roll) {
 
 	// auto axis = nytl::Vec3f{pitch, yaw, roll};
 	// auto ta = apply(c.rot, axis);
-	c.rot = normalize(c.rot * Quaternion::eulerAngle(pitch, yaw, roll));
+	c.rot = normalize(c.rot * Quaternion::eulerAngle(-pitch, -yaw, -roll));
 	// c.rot = normalize(c.rot * Quaternion::axisAngle(up.x, up.y, up.z, yaw) * Quaternion::axisAngle(1, 0, 0, pitch) * Quaternion::axisAngle(0, 0, 1, roll));
 	// c.rot = normalize(Quaternion::axisAngle(0, 0, -1, roll) * c.rot);
 	c.update = true;

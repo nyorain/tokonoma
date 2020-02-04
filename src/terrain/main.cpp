@@ -129,7 +129,23 @@ public:
 		}
 
 		// tkn::update(touch_, dt);
-		checkMovement(camera_, *appContext().keyboardContext(), cameraPosMult * dt);
+		tkn::QuatCameraMovement movement;
+		movement.fastMult = 500.f;
+		movement.slowMult = 50.f;
+		checkMovement(camera_, *appContext().keyboardContext(),
+			cameraPosMult * dt, movement);
+
+		if(rotateView_) {
+			auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
+			auto delta = mpos_ - mposStart_;
+			vel_.yaw += dt * sign(delta.x) * std::pow(std::abs(delta.x), 1.2);
+			vel_.pitch += dt * sign(delta.y) * std::pow(std::abs(delta.y), 1.2);
+		}
+
+		// make it really stiff
+		vel_.pitch *= std::pow(0.001, dt);
+		vel_.yaw *= std::pow(0.001, dt);
+		tkn::rotateView(camera_, vel_.yaw, vel_.pitch, 0.f);
 
 		if(camera_.update) {
 			App::scheduleRedraw();
@@ -153,7 +169,7 @@ public:
 #endif
 
 		if(camera_.update) {
-			auto fov = 0.48 * nytl::constants::pi;
+			auto fov = 0.3 * nytl::constants::pi;
 			auto aspect = float(window().size().x) / window().size().y;
 			auto near = 0.01f;
 			auto far = 30.f;
@@ -173,12 +189,14 @@ public:
 
 	void mouseMove(const ny::MouseMoveEvent& ev) override {
 		App::mouseMove(ev);
-		if(rotateView_) {
-			auto x = 0.005 * ev.delta.x, y = 0.005 * ev.delta.y;
-			if(std::abs(x) > std::abs(y)) y = 0; else x = 0;
-			tkn::rotateView(camera_, x, y, 0.f);
-			App::scheduleRedraw();
-		}
+		// if(rotateView_) {
+		// 	auto x = 0.005 * ev.delta.x, y = 0.005 * ev.delta.y;
+		// 	tkn::rotateView(camera_, x, y, 0.f);
+		// 	App::scheduleRedraw();
+		// }
+
+		using namespace nytl::vec::cw::operators;
+		mpos_ = nytl::Vec2f(ev.position) / window().size();
 	}
 
 	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
@@ -195,8 +213,11 @@ public:
 			return true;
 		}
 
+		using namespace nytl::vec::cw::operators;
+		auto mpos = nytl::Vec2f(ev.position) / window().size();
 		if(ev.button == ny::MouseButton::left) {
 			rotateView_ = ev.pressed;
+			mposStart_ = mpos;
 			return true;
 		}
 
@@ -216,19 +237,23 @@ public:
 #ifndef __ANDROID__
 			reload_ = true;
 			App::scheduleRedraw();
+			return true;
 #endif
 		} else if(ev.keycode == ny::Keycode::up) {
 			time_ = fract(time_ + 0.0025);
 			dlg_info("time: {}", time_);
 			camera_.update = true; // write ubo
 			App::scheduleRedraw();
+			return true;
 		} else if(ev.keycode == ny::Keycode::down) {
 			time_ = fract(time_ - 0.0025);
 			dlg_info("time: {}", time_);
 			camera_.update = true; // write ubo
 			App::scheduleRedraw();
+			return true;
 		} else if(ev.keycode == ny::Keycode::p) {
 			playing_ = !playing_;
+			return true;
 		}
 
 		return false;
@@ -286,6 +311,14 @@ public:
 	bool playing_ {false};
 
 	bool rotateView_ {};
+	nytl::Vec2f mposStart_ {};
+	nytl::Vec2f mpos_ {};
+
+	struct {
+		float pitch {0.f};
+		float yaw {0.f};
+	} vel_;
+
 	// tkn::Camera camera_;
 	tkn::QuatCamera camera_;
 

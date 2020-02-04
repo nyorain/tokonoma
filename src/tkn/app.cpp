@@ -764,7 +764,7 @@ vpp::ViewableImage App::createMultisampleTarget(const vk::Extent2D& size) {
 std::vector<vk::ClearValue> App::clearValues() {
 	std::vector<vk::ClearValue> clearValues;
 	clearValues.reserve(3);
-	vk::ClearValue c {{0.2f, 0.2f, 0.2f, 1.f}};
+	vk::ClearValue c {{0.0f, 0.0f, 0.0f, 1.f}};
 
 	clearValues.push_back(c); // clearColor (value unused for msaa)
 	if(samples() != vk::SampleCountBits::e1) { // msaa attachment
@@ -1361,7 +1361,7 @@ File App::openAsset(nytl::StringParam path, bool binary) {
 
 // free util
 std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
-		std::string_view glslPath) {
+		std::string_view glslPath, nytl::StringParam args) {
 	static const auto spv = "live.frag.spv";
 	std::string cmd = "glslangValidator -V -o ";
 	cmd += spv;
@@ -1378,6 +1378,11 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 
 	cmd += " ";
 	cmd += fullPath;
+
+	if(!args.empty()) {
+		cmd += " ";
+		cmd += args;
+	}
 
 	dlg_debug(cmd);
 

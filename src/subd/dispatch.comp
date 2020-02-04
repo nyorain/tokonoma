@@ -1,0 +1,28 @@
+#version 460
+
+struct DrawIndirectCommand {
+	uint vertexCount;
+	uint instanceCount;
+	uint firstVertex;
+	uint firstInstance;
+};
+
+struct DispatchIndirectCommand {
+	uint x;
+	uint y;
+	uint z;
+};
+
+layout(set = 0, binding = 0) buffer Draw {
+	DrawIndirectCommand draw;
+	DispatchIndirectCommand dispatch;
+} cmds;
+
+layout(set = 0, binding = 1) buffer Keys {
+	uint counter;
+} keys;
+
+void main() {
+	cmds.draw.instanceCount = keys.counter;
+	cmds.dispatch.x = keys.counter;
+}
