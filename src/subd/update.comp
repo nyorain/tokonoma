@@ -43,16 +43,15 @@ layout(set = 0, binding = 4) buffer Indices { uint indices[]; };
 // 	0, 2, 3
 // };
 // 
-// TODO: don't hardcode this stuff
-const float fov = 0.35 * 3.141;
-const float targetPixelSize = 1.f;
-const float screenResolution = 4000.f;
 
-// clamps to valid range (e.g. < 31)
-float distanceToLOD(float z) {
-	float s = z * tan(fov / 2);
-	float tmp = s * targetPixelSize / screenResolution;
-	return clamp(-log2(clamp(tmp, 0.0, 1.0)), 1, 31);
+vec3 mapPos(uint ini, vec2 bary) {
+	vec3 v_in[3] = vec3[3](
+		vertices[indices[3 * ini + 0]].xyz,
+		vertices[indices[3 * ini + 1]].xyz,
+		vertices[indices[3 * ini + 2]].xyz
+	);
+ 
+	return berp(v_in, bary);
 }
 
 float desiredLOD(uint key, uint ini) {
@@ -66,7 +65,7 @@ float desiredLOD(uint key, uint ini) {
 	subd(key, v_in, tri);
 	float d0;
 	vec3 d1;
-	vec3 hyp = 0.5 * (displace(tri[0], d1, d0) + displace(tri[1], d1, d0));
+	vec3 hyp = 0.5 * (displace(tri[1], d1, d0) + displace(tri[2], d1, d0));
 	return distanceToLOD(distance(scene.pos, hyp));
 }
 
@@ -78,11 +77,16 @@ void main() {
 	uint key = oldkey.x;
 	uint ini = oldkey.y;
 
-	uint clod = findMSB(key);
+	uint klod = findMSB(key);
+	uint plod = uint(desiredLOD(key == 1u ? key : key >> 1u, ini));
 	uint dlod = uint(desiredLOD(key, ini));
+
+	// vec2 ppos = 
+	// uint plod = distanceToLOD(distance(scene.pos, ppos));
 
 	// TODO: hack, not 100% sure why it's needed. Not mentioned in paper.
 	// investigate. Probably indicates bug in consisten distance lod calc
+	/*
 	if((key & 1u) == 1u && (key != 1)) {
 		uint sib = key;
 		sib ^= 1u;
@@ -91,13 +95,15 @@ void main() {
 			dlod = sdlod;
 		}
 	}
+	*/
 
 	// TODO: this is only for debugging/visualization
 	// if we don't want to do the update step for performance reasons
 	// we obviously shouldn't dispatch at all... but then also
 	// not copy the dst buffer, i.e. requires to modify command buffer.
 	// shame there is no such thing as indirect buffer copies
-	if(scene.update == 0 || clod == dlod) {
+	/*
+	if(scene.update == 0 || clod == dlod / * || clod - 1 == dlod* /) {
 		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
 	} else if(clod < dlod) {
 		// lod too low.
@@ -114,5 +120,26 @@ void main() {
 		}
 	} else {
 		// error
+	}
+	*/
+
+	if(scene.update == 0) {
+		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
+		return;
+	}
+
+	if(klod < dlod) {
+		// subdivide
+		uint idx = atomicAdd(new.counter, 2);
+		new.keys[idx + 0] = uvec2((key << 1u) | 0u, ini);
+		new.keys[idx + 1] = uvec2((key << 1u) | 1u, ini);
+	} else if(klod < (plod + 1)) {
+		// just write
+		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
+	} else {  // merge
+		if((key & 1u) == 1u) {
+			key = key >> 1u; // get parent
+			new.keys[atomicAdd(new.counter, 1u)] = uvec2(key, ini);
+		}
 	}
 }

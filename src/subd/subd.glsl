@@ -138,8 +138,8 @@ vec4 noised( in vec3 x )
 
 vec3 gfbm(vec2 st) {
 	vec3 sum = vec3(0.f);
-	float lacunarity = 2.0;
-	float gain = 0.5;
+	float lacunarity = 1.5;
+	float gain = 0.2;
 
 	float amp = 0.5f; // ampliture
 	float mod = 1.f; // modulation
@@ -176,7 +176,28 @@ vec4 gfbm(vec3 st) {
 	return sum;
 }
 
+float mfbm(vec2 st) {
+	float sum = 0.f;
+	float lacunarity = 2.0;
+	float gain = 0.3;
+
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	for(int i = 0; i < 4; ++i) {
+		sum += amp * gradientNoise(mod * st);
+		mod *= lacunarity;
+		amp *= gain;
+		st = lacunarity * st;
+	}
+
+	return sum;
+}
+
 vec3 displace(vec3 pos, out vec3 normal, out float height) {
+	// normal = normalize(pos);
+	// height = 1.f;
+	// return pos;
+
 	float fac = 4.0;
 
 	float theta = atan(pos.y, pos.x);
@@ -188,8 +209,9 @@ vec3 displace(vec3 pos, out vec3 normal, out float height) {
 
 	// vec3 f = 2 * gfbm(vec2(theta, phi));
 	// vec4 f = fac * gfbm(pos);
-	float off = fbm(1.5 * vec2(theta, phi));
-	pos += 2 * off * normal;
+	float off = 1.5 * mfbm(0.1 + 3 * vec2(theta, phi));
+	// float off = 1.f;
+	pos += off * normal;
 	height = off;
 
 	// TODO: probably not correct. lookup normal blending/mixing
@@ -211,6 +233,26 @@ vec3 displace(vec3 pos, out vec3 normal, out float height) {
 	// normal = vec3(f.yz, 0);
 	// normal = normalize(pos);
 	// */
+	//
+	normal = normalize(pos);
 	return pos;
+}
+
+
+// clamps to valid range (e.g. < 31)
+float distanceToLOD(float z) {
+	// TODO: don't hardcode this stuff
+	const float fov = 0.35 * 3.141;
+	const float targetPixelSize = 1.f;
+	const float screenResolution = 40.f;
+
+	float s = z * tan(fov / 2);
+	float tmp = s * targetPixelSize / screenResolution;
+
+	// should be 2.0 for all triangles to have equal size
+	// if e.g. you want to have a focus on near triangles
+	//   make it larger than 2.0, otherwise smaller.
+	float fac = 2.0;
+	return clamp(-fac * log2(clamp(tmp, 0.0, 1.0)), 1, 31);
 }
 

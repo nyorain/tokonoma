@@ -106,16 +106,20 @@ Shape generateUV(const Sphere& sphere, unsigned stackCount,
 		auto k2 = k1 + sectorCount + 1;
 
 		for(auto j = 0u; j < sectorCount; ++j, ++k1, ++k2) {
+			// NOTE: order here is important, different from most
+			// references. We do it like this so subdivision (see
+			// e.g. subd project) is consistent and doesn't produce
+			// t-junctions on the edge of the both triangles
 			if(i != 0) {
+				shape.indices.push_back(k1 + 1);
 				shape.indices.push_back(k1);
 				shape.indices.push_back(k2);
-				shape.indices.push_back(k1 + 1);
 			}
 
 			if(i != (stackCount - 1)) {
-				shape.indices.push_back(k1 + 1);
 				shape.indices.push_back(k2);
 				shape.indices.push_back(k2 + 1);
+				shape.indices.push_back(k1 + 1);
 			}
 		}
 	}

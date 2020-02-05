@@ -52,15 +52,11 @@ public:
 
 		// vertices/indices
 		auto planet = tkn::Sphere {{0.f, 0.f, 0.f}, {4.f, 4.f, 4.f}};
-		auto shape = tkn::generateUV(planet, 8, 8);
+		auto shape = tkn::generateUV(planet, 16, 16);
 		std::vector<nytl::Vec4f> vverts;
 		for(auto& v : shape.positions) vverts.emplace_back(v);
 		auto verts = tkn::bytes(vverts);
 		auto inds = tkn::bytes(shape.indices);
-
-		for(auto& i : shape.indices) {
-			dlg_info(i);
-		}
 
 		vertices_ = {dev.bufferAllocator(), verts.size(),
 			vk::BufferUsageBits::storageBuffer |
@@ -374,8 +370,8 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
 		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
 
-		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.wirePipe);
-		// vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.wirePipe);
+		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
 	}
 
 	void update(double dt) override {
@@ -384,9 +380,9 @@ public:
 		if(kc) {
 			// tkn::checkMovement(camera_, *kc, dt);
 			tkn::QuatCameraMovement movement {};
-			movement.fastMult = 30.f;
-			movement.slowMult = 0.2f;
-			checkMovement(camera_, *kc, dt, movement);
+			movement.fastMult = 10.f;
+			movement.slowMult = 0.25f;
+			checkMovement(camera_, *kc, 0.25 * dt, movement);
 		}
 
 		if(rotateView_) {
@@ -423,6 +419,7 @@ public:
 			tkn::write(span, P * V);
 			tkn::write(span, camera_.pos);
 			tkn::write(span, u32(updateStep_));
+			map.flush();
 		}
 
 		if(reload_) {
