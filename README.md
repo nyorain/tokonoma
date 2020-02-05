@@ -21,9 +21,13 @@ ideas about what could be done next though (or what is broken at the moment).
 List of projects with some sample screenshots (noninclusive):
 
 - automaton: experiments with cellular automata (hexagonal grid)
-- bezier: simple playground for bezier curves and anything related to it
+- bezier: simple playground for 3D bezier curves, b-splines and anything
+related to it.
+  ![3D B-spline screenshot](./assets/pics/bspline.png)
 - br: minimal gltf pbr forward renderer (including IBL).
-  Most other 3D (forward) rendering projects are built from this
+  Most other 3D (forward) rendering projects are built from this.
+  Currently also contains some 3D audio experiments using steamaudio,
+  simulating indirect environmental audio effects in realtime.
 - cloth: Simple 3D cloth animation using verlet integration, includes cpu and
   gpu variants.
   ![cloth screenshot](./assets/pics/cloth1.png)
@@ -69,6 +73,12 @@ List of projects with some sample screenshots (noninclusive):
   snapshots of the current view and then depth-reprojecting it as one is
   moving through it
   ![repro screenshot](./assets/pics/repro.png)
+- Simulation of light scattering (rayleigh + mie) through the atmosphere.
+  ![scatter sunset](./assets/pics/scatter1.png)
+  Also allows moving out of the planets atmosphere, observing it from space.
+  Uses a quaternion-based free-moving camera to allow intuitive space movement
+  (since there is no "up" direction in space).
+  ![scatter atmosphere](./assets/pics/scatter2.png)
 - sen: first raytracing and path tracing experiments (mainly a cornell-box),
   done via compute shaders (or similar methods) on the gpu.
   Not even physically-based yet, just playing around with the basic concepts.
@@ -88,9 +98,15 @@ List of projects with some sample screenshots (noninclusive):
   playground for different effects that have a synergy with TAA
   (mainly based on noise) like stochastic transparency and noisy shadow
   sampling via a poisson disk
+- tess: Playground for tessellation. Ditched in favor of the
+  dynamic subdivision using compute shaders.
 - volume: volume rendering (mainly of 3D functions, no standard
   3D texture/volume file format supported yet) via marching cubes
   ![volume screenshot](./assets/pics/volume1.png)
+- Dynamic terrain subdivision based on the 2018 paper "Adaptive GPU
+Tessellation with Compute Shaders" by Jad Khoury, Jonathan Dupuy, and
+Christophe Riccio. Renders a whole planet with free-moving quaternion camera.
+  ![terrain screenshot](./assets/pics/subd.png)
 
 There is some shared code between the projects (like an image loading library,
 gltf scene loading and management, various small rendering and computation
