@@ -37,7 +37,7 @@ public:
 		auto& dev = vulkanDevice();
 
 		// camera/scene ubo
-		auto uboSize = sizeof(nytl::Mat4f) + sizeof(nytl::Vec3f) + sizeof(u32);
+		auto uboSize = 2 * sizeof(nytl::Mat4f) + sizeof(nytl::Vec3f) + sizeof(u32);
 		ubo_ = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer,
 			dev.hostMemoryTypes()};
@@ -80,6 +80,7 @@ public:
 
 		keys0_ = {dev.bufferAllocator(), bufSize, usage, dev.deviceMemoryTypes()};
 		keys1_ = {dev.bufferAllocator(), bufSize + 8, usage, dev.deviceMemoryTypes()};
+		keysCulled_ = {dev.bufferAllocator(), bufSize + 8, usage, dev.deviceMemoryTypes()};
 
 		// write initial data to buffers
 		tkn::DynamicBuffer data0;
@@ -158,6 +159,7 @@ public:
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer), // camera
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // verts
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // inds
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // culled
 		};
 
 		comp_.update.dsLayout = {dev, bindings};
@@ -170,13 +172,15 @@ public:
 		dsu.uniform({{{ubo_}}});
 		dsu.storage({{{vertices_}}});
 		dsu.storage({{{indices_}}});
+		dsu.storage({{{keysCulled_}}});
 	}
 
 	void initIndirectComp() {
 		auto& dev = vulkanDevice();
 		auto bindings = {
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // dispatch buf
-			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // counter
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // counter keys1
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // counter keysCulled
 		};
 
 		comp_.indirect.dsLayout = {dev, bindings};
@@ -186,6 +190,7 @@ public:
 		vpp::DescriptorSetUpdate dsu(comp_.indirect.ds);
 		dsu.storage({{{comp_.dispatch}}});
 		dsu.storage({{{keys1_}}});
+		dsu.storage({{{keysCulled_}}});
 	}
 
 	bool createPipes() {
@@ -285,6 +290,7 @@ public:
 	void beforeRender(vk::CommandBuffer cb) override {
 		// reset counter in dst buffer to 0
 		vk::cmdFillBuffer(cb, keys1_.buffer(), keys1_.offset(), 4, 0);
+		vk::cmdFillBuffer(cb, keysCulled_.buffer(), keysCulled_.offset(), 4, 0);
 
 		// make sure the reset is visible
 		vk::BufferMemoryBarrier barrier1;
@@ -295,9 +301,18 @@ public:
 		barrier1.dstAccessMask = vk::AccessBits::shaderRead |
 			vk::AccessBits::shaderWrite;
 
+		vk::BufferMemoryBarrier barrierCulled;
+		barrierCulled.buffer = keysCulled_.buffer();
+		barrierCulled.offset = keysCulled_.offset();
+		barrierCulled.size = keysCulled_.size();
+		barrierCulled.srcAccessMask = vk::AccessBits::transferWrite;
+		barrierCulled.dstAccessMask = vk::AccessBits::shaderRead |
+			vk::AccessBits::shaderWrite;
+
 		// run update pipeline
 		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
-			vk::PipelineStageBits::computeShader, {}, {}, {{barrier1}}, {});
+			vk::PipelineStageBits::computeShader, {}, {},
+			{{barrier1, barrierCulled}}, {});
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, comp_.update.pipe);
 		tkn::cmdBindComputeDescriptors(cb, comp_.update.pipeLayout, 0, {comp_.update.ds});
@@ -318,9 +333,14 @@ public:
 		barrier1.dstAccessMask = vk::AccessBits::transferRead |
 			vk::AccessBits::shaderRead;
 
+		barrierCulled.srcAccessMask = vk::AccessBits::shaderWrite;
+		barrierCulled.dstAccessMask = vk::AccessBits::shaderRead;
+
 		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
-			vk::PipelineStageBits::transfer | vk::PipelineStageBits::computeShader,
-			{}, {}, {{barrier0, barrier1}}, {});
+			vk::PipelineStageBits::transfer |
+				vk::PipelineStageBits::vertexInput |
+				vk::PipelineStageBits::computeShader,
+			{}, {}, {{barrier0, barrier1, barrierCulled}}, {});
 
 		// run indirect pipe to build commands
 		// TODO: probably easier/better to do this with a simple one-word
@@ -364,8 +384,8 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		tkn::cmdBindGraphicsDescriptors(cb, gfx_.pipeLayout, 0, {gfx_.ds});
-		vk::cmdBindVertexBuffers(cb, 0, {{keys0_.buffer()}},
-			{{keys0_.offset()}}); // skip counter and padding
+		vk::cmdBindVertexBuffers(cb, 0, {{keysCulled_.buffer()}},
+			{{keysCulled_.offset() + 8}}); // skip counter and padding
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
 		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
@@ -383,6 +403,14 @@ public:
 			movement.fastMult = 10.f;
 			movement.slowMult = 0.25f;
 			checkMovement(camera_, *kc, 0.25 * dt, movement);
+
+			if(kc->pressed(ny::Keycode::z)) {
+				rollVel_ -= 0.25 * dt;
+			}
+
+			if(kc->pressed(ny::Keycode::x)) {
+				rollVel_ += 0.25 * dt;
+			}
 		}
 
 		if(rotateView_) {
@@ -392,6 +420,9 @@ public:
 			auto pitch = 4 * dt * sign(delta.y) * std::pow(std::abs(delta.y), 1);
 			tkn::rotateView(camera_, yaw, pitch, 0.f);
 		}
+
+		tkn::rotateView(camera_, 0.f, 0.f, rollVel_);
+		rollVel_ *= std::pow(0.01, dt);
 
 		if(camera_.update) {
 			App::scheduleRedraw();
@@ -416,9 +447,14 @@ public:
 			auto span = map.span();
 			auto V = viewMatrix(camera_);
 			auto P = tkn::perspective3RH<float>(fov, aspect, near, far);
-			tkn::write(span, P * V);
+			auto VP = P * V;
+			if(updateStep_) {
+				frozenVP_ = VP;
+			}
+			tkn::write(span, VP);
 			tkn::write(span, camera_.pos);
 			tkn::write(span, u32(updateStep_));
+			tkn::write(span, frozenVP_);
 			map.flush();
 		}
 
@@ -508,6 +544,7 @@ protected:
 	vpp::SubBuffer ubo_;
 	vpp::SubBuffer keys0_;
 	vpp::SubBuffer keys1_; // temporary buffer we write updates to
+	vpp::SubBuffer keysCulled_;
 
 	vpp::SubBuffer indices_;
 	vpp::SubBuffer vertices_;
@@ -544,9 +581,12 @@ protected:
 
 	tkn::QuatCamera camera_ {};
 	bool reload_ {};
+	nytl::Mat4f frozenVP_ {};
 
 	bool update_ {false};
 	bool updateStep_ {false};
+
+	float rollVel_ {0.f};
 };
 
 int main(int argc, const char** argv) {

@@ -24,11 +24,18 @@ layout(set = 0, binding = 2, row_major) uniform Scene {
 	mat4 _vp;
 	vec3 pos;
 	uint update;
+	mat4 cullvp;
 } scene;
 
 // real scene:
 layout(set = 0, binding = 3) buffer Vertices { vec4 vertices[]; };
 layout(set = 0, binding = 4) buffer Indices { uint indices[]; };
+
+layout(set = 0, binding = 5) buffer CulledKeys {
+	uint counter;
+	uint _pad;
+	uvec2 keys[];
+} culled;
 
 // enough for our small dummy scene
 // const vec3 vertices[] = {
@@ -54,7 +61,7 @@ vec3 mapPos(uint ini, vec2 bary) {
 	return berp(v_in, bary);
 }
 
-float desiredLOD(uint key, uint ini) {
+float desiredLOD(uint key, uint ini, out vec3 v_out[3]) {
 	vec3 v_in[3] = vec3[3](
 		vertices[indices[3 * ini + 0]].xyz,
 		vertices[indices[3 * ini + 1]].xyz,
@@ -66,7 +73,57 @@ float desiredLOD(uint key, uint ini) {
 	float d0;
 	vec3 d1;
 	vec3 hyp = 0.5 * (displace(tri[1], d1, d0) + displace(tri[2], d1, d0));
+	v_out = tri;
 	return distanceToLOD(distance(scene.pos, hyp));
+}
+
+// struct Plane {
+// 	vec3 pos;
+// 	vec3 normal;
+// };
+// 
+// bool inside(Plane plane, vec3 pos) {
+// 	return dot((pos - plane.pos), plane.normal) > 0;
+// }
+// 
+// struct Frustum {
+// 	Plane near, far, left, right, top, bottom;
+// };
+// 
+// bool inFrustum(Frustum frust, vec3 pos) {
+// 	return inside(frust.near, pos) &&
+// 		inside(frust.far, pos) && 
+// 		inside(frust.left, pos) &&
+// 		inside(frust.right, pos) &&
+// 		inside(frust.top, pos) &&
+// 		inside(frust.right, pos);
+// }
+// 
+// Frustum frustum() {
+// 		
+// }
+
+uint insideFrustum(vec3 p) {
+	vec3 d1;
+	float d2;
+
+	vec4 t4 = scene.cullvp * vec4(displace(p, d1, d2), 1.0);
+	vec3 t = t4.xyz / t4.w;
+	if(t4.w < 0) {
+		return 63;
+	}
+
+	t.y = -t.y;
+
+	uint code = 0;
+	if(t.x > 1) code |= 1;
+	if(t.x < -1) code |= 2;
+	if(t.y > 1) code |= 4;
+	if(t.y < -1) code |= 8;
+	if(t.z > 1) code |= 16;
+	if(t.z < 0) code |= 32;
+
+	return code;
 }
 
 void main() {
@@ -77,9 +134,10 @@ void main() {
 	uint key = oldkey.x;
 	uint ini = oldkey.y;
 
+	vec3 v_out[3], dummy[3];
 	uint klod = findMSB(key);
-	uint plod = uint(desiredLOD(key == 1u ? key : key >> 1u, ini));
-	uint dlod = uint(desiredLOD(key, ini));
+	uint plod = uint(desiredLOD(key == 1u ? key : key >> 1u, ini, v_out));
+	uint dlod = uint(desiredLOD(key, ini, dummy));
 
 	// vec2 ppos = 
 	// uint plod = distanceToLOD(distance(scene.pos, ppos));
@@ -123,23 +181,46 @@ void main() {
 	}
 	*/
 
+	uint i1 = insideFrustum(v_out[0]);
+	uint i2 = insideFrustum(v_out[1]);
+	uint i3 = insideFrustum(v_out[2]);
+
+	bool outside = (i1 & i2 & i3) != 0;
 	if(scene.update == 0) {
 		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
+
+		if(!outside) {
+			culled.keys[atomicAdd(culled.counter, 1u)] = uvec2(key, ini);
+		}
 		return;
 	}
 
-	if(klod < dlod) {
+	if(klod < dlod /* && !outside*/) {
 		// subdivide
 		uint idx = atomicAdd(new.counter, 2);
 		new.keys[idx + 0] = uvec2((key << 1u) | 0u, ini);
 		new.keys[idx + 1] = uvec2((key << 1u) | 1u, ini);
-	} else if(klod < (plod + 1)) {
+
+		if(!outside) {
+			uint idx = atomicAdd(culled.counter, 2);
+			culled.keys[idx + 0] = uvec2((key << 1u) | 0u, ini);
+			culled.keys[idx + 1] = uvec2((key << 1u) | 1u, ini);
+		}
+	} else if(klod < (plod + 1)/* && !outside*/) {
 		// just write
 		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
+
+		if(!outside) {
+			culled.keys[atomicAdd(culled.counter, 1u)] = uvec2(key, ini);
+		}
 	} else {  // merge
 		if((key & 1u) == 1u) {
-			key = key >> 1u; // get parent
+			key = (key == 1) ? key : key >> 1u; // get parent
 			new.keys[atomicAdd(new.counter, 1u)] = uvec2(key, ini);
+
+			if(!outside) {
+				culled.keys[atomicAdd(culled.counter, 1u)] = uvec2(key, ini);
+			}
 		}
 	}
 }

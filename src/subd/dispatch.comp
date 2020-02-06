@@ -22,7 +22,11 @@ layout(set = 0, binding = 1) buffer Keys {
 	uint counter;
 } keys;
 
+layout(set = 0, binding = 2) buffer Culled {
+	uint counter;
+} culled;
+
 void main() {
-	cmds.draw.instanceCount = keys.counter;
+	cmds.draw.instanceCount = culled.counter;
 	cmds.dispatch.x = keys.counter;
 }
