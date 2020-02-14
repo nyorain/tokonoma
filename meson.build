@@ -179,7 +179,7 @@ subdir('src/playground')
 
 # erase shader dependencies only needed on android
 if not android
-	terrain_shaders = [terrain_shaders[0]]
+	atmosphere_shaders = [atmosphere_shaders[0]]
 	tess_shaders = []
 	subd_shaders = []
 endif
@@ -274,9 +274,9 @@ executable('tta',
 	'src/playground/tta.cpp',
 	dependencies: tkn_dep)
 
-terrain = build_target('terrain', [
-		'src/terrain/main.cpp',
-		terrain_shaders,
+atmosphere = build_target('atmosphere', [
+		'src/atmosphere/main.cpp',
+		atmosphere_shaders,
 	], dependencies: tkn_dep,
 	target_type: exetarget)
 

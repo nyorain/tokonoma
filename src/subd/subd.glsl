@@ -244,7 +244,7 @@ float distanceToLOD(float z) {
 	// TODO: don't hardcode this stuff
 	const float fov = 0.35 * 3.141;
 	const float targetPixelSize = 1.f;
-	const float screenResolution = 40.f;
+	const float screenResolution = 30.f;
 
 	float s = z * tan(fov / 2);
 	float tmp = s * targetPixelSize / screenResolution;
@@ -252,7 +252,7 @@ float distanceToLOD(float z) {
 	// should be 2.0 for all triangles to have equal size
 	// if e.g. you want to have a focus on near triangles
 	//   make it larger than 2.0, otherwise smaller.
-	float fac = 2.0;
+	float fac = 1.8;
 	return clamp(-fac * log2(clamp(tmp, 0.0, 1.0)), 1, 31);
 }
 

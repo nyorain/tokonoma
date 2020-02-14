@@ -26,7 +26,7 @@ deferred_glsl = include_glsl + scene_glsl + files(
 )
 
 fluid_glsl = files('../fluids/fluid.glsl')
-scatter_glsl = files('../terrain/scatter.glsl')
+scatter_glsl = files('../atmosphere/scatter.glsl')
 
 # shader specifications
 # contains multiple shader groups, specified like this:
@@ -187,7 +187,7 @@ shaders_src = {
 		['snap.frag'],
 		['pp.frag'],
 	],
-	'terrain': [
+	'atmosphere': [
 		['sky.vert'],
 		# needed only on android, we realtime load it on other platforms
 		# probably could add a way to make shaders conditional, depending

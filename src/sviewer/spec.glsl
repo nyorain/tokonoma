@@ -13,3 +13,14 @@ layout(set = 0, binding = 0) uniform UBO {
 
 	// TODO: camDir
 } ubo;
+
+
+
+
+// ------------
+// WIP: alternative setup, full 3D camera
+layout(set = 0, binding = 0) uniform UBO {
+	mat4 VP; // projection * view
+	uint effect;
+	float time;
+} ubo;
