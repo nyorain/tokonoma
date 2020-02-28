@@ -20,6 +20,6 @@ void main() {
 	// fragColor.rgb = 0.1 + 0.5 * vec3(dot(normalize(inNormal), -lightDir));
 	// fragColor = vec4(0.5 + 0.5 * inNormal, 1.0);
 	// fragColor.rgb += smoothstep(0.3, 0.58, inHeight);
-	fragColor.rgb += 1 - 250 * exp(-15 * inHeight);
+	fragColor.rgb += 1 - 5 * exp(-10 * inHeight);
 	fragColor.rgb = mix(fragColor.rgb, inColor, 0.1);
 }

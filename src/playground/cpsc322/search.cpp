@@ -181,9 +181,16 @@ bool LCFPrio(const Path<NodeData>& a, const Path<NodeData>& b) {
 // not optimal (since heuristic is independent from real path cost).
 // O(b^m) for space and time.
 // Shittier version of A* i guess?
-template<typename NodeData, typename Heuristic>
+template<typename Heuristic, typename NodeData>
 bool BFPrio(const Path<NodeData>& a, const Path<NodeData>& b) {
 	return Heuristic::get(last(a)) < Heuristic::get(last(b));
+}
+
+// Returns the f-value (cost + heuristic of last node) of the
+// given path
+template<typename Heuristic, typename NodeData>
+float fvalue(const Path<NodeData>& a) {
+	return cost(a) + Heuristic::get(last(a));
 }
 
 // A* uses a priority queue, handling the paths with the lowest
@@ -192,11 +199,9 @@ bool BFPrio(const Path<NodeData>& a, const Path<NodeData>& b) {
 // end of the path, approximating the total cost to the goal
 // on the given path.
 // Optimal, complete, O(b^m) for space and time.
-template<typename NodeData, typename Heuristic>
+template<typename Heuristic, typename NodeData>
 bool AStarPrio(const Path<NodeData>& a, const Path<NodeData>& b) {
-	auto fa = cost(a) + Heuristic::get(last(a));
-	auto fb = cost(b) + Heuristic::get(last(b));
-	return fa <= fb;
+	return fvalue(a) <= fvalue(b);
 }
 
 // Iterative deepening, DFS variation
@@ -207,8 +212,13 @@ template<typename NodeData, typename GoalPred>
 std::optional<Path<NodeData>> searchIDS(const Node<NodeData>& root, GoalPred isGoal) {
 	using DFS = AdapterDFS<NodeData>;
 	auto depth = 1;
-	while(true) {
+	auto discarded = true; // whether there are too long paths
+
+	// if we never discarded a path, we have fully explored
+	// the tree. We didn't find a solution, so there is none
+	while(discarded) {
 		auto todo = DFS::create(Path{root, {}});
+		discarded = false;
 		while(!todo.empty()) {
 			auto& path = DFS::pop(todo);
 			auto& node = last(path);
@@ -221,6 +231,7 @@ std::optional<Path<NodeData>> searchIDS(const Node<NodeData>& root, GoalPred isG
 			// paths that are too long. We well check them in the
 			// next step.
 			if(path.arcs.length() >= depth) {
+				discarded = true;
 				continue;
 			}
 
@@ -237,9 +248,143 @@ std::optional<Path<NodeData>> searchIDS(const Node<NodeData>& root, GoalPred isG
 	return std::nullopt;
 }
 
-// TODO: branch and bound
-// TODO: IDA* (IDS with f-values)
-// TODO: MBA* (memory bound A*)
-//
+// Branch & Bound
+// Uses f-value to discard paths that are worse than the best found solution.
+// Will diverge when there are cycles.
+// Even though it uses heuristics to discard paths, it is optimal, since
+// the heuristic it admissable and dicarded paths can't lead to a
+// goal node with less cost than the currently selected solution.
+// Not complete though, same as DFS.
+// Memory complexity: O(bm), since it is based of DFS
+// Time complexity: O(b^m)
+template<typename Heuristic, typename NodeData, typename GoalPred>
+std::optional<Path<NodeData>> searchBnB(const Node<NodeData>& root, GoalPred isGoal) {
+	using DFS = AdapterDFS<NodeData>;
+
+	// the upper bound: the best solution we have found so far
+	auto ub = std::numeric_limits<float>::infinity();
+	auto todo = DFS::create(Path{root, {}});
+	std::optional<Path<NodeData>> best = std::nullopt;
+
+	while(!todo.empty()) {
+		auto& path = DFS::pop(todo);
+		if(fvalue<Heuristic>(path) > ub) {
+			continue;
+		}
+
+		auto& node = last(path);
+		if(isGoal(node)) {
+			ub = cost(path);
+			best = path;
+			continue; // we don't have to check longer paths
+		}
+
+		for(auto& arc : node.arcs) {
+			auto copy = path;
+			copy.arcs.push_back(arc);
+			DFS::push(todo, copy);
+		}
+	}
+
+	return best;
+}
+
+// IDA*: iterative deepening A*
+// Not really related to A* though, except for the fact that
+// it uses f-values.
+// Basically like IDS but uses f-values instead of depth.
+// Solves the problem of non-completeness BnB has.
+// Memory: O(bm)
+// Time: O(b^m), but much worse factor than e.g. A*
+template<typename Heuristic, typename NodeData, typename GoalPred>
+std::optional<Path<NodeData>> searchIDAStar(const Node<NodeData>& root,
+		GoalPred isGoal) {
+	using DFS = AdapterDFS<NodeData>;
+	auto thresh = fvalue<Heuristic>(root);
+	while(true) {
+		auto next = std::numeric_limits<float>::infinity();
+		auto todo = DFS::create(Path{root, {}});
+		while(!todo.empty()) {
+			auto& path = DFS::pop(todo);
+			auto fv = fvalue(path);
+			if(fv > thresh) {
+				next = std::min(next, fv);
+				continue;
+			}
+
+			auto& node = last(path);
+			if(isGoal(node)) {
+				return {path};
+			}
+
+			for(auto& arc : node.arcs) {
+				auto copy = path;
+				copy.arcs.push_back(arc);
+				DFS::push(todo, copy);
+			}
+		}
+
+		// we haven't discarded any paths, i.e. fully
+		// explored the graph and not found a solution
+		if(thresh == next) {
+			break;
+		}
+
+		thresh = next;
+	}
+
+	return std::nullopt;
+}
+
+// TODO: not finished, just a sketch
+// Memory-bounded A* search data structure.
+// Has a limit on the number of nodes to store in total.
+// If that is exceeded at some points, discards the worst paths.
+// Still O(b^m) memory complexity but less of a problem in reality
+template<typename NodeData, typename Prio>
+struct AdapterMBAStar {
+	struct Queue {
+		std::priority_queue<Path<NodeData>, Prio> queue;
+		unsigned numNodes;
+
+		bool empty() const {
+			return queue.empty();
+		}
+	};
+
+	using Path = Path<NodeData>;
+	static constexpr auto nodeLimit = 1024 * 1024;
+
+	Queue create(const Path& p) {
+		return {{p}, 0};
+	}
+
+	Path pop(Queue& q) {
+		auto front = q.queue.front();
+		q.queue.pop();
+		return front;
+	}
+
+	void push(Queue& q, Path p) {
+		auto n = q.numNodes + p.arcs.size() + 1;
+		q.push(p);
+		if(n > nodeLimit) {
+			// TODO: implement discarding of worse paths
+			// we probably have to switch to std::deque
+			// and the std::make_heap, std::push_heap etc
+			// functions for iterating over all paths
+
+			// TODO: add ability to update heuristic of common
+			// ancestor we prune the paths to?
+			// Add custom heuristic that uses an unordered_map?
+			// but then we use additional space again, probably
+			// not worth it like that...
+			// Maybe add optional Heuristic::update(node, value)
+			// function to Heuristic interface? Heuristics usually
+			// don't store values though.
+		}
+	}
+};
+
 // implement path pruning
 // optionally add cycle checking (and path pruning) where useful.

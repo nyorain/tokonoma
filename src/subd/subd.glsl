@@ -198,6 +198,7 @@ vec3 displace(vec3 pos, out vec3 normal, out float height) {
 	// height = 1.f;
 	// return pos;
 
+	const float radius = 4.0; // TODO
 	float fac = 4.0;
 
 	float theta = atan(pos.y, pos.x);
@@ -209,7 +210,8 @@ vec3 displace(vec3 pos, out vec3 normal, out float height) {
 
 	// vec3 f = 2 * gfbm(vec2(theta, phi));
 	// vec4 f = fac * gfbm(pos);
-	float off = 1.5 * mfbm(0.1 + 3 * vec2(theta, phi));
+	float off = 0.5 * mfbm(0.1 + 8 * vec2(theta, phi));
+	off += radius - length(pos);
 	// float off = 1.f;
 	pos += off * normal;
 	height = off;
@@ -252,7 +254,7 @@ float distanceToLOD(float z) {
 	// should be 2.0 for all triangles to have equal size
 	// if e.g. you want to have a focus on near triangles
 	//   make it larger than 2.0, otherwise smaller.
-	float fac = 1.8;
+	float fac = 2;
 	return clamp(-fac * log2(clamp(tmp, 0.0, 1.0)), 1, 31);
 }
 

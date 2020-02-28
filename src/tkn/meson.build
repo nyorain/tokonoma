@@ -51,6 +51,8 @@ tkn_src = [
 	'image/png.cpp',
 	'image/ktx.cpp',
 
+	'kissfft/kiss_fft.c',
+
 	tkn_shaders,
 ]
 

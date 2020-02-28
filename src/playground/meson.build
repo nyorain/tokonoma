@@ -10,4 +10,6 @@ executable('pg-steamaudio',
 	'steamaudio.cpp',
 	dependencies: [tkn_dep, dep_steamaudio, dep_playground])
 
-
+executable('fft',
+	'fft.cpp',
+	dependencies: [tkn_dep, dep_playground])
