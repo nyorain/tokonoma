@@ -234,6 +234,10 @@ executable('curves', [
 		'src/curves/main.cpp',
 	], dependencies: tkn_dep)
 
+executable('visualizer', [
+		'src/visualizer/main.cpp',
+	], dependencies: [tkn_dep, tkn_audio_dep])
+
 executable('ps', [
 		'src/ps/main.cpp',
 		ps_shaders,

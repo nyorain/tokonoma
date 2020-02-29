@@ -6,6 +6,9 @@
 #include <speex_resampler.h>
 #include <cassert>
 
+// TODO: the upmix/downmix functions are bad atm.
+// adopt something more general
+
 namespace tkn {
 
 // Writes nf frames from 'rb' into 'buf'. If not enough samples
