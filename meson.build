@@ -212,7 +212,7 @@ executable('guitest',
 particles = build_target('particles', [
 		'src/particles/main.cpp',
 		particles_shaders,
-	], dependencies: tkn_dep,
+	], dependencies: [tkn_dep, tkn_audio_dep_optional],
 	target_type: exetarget)
 
 executable('automaton', [

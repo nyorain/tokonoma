@@ -1,7 +1,9 @@
+#include <tkn/config.hpp>
 #include <tkn/app.hpp>
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
 #include <argagg.hpp>
+
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/shader.hpp>
@@ -11,20 +13,35 @@
 #include <vpp/submit.hpp>
 #include <vpp/commandAllocator.hpp>
 #include <vpp/vk.hpp>
+
 #include <ny/mouseButton.hpp>
 #include <nytl/vecOps.hpp>
 #include <vui/gui.hpp>
 #include <vui/dat.hpp>
 #include <dlg/dlg.hpp>
+
 #include <random>
 
 #include <shaders/particles.particle.comp.h>
 #include <shaders/particles.particle.frag.h>
 #include <shaders/particles.particle.vert.h>
+#include <shaders/particles.particle.audio.comp.h>
 
-// velocity and position is always given in screen-space coords [-1, 1]
+#ifdef TKN_WITH_AUDIO
+#include <tkn/audio.hpp>
+#include <tkn/sound.hpp>
+#include <tkn/sampling.hpp>
+#include <tkn/audioFeedback.hpp>
+#include <tkn/kiss_fft.h>
+using FeedbackMP3Audio = tkn::FeedbackAudioSource<tkn::StreamedMP3Audio>;
+#endif
 
-constexpr auto compUboSize = (6 + 2 + 4 * 5) * sizeof(float);
+// velocity and position is always given in screen-space coords
+// position in range [-1, 1] means its on screen
+
+// IDEA: allow to visualize audio recorded via mic instead of audio file
+
+constexpr auto compUboSize = (6 + 3 + 4 * 5) * sizeof(float);
 constexpr auto gfxUboSize = 2 * sizeof(float);
 
 class ParticleSystem {
@@ -54,7 +71,8 @@ public:
 public:
 	ParticleSystem() = default;
 	void init(vpp::Device& dev, vk::RenderPass rp,
-			vk::SampleCountBits samples, unsigned count) {
+			vk::SampleCountBits samples, unsigned count,
+			vpp::BufferSpan freqFactors = {}) {
 		dev_ = &dev;
 
 		// gfx stuff
@@ -105,21 +123,30 @@ public:
 		gfxPipeline_ = {device(), vkpipe};
 
 		// compute stuff
-		auto compBindings = {
+		std::vector compBindings = {
 			vpp::descriptorBinding(
 				vk::DescriptorType::storageBuffer,
-				vk::ShaderStageBits::compute, 0),
+				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::compute, 1)
+				vk::ShaderStageBits::compute)
 		};
+
+		bool withFactors = freqFactors.size() != 0;
+		if(withFactors) {
+			compBindings.push_back(vpp::descriptorBinding(
+				vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::compute));
+		}
 
 		compDsLayout_ = {dev, compBindings};
 		compDs_ = {dev.descriptorAllocator(), compDsLayout_};
 		compPipelineLayout_ = {dev, {{compDsLayout_.vkHandle()}}, {}};
 
 		vk::ComputePipelineCreateInfo cpi;
-		vpp::ShaderModule compShader(device(), particles_particle_comp_data);
+		vpp::ShaderModule compShader = withFactors ?
+			vpp::ShaderModule(device(), particles_particle_audio_comp_data) :
+			vpp::ShaderModule(device(), particles_particle_comp_data);
 
 		vk::ComputePipelineCreateInfo info;
 		info.layout = compPipelineLayout_;
@@ -159,6 +186,11 @@ public:
 				particleBuffer_.offset(), particleBuffer_.size()}});
 			update1.uniform({{compUbo_.buffer(), compUbo_.offset(),
 				compUbo_.size()}});
+
+			if(withFactors) {
+				update1.storage({{freqFactors.buffer(),
+					freqFactors.offset(), freqFactors.size()}});
+			}
 
 			vpp::DescriptorSetUpdate update2(gfxDs_);
 			update2.uniform({{gfxUbo_.buffer(), gfxUbo_.offset(),
@@ -202,8 +234,8 @@ public:
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 			compPipelineLayout_, 0, {{compDs_.vkHandle()}}, {});
 
-		auto size = std::ceil(std::sqrt(count_ / 64.f));
-		vk::cmdDispatch(cb, size, size, 1);
+		auto size = std::ceil(count_ / 64.f);
+		vk::cmdDispatch(cb, size, 1, 1);
 	}
 
 	void render(vk::CommandBuffer cb) {
@@ -216,6 +248,7 @@ public:
 	}
 
 	void updateDevice(double delta, nytl::Span<nytl::Vec2f> attractors) {
+		time_ += delta;
 		if(attractors.size() > 5) {
 			 attractors = attractors.first(5);
 		}
@@ -237,6 +270,7 @@ public:
 		tkn::write(span, distOff);
 		tkn::write(span, float(delta));
 		tkn::write(span, std::uint32_t(attractors.size()));
+		tkn::write(span, time_);
 		view.flush();
 
 		if(paramsChanged) {
@@ -267,18 +301,63 @@ protected:
 	vpp::TrDs gfxDs_;
 	vpp::SubBuffer gfxUbo_;
 
+	float time_ {};
 	unsigned count_ {};
 };
 
 class ParticlesApp : public tkn::App {
+public:
+	// On how many frames to perform the DFT.
+	static constexpr auto frameCount = 1024;
+	static constexpr auto logFac = 1.1;
+
 public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!tkn::App::init(args)) {
 			return false;
 		}
 
+		auto& dev = vulkanDevice();
+		vpp::BufferSpan freqFactors;
+
+#ifdef TKN_WITH_AUDIO
+		if(!audioFile_.empty()) {
+			auto asset = openAsset(audioFile_);
+			if(!asset) {
+				dlg_error("Couldn't open {}", audioFile_);
+				return false;
+			}
+
+			audioPlayer_.emplace("particles", 0, 2, 2);
+			auto& ap = *audioPlayer_;
+
+			audio_ = &ap.create<FeedbackMP3Audio>(ap, std::move(asset));
+			dft_.kiss = kiss_fft_alloc(frameCount, 0, nullptr, nullptr);
+			dft_.freq.resize(frameCount);
+			dft_.time.resize(frameCount);
+
+			// TODO: there is probably a better way to estimate this
+			auto i = 0u;
+			auto size = 1.f;
+			auto count = 0u;
+			while(i < dft_.freq.size() / 4) {
+				i += size;
+				size *= logFac;
+				++count;
+			}
+
+			unsigned fbs = sizeof(float) * count;
+			factorBuf_ = {dev.bufferAllocator(), fbs,
+				vk::BufferUsageBits::storageBuffer, dev.hostMemoryTypes()};
+			freqFactors = factorBuf_;
+
+			ap.start();
+		}
+#endif // TKN_WITH_AUDIO
+
 		// system
-		system_.init(vulkanDevice(), renderPass(), samples(), count_);
+		system_.init(vulkanDevice(), renderPass(), samples(), count_,
+			freqFactors);
 
 		// gui
 		auto& panel = gui().create<vui::dat::Panel>(nytl::Vec2f {100.f, 0.f});
@@ -313,16 +392,6 @@ public:
 		panel.create<vui::dat::Button>("Reset").onClick = [&]{ reset_ = true; };
 
 		return true;
-	}
-
-	argagg::parser argParser() const override {
-		auto parser = App::argParser();
-		parser.definitions.push_back({
-			"count",
-			{"-c", "--count"},
-			"Number of particles", 1
-		});
-		return parser;
 	}
 
 	nytl::Vec2f attractorPos(const nytl::Vec2i pos) {
@@ -403,6 +472,26 @@ public:
 		}
 	}
 
+	argagg::parser argParser() const override {
+		auto parser = App::argParser();
+		parser.definitions.push_back({
+			"count",
+			{"-c", "--count"},
+			"Number of particles", 1
+		});
+
+#ifdef TKN_WITH_AUDIO
+		parser.definitions.push_back({
+			"audio",
+			{"-a", "--audio"},
+			"MP3 file to play and visualize", 1
+		});
+#endif // TKN_WITH_AUDIO
+
+		return parser;
+	}
+
+
 	bool handleArgs(const argagg::parser_results& result) override {
 		if (!App::handleArgs(result)) {
 			return false;
@@ -411,6 +500,16 @@ public:
 		if(result["count"].count()) {
 			count_ = result["count"].as<unsigned>();
 		}
+
+#ifdef TKN_WITH_AUDIO
+		if(result.has_option("audio")) {
+			audioFile_ = result["audio"].as<const char*>();
+			if(audioFile_.empty()) {
+				dlg_info("No audio file given");
+				return false;
+			}
+		}
+#endif // TKN_WITH_AUDIO
 
 		return true;
 	}
@@ -428,6 +527,33 @@ public:
 		App::update(delta);
 		App::scheduleRedraw();
 		delta_ = delta;
+
+		// audio processing
+#ifdef TKN_WITH_AUDIO
+		if(audio_) {
+			auto available = audio_->available();
+			dft_.samples.resize(available);
+			audio_->dequeFeedback(dft_.samples.data(), available);
+
+			if(available > 2 * frameCount) {
+				dft_.samples.erase(dft_.samples.begin(),
+					dft_.samples.begin() + (available - 2 * frameCount));
+			}
+
+			dlg_assert(!(available % 2));
+			available /= 2; // TODO: don't assume stereo
+
+			auto ec = std::min<unsigned>(available, dft_.time.size());
+			dft_.time.erase(dft_.time.begin(), dft_.time.begin() + ec);
+			dft_.time.reserve(frameCount);
+			for(auto i = 0u; i < available; ++i) {
+				float r = 0.5 * (dft_.samples[2 * i] + dft_.samples[2 * i + 1]);
+				dft_.time.push_back({r, 0.f});
+			}
+
+			kiss_fft(dft_.kiss, dft_.time.data(), dft_.freq.data());
+		}
+#endif
 	}
 
 	void updateDevice() override {
@@ -438,6 +564,40 @@ public:
 			reset_ = false;
 			system_.reset();
 		}
+
+#ifdef TKN_WITH_AUDIO
+		if(audio_) {
+			auto map = factorBuf_.memoryMap();
+			auto vals = reinterpret_cast<float*>(map.ptr());
+
+			auto i = 0u;
+			auto size = 1.f;
+			auto c = 0u;
+			while(i < dft_.freq.size() / 4) {
+				dlg_assert((std::byte*) vals < map.ptr() + map.size());
+
+				auto sum = 0.f;
+				unsigned end = i + size;
+				for(; i < end; ++i) {
+					auto& cpx = dft_.freq[i];
+					auto amp = std::sqrt(cpx.r * cpx.r + cpx.i * cpx.i);
+					sum += amp / frameCount;
+				}
+
+				// smooth the bars a bit over time (friction-like)
+				// float ndt = 1 - std::pow(1000, -0.02); // TODO: use dt instead of 0.02
+				float ndt = 1;
+				// *vals += ndt * (std::pow(80.f * sum, 2) - *vals);
+				*vals += ndt * (80 * sum - *vals);
+
+				++c;
+				++vals;
+				size *= logFac;
+			}
+
+			map.flush();
+		}
+#endif // TKN_WITH_AUDIO
 	}
 
 	const char* name() const override { return "particles"; }
@@ -449,6 +609,21 @@ protected:
 	bool reset_ {};
 	std::vector<nytl::Vec2f> attractors_ {};
 	std::vector<unsigned> touchIDs_ {};
+
+#ifdef TKN_WITH_AUDIO
+	std::string audioFile_ {};
+	FeedbackMP3Audio* audio_ {};
+	std::optional<tkn::AudioPlayer> audioPlayer_;
+
+	struct {
+		std::vector<float> samples; // buffer cache for reading audio samples
+		std::vector<kiss_fft_cpx> time; // time domain constructed from samples
+		std::vector<kiss_fft_cpx> freq; // freq domain, output from fft
+		kiss_fft_cfg kiss;
+	} dft_;
+
+	vpp::SubBuffer factorBuf_;
+#endif // TKN_WITH_AUDIO
 };
 
 int main(int argc, const char** argv) {

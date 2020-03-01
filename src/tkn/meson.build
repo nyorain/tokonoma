@@ -82,6 +82,7 @@ tkn_dep = declare_dependency(
 
 # additional/optional libraries
 tkn_audio_dep = disabler()
+tkn_audio_dep_optional = []
 if with_audio
 	tkn_audio_lib = static_library('tkn_audio',
 		sources: [
@@ -96,9 +97,11 @@ if with_audio
 		link_with: tkn_audio_lib,
 		dependencies: dep_cubeb,
 		include_directories: tkn_inc)
+	tkn_audio_dep_optional = [tkn_audio_dep]
 endif
 
 tkn_audio3D_dep = disabler()
+tkn_audio3D_dep_optional = []
 if with_audio3D
 	tkn_audio3D_lib = static_library('tkn_audio3D',
 		sources: ['audio3D.cpp'],
@@ -109,5 +112,7 @@ if with_audio3D
 		link_with: tkn_audio3D_lib,
 		dependencies: dep_steamaudio,
 		include_directories: tkn_inc)
+
+	tkn_audio3D_dep_optional = [tkn_audio3D_dep]
 endif
 

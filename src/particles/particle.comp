@@ -28,7 +28,17 @@ layout(set = 0, binding = 1) uniform UBO {
 
 	float deltaT; // time delta in seconds
 	uint count; // number of attraction positions (<= 10)
+	float time;
 } ubo;
+
+
+// For normal particle simulation, just ignore this.
+// Allows to use particles as audio visualizer
+#ifdef WITH_FACTORS
+layout(std430, set = 0, binding = 2) readonly buffer Factors {
+	float factors[];
+};
+#endif // WITH_FACTORS
 
 vec2 attraction(vec2 pos, vec2 attractPos) {
 	vec2 delta = attractPos - pos;
@@ -66,7 +76,6 @@ void leftBorder(inout vec2 pos, inout vec2 vel) {
 void main() {
 	// Current SSBO index
 	uint index = gl_GlobalInvocationID.x;
-	index += gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x;
 	if(index >= particles.length()) {
 		return;
 	}
@@ -76,16 +85,78 @@ void main() {
 	vec2 vel = particles[index].vel;
 
 	// apply friction
-	vel *= pow(ubo.attractionFactors.a, ubo.deltaT);
+	float mass = 1.f;
+#ifdef WITH_FACTORS
+	// 1: trivial
+	// simply associate a frequency with each particle, constant
+	// mass *= factors[index % factors.length()];
+
+	// 2: dynamically associate frequency based on distance from
+	// first attactor
+	// if(ubo.count > 0) {
+	// 	float dist = distance(pos, ubo.attract[0].xy);
+	// 	int id = int((factors.length() / sqrt(8)) * dist);
+	// 	// mass = factors[(factors.length() - 1 - id) % factors.length()];
+	// 	mass *= factors[id % factors.length()];
+	// }
+	
+	// 2b: based on velocity
+	// if(ubo.count > 0) {
+	// 	float dist = length(vel);
+	// 	int id = int((factors.length() / sqrt(8)) * dist);
+	// 	// mass = factors[(factors.length() - 1 - id) % factors.length()];
+	// 	mass *= factors[id % factors.length()];
+	// }
+	
+	// 3: associate frequency based on angle from first attractor
+	// if(ubo.count > 0) {
+	// 	const float pi = 3.1415; // good enough
+	// 	vec2 diff = pos - ubo.attract[0].xy;
+	// 	float angle = atan(diff.y, diff.x);
+	// 	int id = int((angle + pi) / (2 * pi) * factors.length());
+	// 	mass = factors[id % factors.length()];
+	// }
+
+	// 4: like 3 but symmetric and interpolated
+	if(ubo.count > 0) {
+		const float pi = 3.1415; // good enough
+		vec2 diff = pos - ubo.attract[0].xy;
+		float angle = atan(diff.y, diff.x) + 0.1 * ubo.time;
+		float id = (angle + pi) / (1 * pi) * factors.length();
+		mass *= factors[int(id) % factors.length()];
+		// intepolate
+		// float fac = fract(id);
+		// mass = mix(
+		// 	factors[int(floor(id)) % factors.length()],
+		// 	factors[int(ceil(id)) % factors.length()], fac);
+	}
+
+	// 5: based on velocity angle
+	// if(ubo.count > 0) {
+	// 	const float pi = 3.1415; // good enough
+	// 	float angle = atan(vel.y, vel.x) + 0.1 * ubo.time;
+	// 	float id = (angle + pi) / (1 * pi) * factors.length();
+	// 	mass *= factors[int(id) % factors.length()];
+	// }
+#endif // WITH_FACTORS
+
+	// vec2 acc = -(1 - pow(ubo.attractionFactors.a, ubo.deltaT)) * vel;
+	// vel += acc / (1 + mass);
+	vel *= pow(ubo.attractionFactors.a, ubo.deltaT / sqrt(mass));
 
 	// Calculate new velocity depending on attraction point
 	// float fac = 1.f / sqrt(ubo.count);
+	vec2 acc = vec2(0.0);
 	for(uint i = 0; i < ubo.count; ++i) {
 		vec2 a = mod(i, 2) == 0 ? ubo.attract[i / 2].xy : ubo.attract[i / 2].zw;
-		vel += ubo.deltaT * attraction(pos, a);
+		acc += attraction(pos, a);
 	}
 
-	vel = clamp(vel, -ubo.maxVel, ubo.maxVel);
+	vel += ubo.deltaT * acc * mass;
+	float l = length(vel);
+	if(l > ubo.maxVel) {
+		vel *= ubo.maxVel / l;
+	}
 
 	// Move by velocity
 	pos += vel * ubo.deltaT;

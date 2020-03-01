@@ -88,6 +88,7 @@ shaders_src = {
 		['particle.vert'],
 		['particle.frag'],
 		['particle.comp'],
+		['particle.comp', [], 'particle.audio.comp', ['-DWITH_FACTORS']],
 	],
 	'normals': [
 		['texn.frag'],

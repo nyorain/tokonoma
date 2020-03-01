@@ -5,6 +5,16 @@
 #include <thread>
 #include <chrono>
 
+// some notes:
+// - the motivation for having a seperate update thread instead
+//   of calling the update methods from the main thread is that
+//   the main thread has so much stuff going on, we don't want
+//   to put anything there that has fixed time limits. Furthermore,
+//   updating audio sources can cleanly be seperated in a different
+//   thread, why not do so? might make use of multiple cores and
+//   there needs to be synchronization between update and render
+//   anyways.
+
 namespace tkn {
 
 struct AudioPlayer::Util {
