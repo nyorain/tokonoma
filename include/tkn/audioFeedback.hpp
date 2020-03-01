@@ -50,7 +50,7 @@ public:
 	}
 
 	unsigned dequeFeedback(float* buf, unsigned ns) {
-		feedback_.deque(buf, ns);
+		return feedback_.deque(buf, ns);
 	}
 
 protected:
