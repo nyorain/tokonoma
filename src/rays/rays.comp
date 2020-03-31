@@ -230,9 +230,10 @@ void main() {
 	vec2 dir = normalize(rf * noff + (1 - rf) * off);
 
 	float c = dot(dir, off);
-	float s = sqrt(1 - c * c);
-	if(dot(noff, dir) > 0) s = -s;
-	vec2 start = light.pos + light.radius * (c * off + s * noff);
+	// float s = sqrt(1 - c * c);
+	// if(dot(noff, dir) > 0) s = -s;
+	vec2 start = light.pos + light.radius * off;
+	// vec2 start = light.pos + light.radius * (c * off + s * noff);
 
 	Segment seg;
 	vec2 pos = start;
@@ -298,7 +299,7 @@ void main() {
 		// TODO: inverse-square light falloff over distance
 		// color *= cookTorrance(normal, -dir, ndir,
 		// 	mat.roughness, mat.metallic, mat.albedo);
-		color *= pi * mat.albedo * max(dot(-dir, normal), 0);
+		color *= mat.albedo * max(dot(-dir, normal), 0);
 		// color *= mat.albedo;
 
 		dir = ndir;

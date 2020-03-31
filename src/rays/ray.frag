@@ -6,10 +6,13 @@ layout(location = 1) in vec4 inColor;
 layout(location = 0) out vec4 fragColor;
 
 void main() {
-	float dist = inColor.a;
+	// float dist = inColor.a;
 	// float falloff = 1 / (dist * dist);
-	// Light falloff in a perfect 2D world is just inverse linear,
-	// not squared distance falloff. See noden 1042
-	float falloff = 1 / dist;
-	fragColor = vec4(falloff * inColor.rgb, 1);
+	// NOTE: Light falloff in a perfect 2D world is just inverse linear,
+	// not squared distance falloff. See node 1042
+	// NOTE: no, nvm, we don't have to model light falloff at all. It
+	// comes naturally with the light rays getting less dense far
+	// away from the source. That's how falloff works.
+	// float falloff = 1 / dist;
+	fragColor = vec4(inColor.rgb, 1);
 }

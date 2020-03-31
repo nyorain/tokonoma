@@ -246,7 +246,8 @@ float distanceToLOD(float z) {
 	// TODO: don't hardcode this stuff
 	const float fov = 0.35 * 3.141;
 	const float targetPixelSize = 1.f;
-	const float screenResolution = 30.f;
+	// const float screenResolution = 30.f;
+	const float screenResolution = 40.f;
 
 	float s = z * tan(fov / 2);
 	float tmp = s * targetPixelSize / screenResolution;
