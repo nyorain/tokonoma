@@ -1,5 +1,7 @@
 -std=c++17
 -I./subprojects/ny/include
+-I./subprojects/swa/include
+-I./subprojects/pml
 -I./subprojects/vpp/include
 -I./subprojects/nytl
 -I./subprojects/dlg/include
@@ -16,6 +18,7 @@
 -I./build/subprojects/cubeb
 -I./build/subprojects/ny/include
 -I./build/subprojects/vpp/include
+-I./build/subprojects/swa/include
 -I./build/assets
 -I./build/include
 -I./build/src/

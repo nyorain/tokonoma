@@ -16,6 +16,7 @@ gltf_dep = declare_dependency(
 # libtkn
 tkn_deps = [
 	dep_vpp,
+	dep_swa,
 	dep_ny,
 	dep_nytl,
 	dep_dlg,
@@ -52,6 +53,8 @@ tkn_src = [
 	'image/ktx.cpp',
 
 	'kissfft/kiss_fft.c',
+
+	'app2.cpp',
 
 	tkn_shaders,
 ]

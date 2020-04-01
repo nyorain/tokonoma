@@ -90,9 +90,8 @@ dep_rvg = dependency('rvg', fallback: ['rvg', 'rvg_dep'])
 dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
 dep_png = dependency('libpng', fallback: ['png', 'png_dep'])
-dep_ny = dependency('ny',
-	fallback: ['ny', 'ny_dep'],
-	default_options: 'android=@0@'.format(android))
+dep_ny = dependency('ny', fallback: ['ny', 'ny_dep'])
+dep_swa = dependency('swa', fallback: ['swa', 'swa_dep'])
 
 # turbojpeg is optional, there exists no meson wrap for it.
 # if we can't find it, we just fall back to the stbi loader, i.e. make
