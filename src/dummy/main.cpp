@@ -1,10 +1,10 @@
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 
-class DummyApp : public tkn::App {
+class DummyApp : public tkn::SinglePassApp {
 public:
-	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+	using Base = tkn::SinglePassApp;
+	bool init(nytl::Span<const char*> args, Args& out) override {
+		if(!Base::init(args, out)) {
 			return false;
 		}
 
@@ -16,17 +16,13 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
+		Base::update(dt);
 	}
 
 	const char* name() const override { return "dummy"; }
+	bool needsDepth() const override { return false; }
 };
 
 int main(int argc, const char** argv) {
-	DummyApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<DummyApp>(argc, argv);
 }

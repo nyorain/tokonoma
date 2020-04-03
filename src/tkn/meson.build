@@ -55,6 +55,7 @@ tkn_src = [
 	'kissfft/kiss_fft.c',
 
 	'app2.cpp',
+	'singlePassApp.cpp',
 
 	tkn_shaders,
 ]

@@ -1,56 +1,86 @@
 #include <tkn/app2.hpp>
 #include <dlg/dlg.hpp>
-#include <nytl/functionTraits.hpp>
+#include <dlg/output.h>
+#include <vpp/vk.hpp>
+#include <vpp/renderer.hpp>
+#include <vpp/debug.hpp>
+#include <vpp/handles.hpp>
+#include <vpp/device.hpp>
+#include <vpp/submit.hpp>
+#include <vpp/physicalDevice.hpp>
+#include <nytl/scope.hpp>
+#include <rvg/context.hpp>
+#include <rvg/font.hpp>
+#include <vui/gui.hpp>
+#include <vui/style.hpp>
 #include <argagg.hpp>
 #include <iostream>
 #include <thread>
 
-namespace tkn {
-inline namespace app2 {
-
-namespace {
-
 // We do this to allowe switching in normal if expressions
 // instead of compile-time switches where possible
 #ifdef __ANDROID__
-	static bool onAndroid = true;
+	constexpr bool onAndroid = true;
+	constexpr auto fontHeight = 32;
 #else
-	static bool onAndroid = false;
+	constexpr bool onAndroid = false;
+	constexpr auto fontHeight = 12;
 #endif
 
-static unsigned dlgErrors = 0;
-static unsigned dlgWarnings = 0;
-static dlg_handler old_dlg_handler = NULL;
-static void* old_dlg_data = NULL;
 
-void dlgHandler(const struct dlg_origin* origin, const char* string, void*) {
-	if(origin->level == dlg_level_error) {
-		++dlgErrors;
-	} else if(origin->level == dlg_level_warn) {
-		++dlgWarnings;
-	}
+namespace tkn {
+inline namespace app2 {
 
-	old_dlg_handler(origin, string, old_dlg_data);
+
+Features::Features() {
+	base.pNext = &multiview;
 }
 
-template<typename F, F f, typename Signature>
-struct SwaMemberCallback;
+// App::Renderer
+struct App::Renderer : public vpp::Renderer {
+	Renderer() = default;
+	using vpp::Renderer::init;
 
-template<typename F, F f, typename R, typename... Args>
-struct SwaMemberCallback<F, f, R(Args...)> {
-	static auto call(swa_window* win, Args... args) {
-		App* app = static_cast<App*>(swa_window_get_userdata(win));
-		return (app->*f)(std::forward<Args>(args)...);
+	void initBuffers(const vk::Extent2D& size,
+			nytl::Span<RenderBuffer> bufs) override {
+		dlg_assert(app_);
+		app_->initBuffers(size, bufs);
 	}
+
+	void record(const RenderBuffer& buf) override {
+		dlg_assert(app_);
+		app_->record(buf);
+	}
+
+	App* app_ {};
 };
 
-template<auto f> constexpr auto swaMemberCallback =
-	&SwaMemberCallback<std::decay_t<decltype(f)>, f,
-		typename nytl::FunctionTraits<decltype(f)>::Signature>::call;
+struct App::GuiListener : public vui::GuiListener {
+	void cursor(vui::Cursor cursor) override {
+		if(cursor == currentCursor_) {
+			return;
+		}
 
-} // anon namespace
+		currentCursor_ = cursor;
+		auto num = static_cast<unsigned>(cursor) - 1;
+		struct swa_cursor c {};
+		c.type = static_cast<swa_cursor_type>(num);
+		swa_window_set_cursor(app_->swaWindow(), c);
+	}
 
-struct SwaCallbacks {
+	void focus([[maybe_unused]] vui::Widget* oldf,
+			[[maybe_unused]] vui::Widget* nf) override {
+#ifdef __ANDROID__
+		// TODO: On android, show the keyboard when a textfield
+		// (or anything text-y really) is focused.
+#endif
+	}
+
+	App* app_ {};
+	vui::Cursor currentCursor_ {};
+};
+
+struct App::Callbacks {
 	static void resize(struct swa_window* w, unsigned width, unsigned height) {
 		((App*) swa_window_get_userdata(w))->resize(width, height);
 	}
@@ -103,8 +133,8 @@ struct SwaCallbacks {
 		((App*) swa_window_get_userdata(w))->touchUpdate(*ev);
 	}
 
-	static void touchCancel(struct swa_window* w, const swa_touch_event* ev) {
-		((App*) swa_window_get_userdata(w))->touchCancel(*ev);
+	static void touchCancel(struct swa_window* w) {
+		((App*) swa_window_get_userdata(w))->touchCancel();
 	}
 
 	static void surfaceDestroyed(struct swa_window* w){
@@ -114,7 +144,78 @@ struct SwaCallbacks {
 	static void surfaceCreated(struct swa_window* w) {
 		((App*) swa_window_get_userdata(w))->surfaceCreated();
 	}
+
+	static void dlgHandler(const struct dlg_origin* origin,
+			const char* string, void* data) {
+		auto app = static_cast<App*>(data);
+		dlg_assert(app);
+		app->dlgHandler(origin, string);
+	}
+
 };
+
+struct App::DebugMessenger : public vpp::DebugMessenger {
+	using vpp::DebugMessenger::DebugMessenger;
+	App* app_;
+
+	void call(MsgSeverity severity,
+			MsgTypeFlags type, const Data& data) noexcept override {
+		try {
+			dlg_assert(app_);
+			app_->vkDebug(severity, type, data);
+		} catch(const std::exception& err) {
+			dlg_error("Caught exception from vkDebug: {}", err.what());
+		}
+	}
+};
+
+struct SwaDisplayDeleter {
+	void operator()(swa_display* dpy) {
+		swa_display_destroy(dpy);
+	}
+};
+
+struct SwaWindowDeleter {
+	void operator()(swa_window* win) {
+		swa_window_destroy(win);
+	}
+};
+
+struct App::Impl {
+	// NOTE: order here is very important since a lot
+	// of those depend on each other (in destructor)
+	std::unique_ptr<swa_display, SwaDisplayDeleter> dpy;
+	vpp::Instance instance;
+	std::unique_ptr<swa_window, SwaWindowDeleter> win;
+	std::optional<DebugMessenger> messenger;
+	std::optional<vpp::Device> dev;
+	const vpp::Queue* presentq {};
+
+	std::vector<vpp::StageSemaphore> nextFrameWait;
+	vk::SwapchainCreateInfoKHR swapchainInfo;
+	Renderer renderer;
+
+	std::optional<rvg::Context> rvg;
+	std::optional<rvg::FontAtlas> fontAtlas;
+	rvg::Font defaultFont;
+	std::optional<vui::Gui> gui;
+	GuiListener guiListener;
+	std::optional<vui::DefaultStyles> defaultStyles;
+
+	struct {
+		unsigned errors {};
+		unsigned warnings {};
+		dlg_handler oldHandler {};
+		void* oldData {};
+	} dlg;
+};
+
+App::App() = default;
+App::~App() {
+	if(impl_ && impl_->dlg.oldHandler) {
+		dlg_set_handler(impl_->dlg.oldHandler, impl_->dlg.oldData);
+	}
+}
 
 bool App::init(nytl::Span<const char*> args) {
 	Args out;
@@ -122,10 +223,12 @@ bool App::init(nytl::Span<const char*> args) {
 }
 
 bool App::init(nytl::Span<const char*> args, Args& argsOut) {
+	impl_ = std::make_unique<Impl>();
+
 	// We set a custom dlg handler that allows to set breakpoints
 	// on any warnings or errors
-	old_dlg_handler = dlg_get_handler(&old_dlg_data);
-	dlg_set_handler(dlgHandler, nullptr);
+	impl_->dlg.oldHandler = dlg_get_handler(&impl_->dlg.oldData);
+	dlg_set_handler(&Callbacks::dlgHandler, this);
 
 	if(onAndroid) {
 		// TODO: workaround atm, this seems to be needed since global
@@ -133,7 +236,7 @@ bool App::init(nytl::Span<const char*> args, Args& argsOut) {
 		// to reset it, otherwise we use obsolete function pointers.
 		vk::dispatch = {};
 
-		// TODO: we can't use layers on android by default.
+		// NOTE: we can't use layers on android by default.
 		argsOut.layers = false;
 	}
 
@@ -157,20 +260,28 @@ bool App::init(nytl::Span<const char*> args, Args& argsOut) {
 			return false;
 		}
 
-		if(!handleArgs(result, argsOut)) {
+		try {
+			if(!handleArgs(result, argsOut)) {
+				argagg::fmt_ostream help(std::cerr);
+				help << usage << parser << std::endl;
+				return false;
+			}
+		} catch(const std::exception& error) {
 			argagg::fmt_ostream help(std::cerr);
-			help << usage << parser << std::endl;
+			help << usage << parser << "\n";
+			help << "Error prasing arguments: " << error.what();
+			help << std::endl;
 			return false;
 		}
 	}
 
-	dpy_.reset(swa_display_autocreate(name()));
-	if(!dpy_) {
+	impl_->dpy.reset(swa_display_autocreate(name()));
+	if(!impl_->dpy) {
 		dlg_fatal("Can't find backend for window creation (swa)");
 		return false;
 	}
 
-	auto* dpy = dpy_.get();
+	auto* dpy = impl_->dpy.get();
 	auto dpyCaps = swa_display_capabilities(dpy);
 	if(!(dpyCaps & swa_display_cap_vk)) {
 		dlg_fatal("Window backend does not support vulkan (swa)");
@@ -221,8 +332,8 @@ bool App::init(nytl::Span<const char*> args, Args& argsOut) {
 	}
 
 	try {
-		instance_ = {instanceInfo};
-		if(!instance_.vkInstance()) { // not supposed to happen
+		impl_->instance = {instanceInfo};
+		if(!impl_->instance.vkInstance()) { // not supposed to happen
 			dlg_fatal("vkCreateInstance returned a nullptr?!");
 			return false;
 		}
@@ -235,45 +346,50 @@ bool App::init(nytl::Span<const char*> args, Args& argsOut) {
 	}
 
 	if(argsOut.layers) {
-		messenger_.emplace(instance_);
+		impl_->messenger.emplace(vkInstance());
+		impl_->messenger->app_ = this;
 	}
 
 	// create window
 	swa_window_settings wins;
 	swa_window_settings_default(&wins);
 	wins.surface = swa_surface_vk;
-	wins.surface_settings.vk.instance = (uintptr_t) instance_.vkHandle();
+	wins.surface_settings.vk.instance = (uintptr_t) vkInstance().vkHandle();
 
-	struct swa_window_listener wl {};
-	wl.draw = swaMemberCallback<&App::windowDraw>;
-	wl.close = swaMemberCallback<&App::windowClose>;
-	wl.resize = swaMemberCallback<&App::resize>;
-	wl.surface_destroyed = swaMemberCallback<&App::surfaceDestroyed>;
-	wl.surface_created = swaMemberCallback<&App::surfaceCreated>;
-	wl.key = swaMemberCallback<&App::key>;
-	wl.state = swaMemberCallback<&App::windowState>;
-	wl.focus = swaMemberCallback<&App::windowFocus>;
-	wl.mouse_move = swaMemberCallback<&App::mouseMove>;
-	wl.mouse_cross = swaMemberCallback<&App::mouseCross>;
-	wl.mouse_button = swaMemberCallback<&App::mouseButton>;
-	wl.mouse_wheel = swaMemberCallback<&App::mouseWheel>;
-	wl.touch_begin = swaMemberCallback<&App::touchBegin>;
-	wl.touch_end = swaMemberCallback<&App::touchEnd>;
-	wl.touch_update = swaMemberCallback<&App::touchUpdate>;
-	wl.touch_cancel = swaMemberCallback<&App::touchCancel>;
+	// Wow, i really hate that C++ doesn't have designated initializers.
+	// Using swa_window_listener really becomes a pain like that.
+	static struct swa_window_listener wl {};
+	wl.draw = &Callbacks::windowDraw;
+	wl.close = &Callbacks::windowClose;
+	wl.resize = &Callbacks::resize;
+	wl.surface_destroyed = &Callbacks::surfaceDestroyed;
+	wl.surface_created = &Callbacks::surfaceCreated;
+	wl.key = &Callbacks::key;
+	wl.state = &Callbacks::windowState;
+	wl.focus = &Callbacks::windowFocus;
+	wl.mouse_move = &Callbacks::mouseMove;
+	wl.mouse_cross = &Callbacks::mouseCross;
+	wl.mouse_button = &Callbacks::mouseButton;
+	wl.mouse_wheel = &Callbacks::mouseWheel;
+	wl.touch_begin = &Callbacks::touchBegin;
+	wl.touch_end = &Callbacks::touchEnd;
+	wl.touch_update = &Callbacks::touchUpdate;
+	wl.touch_cancel = &Callbacks::touchCancel;
 	wins.listener = &wl;
 
-	win_.reset(swa_display_create_window(dpy, &wins));
-	if(!win_) {
+	impl_->win.reset(swa_display_create_window(dpy, &wins));
+	if(!impl_->win) {
 		dlg_fatal("Failed to create window (swa)");
 		return false;
 	}
+
+	swa_window_set_userdata(swaWindow(), this);
 
 	// create device
 	// enable some extra features
 	float priorities[1] = {0.0};
 
-	auto phdevs = vk::enumeratePhysicalDevices(instance_);
+	auto phdevs = vk::enumeratePhysicalDevices(vkInstance());
 	for(auto phdev : phdevs) {
 		dlg_debug("Found device: {}", vpp::description(phdev, "\n\t"));
 	}
@@ -283,7 +399,7 @@ bool App::init(nytl::Span<const char*> args, Args& argsOut) {
 		return false;
 	}
 
-	auto vkSurf = (vk::SurfaceKHR) swa_window_get_vk_surface(win_.get());
+	auto vkSurf = (vk::SurfaceKHR) swa_window_get_vk_surface(swaWindow());
 	vk::PhysicalDevice phdev {};
 	using std::get;
 	if(argsOut.phdev.index() == 0 && get<0>(argsOut.phdev) == DevType::choose) {
@@ -348,8 +464,8 @@ bool App::init(nytl::Span<const char*> args, Args& argsOut) {
 
 	devInfo.pNext = &f.base;
 
-	dev_.emplace(instance_, phdev, devInfo);
-	presentq_ = vkDevice().queue(queueFam);
+	impl_->dev.emplace(vkInstance(), phdev, devInfo);
+	impl_->presentq = vkDevice().queue(queueFam);
 
 	// we query the surface information needed for swapchain creation
 	// now since a lot of static resources (transitively) depend on it,
@@ -357,10 +473,59 @@ bool App::init(nytl::Span<const char*> args, Args& argsOut) {
 	// But we only create the swapchain (and will re-eval the needed size)
 	// on the first resize event that provides us with the actual
 	// init size of the window. That's why we pass a dummy size (1, 1) here.
-	auto prefs = swapchainPrefs();
-	swapchainInfo_ = vpp::swapchainCreateInfo(vkDevice(), vkSurf, {1, 1}, prefs);
+	auto prefs = swapchainPrefs(argsOut);
+	impl_->swapchainInfo = vpp::swapchainCreateInfo(vkDevice(),
+		vkSurf, {1, 1}, prefs);
 
 	return true;
+}
+
+void App::rvgInit(vk::RenderPass rp, unsigned subpass,
+		vk::SampleCountBits samples) {
+
+	rvg::ContextSettings rvgcs {rp, subpass};
+	rvgcs.samples = samples;
+	rvgcs.clipDistanceEnable = hasClipDistance_;
+
+#ifdef __ANDROID__
+	// TODO: needed because otherwise rvg uses too many bindings.
+	// Should be fixed in rvg
+	rvgcs.antiAliasing = false;
+#endif // __ANDROID__
+
+	impl_->rvg.emplace(vkDevice(), rvgcs);
+	impl_->fontAtlas.emplace(rvgContext());
+
+#ifdef __ANDROID__
+	// TODO: android-specific swa stuff
+	throw std::runtime_error("rvg/vui currently not supported on android");
+	// auto& ac = dynamic_cast<ny::AndroidAppContext&>(appContext());
+	// auto* mgr = ac.nativeActivity()->assetManager;
+	// auto asset = AAssetManager_open(mgr, "font.ttf", AASSET_MODE_BUFFER);
+	// dlg_assert(asset);
+	// auto len = AAsset_getLength(asset);
+	// auto buf = (std::byte*)AAsset_getBuffer(asset);
+	// std::vector<std::byte> bytes(buf, buf + len);
+	// impl_->defaultFont.emplace(*impl_->fontAtlas, std::move(bytes));
+	// AAsset_close(asset);
+#else
+	std::string fontPath = TKN_BASE_DIR;
+	fontPath += "/assets/Roboto-Regular.ttf";
+	impl_->defaultFont = {*impl_->fontAtlas, fontPath};
+#endif
+
+	// gui
+	impl_->guiListener.app_ = this;
+
+	impl_->defaultStyles.emplace(rvgContext());
+	auto& styles = impl_->defaultStyles->styles();
+	styles.hint.font.height = fontHeight;
+	styles.textfield.font.height = fontHeight;
+	styles.labeledButton.font.height = fontHeight;
+
+	impl_->gui.emplace(rvgContext(), impl_->defaultFont,
+		std::move(styles), impl_->guiListener);
+	impl_->gui->defaultFontHeight = fontHeight;
 }
 
 argagg::parser App::argParser() const {
@@ -391,6 +556,7 @@ bool App::handleArgs(const argagg::parser_results& result, Args& args) {
 	args.renderdoc = result["renderdoc"];
 
 	auto& phdev = result["phdev"];
+	args.phdev = DevType::choose;
 	if(phdev.count() > 0) {
 		try {
 			args.phdev = phdev.as<unsigned>();
@@ -405,16 +571,17 @@ bool App::handleArgs(const argagg::parser_results& result, Args& args) {
 				args.phdev = phdev[0].arg;
 			}
 		}
-	} else {
-		args.phdev = DevType::choose;
 	}
 
 	return true;
 }
 
 bool App::features(Features& enable, const Features& supported) {
-	(void) enable;
-	(void) supported;
+	if(supported.base.features.shaderClipDistance) {
+		enable.base.features.shaderClipDistance = true;
+		hasClipDistance_ = true;
+	}
+
 	return true;
 }
 
@@ -432,7 +599,7 @@ std::optional<std::uint64_t> App::submitFrame() {
 		// was submitted. Presenting might still have failed but we
 		// have to treat this as a regular frame (will just be skipped
 		// on output).
-		auto res = renderer_.render(&submitID, {nextFrameWait_});
+		auto res = impl_->renderer.render(&submitID, {impl_->nextFrameWait});
 		if(submitID) {
 			return submitID;
 		}
@@ -453,7 +620,7 @@ std::optional<std::uint64_t> App::submitFrame() {
 			// no swa surface destroy event. No idea what could be
 			// the issue.
 			if(hasSurface()) {
-				dlg_fatal("Got unrecoverable vulkan surfaceLost error");
+				dlg_fatal("Got surfaceLost error without surfaceDestroyed event");
 				return std::nullopt;
 			}
 
@@ -500,7 +667,7 @@ std::optional<std::uint64_t> App::submitFrame() {
 		// loop iteration.
 		resize_ = false;
 		dlg_info("resize on outOfDate: {}", winSize_);
-		renderer_.recreate({winSize_.x, winSize_.y}, swapchainInfo_);
+		impl_->renderer.recreate({winSize_.x, winSize_.y}, swapchainInfo());
 	}
 }
 
@@ -509,14 +676,17 @@ void App::run() {
 	run_ = true;
 	rerecord_ = true;
 	redraw_ = true;
-	lastUpdate_ = Clock::now();
 
+	using Clock = std::chrono::high_resolution_clock;
 	using Secd = std::chrono::duration<double, std::ratio<1, 1>>;
-	auto dt = [this]{
+	auto lastUpdate = Clock::now();
+
+	// Calculate delta time since last update call
+	auto dt = [&]{
 		auto now = Clock::now();
-		auto diff = now - lastUpdate_;
+		auto diff = now - lastUpdate;
 		auto dt = std::chrono::duration_cast<Secd>(diff).count();
-		lastUpdate_ = now;
+		lastUpdate = now;
 		return dt;
 	};
 
@@ -525,7 +695,6 @@ void App::run() {
 
 	// initial update
 	update(dt());
-
 	while(run_) {
 		// - update device data -
 		// the device will not using any of the resources we change here
@@ -536,17 +705,32 @@ void App::run() {
 		// in which we must change rendering resources.
 		if(resize_) {
 			resize_ = false;
-			renderer_.recreate({winSize_.x, winSize_.y}, swapchainInfo_);
+			impl_->renderer.recreate({winSize_.x, winSize_.y}, swapchainInfo());
 		} else if(rerecord_) {
-			renderer_.invalidate();
+			impl_->renderer.invalidate();
 		}
 
 		rerecord_ = false;
 
 		// - submit and present -
+		submitID = submitFrame();
+		if(!submitID) {
+			break;
+		}
+
+		// wait for this frame at the end of this loop
+		// this way we also wait for it when update throws
+		// since we don't want to destroy resources before
+		// rendering has finished
+		auto waiter = nytl::ScopeGuard {[&] {
+			submitter.wait(*submitID);
+		}};
 
 		// - update phase -
-		while(run_ && (!redraw_ || !hasSurface())) {
+		redraw_ = false;
+		update(dt());
+
+		while(run_ && !redraw_ && !resize_) {
 			// TODO: ideally, we could use waitEvents in update
 			// an only wake up if we need to. But that would need
 			// a (threaded!) waking up algorithm and also require all
@@ -559,44 +743,159 @@ void App::run() {
 	}
 }
 
+void App::dispatch() {
+	if(!swa_display_dispatch(swaDisplay(), false)) {
+		dlg_info("swa_display_dispatch returned false");
+		run_ = false;
+		return;
+	}
+
+	while(!hasSurface()) {
+		if(!swa_display_dispatch(swaDisplay(), true)) {
+			dlg_info("swa_display_dispatch returned false");
+			run_ = false;
+			break;
+		}
+	}
+}
+
+void App::update(double) {
+	dispatch();
+}
+
+void App::updateDevice() {
+}
+
+vpp::SwapchainPreferences App::swapchainPrefs(const Args& args) const {
+	vpp::SwapchainPreferences prefs {};
+	if(args.vsync) {
+		prefs.presentMode = vk::PresentModeKHR::fifo; // vsync
+	}
+
+	return prefs;
+}
+
 void App::addSemaphore(vk::Semaphore seph, vk::PipelineStageFlags waitDst) {
-	nextFrameWait_.push_back({seph, waitDst});
+	impl_->nextFrameWait.push_back({seph, waitDst});
 }
 
 void App::resize(unsigned width, unsigned height) {
+	if(!impl_->renderer.swapchain() && hasSurface()) {
+		impl_->renderer.app_ = this;
+		impl_->renderer.init(swapchainInfo(), *impl_->presentq);
+	}
+
 	winSize_ = {width, height};
 	resize_ = true;
 }
 
 bool App::key(const swa_key_event&) {
+	return false;
 }
 bool App::mouseButton(const swa_mouse_button_event&) {
+	return false;
 }
 void App::mouseMove(const swa_mouse_move_event&) {
 }
 bool App::mouseWheel(float x, float y) {
+	(void) x;
+	(void) y;
+	return false;
 }
 void App::mouseCross(const swa_mouse_cross_event&) {
 }
 void App::windowFocus(bool gained) {
+	(void) gained;
 }
 void App::windowDraw() {
 }
 void App::windowClose() {
+	dlg_debug("Window closed, exiting");
+	run_ = false;
 }
 void App::windowState(swa_window_state state) {
+	(void) state;
 }
 bool App::touchBegin(const swa_touch_event&) {
+	return false;
 }
 bool App::touchEnd(unsigned id) {
+	(void) id;
+	return false;
 }
 void App::touchUpdate(const swa_touch_event&) {
 }
-void App::touchCancel(const swa_touch_event&) {
+void App::touchCancel() {
 }
 void App::surfaceDestroyed()  {
+	impl_->swapchainInfo.surface = {};
+	impl_->renderer = {};
 }
 void App::surfaceCreated() {
+	auto surf = swa_window_get_vk_surface(swaWindow());
+	impl_->swapchainInfo.surface = (vk::SurfaceKHR) surf;
+	impl_->renderer.init(swapchainInfo(), *impl_->presentq);
+}
+
+bool App::hasSurface() const {
+	return swapchainInfo().surface;
+}
+swa_display* App::swaDisplay() const {
+	return impl_->dpy.get();
+}
+swa_window* App::swaWindow() const {
+	return impl_->win.get();
+}
+const vpp::Instance& App::vkInstance() const {
+	return impl_->instance;
+}
+vpp::Device& App::vkDevice() {
+	return *impl_->dev;
+}
+const vpp::Device& App::vkDevice() const {
+	return *impl_->dev;
+}
+const vpp::DebugMessenger& App::debugMessenger() const {
+	return *impl_->messenger;
+}
+const vk::SwapchainCreateInfoKHR& App::swapchainInfo() const {
+	return impl_->swapchainInfo;
+}
+vk::SwapchainCreateInfoKHR& App::swapchainInfo() {
+	return impl_->swapchainInfo;
+}
+rvg::Context& App::rvgContext() {
+	return *impl_->rvg;
+}
+vui::Gui& App::gui() {
+	return *impl_->gui;
+}
+nytl::Vec2ui App::windowSize() const {
+	return winSize_;
+}
+const rvg::Font& App::defaultFont() const {
+	return impl_->defaultFont;
+}
+rvg::FontAtlas& App::fontAtlas() {
+	return *impl_->fontAtlas;
+}
+
+void App::dlgHandler(const struct dlg_origin* origin, const char* string) {
+	if(origin->level == dlg_level_error) {
+		++impl_->dlg.errors;
+	} else if(origin->level == dlg_level_warn) {
+		++impl_->dlg.warnings;
+	}
+
+	impl_->dlg.oldHandler(origin, string, impl_->dlg.oldData);
+}
+
+void App::vkDebug(
+		vk::DebugUtilsMessageSeverityBitsEXT severity,
+		vk::DebugUtilsMessageTypeFlagsEXT type,
+		const vk::DebugUtilsMessengerCallbackDataEXT& data) {
+	dlg_assert(impl_ && impl_->messenger);
+	impl_->messenger->vpp::DebugMessenger::call(severity, type, data);
 }
 
 // main

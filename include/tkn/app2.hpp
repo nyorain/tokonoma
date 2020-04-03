@@ -1,15 +1,25 @@
 #pragma once
 
 #include <swa/swa.h>
-#include <vpp/vpp.hpp>
-#include <rvg/context.hpp>
-#include <vui/gui.hpp>
+#include <vpp/fwd.hpp>
+#include <rvg/fwd.hpp>
+#include <vui/fwd.hpp>
 #include <nytl/span.hpp>
+#include <nytl/vec.hpp>
+
+// - header shame -
+// needed for features
+// pulls in other vkpp headers. Maybe move features to extra header?
+#include <vkpp/structs.hpp>
+#include <vpp/renderer.hpp> // only needed for Renderer::RenderBuffer
 
 #include <memory>
+#include <variant>
 #include <chrono>
 #include <cstdint>
 #include <optional>
+
+struct dlg_origin;
 
 namespace argagg { // fwd
 	struct parser;
@@ -27,12 +37,31 @@ struct Features {
 
 class App {
 public:
-	App() = default;
+	App();
+	~App();
+
 	App(App&&) = delete;
 	App& operator=(App&&) = delete;
 
 	virtual bool init(nytl::Span<const char*> args);
 	virtual void run();
+
+	swa_display* swaDisplay() const;
+	swa_window* swaWindow() const;
+
+	const vpp::Instance& vkInstance() const;
+	vpp::Device& vkDevice();
+	const vpp::Device& vkDevice() const;
+	const vpp::DebugMessenger& debugMessenger() const;
+	const vk::SwapchainCreateInfoKHR& swapchainInfo() const;
+	vk::SwapchainCreateInfoKHR& swapchainInfo();
+
+	rvg::Context& rvgContext();
+	const rvg::Font& defaultFont() const;
+	rvg::FontAtlas& fontAtlas();
+	vui::Gui& gui();
+	nytl::Vec2ui windowSize() const;
+	bool hasSurface() const;
 
 protected:
 	using RenderBuffer = vpp::Renderer::RenderBuffer;
@@ -56,6 +85,9 @@ protected:
 	// at the beginning or after an update.
 	virtual void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) = 0;
 
+	// Called for each buffer when rerecording.
+	virtual void record(const RenderBuffer&) = 0;
+
 	// Called before device creation with the supported features
 	// of the selected physical device (supported). Can be used to
 	// enable the supported ones.
@@ -63,10 +95,7 @@ protected:
 
 	// Returns the swapchain preferences based on which the swapchain
 	// settings will be selected.
-	virtual vpp::SwapchainPreferences swapchainPrefs() const;
-
-	// Called for each buffer when rerecording.
-	virtual void record(const RenderBuffer&) = 0;
+	virtual vpp::SwapchainPreferences swapchainPrefs(const Args&) const;
 
 	// Called every frame with the time since the last call to update
 	// in seconds. Must not change any device resources since rendering
@@ -89,40 +118,37 @@ protected:
 	// (in the given stage).
 	void addSemaphore(vk::Semaphore, vk::PipelineStageFlags waitDst);
 
-	// Should return {} if rvg (and vui) are not needed, otherwise
-	// the render and subpass they are used in.
+	// Initializes rvg and gui for use.
 	// NOTE: might be a limitation for some apps to only use rvg and vui
 	// in one subpass, rvg requires it like that though. Changing it will
 	// be hard since then rvg needs to compile multiple pipelines (one
 	// for each render/subpass).
-	virtual std::pair<vk::RenderPass, unsigned> rvgPass() const { return {}; }
+	virtual void rvgInit(vk::RenderPass rp, unsigned subpass,
+		vk::SampleCountBits samples);
 
 	// Should be overwritten to return the name of this app.
 	virtual const char* name() const { return "tkn"; }
+
+	// Handler for dlg output (log & failed assertions).
+	// The default implementation just calls the default handler.
+	// But it also counts the number of error/warnings, mainly to
+	// allow inserting breakpoints there.
+	virtual void dlgHandler(const struct dlg_origin*, const char* string);
+
+	// Handler for output from the vulkan debug messenger (vulkan layers).
+	// The default implementation just calls the default handler.
+	virtual void vkDebug(
+		vk::DebugUtilsMessageSeverityBitsEXT,
+		vk::DebugUtilsMessageTypeFlagsEXT,
+		const vk::DebugUtilsMessengerCallbackDataEXT& data);
 
 	// Argument parsing
 	virtual argagg::parser argParser() const;
 	virtual bool handleArgs(const argagg::parser_results&, Args& out);
 	virtual const char* usageParams() const { return "[options]"; }
 
-	std::optional<std::uint64_t> submitFrame();
-
 protected:
-	swa_display* swaDisplay() const { return dpy_.get(); }
-	swa_window* swaWindow() const { return win_.get(); }
-
-	const vpp::Instance& vkInstance() const { return instance_; }
-	vpp::Device& vkDevice() { return *dev_; }
-	const vpp::Device& vkDevice() const { return *dev_; }
-	const vpp::DebugMessenger& debugMessenger() const { return *messenger_; }
-
-	rvg::Context& rvgContext() { return *rvg_; }
-	vui::Gui& gui() { return *gui_; }
-	nytl::Vec2ui windowSize() const { return winSize_; }
-	bool hasSurface() const;
-
 	// events
-	friend struct SwaCallbacks;
 	virtual void resize(unsigned width, unsigned height);
 	virtual bool key(const swa_key_event&);
 	virtual bool mouseButton(const swa_mouse_button_event&);
@@ -136,51 +162,28 @@ protected:
 	virtual bool touchBegin(const swa_touch_event&);
 	virtual bool touchEnd(unsigned id);
 	virtual void touchUpdate(const swa_touch_event&);
-	virtual void touchCancel(const swa_touch_event&);
+	virtual void touchCancel();
 	virtual void surfaceDestroyed();
 	virtual void surfaceCreated();
 
-protected:
-	struct SwaDisplayDeleter {
-		void operator()(swa_display* dpy) {
-			swa_display_destroy(dpy);
-		}
-	};
+	// stuff needed for own implementation
+	std::optional<std::uint64_t> submitFrame();
+	void dispatch();
 
-	struct SwaWindowDeleter {
-		void operator()(swa_window* win) {
-			swa_window_destroy(win);
-		}
-	};
+private:
+	struct Renderer;
+	struct GuiListener;
+	struct Callbacks;
+	struct DebugMessenger;
 
-	class Renderer : public vpp::Renderer {
-	public:
-		Renderer() = default;
-
-		void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
-		void record(const RenderBuffer& buf) override;
-		using vpp::Renderer::init;
-
-		App* app_;
-	};
-
-	std::unique_ptr<swa_display, SwaDisplayDeleter> dpy_;
-	vpp::Instance instance_;
-	std::unique_ptr<swa_window, SwaWindowDeleter> win_;
-	std::optional<vpp::DebugMessenger> messenger_;
-	std::optional<vpp::Device> dev_;
-	const vpp::Queue* presentq_;
-	Renderer renderer_;
-
-	std::vector<vpp::StageSemaphore> nextFrameWait_;
-	vk::SwapchainCreateInfoKHR swapchainInfo_;
-	std::optional<rvg::Context> rvg_;
-	std::optional<vui::Gui> gui_;
-
-	nytl::Vec2ui winSize_ {0, 0};
-
-	using Clock = std::chrono::high_resolution_clock;
-	Clock::time_point lastUpdate_;
+	// We pImpl away certain app member for multiple reasons:
+	// - allows us to keep App header complexity simple by only
+	//   defining impl classes (such as Renderer or GuiListener)
+	//   in the source
+	// - allows us to not have to include headers that might not be
+	//   needed by all apps, improving compile times
+	struct Impl;
+	std::unique_ptr<Impl> impl_;
 
 	// Whether the app is supposed to run.
 	// When this is set to false from within the main loop, the loop
@@ -199,6 +202,10 @@ protected:
 	// active when we process events so we will recreate rendering
 	// resources later on.
 	bool resize_ {};
+	nytl::Vec2ui winSize_ {0, 0};
+
+	// available features
+	bool hasClipDistance_ {}; // tracked for rvg
 };
 
 
@@ -210,5 +217,5 @@ int appMain(int argc, const char** argv) {
 	return appMain(app, argc, argv);
 }
 
-}
+} // namespace app2
 } // namespace tkn
