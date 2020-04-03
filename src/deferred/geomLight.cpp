@@ -386,7 +386,8 @@ void GeomLightPass::init(InitData& data) {
 }
 
 void GeomLightPass::createBuffers(InitBufferData& data,
-		const tkn::WorkBatcher& wb, vk::Extent2D size) {
+		const tkn::WorkBatcher& wb, vk::Extent2D size,
+		vk::Format depthFormat) {
 	auto createInfo = [&](vk::Format format,
 			vk::ImageUsageFlags usage) {
 		auto info = vpp::ViewableImageCreateInfo(format,
@@ -409,6 +410,11 @@ void GeomLightPass::createBuffers(InitBufferData& data,
 		// and screenshots. Should probably be a parameter to this
 		// function whether this is used (performance)
 		vk::ImageUsageBits::transferSrc;
+	constexpr auto depthUsage = vk::ImageUsageBits::depthStencilAttachment |
+		vk::ImageUsageBits::inputAttachment |
+		vk::ImageUsageBits::sampled |
+		vk::ImageUsageBits::transferSrc |
+		vk::ImageUsageBits::transferDst;
 
 	auto info = createInfo(normalsFormat, baseUsage);
 	normals_ = {data.initNormals.initTarget, wb.alloc.memDevice, info.img,
@@ -421,9 +427,9 @@ void GeomLightPass::createBuffers(InitBufferData& data,
 	data.initAlbedo.viewInfo = info.view;
 
 	info = createInfo(ldepthFormat, ldepthUsage);
-	ldepth_ = {data.initDepth.initTarget, wb.alloc.memDevice, info.img,
+	ldepth_ = {data.initLDepth.initTarget, wb.alloc.memDevice, info.img,
 		devMem};
-	data.initDepth.viewInfo = info.view;
+	data.initLDepth.viewInfo = info.view;
 
 	info = createInfo(emissionFormat, emissionUsage);
 	emission_ = {data.initEmission.initTarget, wb.alloc.memDevice, info.img,
@@ -431,19 +437,24 @@ void GeomLightPass::createBuffers(InitBufferData& data,
 	data.initEmission.viewInfo = info.view;
 
 	info = createInfo(lightFormat, lightUsage);
-	light_ = {data.initLight.initTarget, wb.alloc.memDevice, info.img,
-		devMem};
+	light_ = {data.initLight.initTarget, wb.alloc.memDevice, info.img, devMem};
 	data.initLight.viewInfo = info.view;
+
+	info = createInfo(depthFormat, depthUsage);
+	info.view.subresourceRange.aspectMask = vk::ImageAspectBits::depth;
+	depth_ = {data.initDepth.initTarget, wb.alloc.memDevice, info.img, devMem};
+	data.initDepth.viewInfo = info.view;
 }
 
 void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
-		vk::ImageView depth, vk::ImageView irradiance, vk::ImageView envMap,
+		vk::ImageView irradiance, vk::ImageView envMap,
 		unsigned envLods, vk::ImageView brdflut) {
 	normals_.init(data.initNormals.initTarget, data.initNormals.viewInfo);
 	albedo_.init(data.initAlbedo.initTarget, data.initAlbedo.viewInfo);
-	ldepth_.init(data.initDepth.initTarget, data.initDepth.viewInfo);
+	ldepth_.init(data.initLDepth.initTarget, data.initLDepth.viewInfo);
 	emission_.init(data.initEmission.initTarget, data.initEmission.viewInfo);
 	light_.init(data.initLight.initTarget, data.initLight.viewInfo);
+	depth_.init(data.initDepth.initTarget, data.initDepth.viewInfo);
 
 	vpp::nameHandle(normals_, "GeomLightPass:normals_");
 	vpp::nameHandle(albedo_, "GeomLightPass:albedo_");
@@ -456,7 +467,7 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 		normals_.vkImageView(),
 		albedo_.vkImageView(),
 		emission_.vkImageView(),
-		depth,
+		depth_.vkImageView(),
 		ldepth_.vkImageView(),
 		light_.vkImageView(),
 	};

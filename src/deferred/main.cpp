@@ -9,11 +9,10 @@
 #include "scatter.hpp"
 #include "graph.hpp"
 
-#include <tkn/app.hpp>
+#include <tkn/app2.hpp>
 #include <tkn/f16.hpp>
 #include <tkn/render.hpp>
 #include <tkn/camera.hpp>
-#include <tkn/app.hpp>
 #include <tkn/types.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
@@ -33,10 +32,9 @@
 #include <vui/textfield.hpp>
 #include <vui/colorPicker.hpp>
 
-#include <ny/appContext.hpp>
-
-#include <ny/key.hpp>
-#include <ny/mouseButton.hpp>
+// #include <ny/appContext.hpp>
+// #include <ny/key.hpp>
+// #include <ny/mouseButton.hpp>
 
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/debug.hpp>
@@ -81,33 +79,32 @@ public:
 	static constexpr auto probeFaceSize = probeSize.width * probeSize.height * 8;
 
 public:
+	struct Args : public App::Args {
+		float scale {1.f};
+		float maxAniso {1.f};
+		std::string model;
+	};
+
 	bool init(const nytl::Span<const char*> args) override;
-	void initRenderData() override;
 	void initTimings();
 	void initPasses(const tkn::WorkBatcher&);
 	void screenshot();
 	void addPointLight(nytl::Vec3f pos, nytl::Vec3f color, float radius,
 		bool shadowMap);
 
-	vpp::ViewableImage createDepthTarget(const vk::Extent2D& size) override;
+	void initStaticBuffers(const vk::Extent2D&);
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
 	bool features(tkn::Features& enable, const tkn::Features& supported) override;
 	argagg::parser argParser() const override;
-	bool handleArgs(const argagg::parser_results& result) override;
+	bool handleArgs(const argagg::parser_results& result, App::Args& out) override;
 	void record(const RenderBuffer& buffer) override;
 	void update(double dt) override;
-	bool key(const ny::KeyEvent& ev) override;
-	void mouseMove(const ny::MouseMoveEvent& ev) override;
-	bool mouseButton(const ny::MouseButtonEvent& ev) override;
-	void resize(const ny::SizeEvent& ev) override;
+	bool key(const swa_key_event& ev) override;
+	void mouseMove(const swa_mouse_move_event& ev) override;
+	bool mouseButton(const swa_mouse_button_event& ev) override;
+	void resize(unsigned w, unsigned h) override;
 	void updateDevice() override;
-
-	vpp::RenderPass createRenderPass() override { return {}; } // we use our own
-	bool needsDepth() const override { return true; }
 	const char* name() const override { return "Deferred Renderer"; }
-	std::pair<vk::RenderPass, unsigned> rvgPass() const override {
-		return {pp_.renderPass(), 0u};
-	}
 
 protected:
 	// TODO: add vpp methods to merge them to one (or into the default
@@ -160,10 +157,6 @@ protected:
 	tkn::Scene scene_;
 	// std::optional<tkn::Material> lightMaterial_;
 
-	std::string modelname_ {};
-	float sceneScale_ {1.f};
-	float maxAnisotropy_ {16.f};
-
 	bool anisotropy_ {}; // whether device supports anisotropy
 	bool multiview_ {}; // whether device supports multiview
 	bool depthClamp_ {}; // whether the device supports depth clamping
@@ -174,6 +167,9 @@ protected:
 	tkn::Camera camera_ {};
 	bool updateLights_ {true};
 	bool updateScene_ {true};
+
+	vk::Format depthFormat_ {};
+	bool recreateStaticBufs_ {true};
 
 	tkn::Texture brdfLut_;
 	tkn::Environment env_;
@@ -227,6 +223,8 @@ protected:
 	PostProcessPass pp_;
 	LightScatterPass scatter_;
 
+	rvg::Transform windowTransform_;
+
 	bool recreatePasses_ {false};
 	vpp::ShaderModule fullVertShader_;
 
@@ -253,7 +251,6 @@ protected:
 		ProbeState state {};
 		vpp::CommandBuffer cb;
 		vpp::SubBuffer retrieve;
-		vpp::ViewableImage depth;
 
 		struct Face {
 			vpp::TrDs ds;
@@ -267,10 +264,293 @@ protected:
 	} probe_ {};
 };
 
-bool ViewApp::init(const nytl::Span<const char*> args) {
-	if(!tkn::App::init(args)) {
+bool ViewApp::init(const nytl::Span<const char*> pargs) {
+	Args args;
+	if(!tkn::App::init(pargs, args)) {
 		return false;
 	}
+
+	auto& dev = vkDevice();
+
+	// ignore incorrect debug messages
+	debugMessenger().ignore.push_back(
+		"UNASSIGNED-CoreValidation-Shader-FeatureNotEnabled");
+
+	// find supported depth format
+	vk::ImageCreateInfo img; // dummy for property checking
+	img.extent = {1, 1, 1};
+	img.mipLevels = 1;
+	img.arrayLayers = 1;
+	img.imageType = vk::ImageType::e2d;
+	img.sharingMode = vk::SharingMode::exclusive;
+	img.tiling = vk::ImageTiling::optimal;
+	img.samples = vk::SampleCountBits::e1;
+	img.usage = vk::ImageUsageBits::depthStencilAttachment;
+	img.initialLayout = vk::ImageLayout::undefined;
+
+	auto fmts = {
+		vk::Format::d32Sfloat,
+		vk::Format::d32SfloatS8Uint,
+		vk::Format::d24UnormS8Uint,
+		vk::Format::d16Unorm,
+		vk::Format::d16UnormS8Uint,
+	};
+	auto features = vk::FormatFeatureBits::depthStencilAttachment |
+		vk::FormatFeatureBits::sampledImage;
+	depthFormat_ = vpp::findSupported(vkDevice(), fmts,
+		img, features);
+	if(depthFormat_ == vk::Format::undefined) {
+		dlg_error("No depth format supported");
+		return false;
+	}
+
+	// initialization setup
+	// allocator
+	alloc.emplace(dev);
+	auto& alloc = *this->alloc;
+
+	// stage allocators only valid during this function
+	vpp::DeviceMemoryAllocator memStage(dev);
+	vpp::BufferAllocator bufStage(memStage);
+
+	// command buffer
+	auto& qs = dev.queueSubmitter();
+	auto qfam = qs.queue().family();
+	auto cb = dev.commandAllocator().get(qfam);
+	vk::beginCommandBuffer(cb, {});
+
+	// create batch
+	tkn::WorkBatcher batch{dev, cb, {
+			alloc.memDevice, alloc.memHost, memStage,
+			alloc.bufDevice, alloc.bufHost, bufStage,
+			dev.descriptorAllocator(),
+		}
+	};
+
+	// sampler
+	vk::SamplerCreateInfo sci;
+	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
+	sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
+	sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
+	sci.magFilter = vk::Filter::linear;
+	sci.minFilter = vk::Filter::linear;
+	sci.mipmapMode = vk::SamplerMipmapMode::linear;
+	sci.minLod = 0.0;
+	sci.maxLod = 100.0;
+	sci.anisotropyEnable = false;
+	// scene rendering has its own samplers
+	// sci.anisotropyEnable = anisotropy_;
+	// sci.maxAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
+	linearSampler_ = {dev, sci};
+	vpp::nameHandle(linearSampler_, "linearSampler");
+
+	sci.magFilter = vk::Filter::nearest;
+	sci.minFilter = vk::Filter::nearest;
+	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
+	sci.anisotropyEnable = false;
+	nearestSampler_ = {dev, sci};
+	vpp::nameHandle(linearSampler_, "nearestSampler");
+
+	fullVertShader_ = {dev, tkn_fullscreen_vert_data};
+
+	// general layouts
+	auto stages =  vk::ShaderStageBits::vertex |
+		vk::ShaderStageBits::fragment |
+		vk::ShaderStageBits::compute;
+	auto sceneBindings = {
+		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer, stages)
+	};
+	cameraDsLayout_ = {dev, sceneBindings};
+
+	// dummy texture for materials that don't have a texture
+	// TODO: we could just create the dummy cube and make the dummy
+	// texture just a view into one of the dummy cube faces...
+	// TODO: those are required below (mainly by lights and by
+	//   materials, both should be fixable).
+	auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
+	auto span = nytl::as_bytes(nytl::span(idata));
+	auto p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+	tkn::TextureCreateParams params;
+	params.format = vk::Format::r8g8b8a8Unorm;
+	dummyTex_ = {batch, std::move(p), params};
+
+	vpp::nameHandle(dummyTex_.image(), "dummyTex.image");
+	vpp::nameHandle(dummyTex_.imageView(), "dummyTex.view");
+
+	auto dptr = reinterpret_cast<const std::byte*>(idata.data());
+	auto faces = {dptr, dptr, dptr, dptr, dptr, dptr};
+	params.cubemap = true;
+	p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, 1, 1, 6u, faces);
+	dummyCube_ = {batch, std::move(p), params};
+
+	vpp::nameHandle(dummyCube_.image(), "dummyCube.image");
+	vpp::nameHandle(dummyCube_.imageView(), "dummyCube.view");
+
+	// ubo and stuff
+	auto hostMem = dev.hostMemoryTypes();
+	auto camUboSize = sizeof(nytl::Mat4f) // proj matrix
+		+ sizeof(nytl::Mat4f) // inv proj
+		+ sizeof(nytl::Vec3f) // viewPos
+		+ 2 * sizeof(float); // near, far plane
+	vpp::Init<vpp::TrDs> initCameraDs(batch.alloc.ds, cameraDsLayout_);
+	vpp::Init<vpp::SubBuffer> initCameraUbo(batch.alloc.bufHost, camUboSize,
+		vk::BufferUsageBits::uniformBuffer, hostMem);
+
+	vpp::Init<vpp::TrDs> initEnvCameraDs(batch.alloc.ds, cameraDsLayout_);
+	vpp::Init<vpp::SubBuffer> initEnvCameraUbo(batch.alloc.bufHost,
+		sizeof(nytl::Mat4f), vk::BufferUsageBits::uniformBuffer, hostMem);
+
+	vpp::Init<vpp::SubBuffer> initRenderStage(batch.alloc.bufHost,
+		5 * sizeof(f16), vk::BufferUsageBits::transferDst, hostMem, 16u);
+
+	// selection data
+	vk::ImageCreateInfo imgi;
+	imgi.arrayLayers = 1;
+	imgi.extent = {1, 1, 1};
+	imgi.format = vk::Format::r32g32b32a32Sfloat;
+	imgi.imageType = vk::ImageType::e2d;
+	imgi.mipLevels = 1;
+	imgi.tiling = vk::ImageTiling::linear;
+	imgi.usage = vk::ImageUsageBits::transferDst;
+	imgi.samples = vk::SampleCountBits::e1;
+	vpp::Init<vpp::Image> initSelectionStage(batch.alloc.memHost, imgi,
+		dev.hostMemoryTypes());
+
+	selectionCb_ = dev.commandAllocator().get(qfam,
+		vk::CommandPoolCreateBits::resetCommandBuffer);
+	selectionSemaphore_ = {dev};
+
+	// environment
+	tkn::Environment::InitData envData;
+	env_.create(envData, batch, "convolution.ktx",
+		"irradiance.ktx", linearSampler_);
+	vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
+	vpp::Init<vpp::SubBuffer> initBoxIndices(alloc.bufDevice,
+		36u * sizeof(std::uint16_t),
+		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
+		dev.deviceMemoryTypes(), 4u);
+
+	// Load Model
+	auto mat = nytl::identity<4, float>();
+	auto samplerAnisotropy = 1.f;
+	if(anisotropy_) {
+		samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
+		samplerAnisotropy = std::max(samplerAnisotropy, args.maxAniso);
+	}
+
+	auto ri = tkn::SceneRenderInfo{
+		// materialDsLayout_,
+		// primitiveDsLayout_,
+		dummyTex_.vkImageView(),
+		samplerAnisotropy,
+		false, multiDrawIndirect_
+	};
+
+	auto [omodel, path] = tkn::loadGltf(args.model);
+	if(!omodel) {
+		std::exit(-1);
+	}
+
+	auto model = std::move(*omodel);
+	dlg_info("Found {} scenes", model.scenes.size());
+	auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
+	auto& sc = model.scenes[scene];
+
+	tkn::Scene::InitData initScene;
+	scene_.create(initScene, batch, path, *omodel, sc, mat, ri);
+	scene_.rescale(4 * args.scale);
+
+	shadowData_ = tkn::initShadowData(dev, depthFormat_,
+		scene_.dsLayout(), multiview_, depthClamp_);
+
+	initPasses(batch);
+
+	rvgInit(pp_.renderPass(), 0, vk::SampleCountBits::e1);
+	windowTransform_ = {rvgContext()};
+
+	// allocate
+	scene_.init(initScene, batch, dummyTex_.imageView());
+	boxIndices_ = initBoxIndices.init();
+	selectionStage_ = initSelectionStage.init();
+	cameraDs_ = initCameraDs.init();
+	cameraUbo_ = initCameraUbo.init();
+	envCameraDs_ = initEnvCameraDs.init();
+	envCameraUbo_ = initEnvCameraUbo.init();
+	env_.init(envData, batch);
+	brdfLut_ = initBrdfLut.init(batch);
+	renderStage_ = initRenderStage.init();
+
+	// cb
+	std::array<std::uint16_t, 36> indices = {
+		0, 1, 2,  2, 1, 3, // front
+		1, 5, 3,  3, 5, 7, // right
+		2, 3, 6,  6, 3, 7, // top
+		4, 0, 6,  6, 0, 2, // left
+		4, 5, 0,  0, 5, 1, // bottom
+		5, 4, 7,  7, 4, 6, // back
+	};
+
+	auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
+
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = selectionStage_;
+	barrier.oldLayout = vk::ImageLayout::undefined;
+	barrier.srcAccessMask = {};
+	barrier.newLayout = vk::ImageLayout::general;
+	barrier.dstAccessMask = {};
+	barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+	vk::cmdPipelineBarrier(cb,
+		vk::PipelineStageBits::topOfPipe,
+		vk::PipelineStageBits::bottomOfPipe,
+		{}, {}, {}, {{barrier}});
+
+	// add lights
+	// TODO: defer creation
+	if(pointLight) {
+		addPointLight({-1.8f, 6.0f, -2.f}, {4.f, 3.f, 2.f}, 9.f, true);
+	} else {
+		auto& l = dirLights_.emplace_back(batch, shadowData_);
+		l.data.dir = {-3.8f, -9.2f, -5.2f};
+		l.data.color = {2.f, 1.7f, 0.8f};
+		l.data.color *= 2;
+		l.updateDevice(camera_);
+		// pp_.params.scatterLightColor = 0.05f * l.data.color;
+	}
+
+	// submit and wait
+	// NOTE: we could do something on the cpu meanwhile
+	vk::endCommandBuffer(cb);
+	auto id = qs.add(cb);
+	qs.wait(id);
+
+	// PERF: do this in scene initialization to avoid additional
+	// data upload
+	auto cube = tkn::Cube{{}, {0.05f, 0.05f, 0.05f}};
+	auto shape = tkn::generate(cube);
+	cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
+		std::move(shape.normals), std::move(shape.indices));
+
+	auto sphere = tkn::Sphere{{}, {0.02f, 0.02f, 0.02f}};
+	shape = tkn::generateUV(sphere);
+	spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
+		std::move(shape.normals), std::move(shape.indices));
+
+	// scene descriptor, used for some pipelines as set 0 for camera
+	// matrix and view position
+	vpp::DescriptorSetUpdate sdsu(cameraDs_);
+	sdsu.uniform({{{cameraUbo_}}});
+	sdsu.apply();
+
+	vpp::DescriptorSetUpdate edsu(envCameraDs_);
+	edsu.uniform({{{envCameraUbo_}}});
+	edsu.apply();
+
+	currentID_ = scene_.primitives().size();
+	// lightMaterial_.emplace(materialDsLayout_,
+	// 	dummyTex_.vkImageView(), scene_.defaultSampler(),
+	// 	nytl::Vec{0.f, 0.f, 0.0f, 0.f}, 0.f, 0.f, false,
+	// 	nytl::Vec{1.f, 0.9f, 0.5f});
+
 
 	camera_.perspective.near = 0.01f;
 	camera_.perspective.far = 10.f;
@@ -396,14 +676,14 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 	cbbm.set(bloom_.mipBlurred);
 	cbbm.onToggle = [&](auto&) {
 		bloom_.mipBlurred ^= true;
-		App::resize_ = true; // recreate, rerecord
+		recreateStaticBufs_ = true; // recreate, rerecord
 	};
 	auto& cbbd = bf.create<Checkbox>("decrease").checkbox();
 	cbbd.set(combine_.params.flags & CombinePass::flagBloomDecrease);
 	cbbd.onToggle = [&](auto&) {
 		combine_.params.flags ^= CombinePass::flagBloomDecrease;
 	};
-	createValueTextfield(bf, "max levels", bloom_.maxLevels, &this->App::resize_);
+	createValueTextfield(bf, "max levels", bloom_.maxLevels, &recreateStaticBufs_);
 	createValueTextfield(bf, "threshold", bloom_.params.highPassThreshold, nullptr);
 	createValueTextfield(bf, "strength", combine_.params.bloomStrength, nullptr);
 	createValueTextfield(bf, "pow", bloom_.params.bloomPow, nullptr);
@@ -428,7 +708,8 @@ bool ViewApp::init(const nytl::Span<const char*> args) {
 		luminance_.compute = c.checked();
 		recreatePasses_ = true;
 	};
-	createValueTextfield(lf, "groupDimSize", luminance_.mipGroupDimSize, &recreatePasses_);
+	createValueTextfield(lf, "groupDimSize", luminance_.mipGroupDimSize,
+		&recreatePasses_);
 	lf.open(false);
 
 	// == scatter folder ==
@@ -519,7 +800,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 	PassCreateInfo passInfo {
 		wb,
-		depthFormat(), {
+		depthFormat_, {
 			cameraDsLayout_,
 			scene_.dsLayout(),
 			shadowData_.dsLayout,
@@ -538,7 +819,6 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 	dlg_info("ao pass: {}", bool(renderPasses_ & passAO));
 	dlg_info("combine pass: {}", bool(renderPasses_ & passCombine));
-
 
 	auto& passGeomLight = frameGraph_.addPass();
 	passGeomLight.name = "geomLight";
@@ -576,18 +856,15 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		}, {});
 
 		pp_.record(cb, debugMode_);
-		// timeWidget_.add("pp");
 		timeWidget_.addTimestamp(cb);
 
 		// gui stuff
-		vpp::DebugLabel debugLabel(device(), cb, "GUI");
+		vpp::DebugLabel debugLabel(vkDevice(), cb, "GUI");
 		rvgContext().bindDefaults(cb);
 		gui().draw(cb);
 
-		// times
-		// timeWidget_.finish();
 		rvgContext().bindDefaults(cb);
-		windowTransform().bind(cb);
+		windowTransform_.bind(cb);
 		timeWidget_.draw(cb);
 
 		vk::cmdEndRenderPass(cb);
@@ -738,9 +1015,6 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 		passLum.record = [&](const auto& buf) {
 			luminance_.record(buf.cb, buf.size);
-			// TODO: luminance might be executed after pp.
-			// still working around weird time widget quirks
-			// timeWidget_.add("luminance");
 			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
@@ -837,301 +1111,8 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 	}
 
 	// others
-	env_.createPipe(device(), cameraDsLayout_, geomLight_.renderPass(), 1,
+	env_.createPipe(vkDevice(), cameraDsLayout_, geomLight_.renderPass(), 1,
 		vk::SampleCountBits::e1);
-}
-
-void ViewApp::initRenderData() {
-	auto& dev = vulkanDevice();
-
-	// ignore incorrect debug messages
-	debugMessenger().ignore.push_back(
-		"UNASSIGNED-CoreValidation-Shader-FeatureNotEnabled");
-
-	// initialization setup
-	// allocator
-	alloc.emplace(dev);
-	auto& alloc = *this->alloc;
-
-	// stage allocators only valid during this function
-	vpp::DeviceMemoryAllocator memStage(dev);
-	vpp::BufferAllocator bufStage(memStage);
-
-	// command buffer
-	auto& qs = dev.queueSubmitter();
-	auto qfam = qs.queue().family();
-	auto cb = dev.commandAllocator().get(qfam);
-	vk::beginCommandBuffer(cb, {});
-
-	// create batch
-	tkn::WorkBatcher batch{dev, cb, {
-			alloc.memDevice, alloc.memHost, memStage,
-			alloc.bufDevice, alloc.bufHost, bufStage,
-			dev.descriptorAllocator(),
-		}
-	};
-
-	// sampler
-	vk::SamplerCreateInfo sci;
-	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
-	sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
-	sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
-	sci.magFilter = vk::Filter::linear;
-	sci.minFilter = vk::Filter::linear;
-	sci.mipmapMode = vk::SamplerMipmapMode::linear;
-	sci.minLod = 0.0;
-	sci.maxLod = 100.0;
-	sci.anisotropyEnable = false;
-	// scene rendering has its own samplers
-	// sci.anisotropyEnable = anisotropy_;
-	// sci.maxAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
-	linearSampler_ = {dev, sci};
-	vpp::nameHandle(linearSampler_, "linearSampler");
-
-	sci.magFilter = vk::Filter::nearest;
-	sci.minFilter = vk::Filter::nearest;
-	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
-	sci.anisotropyEnable = false;
-	nearestSampler_ = {dev, sci};
-	vpp::nameHandle(linearSampler_, "nearestSampler");
-
-	fullVertShader_ = {dev, tkn_fullscreen_vert_data};
-
-	// general layouts
-	auto stages =  vk::ShaderStageBits::vertex |
-		vk::ShaderStageBits::fragment |
-		vk::ShaderStageBits::compute;
-	auto sceneBindings = {
-		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer, stages)
-	};
-	cameraDsLayout_ = {dev, sceneBindings};
-
-	// dummy texture for materials that don't have a texture
-	// TODO: we could just create the dummy cube and make the dummy
-	// texture just a view into one of the dummy cube faces...
-	// TODO: those are required below (mainly by lights and by
-	//   materials, both should be fixable).
-	auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
-	auto span = nytl::as_bytes(nytl::span(idata));
-	auto p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
-	tkn::TextureCreateParams params;
-	params.format = vk::Format::r8g8b8a8Unorm;
-	dummyTex_ = {batch, std::move(p), params};
-
-	vpp::nameHandle(dummyTex_.image(), "dummyTex.image");
-	vpp::nameHandle(dummyTex_.imageView(), "dummyTex.view");
-
-	auto dptr = reinterpret_cast<const std::byte*>(idata.data());
-	auto faces = {dptr, dptr, dptr, dptr, dptr, dptr};
-	params.cubemap = true;
-	p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, 1, 1, 6u, faces);
-	dummyCube_ = {batch, std::move(p), params};
-
-	vpp::nameHandle(dummyCube_.image(), "dummyCube.image");
-	vpp::nameHandle(dummyCube_.imageView(), "dummyCube.view");
-
-	// ubo and stuff
-	auto hostMem = dev.hostMemoryTypes();
-	auto camUboSize = sizeof(nytl::Mat4f) // proj matrix
-		+ sizeof(nytl::Mat4f) // inv proj
-		+ sizeof(nytl::Vec3f) // viewPos
-		+ 2 * sizeof(float); // near, far plane
-	vpp::Init<vpp::TrDs> initCameraDs(batch.alloc.ds, cameraDsLayout_);
-	vpp::Init<vpp::SubBuffer> initCameraUbo(batch.alloc.bufHost, camUboSize,
-		vk::BufferUsageBits::uniformBuffer, hostMem);
-
-	vpp::Init<vpp::TrDs> initEnvCameraDs(batch.alloc.ds, cameraDsLayout_);
-	vpp::Init<vpp::SubBuffer> initEnvCameraUbo(batch.alloc.bufHost,
-		sizeof(nytl::Mat4f), vk::BufferUsageBits::uniformBuffer, hostMem);
-
-	vpp::Init<vpp::SubBuffer> initRenderStage(batch.alloc.bufHost,
-		5 * sizeof(f16), vk::BufferUsageBits::transferDst, hostMem, 16u);
-
-	// selection data
-	vk::ImageCreateInfo imgi;
-	imgi.arrayLayers = 1;
-	imgi.extent = {1, 1, 1};
-	imgi.format = vk::Format::r32g32b32a32Sfloat;
-	imgi.imageType = vk::ImageType::e2d;
-	imgi.mipLevels = 1;
-	imgi.tiling = vk::ImageTiling::linear;
-	imgi.usage = vk::ImageUsageBits::transferDst;
-	imgi.samples = vk::SampleCountBits::e1;
-	vpp::Init<vpp::Image> initSelectionStage(batch.alloc.memHost, imgi,
-		dev.hostMemoryTypes());
-
-	selectionCb_ = dev.commandAllocator().get(qfam,
-		vk::CommandPoolCreateBits::resetCommandBuffer);
-	selectionSemaphore_ = {dev};
-
-	// environment
-	tkn::Environment::InitData envData;
-	env_.create(envData, batch, "convolution.ktx",
-		"irradiance.ktx", linearSampler_);
-	vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
-	vpp::Init<vpp::SubBuffer> initBoxIndices(alloc.bufDevice,
-		36u * sizeof(std::uint16_t),
-		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-		dev.deviceMemoryTypes(), 4u);
-
-	// Load Model
-	auto mat = nytl::identity<4, float>();
-	auto samplerAnisotropy = 1.f;
-	if(anisotropy_) {
-		samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
-		samplerAnisotropy = std::max(samplerAnisotropy, maxAnisotropy_);
-	}
-
-	auto ri = tkn::SceneRenderInfo{
-		// materialDsLayout_,
-		// primitiveDsLayout_,
-		dummyTex_.vkImageView(),
-		samplerAnisotropy,
-		false, multiDrawIndirect_
-	};
-
-	auto [omodel, path] = tkn::loadGltf(modelname_);
-	if(!omodel) {
-		std::exit(-1);
-	}
-
-	auto model = std::move(*omodel);
-	dlg_info("Found {} scenes", model.scenes.size());
-	auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
-	auto& sc = model.scenes[scene];
-
-	tkn::Scene::InitData initScene;
-	scene_.create(initScene, batch, path, *omodel, sc, mat, ri);
-	scene_.rescale(4 * sceneScale_);
-
-	shadowData_ = tkn::initShadowData(dev, depthFormat(),
-		scene_.dsLayout(), multiview_, depthClamp_);
-
-	initPasses(batch);
-
-	// allocate
-	scene_.init(initScene, batch, dummyTex_.imageView());
-	boxIndices_ = initBoxIndices.init();
-	selectionStage_ = initSelectionStage.init();
-	cameraDs_ = initCameraDs.init();
-	cameraUbo_ = initCameraUbo.init();
-	envCameraDs_ = initEnvCameraDs.init();
-	envCameraUbo_ = initEnvCameraUbo.init();
-	env_.init(envData, batch);
-	brdfLut_ = initBrdfLut.init(batch);
-	renderStage_ = initRenderStage.init();
-
-	// cb
-	std::array<std::uint16_t, 36> indices = {
-		0, 1, 2,  2, 1, 3, // front
-		1, 5, 3,  3, 5, 7, // right
-		2, 3, 6,  6, 3, 7, // top
-		4, 0, 6,  6, 0, 2, // left
-		4, 5, 0,  0, 5, 1, // bottom
-		5, 4, 7,  7, 4, 6, // back
-	};
-
-	auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
-
-	vk::ImageMemoryBarrier barrier;
-	barrier.image = selectionStage_;
-	barrier.oldLayout = vk::ImageLayout::undefined;
-	barrier.srcAccessMask = {};
-	barrier.newLayout = vk::ImageLayout::general;
-	barrier.dstAccessMask = {};
-	barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-	vk::cmdPipelineBarrier(cb,
-		vk::PipelineStageBits::topOfPipe,
-		vk::PipelineStageBits::bottomOfPipe,
-		{}, {}, {}, {{barrier}});
-
-	// add lights
-	// TODO: defer creation
-	if(pointLight) {
-		addPointLight({-1.8f, 6.0f, -2.f}, {4.f, 3.f, 2.f}, 9.f, true);
-	} else {
-		auto& l = dirLights_.emplace_back(batch, shadowData_);
-		l.data.dir = {-3.8f, -9.2f, -5.2f};
-		l.data.color = {2.f, 1.7f, 0.8f};
-		l.data.color *= 2;
-		l.updateDevice(camera_);
-		// pp_.params.scatterLightColor = 0.05f * l.data.color;
-	}
-
-	// submit and wait
-	// NOTE: we could do something on the cpu meanwhile
-	vk::endCommandBuffer(cb);
-	auto id = qs.add(cb);
-	qs.wait(id);
-
-	// PERF: do this in scene initialization to avoid additional
-	// data upload
-	auto cube = tkn::Cube{{}, {0.05f, 0.05f, 0.05f}};
-	auto shape = tkn::generate(cube);
-	cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
-		std::move(shape.normals), std::move(shape.indices));
-
-	auto sphere = tkn::Sphere{{}, {0.02f, 0.02f, 0.02f}};
-	shape = tkn::generateUV(sphere);
-	spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
-		std::move(shape.normals), std::move(shape.indices));
-
-	// scene descriptor, used for some pipelines as set 0 for camera
-	// matrix and view position
-	vpp::DescriptorSetUpdate sdsu(cameraDs_);
-	sdsu.uniform({{{cameraUbo_}}});
-	sdsu.apply();
-
-	vpp::DescriptorSetUpdate edsu(envCameraDs_);
-	edsu.uniform({{{envCameraUbo_}}});
-	edsu.apply();
-
-	currentID_ = scene_.primitives().size();
-	// lightMaterial_.emplace(materialDsLayout_,
-	// 	dummyTex_.vkImageView(), scene_.defaultSampler(),
-	// 	nytl::Vec{0.f, 0.f, 0.0f, 0.f}, 0.f, 0.f, false,
-	// 	nytl::Vec{1.f, 0.9f, 0.5f});
-
-}
-
-vpp::ViewableImage ViewApp::createDepthTarget(const vk::Extent2D& size) {
-	auto width = size.width;
-	auto height = size.height;
-
-	// img
-	vk::ImageCreateInfo img;
-	img.imageType = vk::ImageType::e2d;
-	img.format = depthFormat();
-	img.extent.width = width;
-	img.extent.height = height;
-	img.extent.depth = 1;
-	img.mipLevels = 1;
-	img.arrayLayers = 1;
-	img.sharingMode = vk::SharingMode::exclusive;
-	img.tiling = vk::ImageTiling::optimal;
-	img.samples = samples();
-	img.usage = vk::ImageUsageBits::depthStencilAttachment |
-		vk::ImageUsageBits::inputAttachment |
-		vk::ImageUsageBits::sampled |
-		vk::ImageUsageBits::transferSrc |
-		vk::ImageUsageBits::transferDst;
-	img.initialLayout = vk::ImageLayout::undefined;
-
-	// view
-	vk::ImageViewCreateInfo view;
-	view.viewType = vk::ImageViewType::e2d;
-	view.format = img.format;
-	view.components = {};
-	view.subresourceRange.aspectMask = vk::ImageAspectBits::depth;
-	view.subresourceRange.levelCount = 1;
-	view.subresourceRange.layerCount = 1;
-
-	// create the viewable image
-	// will set the created image in the view info for us
-	vpp::ViewableImage target = {device().devMemAllocator(), img, view,
-		device().deviceMemoryTypes()};
-
-	return target;
 }
 
 static constexpr auto defaultAttachmentUsage =
@@ -1141,11 +1122,8 @@ static constexpr auto defaultAttachmentUsage =
 	vk::ImageUsageBits::transferSrc |
 	vk::ImageUsageBits::sampled;
 
-void ViewApp::initBuffers(const vk::Extent2D& size,
-		nytl::Span<RenderBuffer> bufs) {
-	auto& dev = vulkanDevice();
-	depthTarget() = createDepthTarget(size);
-
+void ViewApp::initStaticBuffers(const vk::Extent2D& size) {
+	auto& dev = vkDevice();
 	std::vector<vk::ImageView> attachments;
 
 	vpp::DeviceMemoryAllocator memStage(dev);
@@ -1162,7 +1140,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	};
 
 	GeomLightPass::InitBufferData geomLightData;
-	geomLight_.createBuffers(geomLightData, wb, size);
+	geomLight_.createBuffers(geomLightData, wb, size, depthFormat_);
 
 	BloomPass::InitBufferData bloomData;
 	if(renderPasses_ & passBloom) {
@@ -1190,7 +1168,7 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 	}
 
 	// init
-	geomLight_.initBuffers(geomLightData, size, depthTarget().vkImageView(),
+	geomLight_.initBuffers(geomLightData, size,
 		env_.irradiance().imageView(),
 		env_.envMap().imageView(),
 		env_.convolutionMipmaps(),
@@ -1260,6 +1238,14 @@ void ViewApp::initBuffers(const vk::Extent2D& size,
 		geomLight_.albedoTarget().imageView(),
 		ssaoView, ssrView, bloomView, lumView, scatterView, shadowView);
 
+	App::scheduleRerecord();
+}
+
+void ViewApp::initBuffers(const vk::Extent2D& size,
+		nytl::Span<RenderBuffer> bufs) {
+	initStaticBuffers(size);
+	recreateStaticBufs_ = false;
+
 	// create swapchain framebuffers
 	for(auto& buf : bufs) {
 		buf.framebuffer = pp_.initFramebuffer(buf.imageView, size);
@@ -1307,13 +1293,6 @@ argagg::parser ViewApp::argParser() const {
 	// msaa not supported in deferred renderer
 	auto parser = App::argParser();
 	auto& defs = parser.definitions;
-	auto it = std::find_if(defs.begin(), defs.end(),
-		[](const argagg::definition& def){
-			return def.name == "multisamples";
-	});
-	dlg_assert(it != defs.end());
-	defs.erase(it);
-
 	defs.push_back({
 		"model", {"--model"},
 		"Path of the gltf model to load (dir must contain scene.gltf)", 1
@@ -1329,19 +1308,20 @@ argagg::parser ViewApp::argParser() const {
 	return parser;
 }
 
-bool ViewApp::handleArgs(const argagg::parser_results& result) {
-	if(!App::handleArgs(result)) {
+bool ViewApp::handleArgs(const argagg::parser_results& result, App::Args& bout) {
+	if(!App::handleArgs(result, bout)) {
 		return false;
 	}
 
+	auto& out = static_cast<Args&>(bout);
 	if(result.has_option("model")) {
-		modelname_ = result["model"].as<const char*>();
+		out.model = result["model"].as<const char*>();
 	}
 	if(result.has_option("scale")) {
-		sceneScale_ = result["scale"].as<float>();
+		out.scale = result["scale"].as<float>();
 	}
 	if(result.has_option("maxAniso")) {
-		maxAnisotropy_ = result["maxAniso"].as<float>();
+		out.maxAniso = result["maxAniso"].as<float>();
 	}
 
 	return true;
@@ -1350,7 +1330,6 @@ bool ViewApp::handleArgs(const argagg::parser_results& result) {
 void ViewApp::record(const RenderBuffer& buf) {
 	auto cb = buf.commandBuffer;
 	vk::beginCommandBuffer(cb, {});
-	App::beforeRender(cb);
 	vk::cmdResetQueryPool(cb, timeWidget_.queryPool(), 0, timeWidget_.maxCount);
 
 	timeWidget_.start(cb);
@@ -1381,7 +1360,6 @@ void ViewApp::record(const RenderBuffer& buf) {
 	frameGraph_.record(data);
 	timeWidget_.finish(cb);
 
-	App::afterRender(cb);
 	vk::endCommandBuffer(cb);
 }
 
@@ -1390,10 +1368,7 @@ void ViewApp::update(double dt) {
 	time_ += dt;
 
 	// movement
-	auto kc = appContext().keyboardContext();
-	if(kc) {
-		tkn::checkMovement(camera_, *kc, dt);
-	}
+	tkn::checkMovement(camera_, swaDisplay(), dt);
 
 	// TODO: something about potential changes in pass parameters
 	auto update = camera_.update || updateLights_ || selectionPos_;
@@ -1415,7 +1390,7 @@ void ViewApp::update(double dt) {
 
 void ViewApp::addPointLight(nytl::Vec3f pos, nytl::Vec3f color, float radius,
 		bool shadowMap) {
-	auto wb = tkn::WorkBatcher::createDefault(vulkanDevice());
+	auto wb = tkn::WorkBatcher::createDefault(vkDevice());
 	auto& l = pointLights_.emplace_back(wb, shadowData_,
 		shadowMap ? vk::ImageView{} : dummyCube_.vkImageView());
 	// std::uniform_real_distribution<float> dist(0.0f, 1.0f);
@@ -1459,7 +1434,7 @@ void ViewApp::screenshot() {
 	}
 
 	if(probe_.state == ProbeState::invalid) {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// faces, ubo, ds
 		// TODO: duplication with cameraUbo_ and cameraDs_
@@ -1489,10 +1464,10 @@ void ViewApp::screenshot() {
 
 		// passes
 		// no cb needed in wb
-		auto wb = tkn::WorkBatcher::createDefault(vulkanDevice());
+		auto wb = tkn::WorkBatcher::createDefault(vkDevice());
 		PassCreateInfo passInfo {
 			wb,
-			depthFormat(), {
+			depthFormat_, {
 				cameraDsLayout_,
 				scene_.dsLayout(),
 				shadowData_.dsLayout,
@@ -1513,19 +1488,18 @@ void ViewApp::screenshot() {
 		initGeomLight.init();
 
 		// buffers
-		probe_.depth = createDepthTarget(probeSize);
-
 		GeomLightPass::InitBufferData geomLightBuffers;
-		probe_.geomLight.createBuffers(geomLightBuffers, wb, probeSize);
+		probe_.geomLight.createBuffers(geomLightBuffers, wb, probeSize,
+			depthFormat_);
 		probe_.geomLight.initBuffers(geomLightBuffers, probeSize,
-			probe_.depth.imageView(), env_.irradiance().imageView(),
+			env_.irradiance().imageView(),
 			env_.envMap().imageView(), env_.convolutionMipmaps(),
 			brdfLut_.imageView());
 
 		// cb
-		auto& qs = device().queueSubmitter();
+		auto& qs = vkDevice().queueSubmitter();
 		auto qfam = qs.queue().family();
-		probe_.cb = device().commandAllocator().get(qfam);
+		probe_.cb = vkDevice().commandAllocator().get(qfam);
 		auto cb = probe_.cb.vkHandle();
 
 		vk::beginCommandBuffer(probe_.cb, {});
@@ -1595,7 +1569,7 @@ void ViewApp::screenshot() {
 	probe_.state = ProbeState::pending;
 }
 
-bool ViewApp::key(const ny::KeyEvent& ev) {
+bool ViewApp::key(const swa_key_event& ev) {
 	static std::default_random_engine rnd(std::time(nullptr));
 	if(App::key(ev)) {
 		return true;
@@ -1607,7 +1581,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 
 	auto numModes = 13u;
 	switch(ev.keycode) {
-		case ny::Keycode::m: // move light here
+		case swa_key_m: // move light here
 			if(!dirLights_.empty()) {
 				dirLights_[0].data.dir = -nytl::normalized(camera_.pos);
 			} else {
@@ -1615,7 +1589,7 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			}
 			updateLights_ = true;
 			return true;
-		case ny::Keycode::p:
+		case swa_key_p:
 			if(!dirLights_.empty()) {
 				dirLights_[0].data.flags ^= tkn::lightFlagPcf;
 			} else {
@@ -1623,32 +1597,32 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 			}
 			updateLights_ = true;
 			return true;
-		case ny::Keycode::n:
+		case swa_key_n:
 			debugMode_ = (debugMode_ + 1) % numModes;
 			recreatePasses_ = true; // recreate, rerecord
 			return true;
-		case ny::Keycode::l:
+		case swa_key_l:
 			debugMode_ = (debugMode_ + numModes - 1) % numModes;
 			recreatePasses_ = true; // recreate, rerecord
 			return true;
-		case ny::Keycode::equals:
+		case swa_key_equals:
 			desiredLuminance_ *= 1.1f;
 			return true;
-		case ny::Keycode::minus:
+		case swa_key_minus:
 			desiredLuminance_ /= 1.1f;
 			return true;
-		case ny::Keycode::t: { // screenshot
+		case swa_key_t: { // screenshot
 			screenshot();
 			return true;
-		} case ny::Keycode::comma: {
+		} case swa_key_comma: {
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 			addPointLight(camera_.pos, {dist(rnd), dist(rnd), dist(rnd)}, 0.5, false);
 			break;
-		 } case ny::Keycode::z: {
+		 } case swa_key_z: {
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
 			addPointLight(camera_.pos, {dist(rnd), dist(rnd), dist(rnd)}, 5.0, true);
 			break;
-		} case ny::Keycode::f: {
+		} case swa_key_f: {
 			hideTimeWidget_ ^= true;
 			timeWidget_.hide(hideTimeWidget_);
 			break;
@@ -1657,13 +1631,13 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 	}
 
 	auto uk = static_cast<unsigned>(ev.keycode);
-	auto k1 = static_cast<unsigned>(ny::Keycode::k1);
-	auto k0 = static_cast<unsigned>(ny::Keycode::k0);
+	auto k1 = static_cast<unsigned>(swa_key_k1);
+	auto k0 = static_cast<unsigned>(swa_key_k0);
 	if(uk >= k1 && uk < k0) {
 		auto diff = (1 + uk - k1) % numModes;
 		debugMode_ = diff;
 		recreatePasses_ = true; // recreate, rerecord
-	} else if(ev.keycode == ny::Keycode::k0) {
+	} else if(ev.keycode == swa_key_k0) {
 		debugMode_ = 0;
 		recreatePasses_ = true; // recreate, rerecord
 	}
@@ -1671,24 +1645,24 @@ bool ViewApp::key(const ny::KeyEvent& ev) {
 	return false;
 }
 
-void ViewApp::mouseMove(const ny::MouseMoveEvent& ev) {
+void ViewApp::mouseMove(const swa_mouse_move_event& ev) {
 	App::mouseMove(ev);
 	if(rotateView_) {
-		tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+		tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
 		App::scheduleRedraw();
 	}
 }
 
-bool ViewApp::mouseButton(const ny::MouseButtonEvent& ev) {
+bool ViewApp::mouseButton(const swa_mouse_button_event& ev) {
 	if(App::mouseButton(ev)) {
 		return true;
 	}
 
-	if(ev.button == ny::MouseButton::left) {
+	if(ev.button == swa_mouse_button_left) {
 		rotateView_ = ev.pressed;
 		return true;
-	} else if(ev.pressed && ev.button == ny::MouseButton::right) {
-		auto ipos = ev.position;
+	} else if(ev.pressed && ev.button == swa_mouse_button_right) {
+		auto ipos = nytl::Vec2i {ev.x, ev.y};
 		auto& ie = swapchainInfo().imageExtent;
 		if(ipos.x >= 0 && ipos.y >= 0) {
 			auto pos = nytl::Vec2ui(ipos);
@@ -1704,10 +1678,10 @@ bool ViewApp::mouseButton(const ny::MouseButtonEvent& ev) {
 void ViewApp::updateDevice() {
 	if(recreatePasses_) {
 		recreatePasses_ = false;
-		auto wb = tkn::WorkBatcher::createDefault(device());
-		auto& qs = device().queueSubmitter();
+		auto wb = tkn::WorkBatcher::createDefault(vkDevice());
+		auto& qs = vkDevice().queueSubmitter();
 		auto qfam = qs.queue().family();
-		auto cb = device().commandAllocator().get(qfam);
+		auto cb = vkDevice().commandAllocator().get(qfam);
 		wb.cb = cb;
 
 		vk::beginCommandBuffer(cb, {});
@@ -1719,7 +1693,14 @@ void ViewApp::updateDevice() {
 		auto id = qs.add(cb);
 		qs.wait(id);
 
-		App::resize_ = true; // recreate buffers and stuff
+		recreateStaticBufs_ = true; // recreate buffers and stuff
+	}
+
+	if(recreateStaticBufs_ && renderer().swapchain()) {
+		auto e = swapchainInfo().imageExtent;
+		dlg_info("extent {} {}", e.width, e.height);
+		initStaticBuffers(e);
+		recreateStaticBufs_ = false;
 	}
 
 	geomLight_.updateDevice();
@@ -1912,7 +1893,7 @@ void ViewApp::updateDevice() {
 		si.pCommandBuffers = &selectionCb_.vkHandle();
 		si.pSignalSemaphores = &selectionSemaphore_.vkHandle();
 		si.signalSemaphoreCount = 1u;
-		device().queueSubmitter().add(si);
+		vkDevice().queueSubmitter().add(si);
 
 		// wait for blit to finish before continuing with rendering
 		App::addSemaphore(selectionSemaphore_,
@@ -1927,7 +1908,7 @@ void ViewApp::updateDevice() {
 	// TODO: inefficient, don't stall!
 	if(probe_.state == ProbeState::pending) {
 		probe_.geomLight.updateDevice();
-		auto& qs = vulkanDevice().queueSubmitter();
+		auto& qs = vkDevice().queueSubmitter();
 		qs.wait(qs.add(probe_.cb));
 
 		auto map = probe_.retrieve.memoryMap();
@@ -1962,16 +1943,25 @@ void ViewApp::updateDevice() {
 	App::updateDevice();
 }
 
-void ViewApp::resize(const ny::SizeEvent& ev) {
-	App::resize(ev);
+void ViewApp::resize(unsigned width, unsigned height) {
+	App::resize(width, height);
+
 	selectionPos_ = {};
-	camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	camera_.perspective.aspect = float(width) / height;
 	camera_.update = true;
 
-	auto pos = nytl::Vec2f(ev.size);
+	// update window transform
+	auto s = nytl::Vec{ 2.f / width, 2.f / height, 1};
+	auto transform = nytl::identity<4, float>();
+	tkn::scale(transform, s);
+	tkn::translate(transform, nytl::Vec3f {-1, -1, 0});
+	windowTransform_.matrix(transform);
+
+	// update time widget position
+	auto pos = nytl::Vec2ui{width, height};
 	pos.x -= 240;
 	pos.y = 10;
-	timeWidget_.move(pos);
+	timeWidget_.move(nytl::Vec2f(pos));
 }
 
 int main(int argc, const char** argv) {

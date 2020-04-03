@@ -1,4 +1,5 @@
 #include <tkn/app2.hpp>
+#include <tkn/transform.hpp>
 #include <dlg/dlg.hpp>
 #include <dlg/output.h>
 #include <vpp/vk.hpp>
@@ -13,6 +14,8 @@
 #include <rvg/font.hpp>
 #include <vui/gui.hpp>
 #include <vui/style.hpp>
+#include <nytl/vecOps.hpp>
+#include <nytl/matOps.hpp>
 #include <argagg.hpp>
 #include <iostream>
 #include <thread>
@@ -62,7 +65,7 @@ struct App::GuiListener : public vui::GuiListener {
 		}
 
 		currentCursor_ = cursor;
-		auto num = static_cast<unsigned>(cursor) - 1;
+		auto num = static_cast<unsigned>(cursor) + 1;
 		struct swa_cursor c {};
 		c.type = static_cast<swa_cursor_type>(num);
 		swa_window_set_cursor(app_->swaWindow(), c);
@@ -465,6 +468,7 @@ bool App::init(nytl::Span<const char*> args, Args& argsOut) {
 	devInfo.pNext = &f.base;
 
 	impl_->dev.emplace(vkInstance(), phdev, devInfo);
+	impl_->dev->hasDebugUtils = true;
 	impl_->presentq = vkDevice().queue(queueFam);
 
 	// we query the surface information needed for swapchain creation
@@ -718,6 +722,8 @@ void App::run() {
 			break;
 		}
 
+		impl_->nextFrameWait.clear();
+
 		// wait for this frame at the end of this loop
 		// this way we also wait for it when update throws
 		// since we don't want to destroy resources before
@@ -759,11 +765,28 @@ void App::dispatch() {
 	}
 }
 
-void App::update(double) {
+void App::update(double dt) {
 	dispatch();
+
+	if(impl_->gui) {
+		redraw_ |= gui().update(dt);
+	}
 }
 
 void App::updateDevice() {
+	if(impl_->rvg) {
+		auto [rec, seph] = rvgContext().upload();
+		if(seph) {
+			impl_->nextFrameWait.push_back({seph,
+				vk::PipelineStageBits::allGraphics});
+		}
+
+		if(impl_->gui) {
+			rec |= gui().updateDevice();
+		}
+
+		rerecord_ |= rec;
+	}
 }
 
 vpp::SwapchainPreferences App::swapchainPrefs(const Args& args) const {
@@ -780,22 +803,67 @@ void App::addSemaphore(vk::Semaphore seph, vk::PipelineStageFlags waitDst) {
 }
 
 void App::resize(unsigned width, unsigned height) {
+	// create renderer if it was never created
 	if(!impl_->renderer.swapchain() && hasSurface()) {
 		impl_->renderer.app_ = this;
-		impl_->renderer.init(swapchainInfo(), *impl_->presentq);
+		vpp::updateImageExtent(vkDevice().vkPhysicalDevice(),
+			impl_->swapchainInfo, {width, height});
+
+		// TODO: hack taken from the old app implementation
+		// I guess the optimal order would be
+		// - initBuffers
+		// - updateDevice
+		// - record
+		impl_->renderer.init(swapchainInfo(), *impl_->presentq,
+			{}, vpp::Renderer::RecordMode::onDemand);
+		// impl_->renderer.recordMode(vpp::Renderer::RecordMode::all);
+	}
+
+	// update gui transform if there is a gui
+	if(impl_->gui) {
+		auto s = nytl::Vec{2.f / width, 2.f / height, 1};
+		auto transform = nytl::identity<4, float>();
+		scale(transform, s);
+		translate(transform, nytl::Vec3f {-1, -1, 0});
+		gui().transform(transform);
 	}
 
 	winSize_ = {width, height};
 	resize_ = true;
 }
 
-bool App::key(const swa_key_event&) {
+bool App::key(const swa_key_event& ev) {
+	auto ret = false;
+	auto vev = vui::KeyEvent {};
+	vev.key = static_cast<vui::Key>(ev.keycode); // both modeled after linux
+	vev.modifiers = {static_cast<vui::KeyboardModifier>(ev.modifiers)};
+	vev.pressed = ev.pressed;
+	ret |= bool(gui().key(vev));
+
+	auto textable = ev.pressed && ev.utf8;
+	textable &= swa_key_is_textual(ev.keycode);
+	textable &= !(ev.modifiers & swa_keyboard_mod_ctrl);
+	if(textable) {
+		ret |= bool(gui().textInput({ev.utf8}));
+	}
+
+	return ret;
+}
+
+bool App::mouseButton(const swa_mouse_button_event& ev) {
+	if(impl_->gui) {
+		auto p = nytl::Vec2f{float(ev.x), float(ev.y)};
+		auto num = static_cast<unsigned>(ev.button) + 1;
+		auto b = static_cast<vui::MouseButton>(num);
+		return gui().mouseButton({ev.pressed, b, p});
+	}
+
 	return false;
 }
-bool App::mouseButton(const swa_mouse_button_event&) {
-	return false;
-}
-void App::mouseMove(const swa_mouse_move_event&) {
+void App::mouseMove(const swa_mouse_move_event& ev) {
+	if(impl_->gui) {
+		gui().mouseMove({nytl::Vec2f{float(ev.x), float(ev.y)}});
+	}
 }
 bool App::mouseWheel(float x, float y) {
 	(void) x;
@@ -855,6 +923,9 @@ vpp::Device& App::vkDevice() {
 const vpp::Device& App::vkDevice() const {
 	return *impl_->dev;
 }
+vpp::DebugMessenger& App::debugMessenger() {
+	return *impl_->messenger;
+}
 const vpp::DebugMessenger& App::debugMessenger() const {
 	return *impl_->messenger;
 }
@@ -878,6 +949,12 @@ const rvg::Font& App::defaultFont() const {
 }
 rvg::FontAtlas& App::fontAtlas() {
 	return *impl_->fontAtlas;
+}
+vpp::Renderer& App::renderer() {
+	return impl_->renderer;
+}
+const vpp::Renderer& App::renderer() const {
+	return impl_->renderer;
 }
 
 void App::dlgHandler(const struct dlg_origin* origin, const char* string) {
@@ -915,3 +992,4 @@ int appMain(App& app, int argc, const char** argv) {
 
 }
 } // namespace tkn
+

@@ -9,6 +9,7 @@
 #include <rvg/paint.hpp>
 #include <ny/fwd.hpp>
 #include <ny/event.hpp>
+#include <swa/swa.h>
 
 namespace tkn {
 
@@ -59,6 +60,7 @@ inline void rotateView(Camera& c, float dyaw, float dpitch) {
 // checks default wasd+qe movement
 // returns whether a change was made
 bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt);
+bool checkMovement(Camera& c, swa_display* dpy, float dt);
 
 // returns the view projection matrix to render a cubemap from position 'pos'
 // for face 'i'. Aspect is assumed to be 1.

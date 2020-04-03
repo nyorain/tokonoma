@@ -19,6 +19,8 @@
 -I./build/subprojects/ny/include
 -I./build/subprojects/vpp/include
 -I./build/subprojects/swa/include
+-I./build/subprojects/swa/src
+-I./build/subprojects/swa/b348c8a@@client_protos@sta/
 -I./build/assets
 -I./build/include
 -I./build/src/

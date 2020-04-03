@@ -12,7 +12,7 @@ const uint doubleSided = (1u << 1);
 const uint imageCount = 96u;
 // const uint samplerCount = 8u;
 // const uint imageCount = 32u;
-const uint samplerCount = 4u;
+const uint samplerCount = 6u;
 
 // TODO: don't hardcode.
 // Instead pass per spec constant
@@ -68,24 +68,6 @@ struct Material {
 	MaterialTex occlusion;
 	vec2 pad;
 };
-
-// TODO: deprecated, remove!
-// using Material in SSBOs instead
-// size: 64
-// struct MaterialPcr {
-// 	vec4 albedo;
-// 	vec3 emission;
-// 	uint flags;
-// 	float roughness;
-// 	float metallic;
-// 	float alphaCutoff;
-// 	uint albedoCoords;
-// 	uint emissionCoords;
-// 	uint normalCoords;
-// 	uint metalRoughCoords;
-// 	uint occlusionCoords;
-// };
-
 
 // returns the z value belonging to the given depth buffer value
 // obviously requires the near and far plane values that were used

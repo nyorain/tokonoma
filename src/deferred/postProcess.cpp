@@ -179,7 +179,7 @@ void PostProcessPass::updateInputs(
 	ddsu.imageSampler({{{}, bloom, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, luminance, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, scatter, vk::ImageLayout::shaderReadOnlyOptimal}});
-	ddsu.imageSampler({{{}, shadow, vk::ImageLayout::depthStencilReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, shadow, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.apply();
 }
 

@@ -52,9 +52,12 @@ public:
 	const vpp::Instance& vkInstance() const;
 	vpp::Device& vkDevice();
 	const vpp::Device& vkDevice() const;
+	vpp::DebugMessenger& debugMessenger();
 	const vpp::DebugMessenger& debugMessenger() const;
 	const vk::SwapchainCreateInfoKHR& swapchainInfo() const;
 	vk::SwapchainCreateInfoKHR& swapchainInfo();
+	vpp::Renderer& renderer();
+	const vpp::Renderer& renderer() const;
 
 	rvg::Context& rvgContext();
 	const rvg::Font& defaultFont() const;

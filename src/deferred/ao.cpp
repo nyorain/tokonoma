@@ -69,7 +69,7 @@ void AOPass::create(InitData& data, const PassCreateInfo& info) {
 	cpi.stage.pName = "main";
 	cpi.stage.pSpecializationInfo = &groupSizeSpec.spec;
 	pipe_ = {dev, cpi};
-	vpp::nameHandle(ds_, "AOPass:pipe_");
+	vpp::nameHandle(pipe_, "AOPass:pipe_");
 
 	// ubo
 	ubo_ = {data.initUbo, wb.alloc.bufHost, sizeof(params),

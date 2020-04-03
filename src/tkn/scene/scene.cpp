@@ -49,6 +49,10 @@ public:
 	}
 
 	void copy(vk::DeviceSize size) {
+		if(size == 0) {
+			return;
+		}
+
 		dlg_assert(src.size() >= srcOff + size);
 		dlg_assert(dst.size() >= dstOff + size);
 

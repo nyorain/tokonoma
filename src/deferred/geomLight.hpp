@@ -45,9 +45,10 @@ public:
 	struct InitBufferData {
 		InitTarget initNormals;
 		InitTarget initAlbedo;
-		InitTarget initDepth;
+		InitTarget initLDepth;
 		InitTarget initEmission;
 		InitTarget initLight;
+		InitTarget initDepth;
 	};
 
 	// TODO: duplication ao.hpp
@@ -71,8 +72,9 @@ public:
 		bool ao, bool flipCull = false);
 	void init(InitData&);
 
-	void createBuffers(InitBufferData&, const tkn::WorkBatcher&, vk::Extent2D);
-	void initBuffers(InitBufferData&, vk::Extent2D, vk::ImageView depth,
+	void createBuffers(InitBufferData&, const tkn::WorkBatcher&,
+		vk::Extent2D, vk::Format depthFormat);
+	void initBuffers(InitBufferData&, vk::Extent2D,
 		// following parameters only required when pass includes ao
 		vk::ImageView irradiance, vk::ImageView filteredEnv,
 		unsigned filteredEnvLods, vk::ImageView brdflut);
@@ -108,6 +110,7 @@ protected:
 	vpp::ViewableImage normals_;
 	vpp::ViewableImage albedo_;
 	vpp::ViewableImage emission_;
+	vpp::ViewableImage depth_;
 	vpp::ViewableImage ldepth_; // color, for linear sampling/mipmaps
 	vpp::ViewableImage light_;
 

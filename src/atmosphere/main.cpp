@@ -17,7 +17,7 @@
 #include <tkn/qcamera.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/glsl.hpp>
-#include <shaders/terrain.sky.vert.h>
+#include <shaders/atmosphere.sky.vert.h>
 
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
@@ -32,7 +32,7 @@
 #include <nytl/vec.hpp>
 
 #ifdef __ANDROID__
-#include <shaders/terrain.sky.frag.h>
+#include <shaders/atmosphere.sky.frag.h>
 #endif
 
 using tkn::glsl::fract;
@@ -58,11 +58,11 @@ public:
 		pipeLayout_ = {dev, {{dsLayout_}}, {}};
 
 		// pipeline
-		skyVert_ = {dev, terrain_sky_vert_data};
+		skyVert_ = {dev, atmosphere_sky_vert_data};
 #ifdef __ANDROID__
-		auto fragMod = vpp::ShaderModule{dev, terrain_sky_frag_data};
+		auto fragMod = vpp::ShaderModule{dev, atmosphere_sky_frag_data};
 #else
-		auto pfragMod = tkn::loadShader(dev, "terrain/sky.frag");
+		auto pfragMod = tkn::loadShader(dev, "atmosphere/sky.frag");
 		if(!pfragMod) {
 			dlg_error("Failed to load shader");
 			return false;
@@ -158,7 +158,7 @@ public:
 #ifndef __ANDROID__
 		if(reload_) {
 			reload_ = false;
-			auto fragMod = tkn::loadShader(device(), "terrain/sky.frag");
+			auto fragMod = tkn::loadShader(device(), "atmosphere/sky.frag");
 			if(!fragMod) {
 				dlg_error("Failed to reload shader");
 			} else {
@@ -296,7 +296,7 @@ public:
 		return true;
 	}
 
-	const char* name() const override { return "terrain"; }
+	const char* name() const override { return "atmosphere"; }
 
 public:
 	vpp::TrDsLayout dsLayout_;

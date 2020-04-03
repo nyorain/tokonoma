@@ -5,12 +5,13 @@
 
 namespace tkn {
 
-bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
+bool checkMovement(Camera& c, bool modShift, bool modCtrl,
+		std::array<bool, 6> dirs, float dt) {
 	auto fac = dt;
-	if(kc.modifiers() & ny::KeyboardModifier::shift) {
+	if(modShift) {
 		fac *= 5;
 	}
-	if(kc.modifiers() & ny::KeyboardModifier::ctrl) {
+	if(modCtrl) {
 		fac *= 0.2;
 	}
 
@@ -18,27 +19,27 @@ bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
 	auto right = nytl::normalized(nytl::cross(c.dir, yUp));
 	auto up = nytl::normalized(nytl::cross(right, c.dir));
 	bool update = false;
-	if(kc.pressed(ny::Keycode::d)) { // right
+	if(dirs[0]) { // right
 		c.pos += fac * right;
 		update = true;
 	}
-	if(kc.pressed(ny::Keycode::a)) { // left
+	if(dirs[1]) { // left
 		c.pos += -fac * right;
 		update = true;
 	}
-	if(kc.pressed(ny::Keycode::w)) { // forward
+	if(dirs[2]) { // forward
 		c.pos += fac * c.dir;
 		update = true;
 	}
-	if(kc.pressed(ny::Keycode::s)) { // backwards
+	if(dirs[3]) { // backwards
 		c.pos += -fac * c.dir;
 		update = true;
 	}
-	if(kc.pressed(ny::Keycode::q)) { // up
+	if(dirs[4]) { // up
 		c.pos += fac * up;
 		update = true;
 	}
-	if(kc.pressed(ny::Keycode::e)) { // down
+	if(dirs[5]) { // down
 		c.pos += -fac * up;
 		update = true;
 	}
@@ -48,6 +49,34 @@ bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
 	}
 
 	return update;
+}
+
+bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
+	auto mods = kc.modifiers();
+	return checkMovement(c,
+		mods & ny::KeyboardModifier::shift,
+		mods & ny::KeyboardModifier::ctrl, {
+			kc.pressed(ny::Keycode::d),
+			kc.pressed(ny::Keycode::a),
+			kc.pressed(ny::Keycode::w),
+			kc.pressed(ny::Keycode::s),
+			kc.pressed(ny::Keycode::q),
+			kc.pressed(ny::Keycode::e),
+	}, dt);
+}
+
+bool checkMovement(Camera& c, swa_display* dpy, float dt) {
+	auto mods = swa_display_active_keyboard_mods(dpy);
+	return checkMovement(c,
+		mods & swa_keyboard_mod_shift,
+		mods & swa_keyboard_mod_ctrl, {
+			swa_display_key_pressed(dpy, swa_key_d),
+			swa_display_key_pressed(dpy, swa_key_a),
+			swa_display_key_pressed(dpy, swa_key_w),
+			swa_display_key_pressed(dpy, swa_key_s),
+			swa_display_key_pressed(dpy, swa_key_q),
+			swa_display_key_pressed(dpy, swa_key_e),
+	}, dt);
 }
 
 nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
