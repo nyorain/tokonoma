@@ -1,5 +1,4 @@
 // TODO
-// - add mie scattering
 // - add terrain...
 // - maybe make the terrain planet-like and allow to leave atmosphere
 // - add tesselation shader

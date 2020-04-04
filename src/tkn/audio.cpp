@@ -5,6 +5,10 @@
 #include <thread>
 #include <chrono>
 
+#ifdef _WIN32
+	#include <Objbase.h>
+#endif
+
 // some notes:
 // - the motivation for having a seperate update thread instead
 //   of calling the update methods from the main thread is that
@@ -72,6 +76,13 @@ struct AudioPlayer::Util {
 AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
 		unsigned latencyBlocks) {
 	int rv = cubeb_set_log_callback(CUBEB_LOG_VERBOSE, Util::log);
+
+#ifdef _WIN32
+	// Needed for cubeb on windows
+	// Se cubeb.h documentation
+	auto hres = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	dlg_assert(hres == S_OK || hres == S_FALSE);
+#endif
 
 	rv = cubeb_init(&cubeb_, name, NULL);
 	if(rv) {

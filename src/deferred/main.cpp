@@ -1698,7 +1698,6 @@ void ViewApp::updateDevice() {
 
 	if(recreateStaticBufs_ && renderer().swapchain()) {
 		auto e = swapchainInfo().imageExtent;
-		dlg_info("extent {} {}", e.width, e.height);
 		initStaticBuffers(e);
 		recreateStaticBufs_ = false;
 	}

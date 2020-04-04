@@ -1,6 +1,5 @@
 #include <tkn/config.hpp>
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
 #include <argagg.hpp>
 
@@ -305,33 +304,45 @@ protected:
 	unsigned count_ {};
 };
 
-class ParticlesApp : public tkn::App {
+class ParticlesApp : public tkn::SinglePassApp {
 public:
 	// On how many frames to perform the DFT.
 	static constexpr auto frameCount = 1024;
 	static constexpr auto logFac = 1.1;
 
+	using Base = tkn::SinglePassApp;
+	struct Args : public Base::Args {
+		std::string audioFile {"test.mp3"};
+		unsigned particleCount {500'000};
+	};
+
 public:
-	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+	using Base::init;
+	bool init(nytl::Span<const char*> cargs) override {
+		Args args;
+		if(!Base::init(cargs, args)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		rvgInit();
+		auto& dev = vkDevice();
 		vpp::BufferSpan freqFactors;
 
 #ifdef TKN_WITH_AUDIO
-		if(!audioFile_.empty()) {
-			auto asset = openAsset(audioFile_);
+		if(!args.audioFile.empty()) {
+			auto asset = std::fopen(args.audioFile.c_str(), "rb");
+			// TODO: android
+			// auto asset = openAsset(audioFile_);
 			if(!asset) {
-				dlg_error("Couldn't open {}", audioFile_);
+				dlg_error("Couldn't open {}", args.audioFile);
 				return false;
 			}
 
-			audioPlayer_.emplace("particles", 0, 2, 2);
+			// audioPlayer_.emplace("particles", 0, 2, 2);
+			audioPlayer_.emplace();
 			auto& ap = *audioPlayer_;
 
-			audio_ = &ap.create<FeedbackMP3Audio>(ap, std::move(asset));
+			audio_ = &ap.create<FeedbackMP3Audio>(ap, tkn::File{asset});
 			dft_.kiss = kiss_fft_alloc(frameCount, 0, nullptr, nullptr);
 			dft_.freq.resize(frameCount);
 			dft_.time.resize(frameCount);
@@ -356,7 +367,7 @@ public:
 #endif // TKN_WITH_AUDIO
 
 		// system
-		system_.init(vulkanDevice(), renderPass(), samples(), count_,
+		system_.init(vkDevice(), renderPass(), samples(), args.particleCount,
 			freqFactors);
 
 		// gui
@@ -396,21 +407,21 @@ public:
 
 	nytl::Vec2f attractorPos(const nytl::Vec2i pos) {
 		using namespace nytl::vec::cw::operators;
-		auto normed = pos / nytl::Vec2f(window().size());
+		auto normed = pos / nytl::Vec2f(windowSize());
 		return 2 * normed - nytl::Vec{1.f, 1.f};
 	}
 
 	// TODO: mouse and touch currently not usable at the same time
 	// might crash application i guess
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			attractors_.resize(ev.pressed);
 			if(ev.pressed) {
-				attractors_[0] = attractorPos(ev.position);
+				attractors_[0] = attractorPos({ev.x, ev.y});
 			}
 
 			return true;
@@ -419,30 +430,31 @@ public:
 		return false;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		if(!attractors_.empty()) {
-			attractors_[0] = attractorPos(ev.position);
+			attractors_[0] = attractorPos({ev.x, ev.y});
 		}
 	}
 
-	bool touchBegin(const ny::TouchBeginEvent& ev) override {
-		if(App::touchBegin(ev)) {
+	bool touchBegin(const swa_touch_event& ev) override {
+		if(Base::touchBegin(ev)) {
 			return true;
 		}
 
-		auto pos = attractorPos(nytl::Vec2i(ev.pos));
+		auto pos = attractorPos(nytl::Vec2i{ev.x, ev.y});
 		attractors_.push_back(pos);
 		touchIDs_.push_back(ev.id);
 		// dlg_trace("begin: {}", ev.id);
 		return true;
 	}
 
-	bool touchEnd(const ny::TouchEndEvent& ev) override {
-		if(App::touchEnd(ev)) {
+	bool touchEnd(unsigned id) override {
+		if(Base::touchEnd(id)) {
 			return true;
 		}
 
-		auto it = std::find(touchIDs_.begin(), touchIDs_.end(), ev.id);
+		auto it = std::find(touchIDs_.begin(), touchIDs_.end(), id);
 		if(it != touchIDs_.end()) {
 			// dlg_trace("erase: {}", ev.id);
 			attractors_.erase(attractors_.begin() + (it - touchIDs_.begin()));
@@ -454,16 +466,16 @@ public:
 		return true;
 	}
 
-	void touchCancel(const ny::TouchCancelEvent&) override {
-		dlg_trace("cancel");
+	void touchCancel() override {
+		Base::touchCancel();
 		attractors_.clear();
 		touchIDs_.clear();
 	}
 
-	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
-		App::touchUpdate(ev);
+	void touchUpdate(const swa_touch_event& ev) override {
+		Base::touchUpdate(ev);
 
-		auto pos = attractorPos(nytl::Vec2i(ev.pos));
+		auto pos = attractorPos(nytl::Vec2i{ev.x, ev.y});
 		auto it = std::find(touchIDs_.begin(), touchIDs_.end(), ev.id);
 		if(it != touchIDs_.end()) {
 			attractors_[it - touchIDs_.begin()] = pos;
@@ -473,7 +485,7 @@ public:
 	}
 
 	argagg::parser argParser() const override {
-		auto parser = App::argParser();
+		auto parser = Base::argParser();
 		parser.definitions.push_back({
 			"count",
 			{"-c", "--count"},
@@ -492,20 +504,22 @@ public:
 	}
 
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if (!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result,
+			App::Args& bout) override {
+		if (!Base::handleArgs(result, bout)) {
 			return false;
 		}
 
+		auto& out = static_cast<Args&>(bout);
 		if(result["count"].count()) {
-			count_ = result["count"].as<unsigned>();
+			out.particleCount = result["count"].as<unsigned>();
 		}
 
 #ifdef TKN_WITH_AUDIO
 		if(result.has_option("audio")) {
-			audioFile_ = result["audio"].as<const char*>();
-			if(audioFile_.empty()) {
-				dlg_info("No audio file given");
+			out.audioFile = result["audio"].as<const char*>();
+			if(out.audioFile.empty()) {
+				dlg_info("The 'audio' option expects and argument");
 				return false;
 			}
 		}
@@ -524,8 +538,8 @@ public:
 	}
 
 	void update(double delta) override {
-		App::update(delta);
-		App::scheduleRedraw();
+		Base::update(delta);
+		Base::scheduleRedraw();
 		delta_ = delta;
 
 		// audio processing
@@ -557,7 +571,7 @@ public:
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 		system_.updateDevice(delta_, attractors_);
 
 		if(reset_) {
@@ -604,14 +618,12 @@ public:
 
 protected:
 	ParticleSystem system_;
-	unsigned count_ {500'000};
 	double delta_ {};
 	bool reset_ {};
 	std::vector<nytl::Vec2f> attractors_ {};
 	std::vector<unsigned> touchIDs_ {};
 
 #ifdef TKN_WITH_AUDIO
-	std::string audioFile_ {};
 	FeedbackMP3Audio* audio_ {};
 	std::optional<tkn::AudioPlayer> audioPlayer_;
 

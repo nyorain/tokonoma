@@ -709,7 +709,14 @@ void App::run() {
 		// in which we must change rendering resources.
 		if(resize_) {
 			resize_ = false;
-			impl_->renderer.recreate({winSize_.x, winSize_.y}, swapchainInfo());
+			if(!impl_->renderer.swapchain() && hasSurface()) {
+				impl_->renderer.app_ = this;
+				vpp::updateImageExtent(vkDevice().vkPhysicalDevice(),
+					impl_->swapchainInfo, {winSize_.x, winSize_.y});
+				impl_->renderer.init(swapchainInfo(), *impl_->presentq);
+			} else {
+				impl_->renderer.recreate({winSize_.x, winSize_.y}, swapchainInfo());
+			}
 		} else if(rerecord_) {
 			impl_->renderer.invalidate();
 		}
@@ -803,22 +810,6 @@ void App::addSemaphore(vk::Semaphore seph, vk::PipelineStageFlags waitDst) {
 }
 
 void App::resize(unsigned width, unsigned height) {
-	// create renderer if it was never created
-	if(!impl_->renderer.swapchain() && hasSurface()) {
-		impl_->renderer.app_ = this;
-		vpp::updateImageExtent(vkDevice().vkPhysicalDevice(),
-			impl_->swapchainInfo, {width, height});
-
-		// TODO: hack taken from the old app implementation
-		// I guess the optimal order would be
-		// - initBuffers
-		// - updateDevice
-		// - record
-		impl_->renderer.init(swapchainInfo(), *impl_->presentq,
-			{}, vpp::Renderer::RecordMode::onDemand);
-		// impl_->renderer.recordMode(vpp::Renderer::RecordMode::all);
-	}
-
 	// update gui transform if there is a gui
 	if(impl_->gui) {
 		auto s = nytl::Vec{2.f / width, 2.f / height, 1};
