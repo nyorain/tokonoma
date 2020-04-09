@@ -1360,6 +1360,7 @@ File App::openAsset(nytl::StringParam path, bool binary) {
 }
 
 // free util
+// TODO: move impl to own file
 std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 		std::string_view glslPath, nytl::StringParam args) {
 	static const auto spv = "live.frag.spv";

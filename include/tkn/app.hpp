@@ -1,6 +1,7 @@
 #pragma once
 
 #include <tkn/file.hpp>
+#include <tkn/shader.hpp>
 #include <nytl/span.hpp>
 #include <nytl/nonCopyable.hpp>
 
@@ -212,13 +213,5 @@ protected:
 		std::variant<DevType, unsigned, const char*> phdev = DevType::choose;
 	} args_ {};
 };
-
-// Utility function that compiles a shader using glslangValidator
-// Useful for live shader reloading/switching
-// Adds default include paths (src/shaders/{., include})
-// Returns none on failure. glslPath should be given relative to "src/shaders/",
-// so e.g. be just "particles.comp"
-std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
-	std::string_view glslPath, nytl::StringParam args = {});
 
 } // namespace tkn

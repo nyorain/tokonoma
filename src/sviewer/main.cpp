@@ -1,6 +1,7 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/shader.hpp>
 #include <tkn/util.hpp>
 #include <argagg.hpp>
 
@@ -14,10 +15,6 @@
 #include <vpp/submit.hpp>
 #include <vpp/util/file.hpp>
 #include <vpp/imageOps.hpp>
-
-#include <ny/key.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
 
 #include <nytl/stringParam.hpp>
 #include <nytl/vecOps.hpp>
@@ -34,8 +31,9 @@
 
 // Specification of the frag shader ubo in ./spec.glsl
 
-class ViewerApp : public tkn::App {
+class ViewerApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	static constexpr auto cacheFile = "sviewer.cache";
 
 	~ViewerApp() {
@@ -44,12 +42,12 @@ public:
 		}
 	}
 
-	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+	bool init(nytl::Span<const char*> args, Base::Args& out) override {
+		if(!Base::init(args, out)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto mem = dev.hostMemoryTypes();
 		ubo_ = {dev.bufferAllocator(), sizeof(float) * 64, // should be 'nough
 			vk::BufferUsageBits::uniformBuffer, mem};
@@ -75,7 +73,7 @@ public:
 			update.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 		}
 
-		if(!initPipe(glsl_, renderPass(), pipeline_)) {
+		if(!initPipe(shaderFile_, renderPass(), pipeline_)) {
 			return false;
 		}
 
@@ -84,24 +82,24 @@ public:
 		return true;
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
 		if (ev.pressed) {
-			if(ev.utf8 == std::string("+\0")) {
+			if(ev.utf8 && !std::strcmp(ev.utf8, "+")) {
 				++effect_;
 				dlg_info("Effect: {}", effect_);
-			} else if(effect_ && ev.utf8 == "-") {
+			} else if(effect_ && ev.utf8 && !std::strcmp(ev.utf8, "-")) {
 				--effect_;
 				dlg_info("Effect: {}", effect_);
-			} else if(ev.keycode == ny::Keycode::r) {
+			} else if(ev.keycode == swa_key_r) {
 				reload_ = true;
 				screenshot_.reloadPipe = true;
-			} else if(ev.keycode == ny::Keycode::p) {
+			} else if(ev.keycode == swa_key_p) {
 				screenshot();
-			} else {
+			} else if(ev.utf8) {
 				// check if its a number
 				unsigned num;
 				if (tkn::stoi(ev.utf8, num)) {
@@ -120,35 +118,38 @@ public:
 
 	void update(double dt) override {
 		time_ += dt;
-		App::update(dt);
-		App::scheduleRedraw(); // we always redraw; shaders are usually dynamic
+		Base::update(dt);
+		Base::scheduleRedraw(); // we always redraw; shaders are usually dynamic
 
-		auto kc = appContext().keyboardContext();
-		auto fac = dt;
-		if(kc->pressed(ny::Keycode::d)) {
-			camPos_ += nytl::Vec {fac, 0.f, 0.f};
-			App::scheduleRedraw();
-		}
-		if(kc->pressed(ny::Keycode::a)) {
-			camPos_ += nytl::Vec {-fac, 0.f, 0.f};
-			App::scheduleRedraw();
-		}
-		if(kc->pressed(ny::Keycode::w)) {
-			camPos_ += nytl::Vec {0.f, 0.f, -fac};
-			App::scheduleRedraw();
-		}
-		if(kc->pressed(ny::Keycode::s)) {
-			camPos_ += nytl::Vec {0.f, 0.f, fac};
-			App::scheduleRedraw();
-		}
-		if(kc->pressed(ny::Keycode::q)) { // up
-			camPos_ += nytl::Vec {0.f, fac, 0.f};
-			App::scheduleRedraw();
-		}
-		if(kc->pressed(ny::Keycode::e)) { // down
-			camPos_ += nytl::Vec {0.f, -fac, 0.f};
-			App::scheduleRedraw();
-		}
+		// TODO: add as real, full-featured 3D camera
+		// maybe even quaternion camera? optionally quat camera, via
+		// command line flag?
+		// auto kc = appContext().keyboardContext();
+		// auto fac = dt;
+		// if(kc->pressed(ny::Keycode::d)) {
+		// 	camPos_ += nytl::Vec {fac, 0.f, 0.f};
+		// 	Base::scheduleRedraw();
+		// }
+		// if(kc->pressed(ny::Keycode::a)) {
+		// 	camPos_ += nytl::Vec {-fac, 0.f, 0.f};
+		// 	Base::scheduleRedraw();
+		// }
+		// if(kc->pressed(ny::Keycode::w)) {
+		// 	camPos_ += nytl::Vec {0.f, 0.f, -fac};
+		// 	Base::scheduleRedraw();
+		// }
+		// if(kc->pressed(ny::Keycode::s)) {
+		// 	camPos_ += nytl::Vec {0.f, 0.f, fac};
+		// 	Base::scheduleRedraw();
+		// }
+		// if(kc->pressed(ny::Keycode::q)) { // up
+		// 	camPos_ += nytl::Vec {0.f, fac, 0.f};
+		// 	Base::scheduleRedraw();
+		// }
+		// if(kc->pressed(ny::Keycode::e)) { // down
+		// 	camPos_ += nytl::Vec {0.f, -fac, 0.f};
+		// 	Base::scheduleRedraw();
+		// }
 	}
 
 	void updateDevice() override {
@@ -161,8 +162,8 @@ public:
 		tkn::write(span, camPos_);
 
 		if(reload_) {
-			initPipe(glsl_, renderPass(), pipeline_);
-			App::scheduleRerecord();
+			initPipe(shaderFile_, renderPass(), pipeline_);
+			Base::scheduleRerecord();
 			reload_ = false;
 		}
 	}
@@ -174,29 +175,43 @@ public:
 		vk::cmdDraw(cb, 6, 1, 0, 0);
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		using namespace nytl::vec::cw::operators;
-		mpos_ = nytl::Vec2f(ev.position) / window().size();
+		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
 	}
 
-	bool initPipe(std::string_view glslFile, vk::RenderPass rp,
+	bool initPipe(std::string_view shaderFile, vk::RenderPass rp,
 			vpp::Pipeline& out) {
-		auto name = "sviewer/shaders/" + std::string(glslFile);
-		name += ".frag";
-		auto mod = tkn::loadShader(vulkanDevice(), name);
-		if(mod) {
-			fragShader_ = std::move(*mod);
-			initPipe(fragShader_, rp, out);
-			return true;
+		auto spv = shaderFile.find(".spv");
+		if(spv == shaderFile.length() - 4) {
+			try {
+				fragShader_ = vpp::ShaderModule(vkDevice(), shaderFile);
+			} catch(const std::exception& error) {
+				dlg_error("Failed loading SPIR-V shader: {}", error.what());
+				return false;
+			}
 		} else {
-			return false;
+			auto name = std::string(shaderFile);
+			if(shaderFile[0] != '/' && shaderFile[0] != '.') {
+				name = "sviewer/shaders/" + std::string(shaderFile);
+				name += ".frag";
+			}
+			auto mod = tkn::loadShader(vkDevice(), name);
+			if(!mod) {
+				return false;
+			}
+
+			fragShader_ = std::move(*mod);
 		}
+
+		initPipe(fragShader_, rp, out);
+		return true;
 	}
 
 	void initPipe(const vpp::ShaderModule& frag, vk::RenderPass rp,
 			vpp::Pipeline& out) {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		vpp::GraphicsPipelineInfo pipeInfo(rp, pipeLayout_, {{{
 			{vertShader_, vk::ShaderStageBits::vertex},
 			{frag, vk::ShaderStageBits::fragment}
@@ -207,7 +222,7 @@ public:
 	}
 
 	argagg::parser argParser() const override {
-		auto parser = App::argParser();
+		auto parser = Base::argParser();
 		auto& defs = parser.definitions;
 		auto it = std::find_if(defs.begin(), defs.end(),
 			[](const argagg::definition& def){
@@ -219,8 +234,11 @@ public:
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& parsed) override {
-		App::handleArgs(parsed);
+	bool handleArgs(const argagg::parser_results& parsed,
+			Base::Args& bout) override {
+		if(!Base::handleArgs(parsed, bout)) {
+			return false;
+		}
 
 		// try to interpret positional argument as shader
 		if(parsed.pos.size() > 1) {
@@ -229,7 +247,7 @@ public:
 		}
 
 		if(parsed.pos.size() == 1) {
-			glsl_ = parsed.pos[0];
+			shaderFile_ = parsed.pos[0];
 		}
 
 		return true;
@@ -237,10 +255,10 @@ public:
 
 	// TODO: refactor this out to general screenshot functionality
 	// (in app class?). allow to just use the swapchain image if it supports
-	// the needed usages and size is ok.
+	// the needed usages and size is ok/irrelevant.
 	void initScreenshot() {
 		auto size = vk::Extent2D {2048, 2048};
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		auto format = swapchainInfo().imageFormat;
 		auto info = vpp::ViewableImageCreateInfo(format,
@@ -307,7 +325,7 @@ public:
 			return;
 		}
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto& qs = dev.queueSubmitter();
 		qs.wait(qs.add(screenshot_.cb));
 
@@ -332,7 +350,7 @@ public:
 	bool needsDepth() const override { return false; }
 
 protected:
-	const char* glsl_ = "dummy";
+	const char* shaderFile_ = "dummy";
 	bool reload_ {};
 
 	// glsl ubo vars
@@ -351,7 +369,7 @@ protected:
 	vpp::PipelineCache cache_;
 
 	struct {
-		// TODO: use! own rp and pipe for it to make sure we
+		// TODO: use this! own rp and pipe for it to make sure we
 		// use r8g8b8a8a format. Also allows us to get rid of
 		// extra barrier
 		bool reloadPipe;
@@ -370,11 +388,6 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	ViewerApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<ViewerApp>(argc, argv);
 }
 

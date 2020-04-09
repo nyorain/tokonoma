@@ -824,21 +824,25 @@ void App::resize(unsigned width, unsigned height) {
 }
 
 bool App::key(const swa_key_event& ev) {
-	auto ret = false;
-	auto vev = vui::KeyEvent {};
-	vev.key = static_cast<vui::Key>(ev.keycode); // both modeled after linux
-	vev.modifiers = {static_cast<vui::KeyboardModifier>(ev.modifiers)};
-	vev.pressed = ev.pressed;
-	ret |= bool(gui().key(vev));
+	if(impl_->gui) {
+		auto ret = false;
+		auto vev = vui::KeyEvent {};
+		vev.key = static_cast<vui::Key>(ev.keycode); // both modeled after linux
+		vev.modifiers = {static_cast<vui::KeyboardModifier>(ev.modifiers)};
+		vev.pressed = ev.pressed;
+		ret |= bool(gui().key(vev));
 
-	auto textable = ev.pressed && ev.utf8;
-	textable &= swa_key_is_textual(ev.keycode);
-	textable &= !(ev.modifiers & swa_keyboard_mod_ctrl);
-	if(textable) {
-		ret |= bool(gui().textInput({ev.utf8}));
+		auto textable = ev.pressed && ev.utf8;
+		textable &= swa_key_is_textual(ev.keycode);
+		textable &= !(ev.modifiers & swa_keyboard_mod_ctrl);
+		if(textable) {
+			ret |= bool(gui().textInput({ev.utf8}));
+		}
+
+		return ret;
 	}
 
-	return ret;
+	return false;
 }
 
 bool App::mouseButton(const swa_mouse_button_event& ev) {
@@ -857,8 +861,11 @@ void App::mouseMove(const swa_mouse_move_event& ev) {
 	}
 }
 bool App::mouseWheel(float x, float y) {
-	(void) x;
-	(void) y;
+	if(impl_->gui) {
+		int mx, my;
+		swa_display_mouse_position(swaDisplay(), &mx, &my);
+		return gui().mouseWheel({{x, y}, {float(mx), float(my)}});
+	}
 	return false;
 }
 void App::mouseCross(const swa_mouse_cross_event&) {
