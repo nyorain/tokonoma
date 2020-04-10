@@ -1,5 +1,5 @@
 #include "util.hpp"
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/camera.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/render.hpp>
@@ -12,13 +12,6 @@
 #include <vpp/vk.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <dlg/dlg.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/appContext.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/key.hpp>
-#include <ny/event.hpp>
-#include <ny/windowContext.hpp>
-#include <ny/cursor.hpp>
 #include <argagg.hpp>
 #include <variant>
 
@@ -43,16 +36,18 @@
 
 using namespace tkn::types;
 
-class BezierApp : public tkn::App {
+class BezierApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	struct Drag {
 		u32 id;
 		float depth;
 	};
 
 public:
+	using Base::init;
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
@@ -71,7 +66,7 @@ public:
 			}}};
 		}
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto bindings = {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
@@ -153,12 +148,9 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			if(tkn::checkMovement(camera_, *kc, dt)) {
-				App::scheduleRedraw();
-			}
+		Base::update(dt);
+		if(tkn::checkMovement(camera_, swaDisplay(), dt)) {
+			Base::scheduleRedraw();
 		}
 
 		if(updateVerts_) {
@@ -171,12 +163,12 @@ public:
 				}
 			}
 
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 
 		if(camera_.update) {
 			camera_.update = false;
@@ -191,10 +183,10 @@ public:
 			nytl::Span<const std::byte> points = nytl::as_bytes(this->points());
 			if(points.size() > pointVerts_.size()) {
 				u32 size = points.size() * 2;
-				pointVerts_ = {vulkanDevice().bufferAllocator(), size,
+				pointVerts_ = {vkDevice().bufferAllocator(), size,
 					vk::BufferUsageBits::vertexBuffer,
-					vulkanDevice().hostMemoryTypes(), 8u};
-				App::scheduleRerecord();
+					vkDevice().hostMemoryTypes(), 8u};
+				Base::scheduleRerecord();
 				dlg_info("recreated pointVerts_");
 			}
 			auto map = pointVerts_.memoryMap();
@@ -205,10 +197,10 @@ public:
 			points = tkn::bytes(flattened_);
 			if(u32(points.size()) > flatVerts_.size()) {
 				u32 size = points.size() * 2;
-				flatVerts_ = {vulkanDevice().bufferAllocator(), size,
+				flatVerts_ = {vkDevice().bufferAllocator(), size,
 					vk::BufferUsageBits::vertexBuffer,
-					vulkanDevice().hostMemoryTypes(), 8u};
-				App::scheduleRerecord();
+					vkDevice().hostMemoryTypes(), 8u};
+				Base::scheduleRerecord();
 				dlg_info("recreated flagVerts_");
 			}
 
@@ -264,7 +256,7 @@ public:
 			auto ndc = tkn::multPos(proj, points[i]);
 			ndc.y = -ndc.y;
 			auto xy = 0.5f * nytl::Vec2f{ndc.x + 1, ndc.y + 1};
-			auto screen = window().size() * xy;
+			auto screen = windowSize() * xy;
 			if(length(pos - screen) < 10.f) {
 				return {{i, ndc.z}};
 			}
@@ -273,12 +265,12 @@ public:
 		return {};
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
+		auto p = Vec2f{float(ev.x), float(ev.y)};
 		if(drag_) {
 			// unproject
-			auto s = window().size();
-			auto p = Vec2f(ev.position);
+			auto s = windowSize();
 			auto xy = Vec2f{-1.f + 2 * p.x / s.x, -1.f + 2 * p.y / s.y};
 			xy.y = -xy.y;
 			auto invProj = nytl::Mat4f(nytl::inverse(matrix(camera_)));
@@ -298,32 +290,38 @@ public:
 		}
 
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
-			App::scheduleRedraw();
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
+			Base::scheduleRedraw();
 		}
 
-		if(auto i = pointAt(Vec2f(ev.position)); i) {
-			window().windowContext().cursor(ny::Cursor::Type::hand);
+		if(auto i = pointAt(p); i) {
+			swa_cursor c {};
+			c.type = swa_cursor_hand;
+			swa_window_set_cursor(swaWindow(), c);
 		} else {
-			window().windowContext().cursor(ny::Cursor::Type::leftPtr);
+			swa_cursor c {};
+			c.type = swa_cursor_default;
+			swa_window_set_cursor(swaWindow(), c);
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			if(!ev.pressed) {
 				drag_ = {};
 				rotateView_ = false;
 				return true;
 			}
 
-			drag_ = pointAt(Vec2f(ev.position));
+			drag_ = pointAt(Vec2f{float(ev.x), float(ev.y)});
 			if(drag_) {
-				window().windowContext().cursor(ny::Cursor::Type::hand);
+				swa_cursor c {};
+				c.type = swa_cursor_hand;
+				swa_window_set_cursor(swaWindow(), c);
 			} else {
 				rotateView_ = ev.pressed;
 			}
@@ -334,9 +332,9 @@ public:
 		return false;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
+		camera_.perspective.aspect = float(w) / h;
 		camera_.update = true;
 	}
 
@@ -357,8 +355,8 @@ public:
 		return clearValues;
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
@@ -366,7 +364,7 @@ public:
 			return false;
 		}
 
-		if(ev.keycode == ny::Keycode::c) {
+		if(ev.keycode == swa_key_c) {
 			if(auto* ppts = std::get_if<1>(&controlPoints_)) {
 				auto& pts = *ppts;
 				auto p = camera_.pos + camera_.dir;
@@ -377,7 +375,7 @@ public:
 				updateVerts_ = true;
 
 				// TODO: with indirect drawing we could get rid of this
-				App::scheduleRerecord();
+				Base::scheduleRerecord();
 			}
 		}
 
@@ -385,7 +383,7 @@ public:
 	}
 
 	argagg::parser argParser() const override {
-		auto parser = App::argParser();
+		auto parser = Base::argParser();
 		parser.definitions.push_back({
 			"no-spline", {"--no-spline", "-b"},
 			"Use a simple bezier curve instead of a B-Spline", 0
@@ -393,8 +391,8 @@ public:
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if(!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result, Base::Args& out) override {
+		if(!Base::handleArgs(result, out)) {
 			return false;
 		}
 
@@ -429,11 +427,6 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	BezierApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<BezierApp>(argc, argv);
 }
 

@@ -154,4 +154,72 @@ ReadError readPng(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
 	return readPng(std::move(file), ret);
 }
 
+WriteError writePng(nytl::StringParam path, ImageProvider& img) {
+	auto file = File(path, "wb");
+	if(!file) {
+		dlg_debug("fopen: {}", std::strerror(errno));
+		return WriteError::cantOpen;
+	}
+
+	auto png = png_create_write_struct(PNG_LIBPNG_VER_STRING,
+		nullptr, nullptr, nullptr);
+	if(!png) {
+		dlg_error("png_create_write_struct returned null");
+		return WriteError::internal;
+	}
+
+	auto info = png_create_info_struct(png);
+	if(!info) {
+		dlg_error("png_create_info_struct returned null");
+		return WriteError::internal;
+	}
+
+	if(::setjmp(png_jmpbuf(png))) {
+		dlg_error("png error (jmpbuf)");
+		return WriteError::internal;
+	}
+
+	png_init_io(png, file);
+	auto type = 0;
+	auto comps = 0;
+	if(img.format() == vk::Format::r8g8b8Unorm) {
+		type = PNG_COLOR_TYPE_RGB;
+		comps = 3;
+	} else if(img.format() == vk::Format::r8g8b8a8Unorm) {
+		type = PNG_COLOR_TYPE_RGBA;
+		comps = 4;
+	} else {
+		dlg_error("Can only write rgb or rgba images as png");
+		return WriteError::invalidFormat;
+	}
+
+	png_set_IHDR(png, info, img.size().x, img.size().y,
+		8, type, PNG_INTERLACE_NONE,
+    	PNG_COMPRESSION_TYPE_DEFAULT,
+    	PNG_FILTER_TYPE_DEFAULT);
+	png_write_info(png, info);
+
+	auto s = img.size();
+	auto data = img.read();
+	if(data.size() != s.x * s.y * comps) {
+		dlg_error("Invalid image data size. Expected {}, got {}",
+			s.x * s.y * comps, data.size());
+		return WriteError::readError;
+	}
+
+	auto rows = std::make_unique<png_bytep[]>(s.y);
+	for(auto y = 0u; y < img.size().y; ++y) {
+		auto off = y * s.x * comps;
+
+		// ugh, the libpng api is terrible. This param should be const
+		auto ptr = reinterpret_cast<const unsigned char*>(data.data() + off);
+		rows[y] = const_cast<unsigned char*>(ptr);
+	}
+
+	png_write_image(png, rows.get());
+	png_write_end(png, nullptr);
+	png_destroy_write_struct(&png, &info);
+	return WriteError::none;
+}
+
 } // namespace tkn

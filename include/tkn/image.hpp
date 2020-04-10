@@ -49,6 +49,8 @@ public:
 	/// For other providers (e.g. file in ram/mapped device memory) it's more
 	/// comfortable to simply return the data span instead of allocating
 	/// data and copying it.
+	// TODO: rework const-ness. Both functions should probably be const.
+	// If implementations need an extra buffer, that should be mutable.
 
 	/// Reads one full, tighly packed 2D image from the given face, mip, layer.
 	/// The returned span is only guaranteed to be valid until the next read
@@ -138,6 +140,10 @@ enum class WriteError {
 };
 
 WriteError writeKtx(nytl::StringParam path, ImageProvider&);
+
+/// Will only write the first face, layer and mipmap.
+/// Can only write rgb or rgba images.
+WriteError writePng(nytl::StringParam path, ImageProvider&);
 
 
 /// More limited in-memory representation of an image.

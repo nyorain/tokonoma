@@ -2,6 +2,7 @@
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/shader.hpp>
+#include <tkn/image.hpp>
 #include <tkn/util.hpp>
 #include <argagg.hpp>
 
@@ -330,7 +331,7 @@ public:
 		qs.wait(qs.add(screenshot_.cb));
 
 		// get data
-		screenshot_.writing = true;
+		screenshot_.writing.store(true);
 		if(screenshot_.writer.joinable()) {
 			screenshot_.writer.join();
 		}
@@ -339,8 +340,18 @@ public:
 		screenshot_.writer = std::thread([this]{
 			auto map = screenshot_.retrieve.memoryMap();
 			auto fname = "sviewer.png";
-			stbi_write_png(fname, screenshot_.width, screenshot_.height, 4,
-				(char*) map.ptr(), screenshot_.width * 4);
+
+			// - using stbi -
+			// stbi_write_png(fname, screenshot_.width, screenshot_.height, 4,
+			// 	(char*) map.ptr(), screenshot_.width * 4);
+
+			// - using writePng -
+			// much faster than stbi (seems around 10x to me) but
+			// obviously depends on libpng.
+			auto size = nytl::Vec2ui{screenshot_.width, screenshot_.height};
+			auto img = tkn::wrap(size, vk::Format::r8g8b8a8Unorm, map.span());
+			writePng(fname, *img);
+
 			screenshot_.writing.store(false);
 			dlg_info("done writing screenshot");
 		});

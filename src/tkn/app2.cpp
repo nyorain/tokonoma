@@ -40,6 +40,10 @@ Features::Features() {
 }
 
 // App::Renderer
+// We simply import the implementation from the App class basically.
+// The reason we don't simply derive App from Renderer is that their
+// interface is much cleaner this way (3 or 4 methods basically)
+// and App *is not* really a Renderer, it just uses it.
 struct App::Renderer : public vpp::Renderer {
 	Renderer() = default;
 	using vpp::Renderer::init;
@@ -53,6 +57,21 @@ struct App::Renderer : public vpp::Renderer {
 	void record(const RenderBuffer& buf) override {
 		dlg_assert(app_);
 		app_->record(buf);
+	}
+
+	// Basically exports the protected method of vpp::Renderer
+	// here as public method. Needed since we import all of this
+	// functionality to the App class and want to allow App
+	// to call the base implementation.
+	vk::Semaphore baseSubmit(const RenderBuffer& buf,
+			const vpp::RenderInfo& info,
+			std::optional<std::uint64_t>* sid) {
+		return vpp::Renderer::submit(buf, info, sid);
+	}
+
+	vk::Semaphore submit(const RenderBuffer& buf, const vpp::RenderInfo& info,
+			std::optional<std::uint64_t>* sid) override {
+		return app_->submit(buf, info, sid);
 	}
 
 	App* app_ {};
@@ -587,6 +606,11 @@ bool App::features(Features& enable, const Features& supported) {
 	}
 
 	return true;
+}
+
+vk::Semaphore App::submit(const RenderBuffer& buf,
+		const vpp::RenderInfo& info, std::optional<std::uint64_t>* sid) {
+	return impl_->renderer.baseSubmit(buf, info, sid);
 }
 
 // This may seem overly complicated but the main idea is this:

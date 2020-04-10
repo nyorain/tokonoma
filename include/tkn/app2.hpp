@@ -91,6 +91,10 @@ protected:
 	// Called for each buffer when rerecording.
 	virtual void record(const RenderBuffer&) = 0;
 
+	// Called when submitting a render buffer, see vpp::Renderer::submit.
+	virtual vk::Semaphore submit(const RenderBuffer& buf,
+		const vpp::RenderInfo& info, std::optional<std::uint64_t>* sid);
+
 	// Called before device creation with the supported features
 	// of the selected physical device (supported). Can be used to
 	// enable the supported ones.
