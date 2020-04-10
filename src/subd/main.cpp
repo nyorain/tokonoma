@@ -1,13 +1,12 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
+#include <tkn/shader.hpp>
 #include <tkn/window.hpp>
 #include <tkn/qcamera.hpp>
+#include <tkn/timeWidget.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/scene/shape.hpp>
 #include <tkn/render.hpp>
 #include <tkn/types.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/key.hpp>
-#include <ny/appContext.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/shader.hpp>
 #include <vpp/pipeline.hpp>
@@ -27,14 +26,27 @@
 
 using namespace tkn::types;
 
-class SubdApp : public tkn::App {
+class SubdApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
+	using Base::init;
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		rvgInit();
+		windowTransform_ = {rvgContext()};
+
+		timeWidget_ = {rvgContext(), defaultFont()};
+		timeWidget_.reset();
+		timeWidget_.addTiming("update");
+		timeWidget_.addTiming("build indirect");
+		timeWidget_.addTiming("copy");
+		timeWidget_.addTiming("draw");
+		timeWidget_.complete();
+
+		auto& dev = vkDevice();
 
 		// camera/scene ubo
 		auto uboSize = 2 * sizeof(nytl::Mat4f) + sizeof(nytl::Vec3f) + sizeof(u32);
@@ -51,8 +63,8 @@ public:
 			dev.deviceMemoryTypes()};
 
 		// vertices/indices
-		auto planet = tkn::Sphere {{0.f, 0.f, 0.f}, {4.f, 4.f, 4.f}};
-		auto shape = tkn::generateUV(planet, 16, 16);
+		auto planet = tkn::Sphere {{0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}};
+		auto shape = tkn::generateUV(planet, 4, 8);
 		std::vector<nytl::Vec4f> vverts;
 		for(auto& v : shape.positions) vverts.emplace_back(v);
 		auto verts = tkn::bytes(vverts);
@@ -71,25 +83,25 @@ public:
 		// TODO: allow buffers to grow dynamically
 		// condition can simply be checked. Modify compute shaders
 		// to check for out-of-bounds
-		auto triCount = 1024 * 1024;
+		auto triCount = 10 * 1024 * 1024;
 		auto bufSize = triCount * sizeof(nytl::Vec2u32);
 		auto usage = vk::BufferUsageBits::vertexBuffer |
 			vk::BufferUsageBits::storageBuffer |
 			vk::BufferUsageBits::transferSrc |
 			vk::BufferUsageBits::transferDst;
 
-		keys0_ = {dev.bufferAllocator(), bufSize, usage, dev.deviceMemoryTypes()};
+		keys0_ = {dev.bufferAllocator(), bufSize + 8, usage, dev.deviceMemoryTypes()};
 		keys1_ = {dev.bufferAllocator(), bufSize + 8, usage, dev.deviceMemoryTypes()};
 		keysCulled_ = {dev.bufferAllocator(), bufSize + 8, usage, dev.deviceMemoryTypes()};
 
 		// write initial data to buffers
 		tkn::DynamicBuffer data0;
-		// write(data0, u32(1)); // counter
-		// write(data0, 0.f); // padding
-		// initial triangle 0: the key is the root node (1) and
-		// the index is 0.
+
 		dlg_assert(shape.indices.size() % 3 == 0);
 		auto numTris = shape.indices.size() / 3;
+		write(data0, u32(numTris)); // counter
+		write(data0, 0.f); // padding
+
 		for(auto i = 0u; i < numTris; ++i) {
 			write(data0, nytl::Vec2u32 {1, i});
 		}
@@ -134,7 +146,7 @@ public:
 	}
 
 	void initGfx() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto bindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer),
@@ -152,7 +164,7 @@ public:
 	}
 
 	void initUpdateComp() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto bindings = {
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // read
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // write
@@ -176,7 +188,7 @@ public:
 	}
 
 	void initIndirectComp() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto bindings = {
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // dispatch buf
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // counter keys1
@@ -194,7 +206,7 @@ public:
 	}
 
 	bool createPipes() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 #ifdef __ANDROID__
 		#error "Not supported atm"
@@ -255,7 +267,7 @@ public:
 		gpi.depthStencil.depthTestEnable = true;
 		gpi.depthStencil.depthWriteEnable = true;
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
-		gpi.rasterization.cullMode = vk::CullModeBits::none;
+		gpi.rasterization.cullMode = vk::CullModeBits::back;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 		gpi.rasterization.polygonMode = vk::PolygonMode::fill;
 
@@ -271,7 +283,7 @@ public:
 		gpi.vertex.pVertexBindingDescriptions = &bufferBinding;
 		gpi.vertex.vertexBindingDescriptionCount = 1u;
 
-		gfx_.pipe = {vulkanDevice(), gpi.info()};
+		gfx_.pipe = {vkDevice(), gpi.info()};
 
 		// wirte pipe
 		gpi.program = {{{
@@ -282,12 +294,14 @@ public:
 		gpi.depthStencil.depthTestEnable = true;
 		gpi.depthStencil.depthWriteEnable = false;
 		gpi.rasterization.polygonMode = vk::PolygonMode::line;
-		gfx_.wirePipe = {vulkanDevice(), gpi.info()};
+		gfx_.wirePipe = {vkDevice(), gpi.info()};
 
 		return true;
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
+		timeWidget_.start(cb);
+
 		// reset counter in dst buffer to 0
 		vk::cmdFillBuffer(cb, keys1_.buffer(), keys1_.offset(), 4, 0);
 		vk::cmdFillBuffer(cb, keysCulled_.buffer(), keysCulled_.offset(), 4, 0);
@@ -318,6 +332,7 @@ public:
 		tkn::cmdBindComputeDescriptors(cb, comp_.update.pipeLayout, 0, {comp_.update.ds});
 		vk::cmdDispatchIndirect(cb, comp_.dispatch.buffer(),
 			comp_.dispatch.offset() + sizeof(vk::DrawIndirectCommand));
+		timeWidget_.addTimestamp(cb);
 
 		// make sure updates in keys1_ is visible
 		vk::BufferMemoryBarrier barrier0;
@@ -349,14 +364,15 @@ public:
 		tkn::cmdBindComputeDescriptors(cb, comp_.indirect.pipeLayout, 0,
 			{comp_.indirect.ds});
 		vk::cmdDispatch(cb, 1, 1, 1);
+		timeWidget_.addTimestamp(cb);
 
 		// copy from keys1_ (the new triangles) to keys0_ (which are
 		// used for drawing and in the next update step).
 		// we could alternatively use ping-ponging and do 2 steps per
 		// frame or just use 2 completely independent command buffers.
 		// May be more efficient but harder to sync.
-		auto keys1 = vpp::BufferSpan(keys1_.buffer(), keys1_.size() - 8,
-			keys1_.offset() + 8);
+		auto keys1 = vpp::BufferSpan(keys1_.buffer(), keys1_.size(),
+			keys1_.offset());
 		tkn::cmdCopyBuffer(cb, keys1, keys0_);
 
 		barrier0.srcAccessMask = vk::AccessBits::transferWrite;
@@ -380,6 +396,7 @@ public:
 				vk::PipelineStageBits::drawIndirect |
 				vk::PipelineStageBits::computeShader,
 			{}, {}, {{barrier0, barrier1, barrierIndirect}}, {});
+		timeWidget_.addTimestamp(cb);
 	}
 
 	void render(vk::CommandBuffer cb) override {
@@ -392,25 +409,30 @@ public:
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.wirePipe);
 		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
+
+		rvgContext().bindDefaults(cb);
+		windowTransform_.bind(cb);
+
+		timeWidget_.draw(cb);
+		timeWidget_.addTimestamp(cb);
+		timeWidget_.finish(cb);
 	}
 
 	void update(double dt) override {
-		App::update(dt);
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			// tkn::checkMovement(camera_, *kc, dt);
-			tkn::QuatCameraMovement movement {};
-			movement.fastMult = 10.f;
-			movement.slowMult = 0.25f;
-			checkMovement(camera_, *kc, 0.25 * dt, movement);
+		Base::update(dt);
 
-			if(kc->pressed(ny::Keycode::z)) {
-				rollVel_ -= 0.25 * dt;
-			}
+		// tkn::checkMovement(camera_, *kc, dt);
+		tkn::QuatCameraMovementSwa movement {};
+		movement.fastMult = 5.f;
+		movement.slowMult = 0.05f;
+		checkMovement(camera_, swaDisplay(), dt, movement);
 
-			if(kc->pressed(ny::Keycode::x)) {
-				rollVel_ += 0.25 * dt;
-			}
+		if(swa_display_key_pressed(swaDisplay(), swa_key_z)) {
+			rollVel_ -= 0.1 * dt;
+		}
+
+		if(swa_display_key_pressed(swaDisplay(), swa_key_x)) {
+			rollVel_ += 0.1 * dt;
 		}
 
 		if(rotateView_) {
@@ -421,26 +443,29 @@ public:
 			tkn::rotateView(camera_, yaw, pitch, 0.f);
 		}
 
+		rollVel_ *= std::pow(0.001, dt);
 		tkn::rotateView(camera_, 0.f, 0.f, rollVel_);
-		rollVel_ *= std::pow(0.01, dt);
 
 		if(camera_.update) {
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
 	}
 
 	void updateDevice() override {
+		Base::updateDevice();
 		if(update_) {
 			updateStep_ = true;
 		}
+
+		timeWidget_.updateDevice();
 
 		// update scene ubo
 		if(camera_.update) {
 			camera_.update = false;
 
 			auto fov = 0.35 * nytl::constants::pi;
-			auto aspect = float(window().size().x) / window().size().y;
-			auto near = 0.01f;
+			auto aspect = float(windowSize().x) / windowSize().y;
+			auto near = 0.001f;
 			auto far = 30.f;
 
 			auto map = ubo_.memoryMap();
@@ -461,40 +486,30 @@ public:
 		if(reload_) {
 			createPipes();
 			reload_ = false;
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		}
 
 		updateStep_ = false;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
-		// if(rotateView_) {
-			// tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
-			// App::scheduleRedraw();
-		// }
-
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		using namespace nytl::vec::cw::operators;
-		mpos_ = nytl::Vec2f(ev.position) / window().size();
+		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
 	}
 
-	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
-		if(App::mouseWheel(ev)) {
-			return true;
-		}
-
-		tkn::rotateView(camera_, 0.f, 0.f, 0.1 * ev.value.x);
-		return true;
+	bool mouseWheel(float dx, float dy) override {
+		return Base::mouseWheel(dx, dy);
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
 		using namespace nytl::vec::cw::operators;
-		auto mpos = nytl::Vec2f(ev.position) / window().size();
-		if(ev.button == ny::MouseButton::left) {
+		auto mpos = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			mposStart_ = mpos;
 			return true;
@@ -503,8 +518,8 @@ public:
 		return false;
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
@@ -512,17 +527,17 @@ public:
 			return false;
 		}
 
-		if(ev.keycode == ny::Keycode::r) {
+		if(ev.keycode == swa_key_r) {
 #ifndef __ANDROID__
 			reload_ = true;
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 			return true;
 #endif
-		} else if(ev.keycode == ny::Keycode::o) { // update step
+		} else if(ev.keycode == swa_key_o) { // update step
 			updateStep_ = true;
 			dlg_info("Doing one update step next frame");
 			return true;
-		} else if(ev.keycode == ny::Keycode::p) { // constant updating
+		} else if(ev.keycode == swa_key_p) { // constant updating
 			update_ = !update_;
 			dlg_info("update: {}", update_);
 			return true;
@@ -531,10 +546,23 @@ public:
 		return false;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
 		// camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 		camera_.update = true;
+
+		// update window transform
+		auto s = nytl::Vec{ 2.f / w, 2.f / h, 1};
+		auto transform = nytl::identity<4, float>();
+		tkn::scale(transform, s);
+		tkn::translate(transform, nytl::Vec3f {-1, -1, 0});
+		windowTransform_.matrix(transform);
+
+		// update time widget position
+		auto pos = nytl::Vec2ui{w, h};
+		pos.x -= 240;
+		pos.y = 10;
+		timeWidget_.move(nytl::Vec2f(pos));
 	}
 
 	const char* name() const override { return "subd"; }
@@ -587,15 +615,13 @@ protected:
 	bool updateStep_ {false};
 
 	float rollVel_ {0.f};
+
+	tkn::TimeWidget timeWidget_;
+	rvg::Transform windowTransform_;
 };
 
 int main(int argc, const char** argv) {
-	SubdApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	tkn::appMain<SubdApp>(argc, argv);
 }
 
 

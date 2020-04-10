@@ -56,6 +56,23 @@ float vfbm(vec2 st) {
 	return sum;
 }
 
+float tfbm(vec2 st) {
+	float sum = 0.f;
+	float lacunarity = 2.0;
+	float gain = 0.3;
+
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	for(int i = 0; i < 4; ++i) {
+		sum += amp * gradientNoise(mod * st);
+		mod *= lacunarity;
+		amp *= gain;
+		st = lacunarity * st;
+	}
+
+	return sum;
+}
+
 void main() {
 	vec2 uv = 2 * inuv - 1;
 	uv = 10 * inuv;
@@ -86,6 +103,8 @@ void main() {
 		d = fbm(150 * vec2(sin(d), cos(d)) * fbm(vec2(d, -d)));
 	} else if(ubo.effect == counter++) {
 		d = fbm(uv + mfbm(uv + fbm(uv)));
+	} else if(ubo.effect == counter++) {
+		d = 0.5 * tfbm(0.1 + 8 * uv);
 	}
 
 	outcol = d * vec4(rgb, 1.0);

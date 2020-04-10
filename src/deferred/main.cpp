@@ -9,6 +9,7 @@
 #include "scatter.hpp"
 #include "graph.hpp"
 
+#include <tkn/timeWidget.hpp>
 #include <tkn/app2.hpp>
 #include <tkn/f16.hpp>
 #include <tkn/render.hpp>
@@ -229,7 +230,7 @@ protected:
 	vpp::ShaderModule fullVertShader_;
 
 	bool hideTimeWidget_ {false};
-	TimeWidget timeWidget_;
+	tkn::TimeWidget timeWidget_;
 
 	struct {
 		vui::dat::Label* luminance;
@@ -1330,7 +1331,6 @@ bool ViewApp::handleArgs(const argagg::parser_results& result, App::Args& bout) 
 void ViewApp::record(const RenderBuffer& buf) {
 	auto cb = buf.commandBuffer;
 	vk::beginCommandBuffer(cb, {});
-	vk::cmdResetQueryPool(cb, timeWidget_.queryPool(), 0, timeWidget_.maxCount);
 
 	timeWidget_.start(cb);
 

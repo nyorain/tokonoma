@@ -516,7 +516,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		nytl::Span<const tkn::PointLight*> pointLights,
 		nytl::Span<const tkn::DirLight*> dirLights, vpp::BufferSpan boxIndices,
 		vk::DescriptorSet envCamDs, const tkn::Environment* env,
-		TimeWidget* time) {
+		tkn::TimeWidget* time) {
 	auto& dev = rp_.device();
 	vpp::DebugLabel(dev, cb, "GeomLightPass");
 	auto width = size.width;

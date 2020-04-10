@@ -5,9 +5,10 @@
 #include "noise.glsl"
 #include "subd.glsl"
 
+layout(local_size_x = 32) in;
 layout(set = 0, binding = 0) readonly buffer OldKeys {
-	// uint counter;
-	// float _pad;
+	uint counter;
+	float _pad;
 	uvec2 keys[];
 } old;
 
@@ -128,6 +129,9 @@ uint insideFrustum(vec3 p) {
 
 void main() {
 	uint id = gl_GlobalInvocationID.x;
+	if(id >= old.counter) {
+		return;
+	}
 
 	// assert(id < old.counter);
 	uvec2 oldkey = old.keys[id];

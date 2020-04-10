@@ -8,7 +8,7 @@
 #include <rvg/paint.hpp>
 #include <rvg/shapes.hpp>
 
-using namespace tkn::types;
+namespace tkn {
 
 // NOTE: the api here is weird and maybe even a bit counter-intuitive.
 // Not really sure though how this could be done better for now.
@@ -99,3 +99,4 @@ protected:
 	rvg::Text totalTime;
 };
 
+} // namespace tkn

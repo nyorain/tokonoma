@@ -3,10 +3,14 @@
 
 // Converts a single subdivision bit into the corresponding
 // barycentric matrix.
+// We have changed it in comparison to the paper so that subdivision
+// preserves ccw orientation of triangles.
 mat3 bitToMat(in bool bit) {
 	float s = (bit ? 0.5f : -0.5f);
-	vec3 c1 = vec3(s, -0.5, 0);
-	vec3 c2 = vec3(-0.5, -s, 0);
+	vec3 c1 = vec3(-0.5, -s, 0);
+	vec3 c2 = vec3(s, -0.5, 0);
+	// vec3 c1 = vec3(s, -0.5, 0);
+	// vec3 c2 = vec3(-0.5, -s, 0);
 	vec3 c3 = vec3(0.5, 0.5, 1);
 	return mat3(c1, c2, c3);
 }
@@ -68,6 +72,33 @@ vec3 noised( in vec2 p ) {
     vec2 gb = random2( i + vec2(1.0,0.0) );
     vec2 gc = random2( i + vec2(0.0,1.0) );
     vec2 gd = random2( i + vec2(1.0,1.0) );
+    
+    float va = dot( ga, f - vec2(0.0,0.0) );
+    float vb = dot( gb, f - vec2(1.0,0.0) );
+    float vc = dot( gc, f - vec2(0.0,1.0) );
+    float vd = dot( gd, f - vec2(1.0,1.0) );
+
+    return vec3( va + u.x*(vb-va) + u.y*(vc-va) + u.x*u.y*(va-vb-vc+vd),   // value
+                 ga + u.x*(gb-ga) + u.y*(gc-ga) + u.x*u.y*(ga-gb-gc+gd) +  // derivatives
+                 du * (u.yx*(va-vb-vc+vd) + vec2(vb,vc) - va));
+}
+
+vec3 noisedp( in vec2 p, in vec2 per) {
+    ivec2 i = ivec2(floor( p ));
+    vec2 f = fract( p );
+
+    vec2 u = f*f*f*(f*(f*6.0-15.0)+10.0);
+    vec2 du = 30.0*f*f*(f*(f-2.0)+1.0);
+
+    // vec2 ga = random2( i + vec2(0.0,0.0));
+    // vec2 gb = random2( i + vec2(1.0,0.0));
+    // vec2 gc = random2( i + vec2(0.0,1.0));
+    // vec2 gd = random2( i + vec2(1.0,1.0));
+    
+    vec2 ga = random2( mod(i + ivec2(0,0), ivec2(per)) );
+    vec2 gb = random2( mod(i + ivec2(1,0), ivec2(per)) );
+    vec2 gc = random2( mod(i + ivec2(0,1), ivec2(per)) );
+    vec2 gd = random2( mod(i + ivec2(1,1), ivec2(per)) );
     
     float va = dot( ga, f - vec2(0.0,0.0) );
     float vb = dot( gb, f - vec2(1.0,0.0) );
@@ -176,67 +207,90 @@ vec4 gfbm(vec3 st) {
 	return sum;
 }
 
-float mfbm(vec2 st) {
-	float sum = 0.f;
+vec3 mfbm(vec2 st, vec2 dom) {
+	vec3 sum = vec3(0.f);
 	float lacunarity = 2.0;
 	float gain = 0.3;
 
 	float amp = 0.5f; // ampliture
 	float mod = 1.f; // modulation
 	for(int i = 0; i < 4; ++i) {
-		sum += amp * gradientNoise(mod * st);
+		vec3 tmp = amp * noisedp(mod * st, dom);
+		tmp.yz *= mod;
+		sum += tmp;
 		mod *= lacunarity;
+		dom *= lacunarity;
 		amp *= gain;
-		st = lacunarity * st;
 	}
 
 	return sum;
 }
 
+const float pi = 3.1415;
+// Transform of coords on unit sphere to spherical coordinates (theta, phi)
+vec2 sph2(vec3 pos) {
+	// TODO: undefined output in that case...
+	// if(abs(pos.y) > 0.999) {
+	// 	return vec2(0, (pos.y > 0) ? 0.0001 : pi);
+	// }
+	float theta = atan(pos.z, pos.x);
+	float phi = atan(length(pos.xz), pos.y);
+	return vec2(theta, phi);
+}
+
+// Derivation of spherical coordinates in euclidean space with respect to theta.
+vec3 sph_dtheta(float radius, float theta, float phi) {
+	float sp = sin(phi);
+	return radius * vec3(-sin(theta) * sp, 0, cos(theta) * sp);
+}
+
+// Derivation of spherical coordinates in euclidean space with respect to phi.
+vec3 sph_dphi(float radius, float theta, float phi) {
+	float cp = cos(phi);
+	float sp = sin(phi);
+	return radius * vec3(cos(theta) * cp, -sp, sin(theta) * cp);
+}
+
 vec3 displace(vec3 pos, out vec3 normal, out float height) {
-	// normal = normalize(pos);
-	// height = 1.f;
-	// return pos;
+	const float radius = 5.0;
 
-	const float radius = 4.0; // TODO
-	float fac = 4.0;
+	pos = normalize(pos);
+	vec2 tp = sph2(pos);
 
-	float theta = atan(pos.y, pos.x);
-	float phi = atan(length(pos.xy), pos.z);
+	float theta = tp[0];
+	float phi = tp[1];
+	float fac = 3 * sqrt(radius);
 
-	// float a = sin(a1);
-	// float b = cos(a2);
-	normal = normalize(pos);
+	// TODO
+	float freq = 4;
+	// float sp = sin(phi);
+	float sp = 1;
+	vec2 mod1 = freq * vec2(sp, 1);
+	vec2 dom = freq * vec2(2 * sp, 1) * pi;
+	if(dom.x < 1.001) {
+		// mod1.x = 0.0;
+		// dom.x = 1.0001;
+	}
+	vec3 off = (fac / freq) * mfbm(mod1 * vec2(theta, phi), dom);
+	off.y = cos(phi) * off.y;
+	off.yz *= freq;
 
-	// vec3 f = 2 * gfbm(vec2(theta, phi));
-	// vec4 f = fac * gfbm(pos);
-	float off = 0.5 * mfbm(0.1 + 8 * vec2(theta, phi));
-	off += radius - length(pos);
-	// float off = 1.f;
-	pos += off * normal;
-	height = off;
+	vec3 dphi = sph_dphi(radius, theta, phi);
+	vec3 dtheta = sph_dtheta(radius, theta, phi);
+	vec3 nn = cross(
+		(1 + off.x) * dtheta + off.y * pos, 
+		(1 + off.x) * dphi + off.z * pos);
+	// vec3 nn = vec3(tp, 1.0);
+	// vec3 nn = cross(dtheta, dphi);
+	if(abs(pos.y) > 0.999) {
+		nn = vec3(0, sign(pos.y), 0);
+	}
 
-	// TODO: probably not correct. lookup normal blending/mixing
-	
-	/*
-	vec3 dtheta = vec3(
-		cos(theta) * cos(phi),
-		cos(theta) * sin(phi),
-		-sin(theta));
-	vec3 dphi = vec3(
-		-sin(theta) * sin(phi),
-		sin(theta) * cos(phi),
-		0);
+	pos = radius * pos;
+	pos += off.x * normalize(pos);
+	height = off.x;
 
-	// normal = normalize(normal + fac * f.yzw);
-	// normal = normalize(normal + fac * (f.y * dtheta + f.z * dphi));
-	normal = normalize(normal - f.y * dtheta - f.z * dphi);
-	// normal = normalize(cross(dtheta, dphi));
-	// normal = vec3(f.yz, 0);
-	// normal = normalize(pos);
-	// */
-	//
-	normal = normalize(pos);
+	normal = normalize(nn);
 	return pos;
 }
 
@@ -247,8 +301,7 @@ float distanceToLOD(float z) {
 	const float fov = 0.35 * 3.141;
 	const float targetPixelSize = 1.f;
 	// const float screenResolution = 30.f;
-	const float screenResolution = 40.f;
-
+	const float screenResolution = 300.f; 
 	float s = z * tan(fov / 2);
 	float tmp = s * targetPixelSize / screenResolution;
 
@@ -256,6 +309,6 @@ float distanceToLOD(float z) {
 	// if e.g. you want to have a focus on near triangles
 	//   make it larger than 2.0, otherwise smaller.
 	float fac = 2;
-	return clamp(-fac * log2(clamp(tmp, 0.0, 1.0)), 1, 31);
+	return clamp(-fac * log2(clamp(tmp, 0.0, 1.0)), 1, 30);
 }
 

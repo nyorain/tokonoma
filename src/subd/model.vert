@@ -164,7 +164,8 @@ void main() {
 	// outColor = 0.5 * vec3(k, 0, 1-k);
 	outColor += 0.5 * colorMap[cidx];
 
-	outPos = pos;
+	// https://www.enkisoftware.com/devlogpost-20150131-1-Normal-generation-in-the-pixel-shader
+	outPos = pos - scene.pos;
 	gl_Position = vec4(pos, 1.0);
 
 #ifndef NO_TRANSFORM

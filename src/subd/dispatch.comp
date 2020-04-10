@@ -28,5 +28,7 @@ layout(set = 0, binding = 2) buffer Culled {
 
 void main() {
 	cmds.draw.instanceCount = culled.counter;
-	cmds.dispatch.x = keys.counter;
+
+	// NOTE: 32.f here linked to local_size_x in update.comp
+	cmds.dispatch.x = int(ceil(keys.counter / 32.f));
 }

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "pass.hpp"
-#include "timeWidget.hpp"
+#include <tkn/timeWidget.hpp>
 #include <tkn/render.hpp>
 #include <tkn/types.hpp>
 
@@ -84,7 +84,7 @@ public:
 		vk::DescriptorSet camDs, const tkn::Scene& scene,
 		nytl::Span<const tkn::PointLight*>, nytl::Span<const tkn::DirLight*>,
 		vpp::BufferSpan boxIndices, vk::DescriptorSet envCamDs,
-		const tkn::Environment* env, TimeWidget* time);
+		const tkn::Environment* env, tkn::TimeWidget* time);
 	void updateDevice();
 	// SyncScope srcScopeLight() const;
 

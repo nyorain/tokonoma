@@ -1,5 +1,8 @@
-#include "timeWidget.hpp"
+#include <tkn/timeWidget.hpp>
+#include <vpp/debug.hpp>
 #include <dlg/dlg.hpp>
+
+namespace tkn {
 
 TimeWidget::TimeWidget(rvg::Context& ctx, const rvg::Font& font) :
 		ctx_(&ctx), font_(font) {
@@ -7,6 +10,7 @@ TimeWidget::TimeWidget(rvg::Context& ctx, const rvg::Font& font) :
 	qpi.queryCount = maxCount + 1;
 	qpi.queryType = vk::QueryType::timestamp;
 	pool_ = {ctx.device(), qpi};
+	vpp::nameHandle(pool_, "TimeWidget:pool_");
 
 	bgPaint_ = {rvgContext(), rvg::colorPaint({20, 20, 20, 200})};
 	fgPaint_ = {rvgContext(), rvg::colorPaint({230, 230, 230, 255})};
@@ -132,6 +136,7 @@ void TimeWidget::complete() {
 
 void TimeWidget::start(vk::CommandBuffer cb) {
 	// write initial timing
+	vk::cmdResetQueryPool(cb, pool_, 0, maxCount);
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe, pool_, 0);
 	id_ = 0;
 }
@@ -159,3 +164,5 @@ void TimeWidget::toggleRelative() {
 	relative_ ^= true;
 	updateCounter_ = updateAfter_;
 }
+
+} // namespace tkn
