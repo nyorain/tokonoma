@@ -47,7 +47,9 @@ protected:
 	virtual void afterRender(vk::CommandBuffer) {}
 
 	using App::rvgInit;
-	virtual void rvgInit() { App::rvgInit(renderPass(), 0, samples()); }
+	virtual void rvgInit(unsigned subpass = 0) {
+		App::rvgInit(renderPass(), subpass, samples());
+	}
 
 	virtual vpp::ViewableImage createDepthTarget(const vk::Extent2D&);
 	virtual vpp::ViewableImage createMultisampleTarget(const vk::Extent2D&);

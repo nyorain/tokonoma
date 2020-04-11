@@ -17,12 +17,32 @@
 #include <vpp/submit.hpp>
 #include <vpp/commandAllocator.hpp>
 
-#ifdef __ANDROID__
-#include <shaders/subd.model.vert.h>
-#include <shaders/subd.model.frag.h>
-#include <shaders/subd.update.comp.h>
-#include <shaders/subd.dispatch.comp.h>
-#endif
+// TODO: maybe create separate application? that share a "terrain" class?
+// - create custom renderpass with 2 subpasses
+//   the second subpass gets the depth buffer as input attachment
+// - in second subpass: render atmosphere (ball) with scattering shader
+// - add sun shadow mapping
+//   use that for scattering
+//   but instead of using the whole frustum, shadow map only a part
+//   around the camera (within the frustum). Make sure the transition
+//   is at least linear though
+//   	- check if global illumination can be implemented
+// - add scattering and subdiv parameters to ui
+// - add skybox with custom universe shader
+// - add third subpass (that gets previous color as input) for tonemapping
+// - add textures (and normal maps) to terrain
+//   tile them dynamically, see iq's blogpost
+// - make terrain generation more interesting. Deserts, seas, oceans,
+//   lakes, rivers, etc. Maybe do some heavy pre-computations
+//   modeling planet plates?
+//   	- (way) later: don't model planets as surfaces anymore but
+//   	  allow more general 3D noise patterns. Not sure how to
+//   	  render yet. I mean raymarching could work?
+//   	  maybe we can use raymarching to generate/subdivide
+//   	  primitives but then render those normally?
+// - (way later) add foliage: dynamically add grass (or at low lod approx it
+//   via noise in the texture) and maybe trees?
+// - TAA would be really useful with scattering
 
 using namespace tkn::types;
 
@@ -208,14 +228,6 @@ public:
 	bool createPipes() {
 		auto& dev = vkDevice();
 
-#ifdef __ANDROID__
-		#error "Not supported atm"
-
-		// auto modelVert = vpp::ShaderModule{dev, subd_model_vert_data};
-		// auto modelFrag = vpp::ShaderModule{dev, subd_model_frag_data};
-		// auto updateComp = vpp::ShaderModule{dev, subd_update_comp_data};
-		// auto dispatchComp = vpp::ShaderModule{dev, subd_dispatch_comp_data};
-#else
 		bool failed = false;
 		auto load = [&](auto name, const char* args = "") {
 			auto pmod = tkn::loadShader(dev, name, args);
@@ -528,11 +540,9 @@ public:
 		}
 
 		if(ev.keycode == swa_key_r) {
-#ifndef __ANDROID__
 			reload_ = true;
 			Base::scheduleRedraw();
 			return true;
-#endif
 		} else if(ev.keycode == swa_key_o) { // update step
 			updateStep_ = true;
 			dlg_info("Doing one update step next frame");
