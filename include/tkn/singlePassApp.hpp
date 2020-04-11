@@ -30,13 +30,6 @@ protected:
 	// Creates the default render pass
 	virtual vpp::RenderPass createRenderPass();
 
-	// Called by the default createRenderPass implementation to
-	// add the subpass dependencies. By default returns an empty
-	// vector.
-	// TODO: maybe return full sync external dependency by default?
-	// and only let apps overwrite it for more performance?
-	virtual std::vector<vk::SubpassDependency> subpassDependencies() const;
-
 	// Called by the default record implemention when starting
 	// the renderpass instance.
 	virtual std::vector<vk::ClearValue> clearValues();

@@ -1,6 +1,8 @@
 // See https://jadkhoury.github.io/files/MasterThesisFinal.pdf
 // and the corresponding paper for more details and code.
 
+#include "snoise.glsl"
+
 // Converts a single subdivision bit into the corresponding
 // barycentric matrix.
 // We have changed it in comparison to the paper so that subdivision
@@ -207,19 +209,19 @@ vec4 gfbm(vec3 st) {
 	return sum;
 }
 
-vec3 mfbm(vec2 st, vec2 dom) {
-	vec3 sum = vec3(0.f);
+vec4 mfbm(vec3 st) {
+	vec4 sum = vec4(0.f);
 	float lacunarity = 2.0;
-	float gain = 0.3;
+	float gain = 0.5;
 
 	float amp = 0.5f; // ampliture
 	float mod = 1.f; // modulation
-	for(int i = 0; i < 4; ++i) {
-		vec3 tmp = amp * noisedp(mod * st, dom);
-		tmp.yz *= mod;
-		sum += tmp;
+	for(int i = 0; i < 8; ++i) {
+		vec3 grad;
+		float tmp = amp * snoise(mod * st, grad);
+		grad = amp * mod * grad;
+		sum += vec4(tmp, grad);
 		mod *= lacunarity;
-		dom *= lacunarity;
 		amp *= gain;
 	}
 
@@ -230,9 +232,9 @@ const float pi = 3.1415;
 // Transform of coords on unit sphere to spherical coordinates (theta, phi)
 vec2 sph2(vec3 pos) {
 	// TODO: undefined output in that case...
-	// if(abs(pos.y) > 0.999) {
-	// 	return vec2(0, (pos.y > 0) ? 0.0001 : pi);
-	// }
+	if(abs(pos.y) > 0.999) {
+		return vec2(0, (pos.y > 0) ? 0.0001 : pi);
+	}
 	float theta = atan(pos.z, pos.x);
 	float phi = atan(length(pos.xz), pos.y);
 	return vec2(theta, phi);
@@ -252,6 +254,39 @@ vec3 sph_dphi(float radius, float theta, float phi) {
 }
 
 vec3 displace(vec3 pos, out vec3 normal, out float height) {
+	const float radius = 5.0;
+	const float freq = 4.0;
+	const float fac = 0.1 * sqrt(radius) / freq;
+
+	pos = normalize(pos);
+	vec2 tp = sph2(pos);
+
+	float theta = tp[0];
+	float phi = tp[1];
+
+	vec4 displace = fac * mfbm(freq * pos);
+	displace.yzw *= freq;
+
+	vec3 dphi = sph_dphi(radius, theta, phi);
+	vec3 dtheta = sph_dtheta(radius, theta, phi);
+	vec3 n = cross(
+		(1 + displace.x) * dtheta + dot(dtheta, displace.yzw) * pos, 
+		(1 + displace.x) * dphi + dot(dphi, displace.yzw) * pos);
+	normal = normalize(n);
+
+	// alternative way to handle normals at poles
+	// if(abs(pos.y) > 0.999) {
+	// 	normal = vec3(0, sign(pos.y), 0);
+	// }
+
+	pos += displace.x * pos;
+	pos *= radius;
+	height = displace.x;
+	return pos;
+}
+
+/*
+vec3 displace_old(vec3 pos, out vec3 normal, out float height) {
 	const float radius = 5.0;
 
 	pos = normalize(pos);
@@ -293,6 +328,7 @@ vec3 displace(vec3 pos, out vec3 normal, out float height) {
 	normal = normalize(nn);
 	return pos;
 }
+*/
 
 
 // clamps to valid range (e.g. < 31)
@@ -301,14 +337,14 @@ float distanceToLOD(float z) {
 	const float fov = 0.35 * 3.141;
 	const float targetPixelSize = 1.f;
 	// const float screenResolution = 30.f;
-	const float screenResolution = 300.f; 
+	const float screenResolution = 5000.f; 
 	float s = z * tan(fov / 2);
 	float tmp = s * targetPixelSize / screenResolution;
 
 	// should be 2.0 for all triangles to have equal size
 	// if e.g. you want to have a focus on near triangles
-	//   make it larger than 2.0, otherwise smaller.
-	float fac = 2;
+	//   make it greater than 2.0, otherwise smaller.
+	float fac = 1.5;
 	return clamp(-fac * log2(clamp(tmp, 0.0, 1.0)), 1, 30);
 }
 

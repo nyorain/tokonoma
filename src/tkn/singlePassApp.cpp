@@ -128,7 +128,7 @@ vpp::RenderPass SinglePassApp::createRenderPass() {
 	}
 	++aid;
 
-	// optiontal multisampled render target
+	// optional multisample render target
 	if(msaa) {
 		// multisample color attachment
 		attachments[aid].format = swapchainInfo().imageFormat;
@@ -211,21 +211,15 @@ vpp::RenderPass SinglePassApp::createRenderPass() {
 		subpass.pResolveAttachments = &resolveReference;
 	}
 
-	auto deps = subpassDependencies();
-
 	vk::RenderPassCreateInfo renderPassInfo;
 	renderPassInfo.attachmentCount = aid;
 	renderPassInfo.pAttachments = attachments;
 	renderPassInfo.subpassCount = 1;
 	renderPassInfo.pSubpasses = &subpass;
-	renderPassInfo.dependencyCount = deps.size();
-	renderPassInfo.pDependencies = deps.data();
+	renderPassInfo.dependencyCount = 0;
+	renderPassInfo.pDependencies = nullptr;
 
 	return {vkDevice(), renderPassInfo};
-}
-
-std::vector<vk::SubpassDependency> SinglePassApp::subpassDependencies() const {
-	return {};
 }
 
 vpp::ViewableImage SinglePassApp::createDepthTarget(const vk::Extent2D& size) {

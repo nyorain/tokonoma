@@ -30,5 +30,5 @@ void main() {
 	cmds.draw.instanceCount = culled.counter;
 
 	// NOTE: 32.f here linked to local_size_x in update.comp
-	cmds.dispatch.x = int(ceil(keys.counter / 32.f));
+	cmds.dispatch.x = int(ceil(keys.counter / 128.f));
 }

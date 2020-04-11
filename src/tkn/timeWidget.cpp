@@ -26,12 +26,13 @@ TimeWidget::TimeWidget(rvg::Context& ctx, const rvg::Font& font) :
 }
 
 void TimeWidget::updateDevice() {
-	if(++updateCounter_ < updateAfter_) {
+	if(++updateCounter_ < updateAfter_ || id_ == 0) {
 		return;
 	}
 
-	dlg_assert(entries_.size() <= maxCount);
-	dlg_assert(id_ <= maxCount);
+	dlg_assertm(id_ == entries_.size() + 1,
+		"Number of recorded timestamps does not match section count: {} != {}",
+		id_, entries_.size() + 1);
 
 	auto& dev = rvgContext().device();
 	updateCounter_ = 0;
@@ -111,6 +112,8 @@ void TimeWidget::reset() {
 void TimeWidget::addTiming(std::string name) {
 	name += ":";
 	auto& entry = entries_.emplace_back();
+	dlg_assertm(entries_.size() <= maxCount, "Too many timings");
+
 	auto pos = nytl::Vec2f{bg_.position().x + 20, y_};
 	entry.name = {rvgContext(), pos, std::move(name), font(), 14.f};
 	entry.name.updateDevice();
@@ -143,10 +146,14 @@ void TimeWidget::start(vk::CommandBuffer cb) {
 
 void TimeWidget::addTimestamp(vk::CommandBuffer cb, vk::PipelineStageBits stage) {
 	vk::cmdWriteTimestamp(cb, stage, pool_, ++id_);
+	dlg_assertm(id_ <= entries_.size(),
+		"Number of recorded timestamps does not match section count");
 }
 
 void TimeWidget::finish(vk::CommandBuffer cb) {
 	vk::cmdWriteTimestamp(cb, vk::PipelineStageBits::bottomOfPipe, pool_, ++id_);
+	dlg_assertm(id_ == entries_.size() + 1,
+		"Number of recorded timestamps does not match section count");
 }
 
 void TimeWidget::hide(bool h) {

@@ -1,16 +1,5 @@
-// TODO
-// - add terrain...
-// - maybe make the terrain planet-like and allow to leave atmosphere
-// - add tesselation shader
-//   evaluate terrain generation in tesselation shader?
-//   or use PN triangles?
-//   use switch it all to a texture-based terrain generation?
-//   that has advantages (performance i guess?) but might introduce
-//   a (for good quality potentially huge) memory overhead
-//   	- lookup the paper of just using a single triangle/quad for terrain
-// - efficient culling
-
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
+#include <tkn/shader.hpp>
 #include <tkn/window.hpp>
 #include <tkn/render.hpp>
 #include <tkn/qcamera.hpp>
@@ -23,10 +12,7 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
-#include <ny/mouseButton.hpp>
 #include <rvg/context.hpp>
-#include <ny/appContext.hpp>
-#include <ny/key.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/vec.hpp>
 
@@ -36,17 +22,20 @@
 
 using tkn::glsl::fract;
 
-class TerrainApp : public tkn::App {
+class AtmosphereApp : public tkn::SinglePassApp {
 public:
 	static constexpr float cameraPosMult = 10000;
+	using Base = tkn::SinglePassApp;
 
 public:
+	using Base::init;
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
+		rvgInit();
 
 		// layouts
 		auto bindings = {
@@ -102,7 +91,7 @@ public:
 		gpi.depthStencil.depthTestEnable = false;
 		gpi.depthStencil.depthWriteEnable = false;
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleStrip;
-		pipe_ = {vulkanDevice(), gpi.info()};
+		pipe_ = {vkDevice(), gpi.info()};
 	}
 
 	void render(vk::CommandBuffer cb) override {
@@ -121,18 +110,17 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
+		Base::update(dt);
 		if(playing_) {
 			time_ = fract(time_ - 0.05 * dt);
 			camera_.update = true; // write ubo
 		}
 
 		// tkn::update(touch_, dt);
-		tkn::QuatCameraMovement movement;
+		tkn::QuatCameraMovementSwa movement;
 		movement.fastMult = 500.f;
 		movement.slowMult = 50.f;
-		checkMovement(camera_, *appContext().keyboardContext(),
-			cameraPosMult * dt, movement);
+		checkMovement(camera_, swaDisplay(), cameraPosMult * dt, movement);
 
 		if(rotateView_) {
 			auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
@@ -147,29 +135,29 @@ public:
 		tkn::rotateView(camera_, vel_.yaw, vel_.pitch, 0.f);
 
 		if(camera_.update) {
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 
 #ifndef __ANDROID__
 		if(reload_) {
 			reload_ = false;
-			auto fragMod = tkn::loadShader(device(), "atmosphere/sky.frag");
+			auto fragMod = tkn::loadShader(vkDevice(), "atmosphere/sky.frag");
 			if(!fragMod) {
 				dlg_error("Failed to reload shader");
 			} else {
 				createPipeline(*fragMod);
-				App::scheduleRerecord();
+				Base::scheduleRerecord();
 			}
 		}
 #endif
 
 		if(camera_.update) {
 			auto fov = 0.3 * nytl::constants::pi;
-			auto aspect = float(window().size().x) / window().size().y;
+			auto aspect = float(windowSize().x) / windowSize().y;
 			auto near = 0.01f;
 			auto far = 30.f;
 
@@ -186,35 +174,26 @@ public:
 		}
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		// if(rotateView_) {
 		// 	auto x = 0.005 * ev.delta.x, y = 0.005 * ev.delta.y;
 		// 	tkn::rotateView(camera_, x, y, 0.f);
-		// 	App::scheduleRedraw();
+		// 	Base::scheduleRedraw();
 		// }
 
 		using namespace nytl::vec::cw::operators;
-		mpos_ = nytl::Vec2f(ev.position) / window().size();
+		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
 	}
 
-	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
-		if(App::mouseWheel(ev)) {
-			return true;
-		}
-
-		tkn::rotateView(camera_, 0.f, 0.f, 0.1 * ev.value.x);
-		return true;
-	}
-
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
 		using namespace nytl::vec::cw::operators;
-		auto mpos = nytl::Vec2f(ev.position) / window().size();
-		if(ev.button == ny::MouseButton::left) {
+		auto mpos = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			mposStart_ = mpos;
 			return true;
@@ -223,8 +202,8 @@ public:
 		return false;
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
@@ -232,25 +211,25 @@ public:
 			return false;
 		}
 
-		if(ev.keycode == ny::Keycode::r) {
+		if(ev.keycode == swa_key_r) {
 #ifndef __ANDROID__
 			reload_ = true;
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 			return true;
 #endif
-		} else if(ev.keycode == ny::Keycode::up) {
+		} else if(ev.keycode == swa_key_up) {
 			time_ = fract(time_ + 0.0025);
 			dlg_info("time: {}", time_);
 			camera_.update = true; // write ubo
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 			return true;
-		} else if(ev.keycode == ny::Keycode::down) {
+		} else if(ev.keycode == swa_key_down) {
 			time_ = fract(time_ - 0.0025);
 			dlg_info("time: {}", time_);
 			camera_.update = true; // write ubo
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 			return true;
-		} else if(ev.keycode == ny::Keycode::p) {
+		} else if(ev.keycode == swa_key_p) {
 			playing_ = !playing_;
 			return true;
 		}
@@ -258,19 +237,19 @@ public:
 		return false;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
 		// camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 		camera_.update = true;
 	}
 
-	bool touchBegin(const ny::TouchBeginEvent& ev) override {
-		if(App::touchBegin(ev)) {
+	bool touchBegin(const swa_touch_event& ev) override {
+		if(Base::touchBegin(ev)) {
 			return true;
 		}
 
 		using namespace nytl::vec::cw::operators;
-		auto mpos = ev.pos / window().size();
+		auto mpos = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
 		if(mpos.x > 0.9 && mpos.y > 0.95) {
 			playing_ = !playing_;
 			return true;
@@ -280,18 +259,19 @@ public:
 		return true;
 	}
 
-	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
+	void touchUpdate(const swa_touch_event& ev) override {
+		Base::touchUpdate(ev);
 		// tkn::touchUpdate(touch_, ev);
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 	}
 
-	bool touchEnd(const ny::TouchEndEvent& ev) override {
-		if(App::touchEnd(ev)) {
+	bool touchEnd(unsigned id) override {
+		if(Base::touchEnd(id)) {
 			return true;
 		}
 
 		// tkn::touchEnd(touch_, ev);
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 		return true;
 	}
 
@@ -329,10 +309,5 @@ public:
 };
 
 int main(int argc, const char** argv) {
-	TerrainApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<AtmosphereApp>(argc, argv);
 }

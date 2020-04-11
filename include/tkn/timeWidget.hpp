@@ -88,6 +88,8 @@ protected:
 
 	std::vector<Entry> entries_;
 	unsigned updateCounter_ {0};
+	// After how many frames the widget should be updated
+	// TODO: rather make this dependent on time!
 	unsigned updateAfter_ {30};
 	bool relative_ {true};
 
