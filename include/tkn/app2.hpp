@@ -119,7 +119,7 @@ protected:
 	// Schedules a redraw. App will only redraw when this is called (or
 	// the window send a draw event). Should be called from the update
 	// method when it detects that new/changed content can be rendered.
-	void scheduleRedraw() { redraw_ = true; }
+	void scheduleRedraw();
 
 	// Adds the given semaphore to the semaphores to wait for next frame
 	// (in the given stage).
@@ -210,6 +210,9 @@ private:
 	// resources later on.
 	bool resize_ {};
 	nytl::Vec2ui winSize_ {0, 0};
+
+	// Whether a (swa_window) frame is pending.
+	unsigned drawState_ {};
 
 	// available features
 	bool hasClipDistance_ {}; // tracked for rvg

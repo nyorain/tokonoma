@@ -251,7 +251,6 @@ public:
 		if(failed) {
 			return false;
 		}
-#endif
 
 		// compute
 		vk::ComputePipelineCreateInfo cpiUpdate;
@@ -455,8 +454,10 @@ public:
 			tkn::rotateView(camera_, yaw, pitch, 0.f);
 		}
 
-		rollVel_ *= std::pow(0.001, dt);
-		tkn::rotateView(camera_, 0.f, 0.f, rollVel_);
+		if(rollVel_ > 0.001) {
+			rollVel_ *= std::pow(0.001, dt);
+			tkn::rotateView(camera_, 0.f, 0.f, rollVel_);
+		}
 
 		if(camera_.update) {
 			Base::scheduleRedraw();

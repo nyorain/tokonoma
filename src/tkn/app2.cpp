@@ -632,8 +632,7 @@ std::optional<std::uint64_t> App::submitFrame() {
 			return submitID;
 		}
 
-		// we land here when acquiring an image failed (or returned
-		// that its suboptimal).
+		// we land here when acquiring an image failed.
 		// first we check whether its an expected error (due to
 		// resizing) and we want to rety or if it's something else.
 		dlg_assert(res != vk::Result::success);
@@ -722,9 +721,20 @@ void App::run() {
 	auto& submitter = vkDevice().queueSubmitter();
 
 	// initial update
-	update(dt());
 	while(run_) {
-		// - update device data -
+		dispatch();
+
+		// TODO: only call when needed
+		update(dt());
+		if(!redraw_) {
+			continue;
+		}
+
+		if(submitID) {
+			submitter.wait(*submitID);
+			submitID = std::nullopt;
+		}
+
 		// the device will not using any of the resources we change here
 		updateDevice();
 
@@ -732,7 +742,6 @@ void App::run() {
 		// even since we handles even during the logical update step
 		// in which we must change rendering resources.
 		if(resize_) {
-			resize_ = false;
 			if(!impl_->renderer.swapchain() && hasSurface()) {
 				impl_->renderer.app_ = this;
 				vpp::updateImageExtent(vkDevice().vkPhysicalDevice(),
@@ -745,43 +754,28 @@ void App::run() {
 			impl_->renderer.invalidate();
 		}
 
+		redraw_ = false;
+		resize_ = false;
 		rerecord_ = false;
 
 		// - submit and present -
+		swa_window_surface_frame(swaWindow());
+		drawState_ = 1;
 		submitID = submitFrame();
 		if(!submitID) {
 			break;
 		}
 
 		impl_->nextFrameWait.clear();
+	}
 
-		// wait for this frame at the end of this loop
-		// this way we also wait for it when update throws
-		// since we don't want to destroy resources before
-		// rendering has finished
-		auto waiter = nytl::ScopeGuard {[&] {
-			submitter.wait(*submitID);
-		}};
-
-		// - update phase -
-		redraw_ = false;
-		update(dt());
-
-		while(run_ && !redraw_ && !resize_) {
-			// TODO: ideally, we could use waitEvents in update
-			// an only wake up if we need to. But that would need
-			// a (threaded!) waking up algorithm and also require all
-			// components to signal this correctly (e.g. gui textfield blink)
-			// which is (currently) not worth it/possible.
-			auto idleRate = 144.f;
-			std::this_thread::sleep_for(Secd(1 / idleRate));
-			update(dt());
-		}
+	if(submitID) {
+		submitter.wait(*submitID);
 	}
 }
 
 void App::dispatch() {
-	if(!swa_display_dispatch(swaDisplay(), false)) {
+	if(!swa_display_dispatch(swaDisplay(), true)) {
 		dlg_info("swa_display_dispatch returned false");
 		run_ = false;
 		return;
@@ -797,10 +791,10 @@ void App::dispatch() {
 }
 
 void App::update(double dt) {
-	dispatch();
-
 	if(impl_->gui) {
-		redraw_ |= gui().update(dt);
+		if(gui().update(dt)) {
+			scheduleRedraw();
+		}
 	}
 }
 
@@ -831,6 +825,19 @@ vpp::SwapchainPreferences App::swapchainPrefs(const Args& args) const {
 
 void App::addSemaphore(vk::Semaphore seph, vk::PipelineStageFlags waitDst) {
 	impl_->nextFrameWait.push_back({seph, waitDst});
+}
+
+void App::scheduleRedraw() {
+	dlg_info("scheduleRedraw");
+	if(drawState_ == 0) {
+		redraw_ = true;
+	}
+
+	if(drawState_ == 1) {
+		dlg_info("  -> refresh");
+		swa_window_refresh(swaWindow());
+		drawState_ = 2;
+	}
 }
 
 void App::resize(unsigned width, unsigned height) {
@@ -897,8 +904,12 @@ void App::mouseCross(const swa_mouse_cross_event&) {
 void App::windowFocus(bool gained) {
 	(void) gained;
 }
+
 void App::windowDraw() {
+	dlg_info("window draw event");
+	redraw_ = true;
 }
+
 void App::windowClose() {
 	dlg_debug("Window closed, exiting");
 	run_ = false;
