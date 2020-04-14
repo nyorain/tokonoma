@@ -6,7 +6,7 @@
 #include <vpp/formats.hpp>
 
 #include <shaders/deferred.bloom.comp.h>
-#include <shaders/deferred.gblur.comp.h>
+#include <shaders/deferred.gblur9.comp.h> // TODO: use GaussianBlur instead
 
 void BloomPass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
@@ -69,7 +69,7 @@ void BloomPass::create(InitData& data, const PassCreateInfo& info) {
 	vpp::nameHandle(blur_.pipeLayout, "BloomPass:blur_.pipeLayout");
 
 	// pipe
-	vpp::ShaderModule blurShader(dev, deferred_gblur_comp_data);
+	vpp::ShaderModule blurShader(dev, deferred_gblur9_comp_data);
 
 	cpi.layout = blur_.pipeLayout;
 	cpi.stage.module = blurShader;
@@ -77,7 +77,7 @@ void BloomPass::create(InitData& data, const PassCreateInfo& info) {
 	cpi.stage.pName = "main";
 	cpi.stage.pSpecializationInfo = &groupSizeSpec.spec;
 	blur_.pipe = {dev, cpi};
-	vpp::nameHandle(blur_.pipeLayout, "BloomPass:blur_.pipe");
+	vpp::nameHandle(blur_.pipe, "BloomPass:blur_.pipe");
 
 	// descriptors
 	filter_.ds = {data.initFilterDs, wb.alloc.ds, filter_.dsLayout};

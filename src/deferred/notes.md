@@ -57,6 +57,8 @@ enough not listed here
 
 ## further ideas
 
+- could only show the active passes in the timeWidget.
+  also show them in the order they are executed in
 - add deferred light initialization
 - timeWidget is more hacked together than anything else.
   See the notes in timeWidget.hpp

@@ -13,3 +13,5 @@ executable('pg-steamaudio',
 executable('fft',
 	'fft.cpp',
 	dependencies: [tkn_dep, dep_playground])
+
+executable('blur', 'blur.cpp')

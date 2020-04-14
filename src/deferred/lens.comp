@@ -1,0 +1,74 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D inLight;
+layout(set = 0, binding = 1, rgba16f) writeonly uniform image2D outLens;
+layout(set = 0, binding = 2) uniform UBO {
+	uint numGhosts;
+	float ghostDispersal;
+	float distortion;
+	float haloWidth;
+} ubo;
+
+vec3 sampleDistorted(vec2 uv, vec2 dir, vec3 distortion) {
+  return vec3(
+	 texture(inLight, uv + dir * distortion.r).r,
+	 texture(inLight, uv + dir * distortion.g).g,
+	 texture(inLight, uv + dir * distortion.b).b
+  );
+}
+
+// https://iquilezles.org/www/articles/palettes/palettes.htm
+vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) {
+    return a + b*cos( 6.28318*(c*t+d) );
+}
+
+vec3 ghostPalette(float t) {
+	vec3 a = vec3(0.5, 0.5, 0.5);
+	vec3 b = vec3(0.5, 0.5, 0.5);
+	vec3 c = vec3(1.5, 1.0, 0.7);
+	vec3 d = vec3(0.1, 0.1, 0.2);
+	return palette(t, a, b, c, d);
+}
+
+void main() {
+	// compute coords
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outLens);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 texelSize = 1.f / size;
+	vec2 uv = (pixel + vec2(0.5, 0.5)) * texelSize;
+	uv = 1.0 - uv; // mirror at center
+
+	vec2 toCenter = 0.5 - uv;
+	float ts = length(texelSize); // use a different norm?
+	vec3 distortion = ts * ubo.distortion * vec3(-1, 0, 1);
+	vec2 distDir = normalize(toCenter);
+
+	// ghosts
+	vec3 accum = vec3(0.0);
+	for(uint i = 0u; i < ubo.numGhosts; ++i) {
+		// NOTE: use repeat sampler instead of fract?
+		// or just discard sample if outside of bounds? 
+		vec2 offset = fract(uv + toCenter * i * ubo.ghostDispersal);
+		float weight = length(0.5 - uv) / length(vec2(0.5));
+		weight = pow(1.0 - weight, 10.0);
+
+		// radially alter color
+		vec3 cw = ghostPalette(length(toCenter) / length(vec2(0.5)));
+		accum += cw * weight * sampleDistorted(offset, distDir, distortion);
+	}
+
+	// halo
+	vec2 haloVec = normalize(toCenter) * ubo.haloWidth;
+	float weight = length(0.5 - uv - haloVec) / length(vec2(0.5));
+	weight = 0.25 * pow(1.0 - weight, 12.0);
+	accum += weight * sampleDistorted(fract(uv + haloVec), distDir, distortion);
+
+	// store
+	imageStore(outLens, ivec2(pixel), vec4(accum, 1.0));
+}

@@ -136,6 +136,8 @@ Additional external licenses for distributed code/assets:
 
 The files in `assets/gltf` have their copyright embedded.
 
+---
+
 On windows: `meson build/win --default-library static --backend ninja`,
 using the latest MinGW. Alternatively, to use dynamic libraries just use
 the `flat` layout meson option (since windows can't find the dlls otherwise).

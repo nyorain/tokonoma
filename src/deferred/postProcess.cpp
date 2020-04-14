@@ -58,6 +58,12 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 		vpp::descriptorBinding( // depth
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // lens
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+		vpp::descriptorBinding( // lens dirt
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
 		// params ubo
 		vpp::descriptorBinding(
 			vk::DescriptorType::uniformBuffer,
@@ -113,6 +119,9 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 		vpp::descriptorBinding( // scatter
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+		vpp::descriptorBinding( // lens
+			vk::DescriptorType::combinedImageSampler,
+			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
 		vpp::descriptorBinding( // shadow
 			vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
@@ -163,10 +172,14 @@ void PostProcessPass::updateInputs(
 		vk::ImageView bloom,
 		vk::ImageView luminance,
 		vk::ImageView scatter,
+		vk::ImageView lens,
+		vk::ImageView lensDirt,
 		vk::ImageView shadow) {
 	vpp::DescriptorSetUpdate dsu(ds_);
 	dsu.imageSampler({{{{}, light, vk::ImageLayout::shaderReadOnlyOptimal}}});
 	dsu.imageSampler({{{{}, ldepth, vk::ImageLayout::shaderReadOnlyOptimal}}});
+	dsu.imageSampler({{{{}, lens, vk::ImageLayout::shaderReadOnlyOptimal}}});
+	dsu.imageSampler({{{{}, lensDirt, vk::ImageLayout::shaderReadOnlyOptimal}}});
 	dsu.uniform({{{ubo_}}});
 	dsu.apply();
 
@@ -179,6 +192,7 @@ void PostProcessPass::updateInputs(
 	ddsu.imageSampler({{{}, bloom, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, luminance, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, scatter, vk::ImageLayout::shaderReadOnlyOptimal}});
+	ddsu.imageSampler({{{}, lens, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.imageSampler({{{}, shadow, vk::ImageLayout::shaderReadOnlyOptimal}});
 	ddsu.apply();
 }

@@ -251,7 +251,6 @@ public:
 		if(failed) {
 			return false;
 		}
-#endif
 
 		// compute
 		vk::ComputePipelineCreateInfo cpiUpdate;

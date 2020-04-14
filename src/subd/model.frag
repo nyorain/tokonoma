@@ -19,9 +19,9 @@ void main() {
 	fragColor.a = 1.0;
 
 	float l = max(dot(n, -lightDir), 0.0);
-	fragColor.rgb = 0.1 + 0.9 * vec3(l); // * vec3(0, 1, 1) + 
+	// fragColor.rgb = 0.1 + 0.9 * vec3(l); // * vec3(0, 1, 1) + 
 	// 	0.5 * vec3(max(0, dot(n, vec3(1, 0, 0)))) * vec3(1, 1, 0);
-	// fragColor.rgb = 0.5 + 0.5 * n;
+	fragColor.rgb = 0.5 + 0.5 * n;
 	// fragColor.rgb += smoothstep(0.3, 0.58, inHeight);
 	// fragColor.rgb += 1 - 5 * exp(-10 * inHeight);
 	// fragColor.rgb = mix(fragColor.rgb, inColor, 0.1);

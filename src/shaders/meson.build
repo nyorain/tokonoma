@@ -150,6 +150,7 @@ shaders_src = {
 		['ssaoBlur.comp', deferred_glsl],
 		['pointScatter.frag', deferred_glsl],
 		['dirScatter.frag', deferred_glsl],
+		['gblur9.comp', deferred_glsl],
 		['gblur.comp', deferred_glsl],
 		['bloom.comp', deferred_glsl],
 		['ssr.comp', deferred_glsl],
@@ -161,6 +162,8 @@ shaders_src = {
 		['luminanceMip.comp', deferred_glsl],
 		['debug.frag', deferred_glsl],
 		['blend.frag', deferred_glsl],
+		['highlight.comp', deferred_glsl],
+		['lens.comp', deferred_glsl],
 	],
 	'shv': [
 		['shv.frag'],

@@ -18,6 +18,7 @@ const uint modeScatter = 9u;
 const uint modeBloom = 10u;
 const uint modeLuminance = 11u;
 const uint modeShadow = 12u;
+const uint modeLens = 13u;
 
 layout(set = 0, binding = 0) uniform sampler2D inAlbedo;
 layout(set = 0, binding = 1) uniform sampler2D inNormal;
@@ -27,7 +28,8 @@ layout(set = 0, binding = 4) uniform sampler2D inSSR;
 layout(set = 0, binding = 5) uniform sampler2D inBloom;
 layout(set = 0, binding = 6) uniform sampler2D inLuminance;
 layout(set = 0, binding = 7) uniform sampler2D inScatter;
-layout(set = 0, binding = 8) uniform sampler2DArray inShadow;
+layout(set = 0, binding = 8) uniform sampler2D inLens;
+layout(set = 0, binding = 9) uniform sampler2DArray inShadow;
 
 layout(push_constant) uniform PCR {
 	uint mode;
@@ -57,7 +59,7 @@ void main() {
 			fragColor = vec4(vec3(normal.w), 1.0);
 			break;
 		case modeMetalness:
-			fragColor = vec4(vec3(normal.w), 1.0);
+			fragColor = vec4(vec3(normal.z), 1.0);
 			break;
 		case modeAO:
 		case modeAlbedoAO: {
@@ -95,6 +97,9 @@ void main() {
 		} case modeShadow: {
 			float s = pow(texture(inShadow, vec3(uv, 0)).r, 2);
 			fragColor = vec4(vec3(s), 1.0);
+			break;
+		} case modeLens: {
+			fragColor = vec4(texture(inLens, uv).rgb, 1.0);
 			break;
 		} default:
 			fragColor = vec4(0, 0, 0, 1);

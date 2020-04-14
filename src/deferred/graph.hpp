@@ -24,7 +24,7 @@
 
 class FrameGraph;
 class FramePass;
-struct SyncScopeFlexTag {} syncScopeFlex;
+constexpr struct SyncScopeFlexTag {} syncScopeFlex;
 
 struct RenderData {
 	vk::CommandBuffer cb;
@@ -35,6 +35,7 @@ struct RenderData {
 
 /// Represents immutable frame target.
 /// There can be multiple targets for the same image.
+/// Our graph has basically SSA form.
 struct FrameTarget {
 	const vk::Image* target {};
 	vk::ImageSubresourceRange subres {vk::ImageAspectBits::color, 0, 1, 0, 1};
@@ -60,6 +61,11 @@ public:
 	std::function<void(const RenderData& data)> record;
 	const char* name {}; // external utility
 
+	struct Content {
+		FrameTarget* target;
+		FrameTarget::Slot* slot; // own slot
+	};
+
 public:
 	void addIn(FrameTarget& target, SyncScope scope) {
 		target.consumers.push_back({this, scope, false});
@@ -78,15 +84,13 @@ public:
 	FrameTarget& addInOut(FrameTarget& target, SyncScope scope);
 	FrameTarget& addInOut(FrameTarget&, SyncScope dst, SyncScope src);
 
+	const auto& in() const { return in_; }
+	const auto& out() const { return out_; }
+
 protected:
 	friend class FrameGraph;
 	FramePass(FrameGraph& graph) : graph_(&graph) {}
 	FrameGraph* graph_;
-
-	struct Content {
-		FrameTarget* target;
-		FrameTarget::Slot* slot;
-	};
 
 	std::vector<Content> in_;
 	std::vector<FrameTarget*> out_;
@@ -332,6 +336,8 @@ public:
 	};
 
 	const auto& order() const { return order_; }
+	const auto& passes() const { return passes_; }
+	const auto& targets() const { return targets_; }
 
 protected:
 	std::deque<FramePass> passes_;
@@ -383,3 +389,5 @@ inline FrameTarget& FramePass::addInOut(FrameTarget& target,
 	out_.push_back(&next);
 	return next;
 }
+
+std::string graphDot(const FrameGraph& graph);

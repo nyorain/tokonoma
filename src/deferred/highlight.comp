@@ -1,0 +1,39 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D inLight;
+layout(set = 0, binding = 1) uniform sampler2D inEmission;
+layout(set = 0, binding = 2, rgba16f) uniform image2D outColor;
+layout(set = 0, binding = 3) uniform UBO {
+	float bias;
+	float scale;
+} ubo;
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outColor);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+
+	vec3 col = texture(inLight, uv).rgb;
+
+	// #1: simple offset + scale
+	// vec3 light = max(ubo.scale * (col + ubo.bias), 0.0);
+	
+	// #2: don't lose color components
+	vec3 light = vec3(0.0);
+	float l = length(col);
+	if(l >= -ubo.bias) {
+		light = col * pow(l + ubo.bias, 0.7) / l;
+	}
+	light += texture(inEmission, uv).rgb;
+	light *= ubo.scale;
+
+	// store
+	imageStore(outColor, ivec2(pixel), vec4(light, 1.0));
+}

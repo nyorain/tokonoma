@@ -13,9 +13,9 @@ layout(location = 4) in float inLinDepth;
 layout(location = 5) in flat uint inMatID;
 layout(location = 6) in flat uint inModelID;
 
-layout(location = 0) out vec4 outNormal; // xy: encoded normal, z: matID, w: roughness
+layout(location = 0) out vec4 outNormal; // xy: encoded normal, z: metal, w: roughness
 layout(location = 1) out vec4 outAlbedo; // rgb: albedo, w: occlusion
-layout(location = 2) out vec4 outEmission; // rgb: emission, w: metallic
+layout(location = 2) out vec4 outEmission; // rgb: emission, w: matID
 layout(location = 3) out float outDepth;
 
 layout(set = 0, binding = 0, row_major) uniform Scene {

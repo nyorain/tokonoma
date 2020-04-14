@@ -14,6 +14,7 @@ public:
 
 	static constexpr u32 flagFXAA = (1 << 0u);
 	static constexpr u32 flagDOF = (1 << 1u);
+	static constexpr u32 flagLens = (1 << 2u);
 
 	static constexpr u32 modeDefault = 0u; // render normally
 	static constexpr u32 modeAlbedo = 1u;
@@ -36,6 +37,7 @@ public:
 		float exposure {1.f};
 		float depthFocus {1.f};
 		float dofStrength {0.05f};
+		float lensStrength {0.1f};
 	} params;
 
 	struct InitData {
@@ -59,6 +61,8 @@ public:
 		vk::ImageView bloom,
 		vk::ImageView luminance,
 		vk::ImageView scatter,
+		vk::ImageView lens,
+		vk::ImageView lensDirt,
 		vk::ImageView shadow);
 	vpp::Framebuffer initFramebuffer(vk::ImageView output, vk::Extent2D);
 

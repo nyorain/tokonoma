@@ -7,6 +7,7 @@
 
 const uint flagFXAA = (1 << 0u);
 const uint flagDOF = (1 << 1u);
+const uint flagLens = (1 << 2u);
 
 const uint tonemapClamp = 0u;
 const uint tonemapReinhard = 1u;
@@ -19,12 +20,15 @@ layout(location = 0) out vec4 fragColor;
 
 layout(set = 0, binding = 0) uniform sampler2D colorTex;
 layout(set = 0, binding = 1) uniform sampler2D ldepthTex;
-layout(set = 0, binding = 2) uniform Params {
+layout(set = 0, binding = 2) uniform sampler2D lensTex;
+layout(set = 0, binding = 3) uniform sampler2D dirtTex;
+layout(set = 0, binding = 4) uniform Params {
 	uint flags;
 	uint tonemap;
 	float exposure;
 	float dofFocus;
 	float dofStrength;
+	float lensStrength;
 } params;
 
 vec3 tonemap(vec3 x) {
@@ -94,6 +98,12 @@ void main() {
 		}
 
 		color = accum / total;
+	}
+
+	// add lens flar
+	if((params.flags & flagLens) != 0) {
+		vec3 dirt = params.lensStrength * texture(dirtTex, uv).rgb;
+		color += dirt * texture(lensTex, uv).rgb;
 	}
 
 	// mark center

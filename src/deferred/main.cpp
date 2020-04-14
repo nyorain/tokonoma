@@ -7,6 +7,7 @@
 #include "luminance.hpp"
 #include "postProcess.hpp"
 #include "scatter.hpp"
+#include "lens.hpp"
 #include "graph.hpp"
 
 #include <tkn/timeWidget.hpp>
@@ -33,13 +34,10 @@
 #include <vui/textfield.hpp>
 #include <vui/colorPicker.hpp>
 
-// #include <ny/appContext.hpp>
-// #include <ny/key.hpp>
-// #include <ny/mouseButton.hpp>
-
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/trackedDescriptor.hpp>
+#include <vpp/util/file.hpp>
 #include <vpp/formats.hpp>
 #include <vpp/init.hpp>
 #include <vpp/submit.hpp>
@@ -70,11 +68,11 @@ public:
 	static constexpr u32 passBloom = (1u << 3u);
 	static constexpr u32 passSSAO = (1u << 4u);
 	static constexpr u32 passLuminance = (1u << 5u);
+	static constexpr u32 passLens = (1u << 8u);
+	static constexpr u32 passHighlight = (1u << 9u);
 
 	static constexpr u32 passAO = (1u << 6u);
 	static constexpr u32 passCombine = (1u << 7u);
-
-	static constexpr unsigned timestampCount = 13u;
 
 	static constexpr auto probeSize = vk::Extent2D {2048, 2048};
 	static constexpr auto probeFaceSize = probeSize.width * probeSize.height * 8;
@@ -211,6 +209,8 @@ protected:
 	} selected_;
 	vui::dat::Panel* vuiPanel_ {};
 
+	GaussianBlur blur_;
+
 	FrameGraph frameGraph_;
 	FrameTarget* frameTargetBloom_ {};
 
@@ -223,7 +223,10 @@ protected:
 	LuminancePass luminance_;
 	PostProcessPass pp_;
 	LightScatterPass scatter_;
+	HighLightPass highlight_;
+	LensFlare lens_;
 
+	tkn::Texture lensDirt_;
 	rvg::Transform windowTransform_;
 
 	bool recreatePasses_ {false};
@@ -350,9 +353,11 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
 	sci.anisotropyEnable = false;
 	nearestSampler_ = {dev, sci};
-	vpp::nameHandle(linearSampler_, "nearestSampler");
+	vpp::nameHandle(nearestSampler_, "nearestSampler");
 
 	fullVertShader_ = {dev, tkn_fullscreen_vert_data};
+
+	blur_.init(dev, linearSampler_);
 
 	// general layouts
 	auto stages =  vk::ShaderStageBits::vertex |
@@ -464,6 +469,9 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	shadowData_ = tkn::initShadowData(dev, depthFormat_,
 		scene_.dsLayout(), multiview_, depthClamp_);
 
+	tkn::Texture::InitData initDirt;
+	lensDirt_ = {initDirt, batch, tkn::read("dirt.jpg")};
+
 	initPasses(batch);
 
 	rvgInit(pp_.renderPass(), 0, vk::SampleCountBits::e1);
@@ -480,6 +488,7 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	env_.init(envData, batch);
 	brdfLut_ = initBrdfLut.init(batch);
 	renderStage_ = initRenderStage.init();
+	lensDirt_.init(initDirt, batch);
 
 	// cb
 	std::array<std::uint16_t, 36> indices = {
@@ -607,6 +616,18 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	createValueTextfield(pp, "scatter strength", combine_.params.scatterStrength);
 	createValueTextfield(pp, "dof strength", pp_.params.dofStrength);
 
+	auto& lff = pp.create<vui::dat::Folder>("Lens");
+	createValueTextfield(lff, "strength", pp_.params.lensStrength);
+	createValueTextfield(lff, "bias", highlight_.params.bias);
+	createValueTextfield(lff, "scale", highlight_.params.scale);
+	createValueTextfield(lff, "numGhosts", lens_.params.numGhosts);
+	createValueTextfield(lff, "dispersal", lens_.params.ghostDispersal);
+	createValueTextfield(lff, "distortion", lens_.params.distortion);
+	createValueTextfield(lff, "halo width", lens_.params.haloWidth);
+	createValueTextfield(lff, "blur hsize", lens_.blurHSize, &this->rerecord_);
+	createValueTextfield(lff, "blur fac", lens_.blurFac, &this->rerecord_);
+	lff.open(false);
+
 	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
 	cb1.set(renderPasses_ & passSSAO);
 	cb1.onToggle = [&](auto&) {
@@ -659,6 +680,14 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 		pp_.params.flags ^= pp_.flagFXAA;
 	};
 
+	auto& cb11 = pp.create<Checkbox>("Lens Flare").checkbox();
+	cb11.set(renderPasses_ & passLens);
+	cb11.onToggle = [&](auto&) {
+		renderPasses_ ^= (passLens | passHighlight);
+		pp_.params.flags ^= PostProcessPass::flagLens;
+		recreatePasses_ = true;
+	};
+
 	auto& cb6 = pp.create<Checkbox>("Diffuse IBL").checkbox();
 	cb6.set(ao_.params.flags & AOPass::flagDiffuseIBL);
 	cb6.onToggle = [&](auto&) {
@@ -669,6 +698,12 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	cb7.set(ao_.params.flags & AOPass::flagSpecularIBL);
 	cb7.onToggle = [&](auto&) {
 		ao_.params.flags ^= AOPass::flagSpecularIBL;
+	};
+
+	pp.create<vui::dat::Button>("Output graph").onClick = [&]{
+		auto str = graphDot(frameGraph_);
+		auto data = (const std::byte*) str.data();
+		vpp::writeFile("deferred.dot", {data, str.length()}, false);
 	};
 
 	// == bloom folder ==
@@ -776,7 +811,7 @@ void ViewApp::initTimings() {
 			}
 			timeWidget_.addTiming("env");
 			timeWidget_.addTiming("geom:blend");
-		} else if(std::strcmp(pass.pass->name, "no-timing") == 0) {
+		} else if(std::strcmp(pass.pass->name, "copyCenterDepth") == 0) {
 			// no-op
 		} else {
 			timeWidget_.addTiming(pass.pass->name);
@@ -1020,7 +1055,47 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		};
 	}
 
+	FrameTarget* targetHighlight {};
+	HighLightPass::InitData initHighlight;
+	if(renderPasses_ & passHighlight) {
+		highlight_.create(initHighlight, passInfo);
+
+		auto& passHighlight = frameGraph_.addPass();
+		passHighlight.name = "highlight";
+		passHighlight.addIn(targetLight, highlight_.dstScopeLight());
+		passHighlight.addIn(targetEmission, highlight_.dstScopeEmission());
+		targetHighlight = &passHighlight.addOut(highlight_.srcScopeTarget(),
+			highlight_.target().vkImage());
+
+		passHighlight.record = [&](const auto& buf) {
+			highlight_.record(buf.cb, buf.size);
+			timeWidget_.addTimestamp(buf.cb);
+		};
+	}
+
+	FrameTarget* targetLens {};
+	LensFlare::InitData initLens;
+	if(renderPasses_ & passLens) {
+		dlg_assert(targetHighlight);
+		lens_.create(initLens, passInfo, blur_);
+
+		auto& passLens = frameGraph_.addPass();
+		passLens.name = "lens";
+		passLens.addIn(*targetHighlight, lens_.dstScopeLight());
+		targetLens = &passLens.addOut(lens_.srcScopeTarget(),
+			lens_.target().vkImage());
+
+		passLens.record = [&](const auto& buf) {
+			lens_.record(buf.cb, blur_, buf.size);
+			timeWidget_.addTimestamp(buf.cb);
+		};
+	}
+
 	passPP.addIn(*targetPPInput, pp_.dstScopeInput());
+	if(targetLens) {
+		passPP.addIn(*targetLens, pp_.dstScopeInput());
+	}
+
 	if(debugMode_ != 0) {
 		if(targetSSR) {
 			passPP.addIn(*targetSSR, pp_.dstScopeInput());
@@ -1047,7 +1122,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		// pseudo-pass that copies the center pixel of the depth target
 		// so we know what depth is currently focused and can adopt dof
 		auto& passCopyDepth = frameGraph_.addPass();
-		passCopyDepth.name = "no-timing"; // special, see initTimings
+		passCopyDepth.name = "copyCenterDepth"; // special in initTimings
 		passCopyDepth.addIn(targetLDepth, {
 			vk::PipelineStageBits::transfer,
 			vk::ImageLayout::transferSrcOptimal,
@@ -1110,6 +1185,12 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 	if(renderPasses_ & passScattering) {
 		scatter_.init(initScatter, passInfo);
 	}
+	if(renderPasses_ & passHighlight) {
+		highlight_.init(initHighlight, passInfo);
+	}
+	if(renderPasses_ & passLens) {
+		lens_.init(initLens, passInfo, blur_);
+	}
 
 	// others
 	env_.createPipe(vkDevice(), cameraDsLayout_, geomLight_.renderPass(), 1,
@@ -1168,6 +1249,16 @@ void ViewApp::initStaticBuffers(const vk::Extent2D& size) {
 		scatter_.createBuffers(scatterData, wb, size);
 	}
 
+	HighLightPass::InitBufferData highlightData;
+	if(renderPasses_ & passHighlight) {
+		highlight_.createBuffers(highlightData, wb, size);
+	}
+
+	LensFlare::InitBufferData lensData;
+	if(renderPasses_ & passLens) {
+		lens_.createBuffers(lensData, wb, size, blur_);
+	}
+
 	// init
 	geomLight_.initBuffers(geomLightData, size,
 		env_.irradiance().imageView(),
@@ -1200,6 +1291,20 @@ void ViewApp::initStaticBuffers(const vk::Extent2D& size) {
 		scatter_.initBuffers(scatterData, size,
 			geomLight_.ldepthTarget().imageView());
 		scatterView = scatter_.target().imageView();
+	}
+
+	auto highlightView = dummyTex_.vkImageView();
+	if(renderPasses_ & passHighlight) {
+		highlight_.initBuffers(highlightData,
+			geomLight_.lightTarget().imageView(),
+			geomLight_.emissionTarget().imageView());
+		highlightView = highlight_.target().imageView();
+	}
+
+	auto lensView = dummyTex_.vkImageView();
+	if(renderPasses_ & passLens) {
+		lens_.initBuffers(lensData, highlightView, blur_);
+		lensView = lens_.target().imageView();
 	}
 
 	if(renderPasses_ & passAO) {
@@ -1237,7 +1342,8 @@ void ViewApp::initStaticBuffers(const vk::Extent2D& size) {
 		geomLight_.ldepthTarget().imageView(),
 		geomLight_.normalsTarget().imageView(),
 		geomLight_.albedoTarget().imageView(),
-		ssaoView, ssrView, bloomView, lumView, scatterView, shadowView);
+		ssaoView, ssrView, bloomView, lumView, scatterView, lensView,
+		lensDirt_.vkImageView(), shadowView);
 
 	App::scheduleRerecord();
 }
@@ -1579,7 +1685,7 @@ bool ViewApp::key(const swa_key_event& ev) {
 		return false;
 	}
 
-	auto numModes = 13u;
+	auto numModes = 14u;
 	switch(ev.keycode) {
 		case swa_key_m: // move light here
 			if(!dirLights_.empty()) {
@@ -1717,6 +1823,12 @@ void ViewApp::updateDevice() {
 	}
 	if(renderPasses_ & passScattering) {
 		scatter_.updateDevice();
+	}
+	if(renderPasses_ & passHighlight) {
+		highlight_.updateDevice();
+	}
+	if(renderPasses_ & passLens) {
+		lens_.updateDevice();
 	}
 	pp_.updateDevice();
 

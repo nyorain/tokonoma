@@ -8,6 +8,8 @@ executable('deferred', [
 		'postProcess.cpp',
 		'luminance.cpp',
 		'geomLight.cpp',
+		'lens.cpp',
+		'graph.cpp',
 		'scatter.cpp',
 		deferred_shaders,
 	], dependencies: [

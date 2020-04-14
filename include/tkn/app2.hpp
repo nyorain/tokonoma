@@ -177,7 +177,7 @@ protected:
 	std::optional<std::uint64_t> submitFrame();
 	void dispatch();
 
-private:
+protected:
 	struct Renderer;
 	struct GuiListener;
 	struct Callbacks;

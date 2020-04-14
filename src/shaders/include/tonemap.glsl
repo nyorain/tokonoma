@@ -33,5 +33,3 @@ vec3 acesTonemap(vec3 color) {
     const float E = 0.14;
     return clamp((color * (A * color + B)) / (color * (C * color + D) + E), 0.0, 1.0);
 }
-
-
