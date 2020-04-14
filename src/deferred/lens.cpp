@@ -100,7 +100,7 @@ void GaussianBlur::init(const vpp::Device& dev, vk::Sampler linearSampler) {
 	pcr.stageFlags = vk::ShaderStageBits::compute;
 
 	dsLayout_ = {dev, bindings};
-	pipeLayout_ = {dev, {{dsLayout_}}, {{pcr}}};
+	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {{pcr}}};
 	vpp::nameHandle(dsLayout_, "GaussianBlur:dsLayout");
 	vpp::nameHandle(pipeLayout_, "GaussianBlur:pipeLayout");
 
@@ -251,7 +251,7 @@ void HighLightPass::create(InitData& data, const PassCreateInfo& pci) {
 	};
 
 	dsLayout_ = {dev, bindings};
-	pipeLayout_ = {dev, {{dsLayout_}}, {}};
+	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 	vpp::nameHandle(dsLayout_, "HighLightPass:dsLayout");
 	vpp::nameHandle(pipeLayout_, "HighLightPass:pipeLayout");
 
@@ -316,7 +316,7 @@ void HighLightPass::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.storage({{{}, target_.vkImageView(),
 		vk::ImageLayout::general}});
-	dsu.uniform({{ubo_}});
+	dsu.uniform({{{ubo_}}});
 }
 
 void HighLightPass::record(vk::CommandBuffer cb, vk::Extent2D size) {
@@ -389,7 +389,7 @@ void LensFlare::create(InitData& data, const PassCreateInfo& pci,
 	};
 
 	dsLayout_ = {dev, bindings};
-	pipeLayout_ = {dev, {{dsLayout_}}, {}};
+	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 	vpp::nameHandle(dsLayout_, "LensFlare:dsLayout");
 	vpp::nameHandle(pipeLayout_, "LensFlare:pipeLayout");
 
@@ -452,7 +452,7 @@ void LensFlare::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.storage({{{}, target_.vkImageView(),
 		vk::ImageLayout::general}});
-	dsu.uniform({{ubo_}});
+	dsu.uniform({{{ubo_}}});
 }
 
 void LensFlare::record(vk::CommandBuffer cb, const GaussianBlur& blur,

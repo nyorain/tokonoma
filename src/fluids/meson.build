@@ -2,7 +2,7 @@ fluid_software_src = [
 	'software.cpp',
 ]
 
-executable('software',
+executable('fluid-software',
 	sources: fluid_software_src,
 	dependencies: tkn_dep)
 

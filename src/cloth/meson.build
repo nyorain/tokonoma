@@ -1,7 +1,7 @@
 # runs simulation on the cpu, i.e. optimizations and openmp are really
 # important here to allow a reasonably sized cloth grid
 mp_dep = dependency('openmp')
-executable('software', [
+executable('cloth-software', [
 		'software.cpp',
 		tkn_shaders,
 	], dependencies: [tkn_dep, mp_dep],
