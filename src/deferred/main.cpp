@@ -226,6 +226,7 @@ protected:
 	HighLightPass highlight_;
 	LensFlare lens_;
 
+	bool useLensDirt_ {true};
 	tkn::Texture lensDirt_;
 	rvg::Transform windowTransform_;
 
@@ -626,6 +627,13 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	createValueTextfield(lff, "halo width", lens_.params.haloWidth);
 	createValueTextfield(lff, "blur hsize", lens_.blurHSize, &this->rerecord_);
 	createValueTextfield(lff, "blur fac", lens_.blurFac, &this->rerecord_);
+	auto& cb0 = lff.create<Checkbox>("dirt").checkbox();
+	cb0.set(useLensDirt_);
+	cb0.onToggle = [&](auto& cb) {
+		useLensDirt_ = cb.checked();
+		recreateStaticBufs_ = true;
+	};
+
 	lff.open(false);
 
 	auto& cb1 = pp.create<Checkbox>("ssao").checkbox();
@@ -799,6 +807,8 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 }
 
 void ViewApp::initTimings() {
+	// show only timings for active passes; show them in the order
+	// they are executed in.
 	timeWidget_.reset();
 	timeWidget_.addTiming("shadows"); // always the first, no dependencies
 	for(auto& pass : frameGraph_.order()) {
@@ -1335,6 +1345,9 @@ void ViewApp::initStaticBuffers(const vk::Extent2D& size) {
 		lumView = luminance_.target().imageView();
 	}
 
+	auto lensDirt = useLensDirt_ ?
+		lensDirt_.vkImageView() :
+		dummyTex_.vkImageView();
 	auto shadowView = pointLight ?
 		pointLights_[0].shadowMap() :
 		dirLights_[0].shadowMap();
@@ -1343,7 +1356,7 @@ void ViewApp::initStaticBuffers(const vk::Extent2D& size) {
 		geomLight_.normalsTarget().imageView(),
 		geomLight_.albedoTarget().imageView(),
 		ssaoView, ssrView, bloomView, lumView, scatterView, lensView,
-		lensDirt_.vkImageView(), shadowView);
+		lensDirt, shadowView);
 
 	App::scheduleRerecord();
 }

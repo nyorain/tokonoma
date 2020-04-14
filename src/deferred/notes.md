@@ -4,7 +4,6 @@ enough not listed here
 
 ## features to implement:
 
-- lens flare
 - better dof implementations, current impl is naive
   probably best to use own pass, see gpugems article
   bokeh blurring
@@ -15,8 +14,18 @@ enough not listed here
 - temporal anti aliasing (TAA), tolksvig maps
   e.g. https://media.contentapi.ea.com/content/dam/eacom/frostbite/files/course-notes-moving-frostbite-to-pbr-v2.pdf
 
-## urgent todos
+## todos
 
+- fix current performance hit by using shadow maps in scattering
+- make bloom use the output from highpass (that lens flare uses)
+  i guess bloom and lens flare could also share a temporary blur buffer?
+  	- investigate: how does it effect the results if we use a
+	  blurred version from our highlight pass for lens flare?
+	  i feel like that might be a good idea
+- make the highpass bias depend on the current exposure
+  (bloom therefore as well). What about the scale?
+- use the GaussianBlur class everywhere instead of implementing
+  custom blurs.
 - re-add lost features: light/object picking
 - fix the current probe mess. Really hacky implementation
 - fix diretional light shadow in screenshot/probe
@@ -57,11 +66,7 @@ enough not listed here
 
 ## further ideas
 
-- could only show the active passes in the timeWidget.
-  also show them in the order they are executed in
 - add deferred light initialization
-- timeWidget is more hacked together than anything else.
-  See the notes in timeWidget.hpp
 - frame graph: might be possible to combine the frame graph utility
   with all the (currently manual) plugging of image views into
   other passes (see initBuffers). We currently basically provide

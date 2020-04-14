@@ -1,5 +1,9 @@
 #version 450
 
+// Generates lens flare effects.
+// Most of it (with some adaptions) taken from this excellent post:
+// http://john-chapman-graphics.blogspot.com/2013/02/pseudo-lens-flare.html
+
 layout(local_size_x_id = 0, local_size_y_id = 1) in;
 
 layout(set = 0, binding = 0) uniform sampler2D inLight;

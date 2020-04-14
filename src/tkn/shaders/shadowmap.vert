@@ -45,7 +45,7 @@ void main() {
 	outMatID = uint(models[id].normal[0][3]);
 
 	vec4 wpos = models[id].matrix * vec4(inPos, 1.0);
-	gl_Position = light.cascadeProjs[cascadeIndex] * wpos;
+	gl_Position = cascadeProj(light, cascadeIndex) * wpos;
 	gl_Position.y = -gl_Position.y;
 
 	// TODO: only needed if there is no depth clamping

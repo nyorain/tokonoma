@@ -248,7 +248,8 @@ DirLight::DirLight(const WorkBatcher& wb, const ShadowData& data) {
 	// setup light ds and ubo
 	auto hostMem = dev.hostMemoryTypes();
 	auto lightUboSize = sizeof(this->data) +
-		sizeof(nytl::Mat4f) * cascadeCount +
+		// sizeof(nytl::Mat4f) * cascadeCount +
+		2 * sizeof(nytl::Vec4f) * cascadeCount +
 		sizeof(float) * vpp::align(cascadeCount, 4u);
 	ds_ = {wb.alloc.ds, data.dsLayout};
 	ubo_ = {wb.alloc.bufHost, lightUboSize,
@@ -341,7 +342,10 @@ void DirLight::updateDevice(const Camera& camera) {
 	}
 
 	// 3: calculate cascade projections
-	std::array<nytl::Mat4f, cascadeCount> projs;
+	// std::array<nytl::Mat4f, cascadeCount> projs;
+	std::array<nytl::Vec4f, cascadeCount> projMin;
+	std::array<nytl::Vec4f, cascadeCount> projMax;
+
 	float splitBegin = near;
 	for(auto i = 0u; i < cascadeCount; ++i) {
 		auto splitEnd = (splits[i] - near) / (far - near);
@@ -393,8 +397,10 @@ void DirLight::updateDevice(const Camera& camera) {
 		max.y -= std::fmod(max.y, q);
 		// max.z -= std::fmod(max.z, q);
 
-		auto projMat = ortho3(min.x, max.x, max.y, min.y, -max.z, -min.z);
-		projs[i] = projMat * viewMat;
+		// auto projMat = ortho3(min.x, max.x, max.y, min.y, -max.z, -min.z);
+		// projs[i] = projMat * viewMat;
+		projMin[i] = nytl::Vec4f{min.x, min.y, -max.z, 0.0};
+		projMax[i] = nytl::Vec4f{max.x, max.y, -min.z, 0.0};
 
 		// for next iteration
 		splitBegin = splitEnd;
@@ -403,7 +409,9 @@ void DirLight::updateDevice(const Camera& camera) {
 	auto map = ubo_.memoryMap();
 	auto span = map.span();
 	tkn::write(span, this->data);
-	tkn::write(span, projs);
+	// tkn::write(span, projs);
+	tkn::write(span, projMin);
+	tkn::write(span, projMax);
 	tkn::write(span, splits);
 }
 

@@ -23,7 +23,16 @@ struct DirLight {
 	uint flags;
 	vec3 dir;
 	float _; // unused padding
-	mat4 cascadeProjs[dirLightCascades]; // global -> light space
+
+	// Using less space here is crucial. Not sure why but using mat4
+	// here (even if we only have 4 cascades) gives *huge* slowdowns
+	// (20x). I guess the uniform buffer just gets too large (> 256 bytes).
+	// So we manually construct the vp matrices here with minimal
+	// data (well, "minimal"; w component unused...).
+	// mat4 cascadeProjs[dirLightCascades]; // global -> light space
+	vec4 cascadeProjMin[dirLightCascades];
+	vec4 cascadeProjMax[dirLightCascades];
+
 	vec4 cascadeSplits[(dirLightCascades + 3) / 4];
 };
 
@@ -108,6 +117,31 @@ vec3 sceneMap(mat4 proj, vec3 pos) {
 	return sceneMap(proj, vec4(pos, 1.0));
 }
 
+mat4 ortho(vec3 vmin, vec3 vmax) {
+	vec3 diff = vmax - vmin;
+	mat4 r = mat4(1.0);
+	r[0][0] = 2 / diff.x;
+	r[1][1] = 2 / diff.y;
+	r[2][2] = 1 / diff.z;
+	r[3].xy = (vmin.xy + vmax.xy) / (vmin.xy - vmax.xy);
+	r[3].z = vmin.z / (vmin.z - vmax.z);
+	return r;
+}
+
+mat4 lookAt(vec3 ndir) {
+	vec3 up = vec3(0.0, 1.0, 0.0);
+
+	vec3 z = ndir;
+	vec3 x = normalize(cross(z, up));
+	vec3 y = cross(x, z);
+
+	mat4 r = mat4(1.0);
+	r[0].xyz = x;
+	r[1].xyz = y;
+	r[2].xyz = z;
+	return transpose(r);
+}
+
 // computes shadow for directional light
 // returns (1 - shadow), i.e. the light factor
 float dirShadow(sampler2DShadow shadowMap, vec3 pos, int range) {
@@ -156,49 +190,25 @@ uint getCascadeIndex(DirLight light, float linearz, out float between) {
 	return i;
 }
 
+mat4 cascadeProj(DirLight light, uint index) {
+	// TODO: pre-normalize direction
+	// TODO: lookAt can probably be optimized for this pos = 0.0 case
+	mat4 proj = ortho(
+		light.cascadeProjMin[index].xyz,
+		light.cascadeProjMax[index].xyz);
+	return proj * lookAt(normalize(light.dir));
+}
+
 float dirShadowIndex(DirLight light, sampler2DArrayShadow shadowMap,
 		vec3 worldPos, uint index, int range) {
 	// sampler has builtin comparison
 	// array index comes *before* the comparison value (i.e. i before pos.z)
-	vec3 pos = sceneMap(light.cascadeProjs[index], worldPos);
+	vec3 pos = sceneMap(cascadeProj(light, index), worldPos);
 	if(pos.z <= 0.0 || pos.z >= 1.0) {
-		return 0.0;
+		return 1.0;
 	}
 
 	float sum = 0.f;
-
-	// NOTE: not a good idea to use this here, apparently linear
-	// filtering for shadow samplers doesn't really mean linear
-	// filtering and instead just that they take multiple
-	// pixels into account... can't realy on linear sampling
-	// optimizations therefore
-	/*
-	// TODO: simpler with two seperate sampler objects probably
-	const vec2 texSize = textureSize(shadowMap, 0).xy;
-	const vec2 nf = 1.f / texSize; // normalization factor
-	ivec2 ipos = ivec2(floor(pos.xy * texSize)); // unnormalized position
-	vec4 access = vec4((ipos + 0.5) * nf, index, pos.z);
-	// vec4 access = vec4(pos.xy, index, pos.z);
-	sum += texture(shadowMap, access).r;
-
-	access.xy = ipos * nf;
-	sum += textureOffset(shadowMap, access, samplesLinear8Floor[0]).r;
-	sum += textureOffset(shadowMap, access, samplesLinear8Floor[1]).r;
-	sum += textureOffset(shadowMap, access, samplesLinear8Floor[2]).r;
-	sum += textureOffset(shadowMap, access, samplesLinear8Floor[3]).r;
-	sum += textureOffset(shadowMap, access, samplesLinear8Floor[4]).r;
-	sum += textureOffset(shadowMap, access, samplesLinear8Floor[5]).r;
-	sum += textureOffset(shadowMap, access, samplesLinear8Floor[6]).r;
-	sum += textureOffset(shadowMap, access, samplesLinear8Floor[7]).r;
-	// for(uint i = 0u; i < 4; ++i) {
-	// 	vec2 off = nf * samplesLinear8[i];
-	// 	sum += texture(shadowMap, vec4(pos.xy + off, index, pos.z));
-	// 	sum += texture(shadowMap, vec4(pos.xy - off, index, pos.z));
-	// }
-
-	return sum / 9;
-	*/
-
 	const vec2 texelSize = 1.f / textureSize(shadowMap, 0).xy;
 	for(int x = -range; x <= range; ++x) {
 		for(int y = -range; y <= range; ++y) {
@@ -230,11 +240,11 @@ float defaultAttenuation(float d, float radius) {
 
 // from https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows
 vec3 pointShadowOffsets[20] = vec3[](
-   vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1), 
-   vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
-   vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
-   vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
-   vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
+   vec3(1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1), 
+   vec3(1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
+   vec3(1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
+   vec3(1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
+   vec3(0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
 );
 
 float pointShadow(samplerCubeShadow shadowCube, vec3 lightPos,

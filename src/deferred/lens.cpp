@@ -150,6 +150,7 @@ void GaussianBlur::record(vk::CommandBuffer cb, const Instance& instance,
 		const Kernel& kernel, vk::ImageAspectBits aspect) const {
 	dlg_assert(dstSize.width > 0 && dstSize.height > 0);
 	dlg_assert(kernel[0].x > 1);
+	vpp::DebugLabel(instance.ping.device(), cb, "GaussianBlur");
 
 	// basically ceil(dstSize / float(groupDimSize))
 	auto gx = (dstSize.width + groupDimSize - 1) / groupDimSize;
@@ -319,6 +320,8 @@ void HighLightPass::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 }
 
 void HighLightPass::record(vk::CommandBuffer cb, vk::Extent2D size) {
+	vpp::DebugLabel(target_.device(), cb, "HighlightPass");
+
 	vk::ImageMemoryBarrier barrier;
 	barrier.image = target_.image();
 	barrier.oldLayout = vk::ImageLayout::undefined;
@@ -454,6 +457,8 @@ void LensFlare::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 
 void LensFlare::record(vk::CommandBuffer cb, const GaussianBlur& blur,
 		vk::Extent2D size) {
+	vpp::DebugLabel(target_.device(), cb, "LensFlare");
+
 	vk::ImageMemoryBarrier barrier;
 	barrier.image = target_.image();
 	barrier.oldLayout = vk::ImageLayout::undefined;
