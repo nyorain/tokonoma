@@ -930,7 +930,6 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 		passSSAO.record = [&](const auto& buf) {
 			ssao_.record(buf.cb, buf.size, cameraDs_);
-			// timeWidget_.add("ssao");
 			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
@@ -953,7 +952,6 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 		passAO.record = [&](const auto& buf) {
 			ao_.record(buf.cb, cameraDs_, buf.size);
-			// timeWidget_.add("ao");
 			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
@@ -973,7 +971,6 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 		passBloom.record = [&](const auto& buf) {
 			bloom_.record(buf.cb, geomLight_.emissionTarget().image(), buf.size);
-			// timeWidget_.add("bloom");
 			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
@@ -992,7 +989,6 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 
 		passSSR.record = [&](const auto& buf) {
 			ssr_.record(buf.cb, cameraDs_, buf.size);
-			// timeWidget_.add("ssr");
 			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
@@ -1013,7 +1009,6 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 				pointLights_[0].ds() :
 				dirLights_[0].ds();
 			scatter_.record(buf.cb, buf.size, cameraDs_, lightDs);
-			// timeWidget_.add("scatter");
 			timeWidget_.addTimestamp(buf.cb);
 		};
 	}
@@ -1040,7 +1035,6 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 			combine_.scopeTarget());
 		passCombine.record = [&](const auto& buf) {
 			combine_.record(buf.cb, buf.size);
-			// timeWidget_.add("combine");
 			timeWidget_.addTimestamp(buf.cb);
 		};
 
@@ -1155,10 +1149,6 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 	dlg_assert(frameGraph_.check());
 	frameGraph_.compute();
 
-	if(timeWidget_.valid()) {
-		initTimings();
-	}
-
 	// targets
 	auto dstAlbedo = targetAlbedo.producer.scope;
 	auto dstNormals = targetNormals.producer.scope;
@@ -1169,6 +1159,10 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 	vpp::InitObject initGeomLight(geomLight_, passInfo,
 		dstNormals, dstAlbedo, dstEmission, dstDepth, dstLDepth, dstLight,
 		!(renderPasses_ & passAO));
+
+	if(timeWidget_.valid()) {
+		initTimings();
+	}
 
 	// finish initialization
 	initGeomLight.init();

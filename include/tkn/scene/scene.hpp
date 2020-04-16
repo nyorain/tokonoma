@@ -68,7 +68,7 @@ struct Sampler {
 class Scene {
 public:
 	// NOTE: this is important for TAA but causes worse result without it
-	static constexpr auto mipLodBias = -1.f;
+	static constexpr auto mipLodBias = -2.f;
 	// static constexpr auto imageCount = 32u;
 	static constexpr auto imageCount = 96u;
 	static constexpr auto samplerCount = 6u;
@@ -225,6 +225,7 @@ protected:
 	vpp::SubBuffer blendModelIDs_;
 
 	vpp::SubBuffer indices_;
+	// TODO: rework into multiple (sub-)buffers for cleaner implementation?
 	vpp::SubBuffer vertices_; // order: tc1, tc0, position + normal
 	unsigned tc0Offset_; // where tc0 starts in vertices_
 	unsigned posOffset_; // where positions starts in vertices_

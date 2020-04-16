@@ -11,7 +11,7 @@ void main() {
 	// sharpening
 	vec3 original = texture(inTex, uv).rgb;
 
-	float fac = 0.2;
+	float fac = 0.1;
 	vec3 sharp = (1 + fac * 4) * original;
 	sharp += -fac * textureOffset(inTex, uv, ivec2(1, 0)).rgb;
 	sharp += -fac * textureOffset(inTex, uv, ivec2(0, 1)).rgb;

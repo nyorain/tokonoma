@@ -293,9 +293,10 @@ void main() {
 			float lum1 = dot(luminanceFac, hist.rgb);
 			float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.2)));
 			diff = 1.0 - diff;
-			float fac1 = exp(-5 * length(clipped - hist.rgb));
+			// float fac1 = exp(-5 * length(clipped - hist.rgb));
 
-			weight = mix(ubo.minFac, ubo.maxFac, (diff * diff + fac1) / 2);
+			// weight = mix(ubo.minFac, ubo.maxFac, (diff * diff + fac1) / 2);
+			weight = mix(ubo.minFac, ubo.maxFac, diff * diff);
 			// float fac2 = 1 - exp(-1 * contrast);
 			// weight = mix(ubo.minFac, ubo.maxFac, (diff * diff + fac1 + fac2) / 3);
 			/*
@@ -370,6 +371,11 @@ void main() {
 		// float weight = 1 - 0.1 * distance(hist.rgb, color);
 
 		// color = mix(color, hist.rgb, weight);
+
+		// the more movement, the more we trust the current value
+		// this helps to fight blurriness but obviously decreases
+		// AA quality for quick movement
+		weight *= exp(-10 * max(length(vel) - 2 * length(pixelSize), 0.0));
 		color = mix(color, hist.rgb, weight);
 	} 
 

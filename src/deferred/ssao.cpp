@@ -255,10 +255,9 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 	// TODO: or simply use a buffer/constant array in shader? no advantage
 	// like this. We could make noiseDim here variable/configurable though.
 	constexpr auto noiseDim = 4u;
-	std::vector<nytl::Vec4f> noiseData;
-	noiseData.resize(noiseDim * noiseDim);
+	data.samples.resize(noiseDim * noiseDim);
 	for(auto i = 0u; i < noiseDim * noiseDim; i++) {
-		noiseData[i] = nytl::Vec4f{
+		data.samples[i] = nytl::Vec4f{
 			rndDist(rndEngine) * 2.f - 1.f,
 			rndDist(rndEngine) * 2.f - 1.f,
 			0.0f, 0.0f
@@ -266,7 +265,7 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 	}
 
 	auto noiseFormat = vk::Format::r32g32b32a32Sfloat;
-	auto span = nytl::as_bytes(nytl::span(noiseData));
+	auto span = nytl::as_bytes(nytl::span(data.samples));
 	auto p = tkn::wrap({noiseDim, noiseDim}, noiseFormat, span);
 	auto params = tkn::TextureCreateParams{};
 	params.format = noiseFormat;

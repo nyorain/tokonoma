@@ -126,7 +126,7 @@ void main() {
 
 		// custom wip shadow sampling, mainly for TAA
 		float shadow = 0.0;
-		vec3 spos = sceneMap(dirLight.cascadeProjs[index], inPos);
+		vec3 spos = sceneMap(cascadeProj(dirLight, index), inPos);
 		if(spos.z > 0.0 && spos.z < 1.0) {
 			const vec2 poissonDisk[16] = vec2[]( 
 			   vec2( -0.94201624, -0.39906216 ), 
@@ -147,7 +147,7 @@ void main() {
 			   vec2( 0.14383161, -0.14100790 ) 
 			);
 
-			for (int i=0;i<4;i++){
+			for (int i = 0; i < 7; i++){
 				// we could make the length dependent on the
 				// distance behind the first sample or something... (i.e.
 				// make the shadow smoother when further away from

@@ -1156,8 +1156,8 @@ protected:
 		nytl::Mat4f lastProj = nytl::identity<4, float>();
 		nytl::Vec2f lastJitter;
 
-		float minFac {0.90};
-		float maxFac {0.99};
+		float minFac {0.96};
+		float maxFac {0.995};
 		u32 mode {taaModeClipColor};
 
 		std::vector<nytl::Vec2f> samples;
