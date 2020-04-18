@@ -44,6 +44,10 @@ public:
 		float depth;
 	};
 
+	static constexpr float near = 0.05f;
+	static constexpr float far = 25.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
 public:
 	using Base::init;
 	bool init(nytl::Span<const char*> args) override {
@@ -123,7 +127,7 @@ public:
 		// gpi.depthStencil.depthTestEnable = true;
 		// gpi.depthStencil.depthWriteEnable = true;
 		// gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
-//
+
 		gpi.vertex.pVertexAttributeDescriptions = &attrib;
 		gpi.vertex.vertexAttributeDescriptionCount = 1;
 		gpi.vertex.vertexBindingDescriptionCount = 1;
@@ -167,6 +171,15 @@ public:
 		}
 	}
 
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(windowSize().x) / windowSize().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
+	}
+
+	nytl::Mat4f cameraVP() const {
+		return projectionMatrix() * viewMatrix(camera_);
+	}
+
 	void updateDevice() override {
 		Base::updateDevice();
 
@@ -174,7 +187,7 @@ public:
 			camera_.update = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, matrix(camera_));
+			tkn::write(span, cameraVP());
 			map.flush();
 		}
 
@@ -246,7 +259,7 @@ public:
 
 	std::optional<Drag> pointAt(nytl::Vec2f pos) {
 		using namespace nytl::vec::cw::operators;
-		auto proj = matrix(camera_);
+		auto proj = cameraVP();
 
 		// TODO: depth sort? in case there are multiple points
 		// over each other. Not really a sort, just a "best
@@ -273,7 +286,7 @@ public:
 			auto s = windowSize();
 			auto xy = Vec2f{-1.f + 2 * p.x / s.x, -1.f + 2 * p.y / s.y};
 			xy.y = -xy.y;
-			auto invProj = nytl::Mat4f(nytl::inverse(matrix(camera_)));
+			auto invProj = nytl::Mat4f(nytl::inverse(cameraVP()));
 			auto world = tkn::multPos(invProj, Vec3f{xy.x, xy.y, drag_->depth});
 			points()[drag_->id] = world;
 			if(auto* ppts = std::get_if<1>(&controlPoints_)) {
@@ -334,7 +347,6 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		camera_.perspective.aspect = float(w) / h;
 		camera_.update = true;
 	}
 
@@ -367,7 +379,7 @@ public:
 		if(ev.keycode == swa_key_c) {
 			if(auto* ppts = std::get_if<1>(&controlPoints_)) {
 				auto& pts = *ppts;
-				auto p = camera_.pos + camera_.dir;
+				auto p = camera_.pos + dir(camera_);
 				pts.push_back(p);
 				pts[pts.size() - 2] = p;
 				pts[pts.size() - 3] = p;

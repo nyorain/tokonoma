@@ -6,8 +6,8 @@
 
 namespace tkn {
 
-bool SinglePassApp::init(nytl::Span<const char*> args, Args& out) {
-	if(!App::init(args, out)) {
+bool SinglePassApp::doInit(nytl::Span<const char*> args, Args& out) {
+	if(!App::doInit(args, out)) {
 		return false;
 	}
 

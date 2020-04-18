@@ -11,7 +11,6 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord0;
 layout(location = 3) in vec2 inTexCoord1;
 layout(location = 4) in flat uint inMatID;
-layout(location = 5) in flat uint inModelID;
 
 layout(location = 0) out vec4 outCol;
 

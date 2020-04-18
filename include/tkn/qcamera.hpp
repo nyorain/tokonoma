@@ -17,16 +17,24 @@ struct QuatCamera {
 	Quaternion rot {1, 0, 0, 0};
 };
 
+inline nytl::Vec3f dir(const QuatCamera& c) {
+	return apply(c.rot, nytl::Vec3f {0.f, 0.f, -1.f});
+}
+
+inline nytl::Vec3f up(const QuatCamera& c) {
+	return apply(c.rot, nytl::Vec3f {0.f, 1.f, 0.f});
+}
+
+inline nytl::Vec3f right(const QuatCamera& c) {
+	return apply(c.rot, nytl::Vec3f {1.f, 0.f, 0.f});
+}
+
 inline auto viewMatrix(const QuatCamera& c) {
-	auto up = apply(c.rot, nytl::Vec3f {0.f, 1.f, 0.f});
-	auto dir = apply(c.rot, nytl::Vec3f {0.f, 0.f, -1.f});
-	return tkn::lookAtRH(c.pos, c.pos + dir, up);
+	return tkn::lookAtRH(c.pos, c.pos + dir(c), up(c));
 }
 
 inline auto fixedViewMatrix(const QuatCamera& c) {
-	auto up = apply(c.rot, nytl::Vec3f {0.f, 1.f, 0.f});
-	auto dir = apply(c.rot, nytl::Vec3f {0.f, 0.f, -1.f});
-	return tkn::lookAtRH({}, dir, up);
+	return tkn::lookAtRH({}, dir(c), up(c));
 }
 
 // yaw: rotation around y axis (i.e looking to left or right)
@@ -37,41 +45,10 @@ inline void rotateView(QuatCamera& c, float yaw, float pitch, float roll) {
 	c.update = true;
 }
 
-// TODO: deprecrated, remove. Use swa instead
+/// Arguments (with defaults) for checkMovement.
+/// Only exists so movement keys and multipliers are not hardcoded
+/// but could be adjusted by applications.
 struct QuatCameraMovement {
-	// The keycodes to check for the respective movement.
-	// Can be set to ny::Keycode::none to disable movement
-	// in that direction.
-	ny::Keycode forward = ny::Keycode::w;
-	ny::Keycode backward = ny::Keycode::s;
-	ny::Keycode left = ny::Keycode::a;
-	ny::Keycode right = ny::Keycode::d;
-	ny::Keycode up = ny::Keycode::q;
-	ny::Keycode down = ny::Keycode::e;
-
-	// The modifiers that allow faster/slower movement.
-	// Can be set to Modifier::none to disable the feature.
-	ny::KeyboardModifier fastMod = ny::KeyboardModifier::shift;
-	ny::KeyboardModifier slowMod = ny::KeyboardModifier::ctrl;
-
-	// Specifies by how much the modifiers make the movement
-	// faster or slower.
-	float fastMult = 5.f;
-	float slowMult = 0.2f;
-
-	// Whether up and down should respect the current orientation
-	// of the camera. For many camera implementations, up and down
-	// always use the (global) Y axis statically instead of the upwards
-	// pointing vector from the camera.
-	bool respectRotationY = true;
-};
-
-// Checks default wasd+qe movement (with modifiers for faster/slower).
-// Returns whether a change was made.
-bool checkMovement(QuatCamera& c, ny::KeyboardContext& kc, float dt,
-		const QuatCameraMovement& params = {});
-
-struct QuatCameraMovementSwa {
 	// The keycodes to check for the respective movement.
 	// Can be set to ny::Keycode::none to disable movement
 	// in that direction.
@@ -99,8 +76,8 @@ struct QuatCameraMovementSwa {
 	bool respectRotationY = true;
 };
 
-bool checkMovement(QuatCamera& c, swa_display* dpy, float dt,
-		const QuatCameraMovementSwa& params = {});
+bool checkMovement(QuatCamera&, swa_display* dpy, float dt,
+		const QuatCameraMovement& params = {});
 
 } // namespace tkn
 

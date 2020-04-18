@@ -59,7 +59,7 @@ public:
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
-	void updateDevice(const Camera& camera);
+	void updateDevice(const nytl::Mat4f& camvp, float near, float far);
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
 

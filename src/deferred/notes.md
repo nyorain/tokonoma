@@ -10,12 +10,27 @@ enough not listed here
     - make dof etc as physically based as possible
       note where it's not possible
 - reflectance probe rendering/dynamic creation
-- support switching between environment maps
+- support switching between environment maps/irradiance
 - temporal anti aliasing (TAA), tolksvig maps
   e.g. https://media.contentapi.ea.com/content/dam/eacom/frostbite/files/course-notes-moving-frostbite-to-pbr-v2.pdf
+- improve SSAO implementation (and add more ambient lighting tricks)
+  test out multi resolution SSAO: https://www.comp.nus.edu.sg/~lowkl/publications/mssao_cgi2011_slides.pdf 
+  more tricks: https://www.iquilezles.org/www/articles/multiresaocc/multiresaocc.htm
+- play around with the adaptive bloom idea
+  bloom: perform bias/new more restrictive highpass on every mip level, 
+  making sure that only strong light gets strong blur
 
 ## todos
 
+- optimize the pass arrangement in FrameGraph
+- (semi-)automatize render target creation to maximize buffer re-using
+  (combine this with optimized/better pass arrangement)
+	- move ownership of images (and maybe framebuffers? not sure how that works,
+	  renderpasses?) to FrameGraph and something like
+	  `FramePass::addOut(SyncScope, usage, size, format, ...)`, which first
+	  checks if there is a free buffer (not sure if possible).
+	  Hm, tbh there might be a better way to reuse buffers, independent
+	  from the logical representation in FrameGraph
 - fix current performance hit by using shadow maps in scattering
 - make bloom use the output from highpass (that lens flare uses)
   i guess bloom and lens flare could also share a temporary blur buffer?
@@ -39,7 +54,7 @@ enough not listed here
   of primitives?). Probably not bad for performance though,
   AZDO, allows culling (TODO: implement basic culling).
   alternative to transparency sorting: just allow one layer of transparency
- group initial layout transitions from undefined layout to general
+  group initial layout transitions from undefined layout to general
   per frame? could do it externally, undefined -> targetScope()
   for luminance (compute), ssr, ssao (compute)
   Could check in FrameGraph if initialLayout (add something like that)

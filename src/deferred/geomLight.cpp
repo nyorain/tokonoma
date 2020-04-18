@@ -514,7 +514,7 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		vk::DescriptorSet camDs, const tkn::Scene& scene,
 		nytl::Span<const tkn::PointLight*> pointLights,
-		nytl::Span<const tkn::DirLight*> dirLights, vpp::BufferSpan boxIndices,
+		nytl::Span<const tkn::DirLight*> dirLights,
 		vk::DescriptorSet envCamDs, const tkn::Environment* env,
 		tkn::TimeWidget* time) {
 	auto& dev = rp_.device();
@@ -550,11 +550,9 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		vpp::DebugLabel(dev, cb, "light pass");
 		tkn::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 0, {camDs, lightDs_});
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pointLightPipe_);
-		vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
-			boxIndices.offset(), vk::IndexType::uint16);
 		for(auto* light : pointLights) {
 			tkn::cmdBindGraphicsDescriptors(cb, lightPipeLayout_, 2, {light->ds()});
-			// vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0); // box
+			// vk::cmdDrawIndexed(cb, 14, 1, 0, 0, 0); // TODO: draw box
 			vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 		}
 
@@ -583,8 +581,6 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		// that doesn't write the depth buffer
 		if(env) {
 			tkn::cmdBindGraphicsDescriptors(cb, env->pipeLayout(), 0, {envCamDs});
-			vk::cmdBindIndexBuffer(cb, boxIndices.buffer(),
-				boxIndices.offset(), vk::IndexType::uint16);
 			env->render(cb);
 			if(time) {
 				time->addTimestamp(cb);

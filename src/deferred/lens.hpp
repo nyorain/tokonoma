@@ -26,8 +26,8 @@ public:
 	//   should be used to generate the kernel. Can be seen
 	//   as filter sigma normalized to hsize.
 	//   Must be greater or equal to 1. Larger factors mean stronger blur
-	//   but potentially less quality (cutting of the edges of the curve).
-	//   Factors up to 1.5 are usually fine quality-wise.
+	//   but potentially less quality (cutting of the edges of the curve),
+	//   getting closer to a box filter.
 	// The operation is not particularly expensive and can be performed
 	// every recording.
 	static Kernel createKernel(unsigned hsize, float fac = 1.5);
@@ -152,7 +152,7 @@ protected:
 class LensFlare {
 public:
 	unsigned blurHSize = 24;
-	float blurFac = 8.0; // TODO: losing lots of accuracy here. important?
+	float blurFac = 1.5;
 
 	struct {
 		u32 numGhosts {5};

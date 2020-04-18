@@ -1,4 +1,4 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
 #include <tkn/render.hpp>
 #include <tkn/texture.hpp>
@@ -19,9 +19,6 @@
 #include <vpp/vk.hpp>
 
 #include <dlg/dlg.hpp>
-#include <ny/key.hpp>
-#include <ny/mouseButton.hpp>
-
 #include <argagg.hpp>
 
 #include <shaders/tkn.fullscreen.vert.h>
@@ -61,21 +58,37 @@ public:
 	}
 };
 
-class ImageView : public tkn::App {
+class ImageView final : public tkn::SinglePassApp {
+public:
+	using Base = tkn::SinglePassApp;
+	struct Args : public Base::Args {
+		bool noCube;
+		std::string file;
+	};
+
+	static constexpr float near = 0.05f;
+	static constexpr float far = 25.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		Args parsed;
+		if(!Base::doInit(args, parsed)) {
 			return false;
 		}
 
-		auto& dev = device();
+		auto& dev = vkDevice();
 		auto& qs = dev.queueSubmitter();
 		auto cb = dev.commandAllocator().get(qs.queue().family());
 		vk::beginCommandBuffer(cb, {});
 
 		// load image
-		auto p = tkn::read(file_);
-		if(noCube_) {
+		auto p = tkn::read(parsed.file);
+		if(!p) {
+			return false;
+		}
+
+		if(parsed.noCube) {
 			auto wrapper = std::make_unique<FaceLayersProvider>();
 			wrapper->impl_ = std::move(p);
 			p = std::move(wrapper);
@@ -122,7 +135,6 @@ public:
 		sampler_ = {dev, sci};
 
 		// layouts
-		vpp::SubBuffer boxIndicesStage;
 		auto tbindings = {
 			vpp::descriptorBinding(
 				vk::DescriptorType::combinedImageSampler,
@@ -143,14 +155,6 @@ public:
 				camDsLayout_.vkHandle(),
 				texDsLayout_.vkHandle()}}, {}};
 
-			// indices
-			auto usage = vk::BufferUsageBits::indexBuffer |
-				vk::BufferUsageBits::transferDst;
-			auto inds = tkn::boxInsideIndices;
-			boxIndices_ = {dev.bufferAllocator(), sizeof(inds),
-				usage, dev.deviceMemoryTypes(), 4u};
-			boxIndicesStage = vpp::fillStaging(cb, boxIndices_, inds);
-
 			// pipeline
 			vpp::ShaderModule vertShader(dev, tkn_skybox_vert_data);
 			vpp::ShaderModule fragShader(dev, tkn_skybox_frag_data);
@@ -160,7 +164,7 @@ public:
 				{fragShader, vk::ShaderStageBits::fragment},
 			}}});
 
-			gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+			gpi.assembly.topology = vk::PrimitiveTopology::triangleStrip;
 			pipe_ = {dev, gpi.info()};
 		} else {
 			pipeLayout_ = {dev, {{texDsLayout_.vkHandle()}}, {}};
@@ -202,25 +206,27 @@ public:
 	}
 
 	argagg::parser argParser() const override {
-		auto parser = App::argParser();
+		auto parser = Base::argParser();
 		parser.definitions.push_back({
 			"nocube", {"--no-cube"},
 			"Don't show a cubemap, interpret faces as layers", 0});
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if(!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result,
+			Base::Args& bout) override {
+		if(!Base::handleArgs(result, bout)) {
 			return false;
 		}
 
-		noCube_ = result.has_option("nocube");
+		auto& out = static_cast<Args&>(bout);
+		out.noCube = result.has_option("nocube");
 		if(result.pos.empty()) {
 			dlg_fatal("No image argument given");
 			return false;
 		}
 
-		file_ = result.pos[0];
+		out.file = result.pos[0];
 		return true;
 	}
 
@@ -228,9 +234,7 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		if(cubemap_) {
 			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {camDs_, texDs_});
-			vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
-				boxIndices_.offset(), vk::IndexType::uint16);
-			vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
+			vk::cmdDrawIndexed(cb, 14, 1, 0, 0, 0);
 		} else {
 			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {texDs_});
 			vk::cmdDraw(cb, 4, 1, 0, 0);
@@ -238,7 +242,12 @@ public:
 	}
 
 	void update(double delta) override {
-		App::update(delta);
+		Base::update(delta);
+	}
+
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(windowSize().x) / windowSize().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
 	}
 
 	void updateDevice() override {
@@ -247,7 +256,7 @@ public:
 			camera_.update = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, fixedMatrix(camera_));
+			tkn::write(span, projectionMatrix() * fixedViewMatrix(camera_));
 			map.flush();
 		}
 
@@ -264,29 +273,29 @@ public:
 			viewInfo.subresourceRange.baseMipLevel = level_;
 			viewInfo.subresourceRange.layerCount = 1u;
 			viewInfo.subresourceRange.levelCount = 1u;
-			view_ = {device(), viewInfo};
+			view_ = {vkDevice(), viewInfo};
 			vpp::DescriptorSetUpdate dsu(texDs_);
 			dsu.imageSampler({{{{}, view_,
 				vk::ImageLayout::shaderReadOnlyOptimal}}});
 
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		}
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		if(cubemap_ && rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
-			App::scheduleRedraw();
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
+			Base::scheduleRedraw();
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(cubemap_ && ev.button == ny::MouseButton::left) {
+		if(cubemap_ && ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			return true;
 		}
@@ -294,8 +303,8 @@ public:
 		return false;
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
@@ -303,26 +312,26 @@ public:
 			return false;
 		}
 
-		if(!cubemap_ && ev.keycode == ny::Keycode::right) {
+		if(!cubemap_ && ev.keycode == swa_key_right) {
 			layer_ = (layer_ + 1) % layerCount_;
 			recreateView_ = true;
 			dlg_info("Showing layer {}", layer_);
-			App::scheduleRedraw();
-		} else if(!cubemap_ && ev.keycode == ny::Keycode::left) {
+			Base::scheduleRedraw();
+		} else if(!cubemap_ && ev.keycode == swa_key_left) {
 			layer_ = (layer_ + layerCount_ - 1) % layerCount_;
 			recreateView_ = true;
 			dlg_info("Showing layer {}", layer_);
-			App::scheduleRedraw();
-		} else if(ev.keycode == ny::Keycode::up) {
+			Base::scheduleRedraw();
+		} else if(ev.keycode == swa_key_up) {
 			level_ = (level_ + 1) % levelCount_;
 			recreateView_ = true;
 			dlg_info("Showing level {}", level_);
-			App::scheduleRedraw();
-		} else if(ev.keycode == ny::Keycode::down) {
+			Base::scheduleRedraw();
+		} else if(ev.keycode == swa_key_down) {
 			level_ = (level_ + levelCount_ - 1) % levelCount_;
 			recreateView_ = true;
 			dlg_info("Showing level {}", level_);
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		} else {
 			return false;
 		}
@@ -330,19 +339,16 @@ public:
 		return true;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
 		camera_.update = true;
 	}
 
+	bool needsDepth() const override { return false; }
 	const char* name() const override { return "iv"; }
 	const char* usageParams() const override { return "file [options]"; }
 
 protected:
-	std::string file_;
-	bool noCube_;
-
 	vpp::Image image_;
 	vpp::ImageView view_;
 
@@ -366,7 +372,6 @@ protected:
 
 	// cubemap
 	bool cubemap_ {};
-	vpp::SubBuffer boxIndices_;
 	vpp::SubBuffer cameraUbo_;
 	bool rotateView_ {};
 	tkn::Camera camera_;

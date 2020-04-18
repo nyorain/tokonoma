@@ -71,18 +71,32 @@ protected:
 
 // TODO: filter from mipmaps to avoid artefacts
 // TODO: can probably be just a functions that returns staging
-// objects? Otherwise seperate init and run methods
+// objects? Otherwise separate init and run methods for quick
+// back processing.
+// TODO(perf): consider just copying the first level (or ignoring
+// it alltogether here) since it's the same in filtered and env map.
 
 /// Prefilters an environment map for specular ibl.
 /// Renders them as mipmap levels onto the cubemap.
 class EnvironmentMapFilter {
 public:
-	/// The given image must have r16g16b16a16Sfloat format.
-	/// The first mip level must be in shaderReadOnlyOptimal layout,
-	/// all others in general layout. Layouts won't be changed.
+	/// Will record the command to pre-convolute a given cubemap into
+	/// the levels needed for specular IBL.
+	/// The given images must have r16g16b16a16Sfloat format.
+	/// - cubemap: The input cubemap. Should have a full valid
+	///   mip chain, needed while sampling. Must be in shaderReadOnlyOptimal
+	///   layout.
+	/// - filtered: The output environment map with filtered levels.
+	///   Should be in general layout. Must have 'mipLevels' number
+	///   of levels. All content will be overwritten.
+	/// - size: The size of the first level in 'filtered', i.e. the output.
+	/// - linear: A linear sampler, used to filter the cubemap.
+	///   Should allow filtering all mip levels and not have a mip level bias.
+	/// - sampleCount: The number of samples to take per output pixel.
+	///   Setting this higher will avoid artifacts.
 	void record(const vpp::Device& dev, vk::CommandBuffer cb,
-		vk::Image envImage, vk::ImageView envView, vk::Sampler linear,
-		unsigned mipLevels, nytl::Vec2ui size, unsigned sampleCount = 4096);
+		vk::ImageView cupemap, vk::Image filtered, vk::Sampler linear,
+		unsigned mipLevels, nytl::Vec2ui size, unsigned sampleCount = 1024);
 
 protected:
 	static constexpr auto groupDimSize = 8u;

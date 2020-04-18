@@ -1,5 +1,6 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
+#include <tkn/shader.hpp>
 #include <tkn/camera.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/render.hpp>
@@ -22,14 +23,19 @@
 #include <shaders/tess.model.tese.h>
 #endif
 
-class TessApp : public tkn::App {
+class TessApp : public tkn::SinglePassApp {
+public:
+	static constexpr float near = 0.05f;
+	static constexpr float far = 25.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
 public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!tkn::App::init(args)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto bindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 		};
@@ -54,7 +60,7 @@ public:
 	}
 
 	bool createPipes() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 #ifdef __ANDROID__
 		auto modelVert = vpp::ShaderModule{dev, tess_model_vert_data};
@@ -100,7 +106,7 @@ public:
 		gpi.assembly.topology = vk::PrimitiveTopology::patchList;
 		gpi.rasterization.polygonMode = vk::PolygonMode::fill;
 		gpi.tesselation.patchControlPoints = 4;
-		modelPipe_ = {vulkanDevice(), gpi.info()};
+		modelPipe_ = {vkDevice(), gpi.info()};
 
 		gpi.program = {{{
 			{normalVert, vk::ShaderStageBits::vertex},
@@ -110,7 +116,7 @@ public:
 			{normalFrag, vk::ShaderStageBits::fragment},
 		}}};
 		gpi.rasterization.polygonMode = vk::PolygonMode::line;
-		normalPipe_ = {vulkanDevice(), gpi.info()};
+		normalPipe_ = {vkDevice(), gpi.info()};
 
 		return true;
 	}
@@ -126,14 +132,19 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			tkn::checkMovement(camera_, *kc, dt);
-		}
-
+		tkn::checkMovement(camera_, swaDisplay(), dt);
 		if(camera_.update) {
 			App::scheduleRedraw();
 		}
+	}
+
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(windowSize().x) / windowSize().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
+	}
+
+	nytl::Mat4f cameraVP() const {
+		return projectionMatrix() * viewMatrix(camera_);
 	}
 
 	void updateDevice() override {
@@ -143,7 +154,7 @@ public:
 
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, matrix(camera_));
+			tkn::write(span, cameraVP());
 			tkn::write(span, camera_.pos);
 		}
 
@@ -154,20 +165,20 @@ public:
 		}
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
+	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
 			App::scheduleRedraw();
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
 		if(App::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			return true;
 		}
@@ -175,7 +186,7 @@ public:
 		return false;
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
+	bool key(const swa_key_event& ev) override {
 		if(App::key(ev)) {
 			return true;
 		}
@@ -184,7 +195,7 @@ public:
 			return false;
 		}
 
-		if(ev.keycode == ny::Keycode::r) {
+		if(ev.keycode == swa_key_r) {
 #ifndef __ANDROID__
 			reload_ = true;
 			App::scheduleRedraw();
@@ -195,9 +206,8 @@ public:
 		return false;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	void resize(unsigned w, unsigned h) override {
+		App::resize(w, h);
 		camera_.update = true;
 	}
 

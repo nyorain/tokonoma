@@ -316,14 +316,12 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 }
 
 // TODO: calculate stuff in update, not updateDevice
-void DirLight::updateDevice(const Camera& camera) {
+void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 	nytl::normalize(this->data.dir);
 
 	// calculate split depths
 	// https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
 	constexpr auto splitLambda = 0.5f; // higher: nearer at log split scheme
-	const auto near = camera.perspective.near;
-	const auto far = camera.perspective.far;
 
 	// 1: calculate split depths
 	std::array<float, cascadeCount> splits;
@@ -335,7 +333,7 @@ void DirLight::updateDevice(const Camera& camera) {
 	}
 
 	// 2: (un)project frustum to world space
-	auto invVP = nytl::Mat4f(nytl::inverse(matrix(camera)));
+	auto invVP = nytl::Mat4f(nytl::inverse(camvp));
 	auto frustum = ndcFrustum();
 	for(auto& p : frustum) {
 		p = tkn::multPos(invVP, p);

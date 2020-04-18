@@ -87,10 +87,10 @@ void Environment::createPipe(const vpp::Device& dev,
 	gpi.depthStencil.depthTestEnable = true;
 	gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 	gpi.depthStencil.depthWriteEnable = false;
-	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+	gpi.assembly.topology = vk::PrimitiveTopology::triangleStrip;
 	// culling not really needed here
 	gpi.rasterization.cullMode = vk::CullModeBits::back;
-	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+	gpi.rasterization.frontFace = vk::FrontFace::clockwise;
 
 	gpi.blend.attachmentCount = battachments.size();
 	gpi.blend.pAttachments = battachments.begin();
@@ -101,7 +101,7 @@ void Environment::createPipe(const vpp::Device& dev,
 void Environment::render(vk::CommandBuffer cb) const {
 	tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 1, {ds_});
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-	vk::cmdDrawIndexed(cb, 36, 1, 0, 0, 0);
+	vk::cmdDraw(cb, 14, 1, 0, 0, 0);
 }
 
 } // namespace tkn

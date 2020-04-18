@@ -43,8 +43,8 @@ public:
 		}
 	}
 
-	bool init(nytl::Span<const char*> args, Base::Args& out) override {
-		if(!Base::init(args, out)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!Base::init(args)) {
 			return false;
 		}
 

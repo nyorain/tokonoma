@@ -9,7 +9,7 @@ namespace tkn {
 class SinglePassApp : public App {
 protected:
 	using App::init;
-	bool init(nytl::Span<const char*> args, Args& out) override;
+	bool doInit(nytl::Span<const char*> args, Args& out) override;
 	void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) override;
 	void record(const RenderBuffer&) override;
 	argagg::parser argParser() const override;

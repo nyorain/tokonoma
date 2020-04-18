@@ -8,9 +8,10 @@
 // ideas:
 // - allow visualization of GI probes via spheres as in shv
 // - add ability to save the rendered probes to file
+// - use 3D texture for probes, use linear interpolation
 
+#include <tkn/singlePassApp.hpp>
 #include <tkn/camera.hpp>
-#include <tkn/app.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
@@ -24,11 +25,6 @@
 #include <tkn/scene/scene.hpp>
 #include <tkn/scene/environment.hpp>
 #include <argagg.hpp>
-
-#include <ny/key.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
-#include <ny/mouseButton.hpp>
 
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/init.hpp>
@@ -58,23 +54,38 @@
 
 using namespace tkn::types;
 
-class ViewApp : public tkn::App {
+class ViewApp : public tkn::SinglePassApp {
 public:
-	static constexpr auto probeSize = vk::Extent2D {128, 128};
+	using Base = tkn::SinglePassApp;
+	static constexpr auto probeSize = vk::Extent2D {256, 256};
 	static constexpr auto probeFaceSize = probeSize.width * probeSize.height * 8;
 	static constexpr auto maxProbeCount = 32u;
 
+	static constexpr u32 modeDirLight = (1u << 0);
+	static constexpr u32 modePointLight = (1u << 1);
+	static constexpr u32 modeSpecularIBL = (1u << 2);
+	static constexpr u32 modeIrradiance = (1u << 3);
+	static constexpr u32 modeStaticAO = (1u << 4);
+	static constexpr u32 modeAOAlbedo = (1u << 5);
+
+	static constexpr float near = 0.05f;
+	static constexpr float far = 25.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
+	struct Args : public Base::Args {
+		float scale {1.f};
+		std::string model;
+	};
+
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		Args out;
+		if(!Base::doInit(args, out)) {
 			return false;
 		}
 
-		camera_.perspective.near = 0.01f;
-		camera_.perspective.far = 10.f;
-
 		// init pipeline
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto hostMem = dev.hostMemoryTypes();
 		vpp::DeviceMemoryAllocator memStage(dev);
 		vpp::BufferAllocator bufStage(memStage);
@@ -116,7 +127,7 @@ public:
 		dummyTex_ = {batch, std::move(p), params};
 
 		// Load scene
-		auto s = sceneScale_;
+		auto s = out.scale;
 		auto mat = tkn::scaleMat<4, float>({s, s, s});
 		auto samplerAnisotropy = 1.f;
 		if(anisotropy_) {
@@ -126,7 +137,7 @@ public:
 			dummyTex_.vkImageView(),
 			samplerAnisotropy, false, multiDrawIndirect_
 		};
-		auto [omodel, path] = tkn::loadGltf(modelname_);
+		auto [omodel, path] = tkn::loadGltf(out.model);
 		if(!omodel) {
 			return false;
 		}
@@ -153,7 +164,7 @@ public:
 
 		tkn::Environment::InitData initEnv;
 		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", sampler_);
-		env_.createPipe(device(), cameraDsLayout_, renderPass(), 0u, samples());
+		env_.createPipe(vkDevice(), cameraDsLayout_, renderPass(), 0u, samples());
 		env_.init(initEnv, batch);
 
 		// ao
@@ -208,22 +219,6 @@ public:
 		gpi.depthStencil.depthWriteEnable = true;
 		gpi.rasterization.frontFace = vk::FrontFace::clockwise;
 		probe_.pipe = {dev, gpi.info()};
-
-		// box indices
-		std::array<std::uint16_t, 36> indices = {
-			0, 1, 2,  2, 1, 3, // front
-			1, 5, 3,  3, 5, 7, // right
-			2, 3, 6,  6, 3, 7, // top
-			4, 0, 6,  6, 0, 2, // left
-			4, 5, 0,  0, 5, 1, // bottom
-			5, 4, 7,  7, 4, 6, // back
-		};
-
-		boxIndices_ = {alloc.bufDevice,
-			36u * sizeof(std::uint16_t),
-			vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-			dev.deviceMemoryTypes(), 4u};
-		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
 
 		// camera
 		auto cameraUboSize = sizeof(nytl::Mat4f) // proj matrix
@@ -387,7 +382,7 @@ public:
 	// we would somehow have to refresh the shadow map projection
 	// (and re-render all cascades) for *each face* we render here.
 	void initProbePipe(const tkn::WorkBatcher&) {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// faces, ubo, ds
 		// TODO: duplication with cameraUbo_ and cameraDs_
@@ -451,7 +446,11 @@ public:
 		probe_.comp.pipeLayout = {dev, {{probe_.comp.dsLayout.vkHandle()}},
 			{{pcr}}};
 
-		vpp::ShaderModule compShader(device(), lpgi_shProj_comp_data);
+		// TODO: instead of custom projection pipeline, it should
+		// be possible to reuse tkn::SHProjector (pbr.hpp), maybe
+		// in a more general form?
+		// The both shaders share a lot of code.
+		vpp::ShaderModule compShader(vkDevice(), lpgi_shProj_comp_data);
 		vk::ComputePipelineCreateInfo cpi;
 		cpi.layout = probe_.comp.pipeLayout;
 		cpi.stage.module = compShader;
@@ -472,14 +471,14 @@ public:
 		dsu.apply();
 
 		// cb
-		auto& qs = device().queueSubmitter();
+		auto& qs = vkDevice().queueSubmitter();
 		auto qfam = qs.queue().family();
-		probe_.cb = device().commandAllocator().get(qfam);
+		probe_.cb = vkDevice().commandAllocator().get(qfam);
 		probe_.rerecord = true;
 	}
 
 	bool features(tkn::Features& enable, const tkn::Features& supported) override {
-		if(!App::features(enable, supported)) {
+		if(!Base::features(enable, supported)) {
 			return false;
 		}
 
@@ -515,7 +514,7 @@ public:
 	}
 
 	argagg::parser argParser() const override {
-		auto parser = App::argParser();
+		auto parser = Base::argParser();
 		parser.definitions.push_back({
 			"model", {"--model"},
 			"Path of the gltf model to load (dir must contain scene.gltf)", 1
@@ -527,23 +526,25 @@ public:
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if(!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result,
+			Base::Args& bout) override {
+		if(!Base::handleArgs(result, bout)) {
 			return false;
 		}
 
+		auto& out = static_cast<Args&>(bout);
 		if(result.has_option("model")) {
-			modelname_ = result["model"].as<const char*>();
+			out.model = result["model"].as<const char*>();
 		}
 		if(result.has_option("scale")) {
-			sceneScale_ = result["scale"].as<float>();
+			out.scale = result["scale"].as<float>();
 		}
 
 		return true;
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
-		App::beforeRender(cb);
+		Base::beforeRender(cb);
 		if(mode_ & modeDirLight) {
 			dirLight_.render(cb, shadowData_, scene_);
 		}
@@ -559,8 +560,6 @@ public:
 			dirLight_.ds(), pointLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, false); // opaque
 
-		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
-			boxIndices_.offset(), vk::IndexType::uint16);
 		tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
 			{envCameraDs_});
 		env_.render(cb);
@@ -574,15 +573,10 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
+		Base::update(dt);
 		time_ += dt;
 
-		// movement
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			tkn::checkMovement(camera_, *kc, dt);
-		}
-
+		tkn::checkMovement(camera_, swaDisplay(), dt);
 		if(moveLight_) {
 			if(mode_ & modePointLight) {
 				pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
@@ -600,14 +594,14 @@ public:
 
 		// we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
-		// 	App::scheduleRedraw();
+		// 	Base::scheduleRedraw();
 		// }
 
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
@@ -616,84 +610,84 @@ public:
 		}
 
 		switch(ev.keycode) {
-			case ny::Keycode::m: // move light here
+			case swa_key_m: // move light here
 				moveLight_ = false;
 				dirLight_.data.dir = -camera_.pos;
 				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
 				scene_.updatedInstance(dirLight_.instanceID);
 				updateLight_ = true;
 				return true;
-			case ny::Keycode::n: // move light here
+			case swa_key_n: // move light here
 				moveLight_ = false;
 				updateLight_ = true;
 				pointLight_.data.position = camera_.pos;
 				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
 				scene_.updatedInstance(pointLight_.instanceID);
 				return true;
-			case ny::Keycode::l:
+			case swa_key_l:
 				moveLight_ ^= true;
 				return true;
-			case ny::Keycode::p:
+			case swa_key_p:
 				dirLight_.data.flags ^= tkn::lightFlagPcf;
 				pointLight_.data.flags ^= tkn::lightFlagPcf;
 				updateLight_ = true;
 				return true;
-			case ny::Keycode::r: // refresh all light probes
+			case swa_key_r: // refresh all light probes
 				refreshLightProbes();
 				return true;
-			case ny::Keycode::t: // add light probe
+			case swa_key_t: // add light probe
 				addLightProbe();
 				return true;
-			case ny::Keycode::up:
+			case swa_key_up:
 				aoFac_ *= 1.1;
 				updateAOParams_ = true;
 				dlg_info("ao factor: {}", aoFac_);
 				return true;
-			case ny::Keycode::down:
+			case swa_key_down:
 				aoFac_ /= 1.1;
 				updateAOParams_ = true;
 				dlg_info("ao factor: {}", aoFac_);
 				return true;
-			case ny::Keycode::left:
+			case swa_key_left:
 				maxProbeDist_ *= 1.1;
 				updateAOParams_ = true;
 				dlg_info("maxProbeDist: {}", maxProbeDist_);
 				return true;
-			case ny::Keycode::right:
+			case swa_key_right:
 				maxProbeDist_ /= 1.1;
 				updateAOParams_ = true;
 				dlg_info("maxProbeDist: {}", maxProbeDist_);
 				return true;
-			case ny::Keycode::k1:
+			case swa_key_k1:
 				mode_ ^= modeDirLight;
 				updateLight_ = true;
 				updateAOParams_ = true;
-				App::scheduleRerecord();
+				Base::scheduleRerecord();
 				dlg_info("dir light: {}", bool(mode_ & modeDirLight));
 				return true;
-			case ny::Keycode::k2:
+			case swa_key_k2:
 				mode_ ^= modePointLight;
 				updateLight_ = true;
 				updateAOParams_ = true;
-				App::scheduleRerecord();
+				Base::scheduleRerecord();
 				dlg_info("point light: {}", bool(mode_ & modePointLight));
 				return true;
-			case ny::Keycode::k3:
+			case swa_key_k3:
 				mode_ ^= modeSpecularIBL;
 				dlg_info("specular IBL: {}", bool(mode_ & modeSpecularIBL));
 				updateAOParams_ = true;
 				return true;
-			case ny::Keycode::k4:
+			case swa_key_k4:
 				mode_ ^= modeIrradiance;
 				updateAOParams_ = true;
 				dlg_info("Irradiance: {}", bool(mode_ & modeIrradiance));
 				return true;
-			case ny::Keycode::k5:
+			case swa_key_k5:
 				mode_ ^= modeStaticAO;
 				updateAOParams_ = true;
 				dlg_info("Static AO: {}", bool(mode_ & modeStaticAO));
 				return true;
-			case ny::Keycode::k6:
+			case swa_key_k6:
 				mode_ ^= modeAOAlbedo;
 				updateAOParams_ = true;
 				dlg_info("AO Albedo: {}", bool(mode_ & modeAOAlbedo));
@@ -750,20 +744,20 @@ public:
 		updateAOParams_ = true;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
-			App::scheduleRedraw();
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
+			Base::scheduleRedraw();
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			return true;
 		}
@@ -798,8 +792,6 @@ public:
 				dirLight_.ds(), pointLight_.ds(), aoDs_});
 			scene_.render(cb, pipeLayout_, false); // opaque
 
-			vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
-				boxIndices_.offset(), vk::IndexType::uint16);
 			tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
 				{face.envDs});
 			env_.render(cb);
@@ -923,8 +915,17 @@ public:
 		vk::endCommandBuffer(probe_.cb);
 	}
 
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(windowSize().x) / windowSize().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
+	}
+
+	nytl::Mat4f cameraVP() const {
+		return projectionMatrix() * viewMatrix(camera_);
+	}
+
 	void updateDevice() override {
-		if(App::rerecord_) {
+		if(Base::rerecord_) {
 			probe_.rerecord = true;
 		}
 
@@ -936,29 +937,29 @@ public:
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
 
-			tkn::write(span, matrix(camera_));
+			tkn::write(span, cameraVP());
 			tkn::write(span, camera_.pos);
-			tkn::write(span, camera_.perspective.near);
-			tkn::write(span, camera_.perspective.far);
+			tkn::write(span, near);
+			tkn::write(span, far);
 			map.flush();
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
-			tkn::write(envSpan, fixedMatrix(camera_));
+			tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
 			envMap.flush();
 
 			updateLight_ = true;
 		}
 
-		auto semaphore = scene_.updateDevice(matrix(camera_));
+		auto semaphore = scene_.updateDevice(cameraVP());
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		}
 
 		if(updateLight_) {
 			if(mode_ & modeDirLight) {
-				dirLight_.updateDevice(camera_);
+				dirLight_.updateDevice(cameraVP(), near, far);
 			}
 			if(mode_ & modePointLight) {
 				pointLight_.updateDevice();
@@ -976,7 +977,7 @@ public:
 			// TODO: don't stall
 			// but we also have to make sure this finishes before the
 			// ao params are updated to include the new probe...
-			auto& qs = vulkanDevice().queueSubmitter();
+			auto& qs = vkDevice().queueSubmitter();
 			qs.wait(qs.add(probe_.cb));
 			probe_.pending = false;
 		}
@@ -989,7 +990,7 @@ public:
 		if(probe_.refresh) {
 			for(auto i = 0u; i < lightProbes_.size(); ++i) {
 				setupLightProbeRendering(i, lightProbes_[i]);
-				auto& qs = vulkanDevice().queueSubmitter();
+				auto& qs = vkDevice().queueSubmitter();
 				qs.wait(qs.add(probe_.cb));
 			}
 			probe_.refresh = false;
@@ -1018,14 +1019,13 @@ public:
 		return tkn::translateMat(pointLight_.data.position);
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
 		camera_.update = true;
 	}
 
 	bool needsDepth() const override { return true; }
-	const char* name() const override { return "Light probe GI"; }
+	const char* name() const override { return "Lightprobe GI"; }
 
 protected:
 	struct Alloc {
@@ -1059,13 +1059,13 @@ protected:
 	vpp::ViewableImage shTex_; // spherical harmonics coeffs
 	vpp::ViewableImage tmpShTex_; // when updating the coeffs
 
-	static constexpr u32 modeDirLight = (1u << 0);
-	static constexpr u32 modePointLight = (1u << 1);
-	static constexpr u32 modeSpecularIBL = (1u << 2);
-	static constexpr u32 modeIrradiance = (1u << 3);
-	static constexpr u32 modeStaticAO = (1u << 4);
-	static constexpr u32 modeAOAlbedo = (1u << 5);
-	u32 mode_ {modePointLight | modeIrradiance | modeStaticAO | modeAOAlbedo | modeSpecularIBL};
+	u32 mode_ {
+		modePointLight |
+		modeIrradiance |
+		modeStaticAO |
+		modeAOAlbedo |
+		modeSpecularIBL
+	};
 	float aoFac_ {0.1f};
 	float maxProbeDist_ {1.f};
 	bool updateAOParams_ {true};
@@ -1139,19 +1139,8 @@ protected:
 
 	tkn::Environment env_;
 	tkn::Texture brdfLut_;
-
-	// args
-	std::string modelname_ {};
-	float sceneScale_ {1.f};
-
-	vpp::SubBuffer boxIndices_;
 };
 
 int main(int argc, const char** argv) {
-	ViewApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<ViewApp>(argc, argv);
 }

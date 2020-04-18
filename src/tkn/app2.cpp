@@ -220,6 +220,7 @@ struct App::Impl {
 	std::optional<rvg::Context> rvg;
 	std::optional<rvg::FontAtlas> fontAtlas;
 	rvg::Font defaultFont;
+	rvg::Transform windowTransform;
 	std::optional<vui::Gui> gui;
 	GuiListener guiListener;
 	std::optional<vui::DefaultStyles> defaultStyles;
@@ -241,10 +242,10 @@ App::~App() {
 
 bool App::init(nytl::Span<const char*> args) {
 	Args out;
-	return init(args, out);
+	return doInit(args, out);
 }
 
-bool App::init(nytl::Span<const char*> args, Args& argsOut) {
+bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	impl_ = std::make_unique<Impl>();
 
 	// We set a custom dlg handler that allows to set breakpoints
@@ -536,6 +537,8 @@ void App::rvgInit(vk::RenderPass rp, unsigned subpass,
 	fontPath += "/assets/Roboto-Regular.ttf";
 	impl_->defaultFont = {*impl_->fontAtlas, fontPath};
 #endif
+
+	impl_->windowTransform = {rvgContext()};
 
 	// gui
 	impl_->guiListener.app_ = this;
@@ -843,6 +846,15 @@ void App::resize(unsigned width, unsigned height) {
 		gui().transform(transform);
 	}
 
+	// update window transform
+	if(impl_->rvg) {
+		auto s = nytl::Vec{ 2.f / width, 2.f / height, 1};
+		auto transform = nytl::identity<4, float>();
+		tkn::scale(transform, s);
+		tkn::translate(transform, nytl::Vec3f {-1, -1, 0});
+		impl_->windowTransform.matrix(transform);
+	}
+
 	winSize_ = {width, height};
 	resize_ = true;
 }
@@ -946,9 +958,11 @@ const vpp::Device& App::vkDevice() const {
 	return *impl_->dev;
 }
 vpp::DebugMessenger& App::debugMessenger() {
+	dlg_assert(impl_->messenger);
 	return *impl_->messenger;
 }
 const vpp::DebugMessenger& App::debugMessenger() const {
+	dlg_assert(impl_->messenger);
 	return *impl_->messenger;
 }
 const vk::SwapchainCreateInfoKHR& App::swapchainInfo() const {
@@ -958,9 +972,15 @@ vk::SwapchainCreateInfoKHR& App::swapchainInfo() {
 	return impl_->swapchainInfo;
 }
 rvg::Context& App::rvgContext() {
+	dlg_assertm(impl_->rvg, "rvg was not initialized");
 	return *impl_->rvg;
 }
+const rvg::Transform& App::rvgWindowTransform() const {
+	dlg_assertm(impl_->rvg, "rvg was not initialized");
+	return impl_->windowTransform;
+}
 vui::Gui& App::gui() {
+	dlg_assertm(impl_->gui, "rvg/vui was not initialized");
 	return *impl_->gui;
 }
 nytl::Vec2ui App::windowSize() const {
@@ -970,6 +990,7 @@ const rvg::Font& App::defaultFont() const {
 	return impl_->defaultFont;
 }
 rvg::FontAtlas& App::fontAtlas() {
+	dlg_assertm(impl_->fontAtlas, "rvg was not initialized");
 	return *impl_->fontAtlas;
 }
 vpp::Renderer& App::renderer() {
@@ -995,6 +1016,28 @@ void App::vkDebug(
 		const vk::DebugUtilsMessengerCallbackDataEXT& data) {
 	dlg_assert(impl_ && impl_->messenger);
 	impl_->messenger->vpp::DebugMessenger::call(severity, type, data);
+}
+
+// TODO: make this a free function (independent from App) that
+// just uses the static swa android instance. Not exposed publicly atm though.
+File App::openAsset(nytl::StringParam path, bool binary) {
+#ifdef __ANDROID__
+	dlg_error("not implemented");
+	return {};
+	// auto& ac = dynamic_cast<ny::AndroidAppContext&>(appContext());
+	// auto* mgr = ac.nativeActivity()->assetManager;
+	// auto asset = AAssetManager_open(mgr, path.c_str(), 0);
+	// return File(::funopen(asset, android::read, android::write,
+	// 	android::seek, android::close));
+#else
+	auto mode = binary ? "rb" : "r";
+	if(auto f = std::fopen(path.c_str(), mode); f) {
+		return File(f);
+	}
+
+	auto path2 = std::string(TKN_BASE_DIR "/assets/") + path.c_str();
+	return File(path2, mode);
+#endif
 }
 
 // main

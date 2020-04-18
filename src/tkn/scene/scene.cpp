@@ -119,7 +119,7 @@ tkn::Texture loadImage(Texture::InitData& data,
 
 void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path,
 		const tinygltf::Model& model, const tinygltf::Scene& scene,
-		nytl::Mat4f matrix, const SceneRenderInfo& ri) {
+		nytl::Mat4f matrix, const SceneRenderInfo& ri, float samplerLodBias) {
 	auto& dev = wb.dev;
 	multiDrawIndirect_ = ri.multiDrawIndirect;
 	dlg_assertm(multiDrawIndirect_, "Emulating multi draw indirect not yet "
@@ -165,7 +165,8 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	// check for duplicate samplers. But then also change how materials
 	// access samplers, can't happen simply by id anymore.
 	for(auto& sampler : model.samplers) {
-		samplers_.emplace_back(dev, sampler, ri.samplerAnisotropy);
+		samplers_.emplace_back(dev, sampler, ri.samplerAnisotropy,
+			samplerLodBias);
 	}
 
 	// init default sampler as specified in gltf
@@ -175,7 +176,7 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	sci.addressModeW = vk::SamplerAddressMode::repeat;
 	sci.magFilter = vk::Filter::linear;
 	sci.minFilter = vk::Filter::linear;
-	sci.mipLodBias = Scene::mipLodBias;
+	sci.mipLodBias = samplerLodBias;
 	sci.mipmapMode = vk::SamplerMipmapMode::linear;
 	sci.minLod = 0.0;
 	sci.maxLod = 100.f; // use all mipmap levels
@@ -1459,7 +1460,7 @@ bool operator!=(const SamplerInfo& a, const SamplerInfo& b) {
 }
 
 Sampler::Sampler(const vpp::Device& dev, const gltf::Sampler& sampler,
-		float maxAnisotropy) {
+		float maxAnisotropy, float mipLodBias) {
 	info = {sampler};
 
 	vk::SamplerCreateInfo sci;
@@ -1469,7 +1470,7 @@ Sampler::Sampler(const vpp::Device& dev, const gltf::Sampler& sampler,
 	sci.magFilter = info.magFilter;
 	sci.mipmapMode = info.mipmapMode;
 	sci.minLod = 0.f;
-	sci.mipLodBias = Scene::mipLodBias;
+	sci.mipLodBias = mipLodBias;
 	sci.maxLod = 100.f; // all levels
 	sci.anisotropyEnable = maxAnisotropy != 1.f;
 	sci.maxAnisotropy = maxAnisotropy;

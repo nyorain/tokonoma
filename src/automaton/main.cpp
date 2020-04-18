@@ -31,6 +31,8 @@
 #include <cmath>
 #include <fstream>
 
+// TODO: this whole project is broken atm, fix it!
+
 // TODO: ensure correct memory barriers
 class PredPrey : public Automaton {
 public:

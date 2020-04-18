@@ -15,9 +15,15 @@
 #include <vector>
 
 // TODO: fix updateDs returning in upload
+// TODO: use descriptor indexing when possible.
+//   otherwise check for max supported images/samplers.
+//   If not enough, use texture atlas sampling.
 // TODO: dont require multidraw support, see gbuf.vert
 // TODO: update min_,max_ when matrix is changed, new primitive added?
 // TODO: decouple scene and gltf loading, support .obj and other open formats
+//   on that note, we implement uploading twice at the moment,
+//   in init() and in updateDevice(). Just make the init() version
+//   use the updateDevice() version.
 // PERF: sorting primitives by how they are layed out in the vertex
 //   buffers (when there are no other creteria)? could improve cache locality
 // PERF: support basic AABB culling, always use indirect commands
@@ -60,15 +66,14 @@ struct Sampler {
 	SamplerInfo info;
 
 	Sampler() = default;
-	Sampler(const vpp::Device&, const gltf::Sampler&, float maxAnisotropy);
+	Sampler(const vpp::Device&, const gltf::Sampler&,
+		float maxAnisotropy, float mipLodBias);
 };
 
 /// Manages all geometry and material buffers as well as the instances
 /// that use them.
 class Scene {
 public:
-	// NOTE: this is important for TAA but causes worse result without it
-	static constexpr auto mipLodBias = -2.f;
 	// static constexpr auto imageCount = 32u;
 	static constexpr auto imageCount = 96u;
 	static constexpr auto samplerCount = 6u;
@@ -133,7 +138,7 @@ public:
 	Scene() = default;
 	void create(InitData&, const WorkBatcher&, nytl::StringParam path,
 		const gltf::Model&, const gltf::Scene&, nytl::Mat4f matrix,
-		const SceneRenderInfo&);
+		const SceneRenderInfo&, float samplerLodBias = 0.f);
 
 	// Expected to be called between create and init.
 	// Makes sure the scene is in bounds [-s, s] but will scale

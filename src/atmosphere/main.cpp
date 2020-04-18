@@ -117,7 +117,7 @@ public:
 		}
 
 		// tkn::update(touch_, dt);
-		tkn::QuatCameraMovementSwa movement;
+		tkn::QuatCameraMovement movement;
 		movement.fastMult = 500.f;
 		movement.slowMult = 50.f;
 		checkMovement(camera_, swaDisplay(), cameraPosMult * dt, movement);

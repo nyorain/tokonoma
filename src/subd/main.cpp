@@ -433,7 +433,7 @@ public:
 		Base::update(dt);
 
 		// tkn::checkMovement(camera_, *kc, dt);
-		tkn::QuatCameraMovementSwa movement {};
+		tkn::QuatCameraMovement movement {};
 		movement.fastMult = 5.f;
 		movement.slowMult = 0.05f;
 		checkMovement(camera_, swaDisplay(), dt, movement);
@@ -557,7 +557,6 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		// camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 		camera_.update = true;
 
 		// update window transform

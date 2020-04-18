@@ -6,7 +6,7 @@
 
 #include "tables.hpp"
 
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/camera.hpp>
@@ -22,9 +22,6 @@
 #include <vpp/submit.hpp>
 #include <vpp/commandAllocator.hpp>
 #include <dlg/dlg.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
-#include <ny/mouseButton.hpp>
 
 #include <rvg/paint.hpp>
 #include <rvg/shapes.hpp>
@@ -330,14 +327,22 @@ struct Volume {
 	}
 };
 
-class VolumeApp : public tkn::App {
+class VolumeApp : public tkn::SinglePassApp {
+public:
+	using Base = tkn::SinglePassApp;
+
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+	static constexpr float near = 0.1f;
+	static constexpr float far = 10.f;
+
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		rvgInit();
+		auto& dev = vkDevice();
 		auto bindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment)
@@ -438,7 +443,7 @@ public:
 
 		if(touch_.alt) {
 			rvgContext().bindDefaults(cb);
-			windowTransform().bind(cb);
+			rvgWindowTransform().bind(cb);
 			touch_.paint.bind(cb);
 			touch_.move.circle.fill(cb);
 			touch_.rotate.circle.fill(cb);
@@ -446,54 +451,57 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
-
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			tkn::checkMovement(camera_, *kc, dt);
-		}
-
+		Base::update(dt);
+		tkn::checkMovement(camera_, swaDisplay(), dt);
 		tkn::update(touch_, dt);
 		if(camera_.update) {
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
 	}
 
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(windowSize().x) / windowSize().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
+	}
+
+	nytl::Mat4f cameraVP() const {
+		return projectionMatrix() * viewMatrix(camera_);
+	}
+
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 
 		if(camera_.update) {
 			camera_.update = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
 
-			auto mat = matrix(camera_);
+			auto mat = cameraVP();
 			tkn::write(span, mat);
 			tkn::write(span, camera_.pos);
 			map.flush();
 		}
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
 		camera_.update = true;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
-			App::scheduleRedraw();
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
+			Base::scheduleRedraw();
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			return true;
 		}
@@ -501,27 +509,28 @@ public:
 		return false;
 	}
 
-	bool touchBegin(const ny::TouchBeginEvent& ev) override {
-		if(App::touchBegin(ev)) {
+	bool touchBegin(const swa_touch_event& ev) override {
+		if(Base::touchBegin(ev)) {
 			return true;
 		}
 
-		tkn::touchBegin(touch_, ev, window().size());
+		auto pos = nytl::Vec2f{float(ev.x), float(ev.y)};
+		tkn::touchBegin(touch_, ev.id, pos, windowSize());
 		return true;
 	}
 
-	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
-		tkn::touchUpdate(touch_, ev);
-		App::scheduleRedraw();
+	void touchUpdate(const swa_touch_event& ev) override {
+		tkn::touchUpdate(touch_, ev.id, {float(ev.x), float(ev.y)});
+		Base::scheduleRedraw();
 	}
 
-	bool touchEnd(const ny::TouchEndEvent& ev) override {
-		if(App::touchEnd(ev)) {
+	bool touchEnd(unsigned id) override {
+		if(Base::touchEnd(id)) {
 			return true;
 		}
 
-		tkn::touchEnd(touch_, ev);
-		App::scheduleRedraw();
+		tkn::touchEnd(touch_, id);
+		Base::scheduleRedraw();
 		return true;
 	}
 
@@ -546,11 +555,6 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	VolumeApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<VolumeApp>(argc, argv);
 }
 

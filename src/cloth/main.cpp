@@ -1,4 +1,4 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
@@ -32,8 +32,9 @@
 using namespace tkn::types;
 using nytl::Vec3f;
 
-class ClothApp : public tkn::App {
+class ClothApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	struct Node {
 		nytl::Vec4f pos;
 		nytl::Vec4f vel;
@@ -41,13 +42,18 @@ public:
 
 	static constexpr auto workGroupSize = 16u;
 
+	static constexpr float near = 0.05f;
+	static constexpr float far = 25.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
 public:
-	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+	bool init(nytl::Span<const char*> cargs) override {
+		if(!Base::init(cargs)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		rvgInit();
+		auto& dev = vkDevice();
 
 		// init pipe and stuff
 		auto& qs = dev.queueSubmitter();
@@ -128,7 +134,7 @@ public:
 
 	// returns temporary init stage
 	[[nodiscard]] vpp::SubBuffer initGfx(vk::CommandBuffer cb) {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// pipeline
 		auto bindings = {
@@ -222,7 +228,7 @@ public:
 	}
 
 	void initComp() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// pipeline
 		auto bindings = {
@@ -237,7 +243,7 @@ public:
 		comp_.dsLayout = {dev, bindings};
 		comp_.pipeLayout = {dev, {{comp_.dsLayout.vkHandle()}}, {}};
 
-		vpp::ShaderModule compShader(device(), cloth_cloth_comp_data);
+		vpp::ShaderModule compShader(vkDevice(), cloth_cloth_comp_data);
 		vk::ComputePipelineCreateInfo cpi;
 		cpi.layout = comp_.pipeLayout;
 		cpi.stage.module = compShader;
@@ -333,20 +339,20 @@ public:
 		gui().draw(cb);
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
-			App::scheduleRedraw();
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
+			Base::scheduleRedraw();
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			return true;
 		}
@@ -355,18 +361,22 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			tkn::checkMovement(camera_, *kc, dt);
-		}
+		Base::update(dt);
+		tkn::checkMovement(camera_, swaDisplay(), dt);
+		Base::scheduleRedraw(); // always redraw
+	}
 
-		// always redraw
-		App::scheduleRedraw();
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(windowSize().x) / windowSize().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
+	}
+
+	nytl::Mat4f cameraVP() const {
+		return projectionMatrix() * viewMatrix(camera_);
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 
 		if(camera_.update) {
 			camera_.update = false;
@@ -374,7 +384,7 @@ public:
 			auto span = map.span();
 
 			auto scale = 2.f / gridSize_;
-			auto mat = matrix(camera_) * tkn::scaleMat({scale, scale, scale});
+			auto mat = cameraVP() * tkn::scaleMat({scale, scale, scale});
 			tkn::write(span, mat);
 			map.flush();
 		}
@@ -401,7 +411,7 @@ public:
 
 		if(resetCloth_) {
 			resetCloth_ = false;
-			auto& dev = vulkanDevice();
+			auto& dev = vkDevice();
 			auto& qs = dev.queueSubmitter();
 			auto qfam = qs.queue().family();
 			auto cb = dev.commandAllocator().get(qfam);
@@ -415,7 +425,7 @@ public:
 	}
 
 	argagg::parser argParser() const override {
-		auto parser = App::argParser();
+		auto parser = Base::argParser();
 		parser.definitions.push_back({
 			"size",
 			{"-s", "--size"},
@@ -424,8 +434,9 @@ public:
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if (!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result,
+			App::Args& bout) override {
+		if (!Base::handleArgs(result, bout)) {
 			return false;
 		}
 
@@ -436,9 +447,8 @@ public:
 		return true;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
 		camera_.update = true;
 	}
 

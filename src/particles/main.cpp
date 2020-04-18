@@ -26,22 +26,103 @@
 #include <shaders/particles.particle.vert.h>
 #include <shaders/particles.particle.audio.comp.h>
 
+#if defined(TKN_WITH_AUDIO) || defined(TKN_WITH_PULSE_SIMPLE)
+#include <tkn/audioFeedback.hpp>
+#include <tkn/kiss_fft.h>
+#endif
+
 #ifdef TKN_WITH_AUDIO
 #include <tkn/audio.hpp>
 #include <tkn/sound.hpp>
 #include <tkn/sampling.hpp>
-#include <tkn/audioFeedback.hpp>
-#include <tkn/kiss_fft.h>
 using FeedbackMP3Audio = tkn::FeedbackAudioSource<tkn::StreamedMP3Audio>;
-#endif
+#endif // TKN_WITH_AUDIO
+
+#ifdef TKN_WITH_PULSE_SIMPLE
+#include <pulse/simple.h>
+#include <pulse/error.h>
+#endif // TKN_WITH_PULSE_SIMPLE
 
 // velocity and position is always given in screen-space coords
 // position in range [-1, 1] means its on screen
 
-// IDEA: allow to visualize audio recorded via mic instead of audio file
+// TODO: alternatively, allow to visualize audio recorded via mic instead of
+//   audio file or system audio
 
 constexpr auto compUboSize = (6 + 3 + 4 * 5) * sizeof(float);
 constexpr auto gfxUboSize = 2 * sizeof(float);
+
+// audio source that gets audio from system
+#ifdef TKN_WITH_PULSE_SIMPLE
+class PulseAudioRecorder {
+public:
+	static constexpr auto bufferSize = 512 * 2;
+
+	PulseAudioRecorder() {
+		exit_.store(false);
+
+		pa_channel_map map;
+		std::memset(&map, 0, sizeof(map));
+		pa_channel_map_init_stereo(&map);
+
+		pa_sample_spec spec {};
+		spec.format = PA_SAMPLE_FLOAT32LE;
+		spec.rate = 44100;
+		spec.channels = 2;
+
+		pa_buffer_attr attr {};
+		attr.maxlength = 8 * bufferSize;
+		attr.fragsize = bufferSize;
+
+		int perr;
+		pa_ = pa_simple_new(NULL, "tkn-recorder", PA_STREAM_RECORD,
+			NULL, "tkn-recorder", &spec, &map, &attr, &perr);
+		if(!pa_) {
+			dlg_error("pa_simple_new: {}", pa_strerror(perr));
+			throw std::runtime_error("pa_simple_new failed");
+		}
+
+		thread_ = std::thread{[this]{ readerThread(); }};
+	}
+
+	~PulseAudioRecorder() {
+		exit_.store(true);
+		if(thread_.joinable()) {
+			thread_.join();
+		}
+		pa_simple_free(pa_);
+	}
+
+	void readerThread() {
+		std::vector<float> buf(bufferSize);
+		int perr;
+
+		while(!exit_.load()) {
+			if(pa_simple_read(pa_, buf.data(), buf.size(), &perr) < 0) {
+				dlg_error("pa_simple_read: {}", pa_strerror(perr));
+				return;
+			}
+
+			recorded_.enqueue(buf.data(), buf.size());
+		}
+	}
+
+	unsigned available() const {
+		return recorded_.available_read();
+	}
+
+	unsigned deque(float* buf, unsigned ns) {
+		return recorded_.deque(buf, ns);
+	}
+
+protected:
+	static constexpr auto bufSize = 48000 * 2;
+	pa_simple* pa_ {};
+	std::atomic<bool> exit_;
+	std::thread thread_;
+	tkn::RingBuffer<float> recorded_ {bufSize};
+};
+#endif // TKN_WITH_PULSE_SIMPLE
 
 class ParticleSystem {
 public:
@@ -312,7 +393,8 @@ public:
 
 	using Base = tkn::SinglePassApp;
 	struct Args : public Base::Args {
-		std::string audioFile {"test.mp3"};
+		std::string audioFile {};
+		bool systemAudio {};
 		unsigned particleCount {500'000};
 	};
 
@@ -320,7 +402,7 @@ public:
 	using Base::init;
 	bool init(nytl::Span<const char*> cargs) override {
 		Args args;
-		if(!Base::init(cargs, args)) {
+		if(!Base::doInit(cargs, args)) {
 			return false;
 		}
 
@@ -328,6 +410,7 @@ public:
 		auto& dev = vkDevice();
 		vpp::BufferSpan freqFactors;
 
+		bool initFFT = false;
 #ifdef TKN_WITH_AUDIO
 		if(!args.audioFile.empty()) {
 			auto asset = std::fopen(args.audioFile.c_str(), "rb");
@@ -343,6 +426,25 @@ public:
 			auto& ap = *audioPlayer_;
 
 			audio_ = &ap.create<FeedbackMP3Audio>(ap, tkn::File{asset});
+			ap.start();
+			initFFT = true;
+		}
+#endif // TKN_WITH_AUDIO
+
+#ifdef TKN_WITH_PULSE_SIMPLE
+		if(args.systemAudio) {
+			if(!args.audioFile.empty()) {
+				dlg_error("Can't use audio file and system audio");
+				return false;
+			}
+
+			pulseRecorder_.emplace();
+			initFFT = true;
+		}
+#endif
+
+#if defined(TKN_WITH_AUDIO) || defined(TKN_WITH_PULSE_SIMPLE)
+		if(initFFT) {
 			dft_.kiss = kiss_fft_alloc(frameCount, 0, nullptr, nullptr);
 			dft_.freq.resize(frameCount);
 			dft_.time.resize(frameCount);
@@ -361,10 +463,10 @@ public:
 			factorBuf_ = {dev.bufferAllocator(), fbs,
 				vk::BufferUsageBits::storageBuffer, dev.hostMemoryTypes()};
 			freqFactors = factorBuf_;
-
-			ap.start();
 		}
-#endif // TKN_WITH_AUDIO
+#else
+		dlg_assert(!initFFT);
+#endif
 
 		// system
 		system_.init(vkDevice(), renderPass(), samples(), args.particleCount,
@@ -500,6 +602,14 @@ public:
 		});
 #endif // TKN_WITH_AUDIO
 
+#ifdef TKN_WITH_PULSE_SIMPLE
+		parser.definitions.push_back({
+			"system-audio",
+			{"-s", "--system-audio"},
+			"Visualize system audio (using pulseaudio)", 0
+		});
+#endif // TKN_WITH_PULSE_SIMPLE
+
 		return parser;
 	}
 
@@ -525,6 +635,12 @@ public:
 		}
 #endif // TKN_WITH_AUDIO
 
+#ifdef TKN_WITH_PULSE_SIMPLE
+		if(result.has_option("system-audio")) {
+			out.systemAudio = true;
+		}
+#endif // TKN_WITH_AUDIO
+
 		return true;
 	}
 
@@ -543,24 +659,41 @@ public:
 		delta_ = delta;
 
 		// audio processing
+		// first get samples via feedback source or pulse
 #ifdef TKN_WITH_AUDIO
 		if(audio_) {
 			auto available = audio_->available();
 			dft_.samples.resize(available);
 			audio_->dequeFeedback(dft_.samples.data(), available);
+		}
+#endif
 
-			if(available > 2 * frameCount) {
+#ifdef TKN_WITH_PULSE_SIMPLE
+		if(pulseRecorder_) {
+			auto available = pulseRecorder_->available();
+			dft_.samples.resize(available);
+			pulseRecorder_->deque(dft_.samples.data(), available);
+		}
+#endif
+
+		// then perform fft on the samples to get the freq domain
+#if defined(TKN_WITH_AUDIO) || defined(TKN_WITH_PULSE_SIMPLE)
+		if(!dft_.samples.empty()) {
+			auto ns = dft_.samples.size();
+			// erase the old samples we don't need
+			if(ns > 2 * frameCount) {
 				dft_.samples.erase(dft_.samples.begin(),
-					dft_.samples.begin() + (available - 2 * frameCount));
+					dft_.samples.begin() + (ns - 2 * frameCount));
 			}
 
-			dlg_assert(!(available % 2));
-			available /= 2; // TODO: don't assume stereo
+			// TODO: don't assume stereo
+			dlg_assert(!(ns % 2));
+			ns /= 2;
 
-			auto ec = std::min<unsigned>(available, dft_.time.size());
+			auto ec = std::min<unsigned>(ns, dft_.time.size());
 			dft_.time.erase(dft_.time.begin(), dft_.time.begin() + ec);
 			dft_.time.reserve(frameCount);
-			for(auto i = 0u; i < available; ++i) {
+			for(auto i = 0u; i < ns; ++i) {
 				float r = 0.5 * (dft_.samples[2 * i] + dft_.samples[2 * i + 1]);
 				dft_.time.push_back({r, 0.f});
 			}
@@ -579,8 +712,8 @@ public:
 			system_.reset();
 		}
 
-#ifdef TKN_WITH_AUDIO
-		if(audio_) {
+#if defined(TKN_WITH_AUDIO) || defined(TKN_WITH_PULSE_SIMPLE)
+		if(factorBuf_.size()) {
 			auto map = factorBuf_.memoryMap();
 			auto vals = reinterpret_cast<float*>(map.ptr());
 
@@ -623,10 +756,7 @@ protected:
 	std::vector<nytl::Vec2f> attractors_ {};
 	std::vector<unsigned> touchIDs_ {};
 
-#ifdef TKN_WITH_AUDIO
-	FeedbackMP3Audio* audio_ {};
-	std::optional<tkn::AudioPlayer> audioPlayer_;
-
+#if defined(TKN_WITH_AUDIO) || defined(TKN_WITH_PULSE_SIMPLE)
 	struct {
 		std::vector<float> samples; // buffer cache for reading audio samples
 		std::vector<kiss_fft_cpx> time; // time domain constructed from samples
@@ -635,7 +765,16 @@ protected:
 	} dft_;
 
 	vpp::SubBuffer factorBuf_;
+#endif
+
+#ifdef TKN_WITH_AUDIO
+	FeedbackMP3Audio* audio_ {};
+	std::optional<tkn::AudioPlayer> audioPlayer_;
 #endif // TKN_WITH_AUDIO
+
+#ifdef TKN_WITH_PULSE_SIMPLE
+	std::optional<PulseAudioRecorder> pulseRecorder_;
+#endif
 };
 
 int main(int argc, const char** argv) {

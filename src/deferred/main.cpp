@@ -77,6 +77,10 @@ public:
 	static constexpr auto probeSize = vk::Extent2D {2048, 2048};
 	static constexpr auto probeFaceSize = probeSize.width * probeSize.height * 8;
 
+	static constexpr float near = 0.1f;
+	static constexpr float far = 10.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
 public:
 	struct Args : public App::Args {
 		float scale {1.f};
@@ -105,6 +109,9 @@ public:
 	void updateDevice() override;
 	const char* name() const override { return "Deferred Renderer"; }
 
+	nytl::Mat4f projectionMatrix() const;
+	nytl::Mat4f cameraVP() const;
+
 protected:
 	// TODO: add vpp methods to merge them to one (or into the default
 	// one) after initialization
@@ -122,6 +129,8 @@ protected:
 
 	std::optional<Alloc> alloc;
 	vpp::TrDsLayout cameraDsLayout_;
+
+	float fov_ {fov};
 
 	// light and shadow
 	tkn::ShadowData shadowData_;
@@ -176,10 +185,6 @@ protected:
 	u32 debugMode_ {0};
 	u32 renderPasses_ {};
 
-	// needed for point light rendering.
-	// also needed for skybox
-	vpp::SubBuffer boxIndices_;
-
 	// image view into the depth buffer that accesses all depth levels
 	vpp::ImageView depthMipView_;
 	unsigned depthMipLevels_ {};
@@ -228,7 +233,6 @@ protected:
 
 	bool useLensDirt_ {true};
 	tkn::Texture lensDirt_;
-	rvg::Transform windowTransform_;
 
 	bool recreatePasses_ {false};
 	vpp::ShaderModule fullVertShader_;
@@ -271,7 +275,7 @@ protected:
 
 bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	Args args;
-	if(!tkn::App::init(pargs, args)) {
+	if(!tkn::App::doInit(pargs, args)) {
 		return false;
 	}
 
@@ -432,10 +436,6 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	env_.create(envData, batch, "convolution.ktx",
 		"irradiance.ktx", linearSampler_);
 	vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
-	vpp::Init<vpp::SubBuffer> initBoxIndices(alloc.bufDevice,
-		36u * sizeof(std::uint16_t),
-		vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-		dev.deviceMemoryTypes(), 4u);
 
 	// Load Model
 	auto mat = nytl::identity<4, float>();
@@ -476,11 +476,9 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	initPasses(batch);
 
 	rvgInit(pp_.renderPass(), 0, vk::SampleCountBits::e1);
-	windowTransform_ = {rvgContext()};
 
 	// allocate
 	scene_.init(initScene, batch, dummyTex_.imageView());
-	boxIndices_ = initBoxIndices.init();
 	selectionStage_ = initSelectionStage.init();
 	cameraDs_ = initCameraDs.init();
 	cameraUbo_ = initCameraUbo.init();
@@ -492,17 +490,6 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	lensDirt_.init(initDirt, batch);
 
 	// cb
-	std::array<std::uint16_t, 36> indices = {
-		0, 1, 2,  2, 1, 3, // front
-		1, 5, 3,  3, 5, 7, // right
-		2, 3, 6,  6, 3, 7, // top
-		4, 0, 6,  6, 0, 2, // left
-		4, 5, 0,  0, 5, 1, // bottom
-		5, 4, 7,  7, 4, 6, // back
-	};
-
-	auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
-
 	vk::ImageMemoryBarrier barrier;
 	barrier.image = selectionStage_;
 	barrier.oldLayout = vk::ImageLayout::undefined;
@@ -524,7 +511,7 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
-		l.updateDevice(camera_);
+		l.updateDevice(cameraVP(), near, far);
 		// pp_.params.scatterLightColor = 0.05f * l.data.color;
 	}
 
@@ -561,10 +548,6 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	// 	dummyTex_.vkImageView(), scene_.defaultSampler(),
 	// 	nytl::Vec{0.f, 0.f, 0.0f, 0.f}, 0.f, 0.f, false,
 	// 	nytl::Vec{1.f, 0.9f, 0.5f});
-
-
-	camera_.perspective.near = 0.01f;
-	camera_.perspective.far = 10.f;
 
 	// gui
 	auto& gui = this->gui();
@@ -886,7 +869,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		for(auto& l : dirLights_) dl.push_back(&l);
 
 		geomLight_.record(buf.cb, buf.size, cameraDs_, scene_, pl, dl,
-			boxIndices_, envCameraDs_, &env_, &timeWidget_);
+			envCameraDs_, &env_, &timeWidget_);
 	};
 
 	vpp::InitObject initPP(pp_, passInfo, swapchainInfo().imageFormat);
@@ -910,7 +893,7 @@ void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
 		gui().draw(cb);
 
 		rvgContext().bindDefaults(cb);
-		windowTransform_.bind(cb);
+		rvgWindowTransform().bind(cb);
 		timeWidget_.draw(cb);
 
 		vk::cmdEndRenderPass(cb);
@@ -1631,8 +1614,7 @@ void ViewApp::screenshot() {
 			for(auto& l : dirLights_) dl.push_back(&l);
 
 			probe_.geomLight.record(cb, probeSize, face.ds, scene_,
-				pl, dl, boxIndices_, face.envDs, &env_,
-				nullptr);
+				pl, dl, face.envDs, &env_, nullptr);
 
 			vk::BufferImageCopy copy;
 			copy.imageSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
@@ -1710,6 +1692,14 @@ bool ViewApp::key(const swa_key_event& ev) {
 			}
 			updateLights_ = true;
 			return true;
+		case swa_key_v:
+			fov_ *= 0.98;
+			camera_.update = true;
+			break;
+		case swa_key_b:
+			fov_ /= 0.98;
+			camera_.update = true;
+			break;
 		case swa_key_n:
 			debugMode_ = (debugMode_ + 1) % numModes;
 			recreatePasses_ = true; // recreate, rerecord
@@ -1786,6 +1776,15 @@ bool ViewApp::mouseButton(const swa_mouse_button_event& ev) {
 	}
 
 	return false;
+}
+
+nytl::Mat4f ViewApp::projectionMatrix() const {
+	auto aspect = float(windowSize().x) / windowSize().y;
+	return tkn::perspective3RH(fov_, aspect, near, far);
+}
+
+nytl::Mat4f ViewApp::cameraVP() const {
+	return projectionMatrix() * viewMatrix(camera_);
 }
 
 void ViewApp::updateDevice() {
@@ -1878,19 +1877,19 @@ void ViewApp::updateDevice() {
 		camera_.update = false;
 		auto map = cameraUbo_.memoryMap();
 		auto span = map.span();
-		auto mat = matrix(camera_);
+		auto mat = cameraVP();
 		tkn::write(span, mat);
 		tkn::write(span, nytl::Mat4f(nytl::inverse(mat)));
 		tkn::write(span, camera_.pos);
-		tkn::write(span, camera_.perspective.near);
-		tkn::write(span, camera_.perspective.far);
+		tkn::write(span, near);
+		tkn::write(span, far);
 		if(!map.coherent()) {
 			map.flush();
 		}
 
 		auto envMap = envCameraUbo_.memoryMap();
 		auto envSpan = envMap.span();
-		tkn::write(envSpan, fixedMatrix(camera_));
+		tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
 		if(!envMap.coherent()) {
 			envMap.flush();
 		}
@@ -1903,12 +1902,8 @@ void ViewApp::updateDevice() {
 			}
 		}
 
-		// depend on camera position
-		if(!updateLights_) {
-			for(auto& l : dirLights_) {
-				l.updateDevice(camera_);
-			}
-		}
+		// depend on camera matrix
+		updateLights_ = true;
 	}
 
 	if(updateLights_) {
@@ -1916,7 +1911,7 @@ void ViewApp::updateDevice() {
 			l.updateDevice();
 		}
 		for(auto& l : dirLights_) {
-			l.updateDevice(camera_);
+			l.updateDevice(cameraVP(), near, far);
 		}
 		updateLights_ = false;
 	}
@@ -2065,15 +2060,7 @@ void ViewApp::resize(unsigned width, unsigned height) {
 	App::resize(width, height);
 
 	selectionPos_ = {};
-	camera_.perspective.aspect = float(width) / height;
 	camera_.update = true;
-
-	// update window transform
-	auto s = nytl::Vec{ 2.f / width, 2.f / height, 1};
-	auto transform = nytl::identity<4, float>();
-	tkn::scale(transform, s);
-	tkn::translate(transform, nytl::Vec3f {-1, -1, 0});
-	windowTransform_.matrix(transform);
 
 	// update time widget position
 	auto pos = nytl::Vec2ui{width, height};
@@ -2083,10 +2070,5 @@ void ViewApp::resize(unsigned width, unsigned height) {
 }
 
 int main(int argc, const char** argv) {
-	ViewApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<ViewApp>(argc, argv);
 }

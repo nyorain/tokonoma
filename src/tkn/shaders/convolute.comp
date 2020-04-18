@@ -15,7 +15,7 @@ layout(push_constant) uniform Face {
 } pcr;
 
 layout(set = 0, binding = 0, rgba16f) uniform writeonly imageCube outCol;
-layout(set = 0, binding = 1) uniform samplerCube envMap;
+layout(set = 0, binding = 1) uniform samplerCube cubeMap;
 
 void main() {
 	uvec2 pixel = gl_GlobalInvocationID.xy;
@@ -34,6 +34,8 @@ void main() {
     vec3 R = N;
     vec3 V = R;
 
+
+	uvec2 faceSize = textureSize(cubeMap, 0); 
     float total = 0.0;   
     vec3 accum = vec3(0.0);     
     for(uint i = 0u; i < sampleCount; ++i) {
@@ -43,7 +45,21 @@ void main() {
 
         float ndl = max(dot(N, L), 0.0);
         if(ndl > 0.0) {
-            accum += texture(envMap, L).rgb * ndl;
+			float lod = 0.f;
+			if(pcr.roughness > 0) {
+				// sample a mip level of the cubemap to avoid
+				// artefacts; as described in
+				// https://chetanjags.wordpress.com/2015/08/26/image-based-lighting/
+				float d = distributionGGX(N, H, pcr.roughness);
+				float pdf = (d * dot(N, H) / (4.0 * dot(H, V))) + 0.00001; 
+
+				// derive lod from sample and texel area
+				float saTexel = 4.0 * pi / (6.0 * faceSize.x * faceSize.y);
+				float saSample = 1.0 / (sampleCount * pdf + 0.00001);
+				lod = 0.5 * log2(saSample / saTexel);
+			}
+
+            accum += textureLod(cubeMap, L, lod).rgb * ndl;
             total += ndl;
         }
     }

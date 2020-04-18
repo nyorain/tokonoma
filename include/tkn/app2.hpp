@@ -1,5 +1,6 @@
 #pragma once
 
+#include <tkn/file.hpp>
 #include <swa/swa.h>
 #include <vpp/fwd.hpp>
 #include <rvg/fwd.hpp>
@@ -60,6 +61,7 @@ public:
 	const vpp::Renderer& renderer() const;
 
 	rvg::Context& rvgContext();
+	const rvg::Transform& rvgWindowTransform() const;
 	const rvg::Font& defaultFont() const;
 	rvg::FontAtlas& fontAtlas();
 	vui::Gui& gui();
@@ -82,7 +84,7 @@ protected:
 		std::variant<DevType, unsigned, const char*> phdev = DevType::choose;
 	};
 
-	virtual bool init(nytl::Span<const char*> args, Args& out);
+	virtual bool doInit(nytl::Span<const char*> args, Args& out);
 
 	// Called when the render buffers have to be initialized, e.g.
 	// at the beginning or after an update.
@@ -148,6 +150,12 @@ protected:
 		vk::DebugUtilsMessageSeverityBitsEXT,
 		vk::DebugUtilsMessageTypeFlagsEXT,
 		const vk::DebugUtilsMessengerCallbackDataEXT& data);
+
+	// Utility function that opens an asset for reading.
+	// When on desktop, will try to open the file in the current directory
+	// or the asset/ source dir, while on android, it will use the asset
+	// manager.
+	File openAsset(nytl::StringParam path, bool binary = true);
 
 	// Argument parsing
 	virtual argagg::parser argParser() const;

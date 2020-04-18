@@ -1,6 +1,6 @@
 daudio = build_target('daudio', [
 		'main.cpp',
-	], dependencies: [tkn_dep, dep_cubeb, dep_playground],
+	], dependencies: [tkn_dep, tkn_audio_dep, dep_playground],
 	target_type: exetarget)
 
 daudiorc = build_target('daudiorc', [

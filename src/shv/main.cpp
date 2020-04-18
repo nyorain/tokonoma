@@ -1,4 +1,4 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
 #include <tkn/render.hpp>
 #include <tkn/camera.hpp>
@@ -17,10 +17,6 @@
 #include <vpp/vk.hpp>
 
 #include <dlg/dlg.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/appContext.hpp>
-#include <ny/keyboardContext.hpp>
-
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
 
@@ -29,15 +25,26 @@
 #include <shaders/shv.shv.frag.h>
 #include <shaders/shv.sphere.vert.h>
 
-class SHView : public tkn::App {
+class SHView : public tkn::SinglePassApp {
 public:
-	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+	using Base = tkn::SinglePassApp;
+	struct Args : public Base::Args {
+		std::string file;
+	};
+
+	static constexpr float near = 0.05f;
+	static constexpr float far = 25.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
+public:
+	bool init(nytl::Span<const char*> cargs) override {
+		Args args;
+		if(!Base::doInit(cargs, args)) {
 			return false;
 		}
 
 		// TODO: better pack coeffs (as vec4) in uniform buffer
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto bindings = {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
@@ -57,7 +64,7 @@ public:
 
 		std::array<vpp::SubBuffer, 2> stages;
 		if(skybox_) {
-			stages[0] = initSkyPipe(cb);
+			initSkyPipe();
 		} else {
 			stages = initSpherePipe(cb);
 		}
@@ -68,9 +75,9 @@ public:
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 		// coeffs, ssbo
-		auto cf = std::ifstream(file_);
+		auto cf = std::ifstream(args.file);
 		if(!cf.is_open()) {
-			dlg_fatal("Can't open {}", file_);
+			dlg_fatal("Can't open {}", args.file);
 			return false;
 		}
 
@@ -98,10 +105,9 @@ public:
 		return true;
 	}
 
-	[[nodiscard]] vpp::SubBuffer initSkyPipe(vk::CommandBuffer cb) {
-		auto& dev = vulkanDevice();
+	void initSkyPipe() {
+		auto& dev = vkDevice();
 
-		// pipeline
 		vpp::ShaderModule vertShader(dev, tkn_skybox_vert_data);
 		vpp::ShaderModule fragShader(dev, shv_shv_frag_data);
 
@@ -110,23 +116,13 @@ public:
 			{fragShader, vk::ShaderStageBits::fragment},
 		}}}, 0, samples());
 
-		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
+		gpi.assembly.topology = vk::PrimitiveTopology::triangleStrip;
 		pipe_ = {dev, gpi.info()};
-
-		// indices
-		auto usage = vk::BufferUsageBits::indexBuffer |
-			vk::BufferUsageBits::transferDst;
-		auto inds = tkn::boxInsideIndices;
-		indices_ = {dev.bufferAllocator(), sizeof(inds),
-			usage, dev.deviceMemoryTypes(), 4u};
-		auto boxIndicesStage = vpp::fillStaging(cb, indices_, inds);
-		indexCount_ = 36;
-		return boxIndicesStage;
 	}
 
 	[[nodiscard]] std::array<vpp::SubBuffer, 2>
 	initSpherePipe(vk::CommandBuffer cb) {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto sphere = tkn::Sphere{{0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}};
 		auto shape = tkn::generateUV(sphere);
 
@@ -185,23 +181,25 @@ public:
 		if(skybox_) {
 			vk::cmdBindIndexBuffer(cb, indices_.buffer(),
 				indices_.offset(), vk::IndexType::uint16);
+			vk::cmdDraw(cb, 14, 1, 0, 0, 0);
 		} else {
 			vk::cmdBindVertexBuffers(cb, 0, {{spherePositions_.buffer()}},
 				{{spherePositions_.offset()}});
 			vk::cmdBindIndexBuffer(cb, indices_.buffer(),
 				indices_.offset(), vk::IndexType::uint32);
+			vk::cmdDrawIndexed(cb, indexCount_, 1, 0, 0, 0);
 		}
-		vk::cmdDrawIndexed(cb, indexCount_, 1, 0, 0, 0);
 	}
 
 	void update(double dt) override {
 		App::update(dt);
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			tkn::checkMovement(camera_, *kc, dt);
-		}
-
+		tkn::checkMovement(camera_, swaDisplay(), dt);
 		App::scheduleRedraw();
+	}
+
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(windowSize().x) / windowSize().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
 	}
 
 	void updateDevice() override {
@@ -211,25 +209,26 @@ public:
 			camera_.update = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, skybox_ ? fixedMatrix(camera_) : matrix(camera_));
+			auto v = skybox_ ? fixedViewMatrix(camera_) : viewMatrix(camera_);
+			tkn::write(span, projectionMatrix() * v);
 			map.flush();
 		}
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
+	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
 			App::scheduleRedraw();
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
 		if(App::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			return true;
 		}
@@ -237,9 +236,8 @@ public:
 		return false;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	void resize(unsigned w, unsigned h) override {
+		App::resize(w, h);
 		camera_.update = true;
 	}
 
@@ -251,18 +249,20 @@ public:
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if(!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result,
+			App::Args& bout) override {
+		if(!App::handleArgs(result, bout)) {
 			return false;
 		}
 
+		auto& out = static_cast<Args&>(bout);
 		skybox_ = !result.has_option("sphere");
 		if(result.pos.empty()) {
 			dlg_fatal("No file argument given");
 			return false;
 		}
 
-		file_ = result.pos[0];
+		out.file = result.pos[0];
 		return true;
 	}
 
@@ -281,17 +281,11 @@ protected:
 	vpp::SubBuffer spherePositions_;
 	bool rotateView_ {};
 	bool skybox_ {};
-	unsigned indexCount_ {};
-	const char* file_ {};
+	unsigned indexCount_ {}; // only for sphere
 	tkn::Camera camera_ {};
 };
 
 int main(int argc, const char** argv) {
-	SHView app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<SHView>(argc, argv);
 }
 

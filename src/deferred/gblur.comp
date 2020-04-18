@@ -36,6 +36,8 @@ void main() {
 	uint count = uint(abs(owo.x));
 	float horizontal = float(owo.x > 0);
 	vec2 off = pixelSize * vec2(horizontal, 1 - horizontal);
+
+	// TODO: optimize for (texture) cache coherency.
 	for(uint i = 1u; i < count; ++i) {
 		vec2 ow = offsetWeights[i];
 		blurred += texture(inCol, uv + ow.x * off).rgb * ow.y;

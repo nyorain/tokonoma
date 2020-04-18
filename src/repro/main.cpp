@@ -99,14 +99,15 @@ public:
 	static constexpr auto snapSize = vk::Extent2D {4096, 4096};
 	static constexpr auto reproBlend = true;
 
+	static constexpr float near = 0.01f;
+	static constexpr float far = 10.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
 public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!tkn::App::init(args)) {
 			return false;
 		}
-
-		camera_.perspective.near = 0.01f;
-		camera_.perspective.far = 10.f;
 
 		return true;
 	}
@@ -647,7 +648,7 @@ public:
 
 		if(snap_.pending) {
 			snap_.time = time_;
-			snap_.vp = matrix(camera_);
+			snap_.vp = cameraVP();
 			camera_.update = true; // trigger scene ubo update
 			snap_.pending = false;
 		}
@@ -724,18 +725,27 @@ public:
 		return false;
 	}
 
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(window().size().x) / window().size().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
+	}
+
+	nytl::Mat4f cameraVP() const {
+		return projectionMatrix() * viewMatrix(camera_);
+	}
+
 	void updateDevice() override {
 		// update scene ubo every frame (for time)
 		{
 			auto map = sceneUbo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, matrix(camera_));
+			tkn::write(span, cameraVP());
 			tkn::write(span, camera_.pos);
 			tkn::write(span, time_);
 			tkn::write(span, snap_.vp);
 			tkn::write(span, snap_.time);
-			tkn::write(span, camera_.perspective.near);
-			tkn::write(span, camera_.perspective.far);
+			tkn::write(span, near);
+			tkn::write(span, far);
 			tkn::write(span, repro_.exposure);
 			map.flush();
 		}
@@ -747,7 +757,7 @@ public:
 			map.flush();
 		}
 
-		auto semaphore = scene_.updateDevice(matrix(camera_));
+		auto semaphore = scene_.updateDevice(cameraVP());
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
 			// HACK: we need to trigger initBuffers to rerecord all cb's...
@@ -758,7 +768,6 @@ public:
 
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 		camera_.update = true;
 	}
 

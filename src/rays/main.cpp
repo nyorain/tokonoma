@@ -1,4 +1,4 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
 #include <tkn/render.hpp>
 #include <tkn/transform.hpp>
@@ -60,26 +60,23 @@ struct Segment {
 	u32 _pad0 {};
 };
 
-class RaysApp : public tkn::App {
+class RaysApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	static constexpr auto sampleCount = 10 * 1024u;
 	static constexpr auto maxBounces = 8u; // XXX: defined again in rays.comp
 	static constexpr auto renderFormat = vk::Format::r16g16b16a16Sfloat;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
-		return true;
-	}
-
-	void initRenderData() override {
 		dlg_assertm(samples() == vk::SampleCountBits::e1,
 			"This application doesn't support multisampling");
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		vk::SamplerCreateInfo sci {};
 		sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
 		sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
@@ -104,10 +101,11 @@ public:
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
+		return true;
 	}
 
 	void initTss() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// layouts
 		auto bindings = {
@@ -134,7 +132,7 @@ public:
 	}
 
 	void initPP() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// layouts
 		auto bindings = {
@@ -165,7 +163,7 @@ public:
 	}
 
 	void initScene(vk::CommandBuffer cb) {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto devMem = dev.deviceMemoryTypes();
 
 		// float fac = 10.f;
@@ -263,7 +261,7 @@ public:
 	}
 
 	void initCompute() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// layouts
 		auto bindings = {
@@ -315,7 +313,7 @@ public:
 	}
 
 	void initGfx() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// renderPass
 		std::array<vk::AttachmentDescription, 1> attachments;
@@ -424,9 +422,9 @@ public:
 
 	void initBuffers(const vk::Extent2D& size,
 			nytl::Span<RenderBuffer> bufs) override {
-		App::initBuffers(size, bufs);
+		Base::initBuffers(size, bufs);
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto info = vpp::ViewableImageCreateInfo(renderFormat,
 			vk::ImageAspectBits::color, size,
 			vk::ImageUsageBits::sampled |
@@ -501,7 +499,7 @@ public:
 	// yeah, we could use BufferMemoryBarriers in this function
 	// but i'm too lazy rn. And my gpu/mesa impl doesn't care anyways :(
 	void beforeRender(vk::CommandBuffer cb) override {
-		App::beforeRender(cb);
+		Base::beforeRender(cb);
 
 		// reset vertex counter
 		vk::DrawIndirectCommand cmd {};
@@ -586,18 +584,18 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
+		Base::update(dt);
 
 		if(next_) {
 			// next_ = false;
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
 
 		time_ += dt;
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 
 		auto map = gfx_.ubo.memoryMap();
 		auto span = map.span();
@@ -614,7 +612,7 @@ public:
 			updateLight_ = false;
 
 			// TODO: hack
-			auto& dev = vulkanDevice();
+			auto& dev = vkDevice();
 			auto& qs = dev.queueSubmitter();
 			auto qfam = qs.queue().family();
 			auto cb = dev.commandAllocator().get(qfam);
@@ -626,23 +624,23 @@ public:
 	}
 
 	void updateMatrix() {
-		auto wsize = window().size();
+		auto wsize = windowSize();
 		view_.size = tkn::levelViewSize(wsize.x / float(wsize.y), 15.f);
 		matrix_ = tkn::levelMatrix(view_);
 		updateView_ = true;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
+	void resize(unsigned width, unsigned height) override {
+		Base::resize(width, height);
 		updateMatrix();
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
-		if(ev.pressed && ev.keycode == ny::Keycode::n) {
+		if(ev.pressed && ev.keycode == swa_key_n) {
 			next_ = true;
 			return true;
 		}
@@ -650,26 +648,26 @@ public:
 		return false;
 	}
 
-	bool touchBegin(const ny::TouchBeginEvent& ev) override {
-		if(App::touchBegin(ev)) {
+	bool touchBegin(const swa_touch_event& ev) override {
+		if(Base::touchBegin(ev)) {
 			return true;
 		}
 
-		auto pos = tkn::windowToLevel(window().size(), view_, nytl::Vec2i(ev.pos));
+		auto pos = tkn::windowToLevel(windowSize(), view_, {ev.x, ev.y});
 		light_.pos = pos;
 		updateLight_ = true;
 		return true;
 	}
 
-	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
-		auto pos = tkn::windowToLevel(window().size(), view_, nytl::Vec2i(ev.pos));
+	void touchUpdate(const swa_touch_event& ev) override {
+		auto pos = tkn::windowToLevel(windowSize(), view_, {ev.x, ev.y});
 		light_.pos = pos;
 		updateLight_ = true;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
-		auto pos = tkn::windowToLevel(window().size(), view_, ev.position);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
+		auto pos = tkn::windowToLevel(windowSize(), view_, {ev.x, ev.y});
 		light_.pos = pos;
 		updateLight_ = true;
 	}

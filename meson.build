@@ -139,8 +139,18 @@ if with_audio
 		fallback: ['steamaudio', 'steamaudio_dep'],
 		disabler: true,
 		required: get_option('steamaudio'))
+
 endif
 with_audio3D = dep_steamaudio.found()
+
+# pulseaudio, optional, for linux audio recording/interaction
+dep_pulse_simple = dependency('libpulse-simple',
+	required: false,
+	disabler: true)
+dep_pulse_simple_optional = []
+if dep_pulse_simple.found()
+	dep_pulse_simple_optional = [dep_pulse_simple]
+endif
 
 cd = configuration_data()
 cd.set('TKN_LINUX', build_machine.system() == 'linux')
@@ -148,6 +158,7 @@ cd.set('TKN_WITH_AUDIO', with_audio)
 cd.set('TKN_WITH_AUDIO3D', with_audio3D)
 cd.set('TKN_WITH_BULLET', with_bullet)
 cd.set('TKN_WITH_B2D', with_b2d)
+cd.set('TKN_WITH_PULSE_SIMPLE', dep_pulse_simple.found())
 subdir('include/tkn')
 
 external_inc = include_directories('external/include')
@@ -211,8 +222,11 @@ executable('guitest',
 particles = build_target('particles', [
 		'src/particles/main.cpp',
 		particles_shaders,
-	], dependencies: [tkn_dep, tkn_audio_dep_optional],
-	target_type: exetarget)
+	], dependencies: [
+		tkn_dep,
+		tkn_audio_dep_optional,
+		dep_pulse_simple_optional
+	], target_type: exetarget)
 
 executable('automaton', [
 	  'src/automaton/main.cpp',

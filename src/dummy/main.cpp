@@ -3,8 +3,8 @@
 class DummyApp : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
-	bool init(nytl::Span<const char*> args, Args& out) override {
-		if(!Base::init(args, out)) {
+	bool init(nytl::Span<const char*> args) override {
+		if(!Base::init(args)) {
 			return false;
 		}
 

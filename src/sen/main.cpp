@@ -1,4 +1,4 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
@@ -17,12 +17,7 @@
 #include <vpp/submit.hpp>
 #include <vpp/commandAllocator.hpp>
 #include <vpp/vk.hpp>
-
 #include <nytl/mat.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/key.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
 
 #include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/sen.sen.frag.h>
@@ -37,7 +32,13 @@
 constexpr auto faceWidth = 1024u;
 constexpr auto faceHeight = 1024u;
 
-class SenApp : public tkn::App {
+class SenApp : public tkn::SinglePassApp {
+public:
+	using Base = tkn::SinglePassApp;
+	static constexpr float near = 0.05f;
+	static constexpr float far = 25.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
 public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!tkn::App::init(args)) {
@@ -84,7 +85,7 @@ public:
 	}
 
 	void initComputePipe() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto dsBindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::compute),
@@ -116,7 +117,7 @@ public:
 	}
 
 	void initPathtracePipe() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		auto dsBindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
@@ -152,7 +153,7 @@ public:
 
 		auto imgi = vpp::ViewableImageCreateInfo(format,
 			vk::ImageAspectBits::color, {width, height}, usage);
-		dlg_assert(vpp::supported(device(), imgi.img));
+		dlg_assert(vpp::supported(vkDevice(), imgi.img));
 
 		// TODO: we could create second view with r8g8b8a8 format
 		// and then use linear interpolation in sampler,
@@ -203,7 +204,7 @@ public:
 	}
 
 	void initRaytracePipe() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto mem = dev.hostMemoryTypes();
 
 		// TODO: use real size instead of larger dummy
@@ -264,7 +265,7 @@ public:
 	}
 
 	void initRasterPipe() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		vk::SamplerCreateInfo sci {};
 		sci.magFilter = vk::Filter::nearest;
@@ -510,19 +511,19 @@ public:
 		boxes_.back().color = {0.2f, 0.2f, 1.f};
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
+	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
 		if(App::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			return true;
 		}
@@ -536,7 +537,7 @@ public:
 				comp_.pipe);
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
 				comp_.pipeLayout, 0, {{comp_.ds.vkHandle()}}, {});
-			vk::cmdDispatch(cb, 256, 256, 1);
+			vk::cmdDispatch(cb, 512, 512, 1);
 		}
 	}
 
@@ -568,7 +569,7 @@ public:
 		}
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
+	bool key(const swa_key_event& ev) override {
 		if(App::key(ev)) {
 			return true;
 		}
@@ -577,35 +578,35 @@ public:
 			return false;
 		}
 
-		if(ev.keycode == ny::Keycode::k0) {
+		if(ev.keycode == swa_key_k0) {
 			renderMode_ = 0;
 			App::scheduleRerecord();
 			return true;
-		} else if(ev.keycode == ny::Keycode::k1) {
+		} else if(ev.keycode == swa_key_k1) {
 			renderMode_ = 1;
 			App::scheduleRerecord();
 			return true;
-		} else if(ev.keycode == ny::Keycode::k2) {
+		} else if(ev.keycode == swa_key_k2) {
 			renderMode_ = 2;
 			App::scheduleRerecord();
 			return true;
-		} else if(ev.keycode == ny::Keycode::k3) {
+		} else if(ev.keycode == swa_key_k3) {
 			renderMode_ = 3;
 			App::scheduleRerecord();
 			return true;
-		} else if(ev.keycode == ny::Keycode::r) {
+		} else if(ev.keycode == swa_key_r) {
 			renderMode_ = (renderMode_ + 1) % 4;
 			App::scheduleRerecord();
 			return true;
-		} else if(ev.keycode == ny::Keycode::l) {
+		} else if(ev.keycode == swa_key_l) {
 			camera_.update = true; // updates ubo
-			if(ev.modifiers & ny::KeyboardModifier::shift) {
+			if(ev.modifiers & swa_keyboard_mod_shift) {
 				showLightTex_ = (showLightTex_ + 2) % 3;
 			} else {
 				showLightTex_ = (showLightTex_ + 1) % 3;
 			}
 			return true;
-		} else if(ev.keycode == ny::Keycode::i) {
+		} else if(ev.keycode == swa_key_i) {
 			// save image
 			saveImage_ = true;
 		}
@@ -615,25 +616,34 @@ public:
 
 	void update(double delta) override {
 		App::update(delta);
-		App::scheduleRedraw(); // TODO: can be optimized
 		time_ += delta;
+		tkn::checkMovement(camera_, swaDisplay(), delta);
+		App::scheduleRedraw();
+	}
 
-		tkn::checkMovement(camera_, *appContext().keyboardContext(), delta);
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(windowSize().x) / windowSize().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
+	}
+
+	nytl::Mat4f cameraVP() const {
+		return projectionMatrix() * viewMatrix(camera_);
 	}
 
 	void updateDevice() override {
 		// raytracing
 		auto rmap = ubo_.memoryMap();
 		auto rspan = rmap.span();
+		auto aspect = float(windowSize().x) / windowSize().y;
 
 		tkn::write(rspan, camera_.pos);
 		tkn::write(rspan, 0.f); // padding
-		tkn::write(rspan, camera_.dir);
+		tkn::write(rspan, dir(camera_));
 		tkn::write(rspan, 0.f); // padding
-		tkn::write(rspan, camera_.perspective.fov);
-		tkn::write(rspan, camera_.perspective.aspect);
-		tkn::write(rspan, float(window().size().x));
-		tkn::write(rspan, float(window().size().y));
+		tkn::write(rspan, fov);
+		tkn::write(rspan, aspect);
+		tkn::write(rspan, float(windowSize().x));
+		tkn::write(rspan, float(windowSize().y));
 		tkn::write(rspan, nytl::Vec2f{faceWidth, faceHeight});
 		tkn::write(rspan, float(time_));
 
@@ -645,7 +655,7 @@ public:
 			{
 				auto map = rasterSceneUbo_.memoryMap();
 				auto span = map.span();
-				tkn::write(span, matrix(camera_));
+				tkn::write(span, cameraVP());
 				tkn::write(span, camera_.pos);
 				tkn::write(span, showLightTex_);
 				tkn::write(span, nytl::Vec2f{faceWidth, faceHeight});
@@ -693,9 +703,8 @@ public:
 		}
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	void resize(unsigned w, unsigned h) override {
+		App::resize(w, h);
 		camera_.update = true;
 	}
 
@@ -756,11 +765,5 @@ private:
 };
 
 int main(int argc, const char** argv) {
-	// run app
-	SenApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<SenApp>(argc, argv);
 }

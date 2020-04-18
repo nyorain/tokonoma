@@ -59,14 +59,28 @@ public:
 	// TODO: we can probably use a 8-bit buffer here with a proper encoding
 	static constexpr auto velocityFormat = vk::Format::r32g32b32a32Sfloat;
 
+	static constexpr u32 taaModePassthrough = 0u;
+	static constexpr u32 taaModeClipColor = 1u;
+	static constexpr u32 taaModeReprDepthRej = 2u;
+	static constexpr u32 taaModeCombined = 3u;
+	static constexpr u32 taaDebugModeVelocity = 4u;
+	static constexpr u32 taaModePass = 5u;
+
+	static constexpr u32 modeDirLight = (1u << 0);
+	static constexpr u32 modePointLight = (1u << 1);
+	static constexpr u32 modeSpecularIBL = (1u << 2);
+	static constexpr u32 modeIrradiance = (1u << 3);
+
+	static constexpr float near = 0.1f;
+	static constexpr float far = 5.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
 public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!tkn::App::init(args)) {
 			return false;
 		}
 
-		camera_.perspective.near = 0.1f;
-		camera_.perspective.far = 5.f;
 		return true;
 	}
 
@@ -138,8 +152,12 @@ public:
 		auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
 		auto& sc = model.scenes[scene];
 
+		// NOTE: this is needed because we always want to sampler from
+		// a higher miplevel than the one that would usually be selected.
+		// Increases sharpness, we anti-aliase it anyways via jittering.
+		static constexpr auto mipLodBias = -2.f;
 		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
-			model, sc, mat, ri);
+			model, sc, mat, ri, mipLodBias);
 		initScene.init(batch, dummyTex_.vkImageView());
 
 		shadowData_ = tkn::initShadowData(dev, depthFormat(),
@@ -286,22 +304,6 @@ public:
 		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", linearSampler_);
 		env_.createPipe(device(), cameraDsLayout_, offscreen_.rp, 0u, samples(), batts);
 		env_.init(initEnv, batch);
-
-		// box indices
-		std::array<std::uint16_t, 36> indices = {
-			0, 1, 2,  2, 1, 3, // front
-			1, 5, 3,  3, 5, 7, // right
-			2, 3, 6,  6, 3, 7, // top
-			4, 0, 6,  6, 0, 2, // left
-			4, 5, 0,  0, 5, 1, // bottom
-			5, 4, 7,  7, 4, 6, // back
-		};
-
-		boxIndices_ = {alloc.bufDevice,
-			36u * sizeof(std::uint16_t),
-			vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-			dev.deviceMemoryTypes(), 4u};
-		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
 
 		// camera
 		auto cameraUboSize = sizeof(nytl::Mat4f) * 2 // proj matrix (+last)
@@ -743,8 +745,6 @@ public:
 			dirLight_.ds(), pointLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, false); // opaque
 
-		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
-			boxIndices_.offset(), vk::IndexType::uint16);
 		tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
 			{envCameraDs_});
 		env_.render(cb);
@@ -975,6 +975,15 @@ public:
 		return false;
 	}
 
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(window().size().x) / window().size().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
+	}
+
+	nytl::Mat4f cameraVP() const {
+		return projectionMatrix() * viewMatrix(camera_);
+	}
+
 	void updateDevice() override {
 		if(camera_.update) {
 			updateLight_ = true; // for directional light
@@ -1001,22 +1010,24 @@ public:
 				off = {0.f, 0.f};
 			}
 
-			auto proj = matrix(camera_);
+			auto proj = cameraVP();
 			auto jitterMat = tkn::translateMat({off.x, off.y, 0.f});
 			auto jproj = jitterMat * proj;
 
 			tkn::write(span, jproj);
 			tkn::write(span, taa_.lastProj);
 			tkn::write(span, camera_.pos);
-			tkn::write(span, camera_.perspective.near);
-			tkn::write(span, camera_.perspective.far);
+			tkn::write(span, near);
+			tkn::write(span, far);
 			camera_.update = false;
 			map.flush();
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
 			// TODO: not sure about using jitterMat here
-			tkn::write(envSpan, jitterMat * fixedMatrix(camera_));
+			tkn::write(envSpan, jitterMat *
+				projectionMatrix() *
+				fixedViewMatrix(camera_));
 			envMap.flush();
 
 			auto taaMap = taa_.ubo.memoryMap();
@@ -1027,8 +1038,8 @@ public:
 			tkn::write(taaSpan, nytl::Mat4f(nytl::inverse(taa_.lastProj)));
 			tkn::write(taaSpan, off);
 			tkn::write(taaSpan, taa_.lastJitter);
-			tkn::write(taaSpan, camera_.perspective.near);
-			tkn::write(taaSpan, camera_.perspective.far);
+			tkn::write(taaSpan, near);
+			tkn::write(taaSpan, far);
 			tkn::write(taaSpan, taa_.minFac);
 			tkn::write(taaSpan, taa_.maxFac);
 			tkn::write(taaSpan, taa_.mode);
@@ -1038,7 +1049,7 @@ public:
 			taa_.lastJitter = off;
 		}
 
-		auto semaphore = scene_.updateDevice(matrix(camera_));
+		auto semaphore = scene_.updateDevice(cameraVP());
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
 			App::scheduleRerecord();
@@ -1046,7 +1057,7 @@ public:
 
 		if(updateLight_) {
 			if(mode_ & modeDirLight) {
-				dirLight_.updateDevice(camera_);
+				dirLight_.updateDevice(cameraVP(), near, far);
 			}
 			if(mode_ & modePointLight) {
 				pointLight_.updateDevice();
@@ -1077,7 +1088,6 @@ public:
 
 	void resize(const ny::SizeEvent& ev) override {
 		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
 		camera_.update = true;
 	}
 
@@ -1121,10 +1131,6 @@ protected:
 	bool updateAOParams_ {true};
 	float aoFac_ {0.05f};
 
-	static constexpr u32 modeDirLight = (1u << 0);
-	static constexpr u32 modePointLight = (1u << 1);
-	static constexpr u32 modeSpecularIBL = (1u << 2);
-	static constexpr u32 modeIrradiance = (1u << 3);
 	u32 mode_ {modePointLight | modeIrradiance | modeSpecularIBL};
 
 	tkn::Texture dummyTex_;
@@ -1136,13 +1142,6 @@ protected:
 		vpp::ViewableImage velTarget;
 		vpp::Framebuffer fb;
 	} offscreen_;
-
-	static constexpr u32 taaModePassthrough = 0u;
-	static constexpr u32 taaModeClipColor = 1u;
-	static constexpr u32 taaModeReprDepthRej = 2u;
-	static constexpr u32 taaModeCombined = 3u;
-	static constexpr u32 taaDebugModeVelocity = 4u;
-	static constexpr u32 taaModePass = 5u;
 
 	struct {
 		vpp::ViewableImage inHistory;
@@ -1216,8 +1215,6 @@ protected:
 	// args
 	std::string modelname_ {};
 	float sceneScale_ {1.f};
-
-	vpp::SubBuffer boxIndices_;
 };
 
 int main(int argc, const char** argv) {

@@ -83,8 +83,7 @@ public:
 	void record(vk::CommandBuffer cb, const vk::Extent2D&,
 		vk::DescriptorSet camDs, const tkn::Scene& scene,
 		nytl::Span<const tkn::PointLight*>, nytl::Span<const tkn::DirLight*>,
-		vpp::BufferSpan boxIndices, vk::DescriptorSet envCamDs,
-		const tkn::Environment* env, tkn::TimeWidget* time);
+		vk::DescriptorSet envCamDs, const tkn::Environment*, tkn::TimeWidget*);
 	void updateDevice();
 	// SyncScope srcScopeLight() const;
 

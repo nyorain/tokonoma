@@ -5,7 +5,7 @@
 
 #include <tkn/config.hpp>
 #include <tkn/camera.hpp>
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
@@ -19,11 +19,6 @@
 #include <tkn/scene/scene.hpp>
 #include <tkn/scene/environment.hpp>
 #include <argagg.hpp>
-
-#include <ny/key.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
-#include <ny/mouseButton.hpp>
 
 #include <rvg/context.hpp>
 #include <rvg/state.hpp>
@@ -42,6 +37,7 @@
 
 #include <dlg/dlg.hpp>
 #include <nytl/mat.hpp>
+#include <nytl/matOps.hpp>
 #include <nytl/stringParam.hpp>
 
 #include <tinygltf.hpp>
@@ -54,7 +50,6 @@
 #include <string>
 
 #ifdef __ANDROID__
-#include <ny/android/appContext.hpp>
 #include <android/native_activity.h>
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
@@ -70,20 +65,31 @@
 
 using namespace tkn::types;
 
-class ViewApp : public tkn::App {
+class ViewApp : public tkn::SinglePassApp {
 public:
-	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+	using Base = tkn::SinglePassApp;
+	struct Args : Base::Args {
+		std::string model;
+		float scale {1.f};
+		bool noaudio {};
+	};
+
+	static constexpr float near = 0.05f;
+	static constexpr float far = 25.f;
+	static constexpr float fov = 0.5 * nytl::constants::pi;
+
+public:
+	bool init(nytl::Span<const char*> cargs) override {
+		Args args;
+		if(!Base::doInit(cargs, args)) {
 			return false;
 		}
 
 		std::fflush(stdout);
-
-		camera_.perspective.near = 0.05f;
-		camera_.perspective.far = 25.f;
+		rvgInit();
 
 		// init pipeline
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto hostMem = dev.hostMemoryTypes();
 		vpp::DeviceMemoryAllocator memStage(dev);
 		vpp::BufferAllocator bufStage(memStage);
@@ -142,17 +148,19 @@ public:
 		};
 
 #ifdef __ANDROID__
-		auto& ac = dynamic_cast<ny::AndroidAppContext&>(appContext());
-		auto* mgr = ac.nativeActivity()->assetManager;
-		auto asset = AAssetManager_open(mgr, "model.glb", AASSET_MODE_BUFFER);
-
-		std::size_t len = AAsset_getLength(asset);
-		auto buf = (std::byte*) AAsset_getBuffer(asset);
-
-		auto omodel = tkn::loadGltf({buf, len});
-		auto path = "";
+		dlg_error("not implemented");
+		return false;
+		// auto& ac = dynamic_cast<ny::AndroidAppContext&>(appContext());
+		// auto* mgr = ac.nativeActivity()->assetManager;
+		// auto asset = AAssetManager_open(mgr, "model.glb", AASSET_MODE_BUFFER);
+//
+		// std::size_t len = AAsset_getLength(asset);
+		// auto buf = (std::byte*) AAsset_getBuffer(asset);
+//
+		// auto omodel = tkn::loadGltf({buf, len});
+		// auto path = "";
 #else
-		auto [omodel, path] = tkn::loadGltf(modelname_);
+		auto [omodel, path] = tkn::loadGltf(args.model);
 #endif
 
 		if(!omodel) {
@@ -167,7 +175,7 @@ public:
 
 		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
 			model, sc, mat, ri);
-		initScene.object().rescale(4 * sceneScale_);
+		initScene.object().rescale(4 * args.scale);
 		initScene.init(batch, dummyTex_.vkImageView());
 
 		std::fflush(stdout);
@@ -200,7 +208,7 @@ public:
 		env_.create(initEnv, batch,
 			tkn::read(std::move(convFile)),
 			tkn::read(std::move(irrFile)), sampler_);
-		env_.createPipe(device(), cameraDsLayout_, renderPass(), 0u, samples());
+		env_.createPipe(vkDevice(), cameraDsLayout_, renderPass(), 0u, samples());
 		env_.init(initEnv, batch);
 
 		// ao
@@ -254,22 +262,6 @@ public:
 
 		gpi.depthStencil.depthWriteEnable = false;
 		blendPipe_ = {dev, gpi.info()};
-
-		// box indices
-		std::array<std::uint16_t, 36> indices = {
-			0, 1, 2,  2, 1, 3, // front
-			1, 5, 3,  3, 5, 7, // right
-			2, 3, 6,  6, 3, 7, // top
-			4, 0, 6,  6, 0, 2, // left
-			4, 5, 0,  0, 5, 1, // bottom
-			5, 4, 7,  7, 4, 6, // back
-		};
-
-		boxIndices_ = {alloc.bufDevice,
-			36u * sizeof(std::uint16_t),
-			vk::BufferUsageBits::indexBuffer | vk::BufferUsageBits::transferDst,
-			dev.deviceMemoryTypes(), 4u};
-		auto boxIndicesStage = vpp::fillStaging(cb, boxIndices_, indices);
 
 		// camera
 		auto cameraUboSize = sizeof(nytl::Mat4f) // proj matrix
@@ -358,7 +350,7 @@ public:
 			pointLightObjMatrix(), pointLight_.materialID);
 
 #ifdef BR_AUDIO
-		if(!audio_.disable) {
+		if(!args.noaudio) {
 			// audio
 			std::vector<IPLVector3> positions;
 			std::vector<IPLTriangle> tris;
@@ -408,7 +400,7 @@ public:
 	}
 
 	bool features(tkn::Features& enable, const tkn::Features& supported) override {
-		if(!App::features(enable, supported)) {
+		if(!Base::features(enable, supported)) {
 			return false;
 		}
 
@@ -451,7 +443,7 @@ public:
 	}
 
 	argagg::parser argParser() const override {
-		auto parser = App::argParser();
+		auto parser = Base::argParser();
 		parser.definitions.push_back({
 			"model", {"--model"},
 			"Path of the gltf model to load (dir must contain scene.gltf)", 1
@@ -469,20 +461,22 @@ public:
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if(!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result,
+			Base::Args& bout) override {
+		if(!Base::handleArgs(result, bout)) {
 			return false;
 		}
 
+		auto& out = static_cast<Args&>(bout);
 		if(result.has_option("model")) {
-			modelname_ = result["model"].as<const char*>();
+			out.model = result["model"].as<const char*>();
 		}
 		if(result.has_option("scale")) {
-			sceneScale_ = result["scale"].as<float>();
+			out.scale = result["scale"].as<float>();
 		}
 #ifdef BR_AUDIO
 		if(result.has_option("no-audio")) {
-			audio_.disable = true;
+			out.noaudio = true;
 		}
 #endif // BR_AUDIO
 
@@ -490,7 +484,7 @@ public:
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
-		App::beforeRender(cb);
+		Base::beforeRender(cb);
 		if(mode_ & modeDirLight) {
 			dirLight_.render(cb, shadowData_, scene_);
 		}
@@ -508,10 +502,7 @@ public:
 			dirLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, false); // opaque
 
-		vk::cmdBindIndexBuffer(cb, boxIndices_.buffer(),
-			boxIndices_.offset(), vk::IndexType::uint16);
-		tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0,
-			{envCameraDs_});
+		tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0, {envCameraDs_});
 		env_.render(cb);
 
 		/*
@@ -534,15 +525,11 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
+		Base::update(dt);
 		time_ += dt;
 
 		// movement
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			tkn::checkMovement(camera_, *kc, dt);
-		}
-
+		tkn::checkMovement(camera_, swaDisplay(), dt);
 		if(moveLight_) {
 			if(mode_ & modePointLight) {
 				pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
@@ -562,24 +549,23 @@ public:
 
 #ifdef BR_AUDIO
 		if(audio_.d3) {
-			auto& c = camera_;
-			auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-			auto right = nytl::normalized(nytl::cross(c.dir, yUp));
-			auto up = nytl::normalized(nytl::cross(right, c.dir));
-			audio_.d3->updateListener(c.pos, c.dir, up);
+			auto zdir = dir(camera_);
+			auto right = nytl::normalized(nytl::cross(zdir, camera_.up));
+			auto up = nytl::normalized(nytl::cross(right, zdir));
+			audio_.d3->updateListener(camera_.pos, zdir, up);
 		}
 #endif // BR_AUDIO
 
 		// we currently always redraw to see consistent fps
 		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
-		// 	App::scheduleRedraw();
+		// 	Base::scheduleRedraw();
 		// }
 
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
@@ -589,68 +575,68 @@ public:
 
 		switch(ev.keycode) {
 #ifdef BR_AUDIO
-			case ny::Keycode::i: // toggle indirect audio
+			case swa_key_i: // toggle indirect audio
 				if(audio_.d3) audio_.d3->toggleIndirect();
 				return true;
-			case ny::Keycode::u: // toggle direct audio on source
+			case swa_key_u: // toggle direct audio on source
 				if(audio_.source) audio_.source->direct = !audio_.source->direct;
 				return true;
-			case ny::Keycode::o: // move audio source here
+			case swa_key_o: // move audio source here
 				if(audio_.source) audio_.source->position(camera_.pos);
 				return true;
 #endif // BR_AUDIO
-			case ny::Keycode::m: // move light here
+			case swa_key_m: // move light here
 				moveLight_ = false;
 				dirLight_.data.dir = -camera_.pos;
 				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
 				scene_.updatedInstance(dirLight_.instanceID);
 				updateLight_ = true;
 				return true;
-			case ny::Keycode::n: // move light here
+			case swa_key_n: // move light here
 				moveLight_ = false;
 				updateLight_ = true;
 				pointLight_.data.position = camera_.pos;
 				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
 				scene_.updatedInstance(pointLight_.instanceID);
 				return true;
-			case ny::Keycode::l:
+			case swa_key_l:
 				moveLight_ ^= true;
 				return true;
-			case ny::Keycode::p:
+			case swa_key_p:
 				dirLight_.data.flags ^= tkn::lightFlagPcf;
 				pointLight_.data.flags ^= tkn::lightFlagPcf;
 				updateLight_ = true;
 				return true;
-			case ny::Keycode::up:
+			case swa_key_up:
 				aoFac_ *= 1.1;
 				updateAOParams_ = true;
 				dlg_info("ao factor: {}", aoFac_);
 				return true;
-			case ny::Keycode::down:
+			case swa_key_down:
 				aoFac_ /= 1.1;
 				updateAOParams_ = true;
 				dlg_info("ao factor: {}", aoFac_);
 				return true;
-			case ny::Keycode::k1:
+			case swa_key_k1:
 				mode_ ^= modeDirLight;
 				updateLight_ = true;
 				updateAOParams_ = true;
-				App::scheduleRerecord();
+				Base::scheduleRerecord();
 				dlg_info("dir light: {}", bool(mode_ & modeDirLight));
 				return true;
-			case ny::Keycode::k2:
+			case swa_key_k2:
 				mode_ ^= modePointLight;
 				updateLight_ = true;
 				updateAOParams_ = true;
-				App::scheduleRerecord();
+				Base::scheduleRerecord();
 				dlg_info("point light: {}", bool(mode_ & modePointLight));
 				return true;
-			case ny::Keycode::k3:
+			case swa_key_k3:
 				mode_ ^= modeSpecularIBL;
 				dlg_info("specular IBL: {}", bool(mode_ & modeSpecularIBL));
 				updateAOParams_ = true;
 				return true;
-			case ny::Keycode::k4:
+			case swa_key_k4:
 				mode_ ^= modeIrradiance;
 				updateAOParams_ = true;
 				dlg_info("Static AO: {}", bool(mode_ & modeIrradiance));
@@ -662,20 +648,20 @@ public:
 		return false;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
-			App::scheduleRedraw();
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
+			Base::scheduleRedraw();
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			return true;
 		}
@@ -683,62 +669,70 @@ public:
 		return false;
 	}
 
-	bool touchBegin(const ny::TouchBeginEvent& ev) override {
-		if(App::touchBegin(ev)) {
+	bool touchBegin(const swa_touch_event& ev) override {
+		if(Base::touchBegin(ev)) {
 			return true;
 		}
 
-		tkn::touchBegin(touch_, ev, window().size());
+		tkn::touchBegin(touch_, ev.id, {float(ev.x), float(ev.y)}, windowSize());
 		return true;
 	}
 
-	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
-		tkn::touchUpdate(touch_, ev);
-		App::scheduleRedraw();
+	void touchUpdate(const swa_touch_event& ev) override {
+		tkn::touchUpdate(touch_, ev.id, {float(ev.x), float(ev.y)});
+		Base::scheduleRedraw();
 	}
 
-	bool touchEnd(const ny::TouchEndEvent& ev) override {
-		if(App::touchEnd(ev)) {
+	bool touchEnd(unsigned id) override {
+		if(Base::touchEnd(id)) {
 			return true;
 		}
 
-		tkn::touchEnd(touch_, ev);
-		App::scheduleRedraw();
+		tkn::touchEnd(touch_, id);
+		Base::scheduleRedraw();
 		return true;
+	}
+
+	nytl::Mat4f projectionMatrix() const {
+		auto aspect = float(windowSize().x) / windowSize().y;
+		return tkn::perspective3RH(fov, aspect, near, far);
+	}
+
+	nytl::Mat4f cameraVP() const {
+		return projectionMatrix() * viewMatrix(camera_);
 	}
 
 	void updateDevice() override {
 		// update scene ubo
 		if(camera_.update) {
 			camera_.update = false;
-			// updateLights_ set to false below
 
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
 
-			tkn::write(span, matrix(camera_));
+			tkn::write(span, cameraVP());
 			tkn::write(span, camera_.pos);
-			tkn::write(span, camera_.perspective.near);
-			tkn::write(span, camera_.perspective.far);
+			tkn::write(span, near);
+			tkn::write(span, far);
 			map.flush();
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
-			tkn::write(envSpan, fixedMatrix(camera_));
+			tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
 			envMap.flush();
 
 			updateLight_ = true;
 		}
 
-		auto semaphore = scene_.updateDevice(matrix(camera_));
+		auto semaphore = scene_.updateDevice(cameraVP());
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		}
 
 		if(updateLight_) {
 			if(mode_ & modeDirLight) {
-				dirLight_.updateDevice(camera_);
+				dirLight_.updateDevice(cameraVP(), near, far);
 			}
 			if(mode_ & modePointLight) {
 				pointLight_.updateDevice();
@@ -767,9 +761,8 @@ public:
 		return tkn::translateMat(pointLight_.data.position);
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
 		camera_.update = true;
 	}
 
@@ -853,11 +846,7 @@ protected:
 	tkn::Texture brdfLut_;
 
 	// args
-	std::string modelname_ {};
-	float sceneScale_ {1.f};
-
 	tkn::TouchCameraController touch_;
-	vpp::SubBuffer boxIndices_;
 
 #ifdef BR_AUDIO
 	class AudioPlayer : public tkn::AudioPlayer {
@@ -878,7 +867,6 @@ protected:
 		ASource* source;
 		std::optional<tkn::Audio3D> d3;
 		std::optional<AudioPlayer> player;
-		bool disable {};
 	} audio_;
 #endif // BR_AUDIO
 };

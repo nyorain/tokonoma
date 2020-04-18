@@ -15,32 +15,32 @@ bool checkMovement(Camera& c, bool modShift, bool modCtrl,
 		fac *= 0.2;
 	}
 
-	auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-	auto right = nytl::normalized(nytl::cross(c.dir, yUp));
-	auto up = nytl::normalized(nytl::cross(right, c.dir));
+	auto vdir = dir(c);
+	auto vright = nytl::normalized(nytl::cross(vdir, c.up));
+	auto vup = nytl::normalized(nytl::cross(vright, vdir));
 	bool update = false;
 	if(dirs[0]) { // right
-		c.pos += fac * right;
+		c.pos += fac * vright;
 		update = true;
 	}
 	if(dirs[1]) { // left
-		c.pos += -fac * right;
+		c.pos += -fac * vright;
 		update = true;
 	}
 	if(dirs[2]) { // forward
-		c.pos += fac * c.dir;
+		c.pos += fac * vdir;
 		update = true;
 	}
 	if(dirs[3]) { // backwards
-		c.pos += -fac * c.dir;
+		c.pos += -fac * vdir;
 		update = true;
 	}
 	if(dirs[4]) { // up
-		c.pos += fac * up;
+		c.pos += fac * vup;
 		update = true;
 	}
 	if(dirs[5]) { // down
-		c.pos += -fac * up;
+		c.pos += -fac * vup;
 		update = true;
 	}
 
@@ -114,62 +114,6 @@ nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 	auto aspect = 1.f;
 	auto mat = tkn::perspective3RH<float>(fov, aspect, near, far);
 	return mat * view;
-
-	/*
-	static constexpr struct {
-		nytl::Vec3f normal;
-		nytl::Vec3f up;
-	} views[6] = {
-		{{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}},
-		{{-1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}},
-		{{0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}},
-		{{0.f, -1.f, 0.f}, {0.f, 0.f, -1.f}},
-		{{0.f, 0.f, 1.f}, {0.f, 1.f, 0.f}},
-		{{0.f, 0.f, -1.f}, {0.f, 1.f, 0.f}},
-	};
-
-	auto fov = 0.5 * nytl::constants::pi;
-	auto aspect = 1.f;
-	auto mat = tkn::perspective3RH<float>(fov, aspect, near, far);
-	mat = mat * tkn::lookAtRH(pos, pos + views[face].normal, views[face].up);
-	return mat;
-	*/
-
-	/*
-	// alternative implementation that uses manual rotations (and translation)
-	// instead lookAt. Mostly from
-	// https://github.com/SaschaWillems/Vulkan/blob/master/examples/shadowmappingomni/shadowmappingomni.cpp
-	auto pi = float(nytl::constants::pi);
-	auto fov = 0.5 * pi;
-	auto aspect = 1.f;
-	auto mat = tkn::perspective3RH<float>(fov, aspect, near, far);
-	auto viewMat = nytl::identity<4, float>();
-
-	switch(face) {
-	case 0:
-		// viewMat = tkn::rotateMat({1.f, 0.f, 0.f}, pi)
-		viewMat = tkn::rotateMat({0.f, 1.f, 0.f}, pi / 2);
-		break;
-	case 1:	// NEGATIVE_X
-		// viewMat = tkn::rotateMat({1.f, 0.f, 0.f}, pi)
-		viewMat = tkn::rotateMat({0.f, 1.f, 0.f}, -pi / 2);
-		break;
-	case 2:	// POSITIVE_Y
-		viewMat = tkn::rotateMat({1.f, 0.f, 0.f}, pi / 2);
-		break;
-	case 3:	// NEGATIVE_Y
-		viewMat = tkn::rotateMat({1.f, 0.f, 0.f}, -pi / 2);
-		break;
-	case 4:	// POSITIVE_Z
-		viewMat = tkn::rotateMat({1.f, 0.f, 0.f}, pi);
-		break;
-	case 5:	// NEGATIVE_Z
-		viewMat = tkn::rotateMat({0.f, 0.f, 1.f}, pi);
-		break;
-	}
-
-	return mat * viewMat * tkn::translateMat({-pos});
-	*/
 }
 
 Frustum ndcFrustum() {
@@ -201,60 +145,60 @@ void init(TouchCameraController& tc, tkn::Camera& cam, rvg::Context& rvgctx) {
 	tc.rotate.circle.disable(true);
 }
 
-void touchBegin(TouchCameraController& tc, const ny::TouchBeginEvent& ev,
+void touchBegin(TouchCameraController& tc, unsigned id, nytl::Vec2f pos,
 		nytl::Vec2ui windowSize) {
 	constexpr auto invalidID = TouchCameraController::invalidID;
 	using namespace nytl::vec::cw::operators;
-	auto rp = ev.pos / windowSize;
+	auto rp = pos / windowSize;
 	if(rp.x < 0.5f && tc.move.id == invalidID) {
-		tc.move.id = ev.id;
-		tc.move.pos = ev.pos;
-		tc.move.start = ev.pos;
+		tc.move.id = id;
+		tc.move.pos = pos;
+		tc.move.start = pos;
 
 		tc.move.circle.disable(false);
-		tc.move.circle.change()->center = ev.pos;
+		tc.move.circle.change()->center = pos;
 	} else if(rp.x > 0.5f && tc.rotate.id == invalidID) {
-		tc.rotate.id = ev.id;
-		tc.rotate.pos = ev.pos;
-		tc.rotate.start = ev.pos;
+		tc.rotate.id = id;
+		tc.rotate.pos = pos;
+		tc.rotate.start = pos;
 
 		tc.rotate.circle.disable(false);
-		tc.rotate.circle.change()->center = ev.pos;
+		tc.rotate.circle.change()->center = pos;
 	}
 }
 
-void touchEnd(TouchCameraController& tc, const ny::TouchEndEvent& ev) {
+void touchEnd(TouchCameraController& tc, unsigned id) {
 	constexpr auto invalidID = TouchCameraController::invalidID;
-	if(ev.id == tc.rotate.id) {
+	if(id == tc.rotate.id) {
 		tc.rotate.id = invalidID;
 		tc.rotate.circle.disable(true);
-	} else if(ev.id == tc.move.id) {
+	} else if(id == tc.move.id) {
 		tc.move.id = invalidID;
 		tc.move.circle.disable(true);
 	}
 }
 
-void touchUpdate(TouchCameraController& tc, const ny::TouchUpdateEvent& ev) {
+void touchUpdate(TouchCameraController& tc, unsigned id, nytl::Vec2f pos) {
 	dlg_assert(tc.cam);
-	if(ev.id == tc.rotate.id) {
-		auto delta = ev.pos - tc.rotate.pos;
-		tc.rotate.pos = ev.pos;
+	if(id == tc.rotate.id) {
+		auto delta = pos - tc.rotate.pos;
+		tc.rotate.pos = pos;
 
 		if(!tc.alt) {
 			tkn::rotateView(*tc.cam, 0.005 * delta.x, 0.005 * delta.y);
 		}
-	} else if(ev.id == tc.move.id) {
-		auto delta = ev.pos - tc.move.pos;
-		tc.move.pos = ev.pos;
+	} else if(id == tc.move.id) {
+		auto delta = pos - tc.move.pos;
+		tc.move.pos = pos;
 
 		if(!tc.alt) {
 			auto& c = *tc.cam;
-			auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-			auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+			auto zdir = dir(c);
+			auto right = nytl::normalized(nytl::cross(zdir, c.up));
 
 			auto fac = 0.01f;
 			c.pos += fac * delta.x * right;
-			c.pos -= fac * delta.y * c.dir; // y input coords have top-left origin
+			c.pos -= fac * delta.y * zdir; // y input coords have top-left origin
 			c.update = true;
 		}
 	}
@@ -273,8 +217,8 @@ void update(TouchCameraController& tc, double dt) {
 
 		if(tc.move.id != invalidID) {
 			auto& c = *tc.cam;
-			auto yUp = nytl::Vec3f {0.f, 1.f, 0.f};
-			auto right = nytl::normalized(nytl::cross(c.dir, yUp));
+			auto zdir = dir(c);
+			auto right = nytl::normalized(nytl::cross(zdir, c.up));
 
 			nytl::Vec2f delta = tc.move.pos - tc.move.start;
 			delta = {cut(delta.x), cut(delta.y)};
@@ -283,7 +227,7 @@ void update(TouchCameraController& tc, double dt) {
 			delta *= tc.positionMultiplier * 0.0005f * dt;
 
 			c.pos += delta.x * right;
-			c.pos -= delta.y * c.dir; // y input coords have top-left origin
+			c.pos -= delta.y * zdir; // y input coords have top-left origin
 			c.update = true;
 		}
 		if(tc.rotate.id != invalidID) {

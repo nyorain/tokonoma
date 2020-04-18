@@ -387,10 +387,10 @@ void saveIrradiance(const char* infile, const char* outfile,
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }
 
-void saveConvoluted(const char* cubemap, const char* outfile,
+void saveConvoluted(const char* cubemapFile, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
-	auto p = tkn::read(cubemap, true);
+	auto p = tkn::read(cubemapFile, true);
 	auto size = p->size();
 	auto full = int(vpp::mipmapLevels({size.x, size.y})) - 4;
 	unsigned mipLevels = std::max(full, 1);
@@ -399,12 +399,19 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 	tkn::TextureCreateParams params;
 	params.format = format;
 	params.cubemap = true;
-	params.mipLevels = mipLevels;
-	params.fillMipmaps = false;
-	params.view.levelCount = 1u;
-	params.usage = params.defaultUsage | vk::ImageUsageBits::storage;
+	params.mipLevels = 0; // full chain
+	params.fillMipmaps = true; // fill full chain
+	params.usage = params.defaultUsage;
+	auto cubemap = tkn::Texture(dev, std::move(p), params);
 
-	auto envmap = tkn::Texture(dev, std::move(p), params);
+	auto vi = vpp::ViewableImageCreateInfo(format,
+		vk::ImageAspectBits::color, {size.x, size.y},
+		vk::ImageUsageBits::storage | vk::ImageUsageBits::transferSrc);
+	vi.img.mipLevels = mipLevels;
+	vi.img.flags = vk::ImageCreateBits::cubeCompatible;
+	vi.img.arrayLayers = 6u;
+	vpp::Image envMap = {dev.devMemAllocator(), vi.img,
+		dev.deviceMemoryTypes()};
 
 	auto sampler = linearSampler(dev);
 	tkn::EnvironmentMapFilter convoluter;
@@ -415,36 +422,28 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 	vk::beginCommandBuffer(cb, {});
 
 	vk::ImageMemoryBarrier barrier;
-	barrier.image = envmap.image();
-	barrier.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	barrier.image = envMap;
+	barrier.oldLayout = vk::ImageLayout::undefined;
 	barrier.srcAccessMask = {};
 	barrier.newLayout = vk::ImageLayout::general;
 	barrier.dstAccessMask = vk::AccessBits::shaderWrite;
 	barrier.subresourceRange =
-		{vk::ImageAspectBits::color, 1, mipLevels - 1, 0, 6};
+		{vk::ImageAspectBits::color, 0, mipLevels, 0, 6};
 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
 		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
 
-	convoluter.record(dev, cb, envmap.image(), envmap.imageView(),
-		sampler, mipLevels, size);
+	convoluter.record(dev, cb, cubemap.imageView(), envMap,
+		sampler, mipLevels, size, 4096);
 
 	barrier.oldLayout = vk::ImageLayout::general;
 	barrier.srcAccessMask = vk::AccessBits::shaderWrite;
 	barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
 	barrier.dstAccessMask = vk::AccessBits::transferRead;
 	barrier.subresourceRange =
-		{vk::ImageAspectBits::color, 1, mipLevels - 1, 0, 6};
-
-	auto barrier1 = barrier;
-	barrier1.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	barrier1.srcAccessMask = vk::AccessBits::shaderRead;
-	barrier1.newLayout = vk::ImageLayout::transferSrcOptimal;
-	barrier1.dstAccessMask = vk::AccessBits::transferRead;
-	barrier1.subresourceRange =
-		{vk::ImageAspectBits::color, 0, 1, 0, 6};
+		{vk::ImageAspectBits::color, 0, mipLevels, 0, 6};
 
 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
-		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier, barrier1}});
+		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
 
 	auto fmtSize = vpp::formatSize(format);
 	// over approximation of all mip levels (the times 2)
@@ -483,7 +482,7 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 		dlg_assert(off <= totalSize);
 	}
 
-	vk::cmdCopyImageToBuffer(cb, envmap.image(),
+	vk::cmdCopyImageToBuffer(cb, envMap,
 		vk::ImageLayout::transferSrcOptimal, stage.buffer(), copies);
 
 	vk::BufferMemoryBarrier bbarrier;

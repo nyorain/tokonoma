@@ -262,7 +262,7 @@ vpp::ViewableImage Irradiancer::finish() {
 
 // EnvironmentMapFilter
 void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
-		vk::Image envImage, vk::ImageView envView, vk::Sampler linear,
+		vk::ImageView cubemap, vk::Image filtered, vk::Sampler linear,
 		unsigned mipLevels, nytl::Vec2ui size, unsigned sampleCount) {
 	auto bindings = {
 		vpp::descriptorBinding( // output image, convolution
@@ -278,7 +278,7 @@ void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
 	vk::PushConstantRange pcr{vk::ShaderStageBits::compute, 0, sizeof(CubeFace)};
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {{pcr}}};
 
-	std::array<vk::SpecializationMapEntry,3 > entries = {{
+	std::array<vk::SpecializationMapEntry, 3> entries = {{
 		{0, 0, 4u},
 		{1, 4u, 4u},
 		{2, 8u, 4u},
@@ -312,7 +312,7 @@ void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
 	mips_.reserve(mipLevels - 1);
 	vk::ImageViewCreateInfo ivi;
 	ivi.format = vk::Format::r16g16b16a16Sfloat;
-	ivi.image = envImage;
+	ivi.image = filtered;
 	ivi.viewType = vk::ImageViewType::cube;
 	ivi.subresourceRange.aspectMask = vk::ImageAspectBits::color;
 	ivi.subresourceRange.layerCount = 6u;
@@ -320,7 +320,7 @@ void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
 	ivi.subresourceRange.baseArrayLayer = 0u;
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
-	for(auto m = 1u; m < mipLevels; ++m) {
+	for(auto m = 0u; m < mipLevels; ++m) {
 		nytl::Vec2ui msize;
 		msize.x = std::max(size.x >> m, 1u);
 		msize.y = std::max(size.y >> m, 1u);
@@ -341,7 +341,8 @@ void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
 			mip.ds = {dev.descriptorAllocator(), dsLayout_};
 			vpp::DescriptorSetUpdate dsu(mip.ds);
 			dsu.storage({{{}, mip.view, vk::ImageLayout::general}});
-			dsu.imageSampler({{{}, envView, vk::ImageLayout::shaderReadOnlyOptimal}});
+			dsu.imageSampler({{{}, cubemap,
+				vk::ImageLayout::shaderReadOnlyOptimal}});
 			dsu.apply();
 
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
