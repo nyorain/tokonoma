@@ -282,32 +282,11 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	auto& dev = vkDevice();
 
 	// ignore incorrect debug messages
-	debugMessenger().ignore.push_back(
-		"UNASSIGNED-CoreValidation-Shader-FeatureNotEnabled");
+	// debugMessenger().ignore.push_back(
+	// 	"UNASSIGNED-CoreValidation-Shader-FeatureNotEnabled");
 
 	// find supported depth format
-	vk::ImageCreateInfo img; // dummy for property checking
-	img.extent = {1, 1, 1};
-	img.mipLevels = 1;
-	img.arrayLayers = 1;
-	img.imageType = vk::ImageType::e2d;
-	img.sharingMode = vk::SharingMode::exclusive;
-	img.tiling = vk::ImageTiling::optimal;
-	img.samples = vk::SampleCountBits::e1;
-	img.usage = vk::ImageUsageBits::depthStencilAttachment;
-	img.initialLayout = vk::ImageLayout::undefined;
-
-	auto fmts = {
-		vk::Format::d32Sfloat,
-		vk::Format::d32SfloatS8Uint,
-		vk::Format::d24UnormS8Uint,
-		vk::Format::d16Unorm,
-		vk::Format::d16UnormS8Uint,
-	};
-	auto features = vk::FormatFeatureBits::depthStencilAttachment |
-		vk::FormatFeatureBits::sampledImage;
-	depthFormat_ = vpp::findSupported(vkDevice(), fmts,
-		img, features);
+	depthFormat_ = tkn::findDepthFormat(vkDevice());
 	if(depthFormat_ == vk::Format::undefined) {
 		dlg_error("No depth format supported");
 		return false;

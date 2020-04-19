@@ -3,7 +3,7 @@
 
 #include "taa.hpp"
 #include <tkn/camera.hpp>
-#include <tkn/app.hpp>
+#include <tkn/app2.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
@@ -72,90 +72,22 @@ public:
 	static constexpr float far = 5.f;
 	static constexpr float fov = 0.5 * nytl::constants::pi;
 
+	struct Args : public App::Args {
+		std::string model;
+		float scale {1.f};
+	};
+
 public:
-	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+	bool init(nytl::Span<const char*> cargs) override {
+		Args args;
+		if(!tkn::App::doInit(cargs, args)) {
 			return false;
 		}
 
-		// create gui
-		auto& gui = this->gui();
-
-		using namespace vui::dat;
-		auto pos = nytl::Vec2f {100.f, 0};
-		auto& panel = gui.create<vui::dat::Panel>(pos, 300.f);
-
-		// from deferred/main.cpp
-		auto createNumTextfield = [](auto& at, auto name, auto initial, auto func) {
-			auto start = std::to_string(initial);
-			if(start.size() > 4) {
-				start.resize(4, '\0');
-			}
-			auto& t = at.template create<vui::dat::Textfield>(name, start).textfield();
-			t.onSubmit = [&, f = std::move(func), name](auto& tf) {
-				try {
-					auto val = std::stof(std::string(tf.utf8()));
-					f(val);
-				} catch(const std::exception& err) {
-					dlg_error("Invalid float for {}: {}", name, tf.utf8());
-					return;
-				}
-			};
-			return &t;
-		};
-
-		auto createValueTextfield = [createNumTextfield](auto& at, auto name,
-				auto& value, bool* set = {}) {
-			return createNumTextfield(at, name, value, [&value, set](auto v){
-				value = v;
-				if(set) {
-					*set = true;
-				}
-			});
-		};
-
-		createValueTextfield(panel, "minFac", taa_.params.minFac);
-		createValueTextfield(panel, "maxFac", taa_.params.maxFac);
-		createValueTextfield(panel, "velWeight", taa_.params.velWeight);
-
-		createValueTextfield(panel, "exposure", pp_.exposure);
-		createValueTextfield(panel, "sharpen", pp_.sharpen);
-
-		auto createFlagCheckbox = [&](auto& at, auto name, auto& flags,
-				auto flag, bool* set = {}) {
-			auto& cb = at.template create<Checkbox>(name).checkbox();
-			cb.set(u32(flags) & u32(flag));
-			cb.onToggle = [&flags, flag, set](auto&) {
-				flags ^= flag;
-				if(set) *set = true;
-			};
-			return &cb;
-		};
-
-		createFlagCheckbox(panel, "depthReject", taa_.params.flags,
-			TAAPass::flagDepthReject);
-		createFlagCheckbox(panel, "closestDepth", taa_.params.flags,
-			TAAPass::flagClosestDepth);
-		createFlagCheckbox(panel, "tonemap", taa_.params.flags,
-			TAAPass::flagTonemap);
-		createFlagCheckbox(panel, "colorClip", taa_.params.flags,
-			TAAPass::flagColorClip);
-		createFlagCheckbox(panel, "luminanceWeigh", taa_.params.flags,
-			TAAPass::flagLuminanceWeigh);
-
-		auto& cb = panel.create<Checkbox>("disable").checkbox();
-		cb.onToggle = [&](auto&) {
-			disable_ ^= true;
-			taa_.params.flags ^= TAAPass::flagPassthrough;
-		};
-
-		return true;
-	}
-
-	void initRenderData() override {
-		// init pipeline
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto hostMem = dev.hostMemoryTypes();
+		depthFormat_ = tkn::findDepthFormat(dev);
+
 		vpp::DeviceMemoryAllocator memStage(dev);
 		vpp::BufferAllocator bufStage(memStage);
 
@@ -201,8 +133,7 @@ public:
 		dummyTex_ = {batch, std::move(p), params};
 
 		// Load scene
-		auto s = sceneScale_;
-		auto mat = tkn::scaleMat<4, float>({s, s, s});
+		auto mat = tkn::scaleMat<4, float>({args.scale, args.scale, args.scale});
 		auto samplerAnisotropy = 1.f;
 		if(anisotropy_) {
 			samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
@@ -211,7 +142,7 @@ public:
 			dummyTex_.vkImageView(),
 			samplerAnisotropy, false, multiDrawIndirect_
 		};
-		auto [omodel, path] = tkn::loadGltf(modelname_);
+		auto [omodel, path] = tkn::loadGltf(args.model);
 		if(!omodel) {
 			throw std::runtime_error("Couldn't load gltf file");
 		}
@@ -228,7 +159,7 @@ public:
 			model, sc, mat, ri, mipLodBias);
 		initScene.init(batch, dummyTex_.vkImageView());
 
-		shadowData_ = tkn::initShadowData(dev, depthFormat(),
+		shadowData_ = tkn::initShadowData(dev, depthFormat_,
 			scene_.dsLayout(), multiview_, depthClamp_);
 
 		// view + projection matrix
@@ -275,7 +206,7 @@ public:
 
 		attachments[1].initialLayout = vk::ImageLayout::undefined;
 		attachments[1].finalLayout = vk::ImageLayout::depthStencilReadOnlyOptimal;
-		attachments[1].format = depthFormat();
+		attachments[1].format = depthFormat_;
 		attachments[1].loadOp = vk::AttachmentLoadOp::clear;
 		attachments[1].storeOp = vk::AttachmentStoreOp::store;
 		attachments[1].samples = vk::SampleCountBits::e1;
@@ -370,7 +301,8 @@ public:
 
 		tkn::Environment::InitData initEnv;
 		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", linearSampler_);
-		env_.createPipe(device(), cameraDsLayout_, offscreen_.rp, 0u, samples(), batts);
+		env_.createPipe(dev, cameraDsLayout_, offscreen_.rp, 0u,
+			vk::SampleCountBits::e1, batts);
 		env_.init(initEnv, batch);
 
 		// camera
@@ -472,10 +404,84 @@ public:
 		auto qf = dev.queueSubmitter().queue().family();
 		cbInitLayouts_ = dev.commandAllocator().get(qf,
 			vk::CommandPoolCreateBits::resetCommandBuffer);
+
+		// create gui
+		rvgInit(pp_.rp, 0, vk::SampleCountBits::e1);
+		auto& gui = this->gui();
+
+		using namespace vui::dat;
+		auto pos = nytl::Vec2f {100.f, 0};
+		auto& panel = gui.create<vui::dat::Panel>(pos, 300.f);
+
+		// from deferred/main.cpp
+		auto createNumTextfield = [](auto& at, auto name, auto initial, auto func) {
+			auto start = std::to_string(initial);
+			if(start.size() > 4) {
+				start.resize(4, '\0');
+			}
+			auto& t = at.template create<vui::dat::Textfield>(name, start).textfield();
+			t.onSubmit = [&, f = std::move(func), name](auto& tf) {
+				try {
+					auto val = std::stof(std::string(tf.utf8()));
+					f(val);
+				} catch(const std::exception& err) {
+					dlg_error("Invalid float for {}: {}", name, tf.utf8());
+					return;
+				}
+			};
+			return &t;
+		};
+
+		auto createValueTextfield = [createNumTextfield](auto& at, auto name,
+				auto& value, bool* set = {}) {
+			return createNumTextfield(at, name, value, [&value, set](auto v){
+				value = v;
+				if(set) {
+					*set = true;
+				}
+			});
+		};
+
+		createValueTextfield(panel, "minFac", taa_.params.minFac);
+		createValueTextfield(panel, "maxFac", taa_.params.maxFac);
+		createValueTextfield(panel, "velWeight", taa_.params.velWeight);
+
+		createValueTextfield(panel, "exposure", pp_.exposure);
+		createValueTextfield(panel, "sharpen", pp_.sharpen);
+
+		auto createFlagCheckbox = [&](auto& at, auto name, auto& flags,
+				auto flag, bool* set = {}) {
+			auto& cb = at.template create<Checkbox>(name).checkbox();
+			cb.set(u32(flags) & u32(flag));
+			cb.onToggle = [&flags, flag, set](auto&) {
+				flags ^= flag;
+				if(set) *set = true;
+			};
+			return &cb;
+		};
+
+		createFlagCheckbox(panel, "depthReject", taa_.params.flags,
+			TAAPass::flagDepthReject);
+		createFlagCheckbox(panel, "closestDepth", taa_.params.flags,
+			TAAPass::flagClosestDepth);
+		createFlagCheckbox(panel, "tonemap", taa_.params.flags,
+			TAAPass::flagTonemap);
+		createFlagCheckbox(panel, "colorClip", taa_.params.flags,
+			TAAPass::flagColorClip);
+		createFlagCheckbox(panel, "luminanceWeigh", taa_.params.flags,
+			TAAPass::flagLuminanceWeigh);
+
+		auto& cbox = panel.create<Checkbox>("disable").checkbox();
+		cbox.onToggle = [&](auto&) {
+			disable_ ^= true;
+			taa_.params.flags ^= TAAPass::flagPassthrough;
+		};
+
+		return true;
 	}
 
 	void initPP() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		vk::AttachmentDescription attachment;
 		attachment.initialLayout = vk::ImageLayout::undefined;
@@ -533,8 +539,14 @@ public:
 
 	void initBuffers(const vk::Extent2D& size,
 			nytl::Span<RenderBuffer> bufs) override {
-		auto& dev = vulkanDevice();
-		depthTarget() = createDepthTarget(size);
+		auto& dev = vkDevice();
+
+		auto depthUsage = vk::ImageUsageBits::depthStencilAttachment |
+			vk::ImageUsageBits::sampled;
+		auto info = vpp::ViewableImageCreateInfo(depthFormat_,
+			vk::ImageAspectBits::depth, size, depthUsage);
+		offscreen_.depthTarget = {dev.devMemAllocator(),
+			info, dev.deviceMemoryTypes()};
 
 		for(auto& buf : bufs) {
 			vk::FramebufferCreateInfo fbi({},
@@ -543,7 +555,7 @@ public:
 			buf.framebuffer = {dev, fbi};
 		}
 
-		auto info = vpp::ViewableImageCreateInfo(offscreenFormat,
+		info = vpp::ViewableImageCreateInfo(offscreenFormat,
 			vk::ImageAspectBits::color, size,
 			vk::ImageUsageBits::colorAttachment |
 			vk::ImageUsageBits::sampled);
@@ -557,7 +569,7 @@ public:
 
 		auto attachments = {
 			offscreen_.target.vkImageView(),
-			depthTarget().vkImageView(),
+			offscreen_.depthTarget.vkImageView(),
 			offscreen_.velTarget.vkImageView(),
 		};
 		auto fbi = vk::FramebufferCreateInfo({}, offscreen_.rp,
@@ -568,7 +580,7 @@ public:
 		// descriptors
 		taa_.initBuffers(size,
 			offscreen_.target.vkImageView(),
-			depthTarget().vkImageView(),
+			offscreen_.depthTarget.vkImageView(),
 			offscreen_.velTarget.vkImageView());
 
 		vpp::DescriptorSetUpdate pdsu(pp_.ds);
@@ -617,7 +629,7 @@ public:
 
 		vk::endCommandBuffer(cbInitLayouts_);
 
-		auto& qs = vulkanDevice().queueSubmitter();
+		auto& qs = vkDevice().queueSubmitter();
 		// vk::SubmitInfo submission;
 		// submission.commandBufferCount = 1;
 		// submission.pCommandBuffers = &cbInitLayouts_.vkHandle();
@@ -626,7 +638,8 @@ public:
 		qs.wait(qs.add(cbInitLayouts_));
 	}
 
-	bool features(tkn::Features& enable, const tkn::Features& supported) override {
+	bool features(tkn::Features& enable,
+			const tkn::Features& supported) override {
 		if(!App::features(enable, supported)) {
 			return false;
 		}
@@ -664,14 +677,6 @@ public:
 
 	argagg::parser argParser() const override {
 		auto parser = App::argParser();
-		auto& defs = parser.definitions;
-		auto it = std::find_if(defs.begin(), defs.end(),
-			[](const argagg::definition& def){
-				return def.name == "multisamples";
-		});
-		dlg_assert(it != defs.end());
-		defs.erase(it);
-
 		parser.definitions.push_back({
 			"model", {"--model"},
 			"Path of the gltf model to load (dir must contain scene.gltf)", 1
@@ -683,16 +688,18 @@ public:
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if(!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result,
+			App::Args& bout) override {
+		if(!App::handleArgs(result, bout)) {
 			return false;
 		}
 
+		auto& out = static_cast<Args&>(bout);
 		if(result.has_option("model")) {
-			modelname_ = result["model"].as<const char*>();
+			out.model = result["model"].as<const char*>();
 		}
 		if(result.has_option("scale")) {
-			sceneScale_ = result["scale"].as<float>();
+			out.scale = result["scale"].as<float>();
 		}
 
 		return true;
@@ -701,7 +708,13 @@ public:
 	void record(const RenderBuffer& buf) override {
 		auto cb = buf.commandBuffer;
 		vk::beginCommandBuffer(cb, {});
-		beforeRender(cb);
+
+		if(mode_ & modeDirLight) {
+			dirLight_.render(cb, shadowData_, scene_);
+		}
+		if(mode_ & modePointLight) {
+			pointLight_.render(cb, shadowData_, scene_);
+		}
 
 		auto [width, height] = swapchainInfo().imageExtent;
 		vk::Viewport vp{0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
@@ -751,19 +764,7 @@ public:
 		gui().draw(cb);
 
 		vk::cmdEndRenderPass(cb);
-
-		afterRender(cb);
 		vk::endCommandBuffer(cb);
-	}
-
-	void beforeRender(vk::CommandBuffer cb) override {
-		App::beforeRender(cb);
-		if(mode_ & modeDirLight) {
-			dirLight_.render(cb, shadowData_, scene_);
-		}
-		if(mode_ & modePointLight) {
-			pointLight_.render(cb, shadowData_, scene_);
-		}
 	}
 
 	void update(double dt) override {
@@ -771,11 +772,7 @@ public:
 		time_ += dt;
 
 		// movement
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			tkn::checkMovement(camera_, *kc, dt);
-		}
-
+		tkn::checkMovement(camera_, swaDisplay(), dt);
 		if(moveLight_) {
 			if(mode_ & modePointLight) {
 				pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
@@ -811,7 +808,7 @@ public:
 		App::scheduleRedraw();
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
+	bool key(const swa_key_event& ev) override {
 		if(App::key(ev)) {
 			return true;
 		}
@@ -821,7 +818,7 @@ public:
 		}
 
 		switch(ev.keycode) {
-			case ny::Keycode::m: { // move light here
+			case swa_key_m: { // move light here
 				moveLight_ = false;
 				dirLight_.data.dir = -camera_.pos;
 				auto& ini = scene_.instances()[dirLight_.instanceID];
@@ -829,7 +826,7 @@ public:
 				scene_.updatedInstance(dirLight_.instanceID);
 				updateLight_ = true;
 				return true;
-			} case ny::Keycode::n: { // move light here
+			} case swa_key_n: { // move light here
 				moveLight_ = false;
 				updateLight_ = true;
 				pointLight_.data.position = camera_.pos;
@@ -837,44 +834,44 @@ public:
 				ini.lastMatrix = ini.matrix = pointLightObjMatrix();
 				scene_.updatedInstance(pointLight_.instanceID);
 				return true;
-			} case ny::Keycode::l:
+			} case swa_key_l:
 				moveLight_ ^= true;
 				return true;
-			case ny::Keycode::p:
+			case swa_key_p:
 				dirLight_.data.flags ^= tkn::lightFlagPcf;
 				pointLight_.data.flags ^= tkn::lightFlagPcf;
 				updateLight_ = true;
 				return true;
-			case ny::Keycode::up:
+			case swa_key_up:
 				aoFac_ *= 1.1;
 				updateAOParams_ = true;
 				dlg_info("ao factor: {}", aoFac_);
 				return true;
-			case ny::Keycode::down:
+			case swa_key_down:
 				aoFac_ /= 1.1;
 				updateAOParams_ = true;
 				dlg_info("ao factor: {}", aoFac_);
 				return true;
-			case ny::Keycode::k1:
+			case swa_key_k1:
 				mode_ ^= modeDirLight;
 				updateLight_ = true;
 				updateAOParams_ = true;
 				App::scheduleRerecord();
 				dlg_info("dir light: {}", bool(mode_ & modeDirLight));
 				return true;
-			case ny::Keycode::k2:
+			case swa_key_k2:
 				mode_ ^= modePointLight;
 				updateLight_ = true;
 				updateAOParams_ = true;
 				App::scheduleRerecord();
 				dlg_info("point light: {}", bool(mode_ & modePointLight));
 				return true;
-			case ny::Keycode::k3:
+			case swa_key_k3:
 				mode_ ^= modeSpecularIBL;
 				dlg_info("specular IBL: {}", bool(mode_ & modeSpecularIBL));
 				updateAOParams_ = true;
 				return true;
-			case ny::Keycode::k4:
+			case swa_key_k4:
 				mode_ ^= modeIrradiance;
 				updateAOParams_ = true;
 				dlg_info("Static AO: {}", bool(mode_ & modeIrradiance));
@@ -886,20 +883,20 @@ public:
 		return false;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
+	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
 		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
+			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
 			App::scheduleRedraw();
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
 		if(App::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			rotateView_ = ev.pressed;
 			return true;
 		}
@@ -908,7 +905,7 @@ public:
 	}
 
 	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(window().size().x) / window().size().y;
+		auto aspect = float(windowSize().x) / windowSize().y;
 		return tkn::perspective3RH(fov, aspect, near, far);
 	}
 
@@ -1004,17 +1001,12 @@ public:
 		return tkn::translateMat(pointLight_.data.position);
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
+	void resize(unsigned w, unsigned h) override {
+		App::resize(w, h);
 		camera_.update = true;
 	}
 
-	bool needsDepth() const override { return true; }
 	const char* name() const override { return "Temporal Anti aliasing"; }
-	vpp::RenderPass createRenderPass() override { return {}; } // we use our own
-	std::pair<vk::RenderPass, unsigned> rvgPass() const override {
-		return {pp_.rp, 0u};
-	}
 
 protected:
 	struct Alloc {
@@ -1031,6 +1023,7 @@ protected:
 
 	std::optional<Alloc> alloc_;
 
+	vk::Format depthFormat_;
 	vpp::Sampler linearSampler_;
 	vpp::Sampler nearestSampler_;
 	vpp::TrDsLayout cameraDsLayout_;
@@ -1058,6 +1051,7 @@ protected:
 		vpp::RenderPass rp;
 		vpp::ViewableImage target;
 		vpp::ViewableImage velTarget;
+		vpp::ViewableImage depthTarget;
 		vpp::Framebuffer fb;
 	} offscreen_;
 
@@ -1118,10 +1112,6 @@ protected:
 
 	tkn::Environment env_;
 	tkn::Texture brdfLut_;
-
-	// args
-	std::string modelname_ {};
-	float sceneScale_ {1.f};
 };
 
 int main(int argc, const char** argv) {

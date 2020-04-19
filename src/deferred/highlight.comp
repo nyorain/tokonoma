@@ -29,11 +29,11 @@ void main() {
 	vec3 light = vec3(0.0);
 	float l = length(col);
 	if(l >= -ubo.bias) {
-		light = (col / l) * (l + ubo.bias);
+		// light = (col / l) * (l + ubo.bias);
 
 		// TODO: document/continues ideas here
 		// light = (col / l) * pow(l + ubo.bias, 2); // smooth transition
-		// light = (col / l) * pow(l + ubo.bias, 0.7); // soften highlights
+		light = (col / l) * pow(l + ubo.bias, 0.7); // soften highlights
 		// light = (col / l) * log(2 * pow(l + ubo.bias, 2) + 1); // both?
 	}
 

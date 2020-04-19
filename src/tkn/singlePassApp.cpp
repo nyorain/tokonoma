@@ -1,4 +1,5 @@
 #include <tkn/singlePassApp.hpp>
+#include <tkn/render.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/formats.hpp>
 #include <dlg/dlg.hpp>
@@ -12,28 +13,7 @@ bool SinglePassApp::doInit(nytl::Span<const char*> args, Args& out) {
 	}
 
 	if(needsDepth()) {
-		vk::ImageCreateInfo img; // dummy for property checking
-		img.extent = {1, 1, 1};
-		img.mipLevels = 1;
-		img.arrayLayers = 1;
-		img.imageType = vk::ImageType::e2d;
-		img.sharingMode = vk::SharingMode::exclusive;
-		img.tiling = vk::ImageTiling::optimal;
-		img.samples = samples();
-		img.usage = vk::ImageUsageBits::depthStencilAttachment;
-		img.initialLayout = vk::ImageLayout::undefined;
-
-		auto fmts = {
-			vk::Format::d32Sfloat,
-			vk::Format::d32SfloatS8Uint,
-			vk::Format::d24UnormS8Uint,
-			vk::Format::d16Unorm,
-			vk::Format::d16UnormS8Uint,
-		};
-		auto features = vk::FormatFeatureBits::depthStencilAttachment |
-			vk::FormatFeatureBits::sampledImage;
-		depthFormat_ = vpp::findSupported(vkDevice(), fmts,
-			img, features);
+		depthFormat_ = findDepthFormat(vkDevice());
 		if(depthFormat_ == vk::Format::undefined) {
 			dlg_error("No depth format supported");
 			return false;
@@ -223,39 +203,16 @@ vpp::RenderPass SinglePassApp::createRenderPass() {
 }
 
 vpp::ViewableImage SinglePassApp::createDepthTarget(const vk::Extent2D& size) {
-	auto width = size.width;
-	auto height = size.height;
-
-	// img
-	vk::ImageCreateInfo img;
-	img.imageType = vk::ImageType::e2d;
-	img.format = depthFormat();
-	img.extent.width = width;
-	img.extent.height = height;
-	img.extent.depth = 1;
-	img.mipLevels = 1;
-	img.arrayLayers = 1;
-	img.sharingMode = vk::SharingMode::exclusive;
-	img.tiling = vk::ImageTiling::optimal;
-	img.samples = samples();
 	// We don't allow the depth attachment to be sampled, since
 	// apps deriving from this will be simple, only having
 	// one render pass.
-	img.usage = vk::ImageUsageBits::depthStencilAttachment;
-	img.initialLayout = vk::ImageLayout::undefined;
-
-	// view
-	vk::ImageViewCreateInfo view;
-	view.viewType = vk::ImageViewType::e2d;
-	view.format = img.format;
-	view.components = {};
-	view.subresourceRange.aspectMask = vk::ImageAspectBits::depth;
-	view.subresourceRange.levelCount = 1;
-	view.subresourceRange.layerCount = 1;
+	auto usage = vk::ImageUsageBits::depthStencilAttachment;
+	auto info = vpp::ViewableImageCreateInfo(depthFormat(),
+		vk::ImageAspectBits::depth, size, usage);
 
 	// create the viewable image
 	// will set the created image in the view info for us
-	return {vkDevice().devMemAllocator(), img, view};
+	return {vkDevice().devMemAllocator(), info, vkDevice().deviceMemoryTypes()};
 }
 
 vpp::ViewableImage SinglePassApp::createMultisampleTarget(const vk::Extent2D& size) {
@@ -293,7 +250,8 @@ vpp::ViewableImage SinglePassApp::createMultisampleTarget(const vk::Extent2D& si
 
 	// create the viewable image
 	// will set the created image in the view info for us
-	return {vkDevice().devMemAllocator(), img, view};
+	return {vkDevice().devMemAllocator(), img, view,
+		vkDevice().deviceMemoryTypes()};
 }
 
 std::vector<vk::ClearValue> SinglePassApp::clearValues() {
