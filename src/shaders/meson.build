@@ -120,6 +120,7 @@ shaders_src = {
 		['model.frag', scene_glsl],
 		['pp.frag'],
 		['taa.comp', scene_glsl],
+		['taa2.comp', scene_glsl],
 	],
 	'iro': [
 		['iro.vert', include_glsl],

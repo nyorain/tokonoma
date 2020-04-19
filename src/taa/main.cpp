@@ -1,6 +1,7 @@
 // WIP: playing around, might be in an ugly state
 // Based upon br
 
+#include "taa.hpp"
 #include <tkn/camera.hpp>
 #include <tkn/app.hpp>
 #include <tkn/render.hpp>
@@ -38,6 +39,9 @@
 #include <nytl/mat.hpp>
 #include <nytl/stringParam.hpp>
 
+#include <vui/gui.hpp>
+#include <vui/dat.hpp>
+
 #include <tinygltf.hpp>
 
 #include <shaders/tkn.fullscreen.vert.h>
@@ -59,13 +63,6 @@ public:
 	// TODO: we can probably use a 8-bit buffer here with a proper encoding
 	static constexpr auto velocityFormat = vk::Format::r32g32b32a32Sfloat;
 
-	static constexpr u32 taaModePassthrough = 0u;
-	static constexpr u32 taaModeClipColor = 1u;
-	static constexpr u32 taaModeReprDepthRej = 2u;
-	static constexpr u32 taaModeCombined = 3u;
-	static constexpr u32 taaDebugModeVelocity = 4u;
-	static constexpr u32 taaModePass = 5u;
-
 	static constexpr u32 modeDirLight = (1u << 0);
 	static constexpr u32 modePointLight = (1u << 1);
 	static constexpr u32 modeSpecularIBL = (1u << 2);
@@ -80,6 +77,77 @@ public:
 		if(!tkn::App::init(args)) {
 			return false;
 		}
+
+		// create gui
+		auto& gui = this->gui();
+
+		using namespace vui::dat;
+		auto pos = nytl::Vec2f {100.f, 0};
+		auto& panel = gui.create<vui::dat::Panel>(pos, 300.f);
+
+		// from deferred/main.cpp
+		auto createNumTextfield = [](auto& at, auto name, auto initial, auto func) {
+			auto start = std::to_string(initial);
+			if(start.size() > 4) {
+				start.resize(4, '\0');
+			}
+			auto& t = at.template create<vui::dat::Textfield>(name, start).textfield();
+			t.onSubmit = [&, f = std::move(func), name](auto& tf) {
+				try {
+					auto val = std::stof(std::string(tf.utf8()));
+					f(val);
+				} catch(const std::exception& err) {
+					dlg_error("Invalid float for {}: {}", name, tf.utf8());
+					return;
+				}
+			};
+			return &t;
+		};
+
+		auto createValueTextfield = [createNumTextfield](auto& at, auto name,
+				auto& value, bool* set = {}) {
+			return createNumTextfield(at, name, value, [&value, set](auto v){
+				value = v;
+				if(set) {
+					*set = true;
+				}
+			});
+		};
+
+		createValueTextfield(panel, "minFac", taa_.params.minFac);
+		createValueTextfield(panel, "maxFac", taa_.params.maxFac);
+		createValueTextfield(panel, "velWeight", taa_.params.velWeight);
+
+		createValueTextfield(panel, "exposure", pp_.exposure);
+		createValueTextfield(panel, "sharpen", pp_.sharpen);
+
+		auto createFlagCheckbox = [&](auto& at, auto name, auto& flags,
+				auto flag, bool* set = {}) {
+			auto& cb = at.template create<Checkbox>(name).checkbox();
+			cb.set(u32(flags) & u32(flag));
+			cb.onToggle = [&flags, flag, set](auto&) {
+				flags ^= flag;
+				if(set) *set = true;
+			};
+			return &cb;
+		};
+
+		createFlagCheckbox(panel, "depthReject", taa_.params.flags,
+			TAAPass::flagDepthReject);
+		createFlagCheckbox(panel, "closestDepth", taa_.params.flags,
+			TAAPass::flagClosestDepth);
+		createFlagCheckbox(panel, "tonemap", taa_.params.flags,
+			TAAPass::flagTonemap);
+		createFlagCheckbox(panel, "colorClip", taa_.params.flags,
+			TAAPass::flagColorClip);
+		createFlagCheckbox(panel, "luminanceWeigh", taa_.params.flags,
+			TAAPass::flagLuminanceWeigh);
+
+		auto& cb = panel.create<Checkbox>("disable").checkbox();
+		cb.onToggle = [&](auto&) {
+			disable_ ^= true;
+			taa_.params.flags ^= TAAPass::flagPassthrough;
+		};
 
 		return true;
 	}
@@ -155,7 +223,7 @@ public:
 		// NOTE: this is needed because we always want to sampler from
 		// a higher miplevel than the one that would usually be selected.
 		// Increases sharpness, we anti-aliase it anyways via jittering.
-		static constexpr auto mipLodBias = -2.f;
+		static constexpr auto mipLodBias = -1.f;
 		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
 			model, sc, mat, ri, mipLodBias);
 		initScene.init(batch, dummyTex_.vkImageView());
@@ -307,6 +375,7 @@ public:
 
 		// camera
 		auto cameraUboSize = sizeof(nytl::Mat4f) * 2 // proj matrix (+last)
+			+ sizeof(nytl::Vec2f) // jitter offset
 			+ sizeof(nytl::Vec3f) + sizeof(float) * 2; // viewPos, near, far
 		cameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
 		cameraUbo_ = {dev.bufferAllocator(), cameraUboSize,
@@ -396,7 +465,7 @@ public:
 			pointLightObjMatrix(), pointLight_.materialID);
 
 		initPP();
-		initTAA();
+		taa_.init(dev, linearSampler_);
 
 		// init layouts cb
 		semaphoreInitLayouts_ = {dev};
@@ -436,6 +505,8 @@ public:
 		auto ppBindings = {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::fragment)
 		};
 
 		pp_.dsLayout = {dev, ppBindings};
@@ -454,89 +525,10 @@ public:
 		gpi.blend.attachmentCount = atts.size();
 		gpi.blend.pAttachments = atts.begin();
 		pp_.pipe = {dev, gpi.info()};
-	}
 
-	void initTAA() {
-		auto& dev = vulkanDevice();
-		auto taaBindings = {
-			// linear sampler for history access important
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
-				// vk::ShaderStageBits::compute, -1, 1, &nearestSampler_.vkHandle()),
-			vpp::descriptorBinding(vk::DescriptorType::storageImage,
-				vk::ShaderStageBits::compute),
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &linearSampler_.vkHandle()),
-			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::compute),
-		};
-
-		taa_.dsLayout = {dev, taaBindings};
-		taa_.ds = {dev.descriptorAllocator(), taa_.dsLayout};
-		taa_.pipeLayout = {dev, {{taa_.dsLayout.vkHandle()}}, {}};
-
-		vpp::ShaderModule compShader(device(), taa_taa_comp_data);
-		vk::ComputePipelineCreateInfo cpi;
-		cpi.layout = taa_.pipeLayout;
-		cpi.stage.module = compShader;
-		cpi.stage.pName = "main";
-		cpi.stage.stage = vk::ShaderStageBits::compute;
-
-		taa_.pipe = {dev, cpi};
-
-		auto uboSize = sizeof(nytl::Mat4f) * 4 + sizeof(float) * 9;
-		taa_.ubo = {dev.bufferAllocator(), uboSize,
+		auto uboSize = sizeof(float) * 2;
+		pp_.ubo = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
-
-		// samples
-#if 0 // Simple sample sequences
-		taa_.samples = {
-			// ARM
-			Vec2f{-7.0f / 8.f, 1.0f / 8.f},
-			Vec2f{-5.0f / 8.f, -5.0f / 8.f},
-			Vec2f{-1.0f / 8.f, -3.0f / 8.f},
-			Vec2f{3.0f / 8.f, -7.0f / 8.f},
-			Vec2f{5.0f / 8.f, -1.0f / 8.f},
-			Vec2f{7.0f / 8.f, 7.0f / 8.f},
-			Vec2f{1.0f / 8.f, 3.0f / 8.f},
-			Vec2f{-3.0f / 8.f, 5.0f / 8.f},
-
-			// uniform4
-			// Vec2f{-0.25f, -0.25f},
-			// Vec2f{0.25f, 0.25f},
-			// Vec2f{0.25f, -0.25f},
-			// Vec2f{-0.25f, 0.25f},
-		};
-#endif
-
-		// halton 16x
-		constexpr auto len = 16;
-		taa_.samples.resize(len);
-
-		// http://en.wikipedia.org/wiki/Halton_sequence
-		// index not zero based
-		auto halton = [](int prime, int index = 1){
-			float r = 0.0f;
-			float f = 1.0f;
-			int i = index;
-			while (i > 0) {
-				f /= prime;
-				r += f * (i % prime);
-				i = std::floor(i / (float)prime);
-			}
-			return r;
-		};
-
-		for (auto i = 0; i < len; i++) {
-            float u = 2 * (halton(2, i + 1) - 0.5f);
-            float v = 2 * (halton(3, i + 1) - 0.5f);
-            taa_.samples[i] = {u, v};
-			dlg_info("sample {}: {}", i, taa_.samples[i]);
-        }
 	}
 
 	void initBuffers(const vk::Extent2D& size,
@@ -551,18 +543,7 @@ public:
 			buf.framebuffer = {dev, fbi};
 		}
 
-		auto info = vpp::ViewableImageCreateInfo(historyFormat,
-			vk::ImageAspectBits::color, size,
-			vk::ImageUsageBits::sampled | vk::ImageUsageBits::transferDst);
-		dlg_assert(vpp::supported(dev, info.img));
-		taa_.inHistory = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
-
-		info.img.usage = vk::ImageUsageBits::storage |
-			vk::ImageUsageBits::transferSrc;
-		dlg_assert(vpp::supported(dev, info.img));
-		taa_.outHistory = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
-
-		info = vpp::ViewableImageCreateInfo(offscreenFormat,
+		auto info = vpp::ViewableImageCreateInfo(offscreenFormat,
 			vk::ImageAspectBits::color, size,
 			vk::ImageUsageBits::colorAttachment |
 			vk::ImageUsageBits::sampled);
@@ -585,25 +566,18 @@ public:
 		offscreen_.fb = {dev, fbi};
 
 		// descriptors
-		vpp::DescriptorSetUpdate tdsu(taa_.ds);
-		tdsu.imageSampler({{{}, taa_.inHistory.vkImageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		tdsu.storage({{{}, taa_.outHistory.vkImageView(),
-			vk::ImageLayout::general}});
-		tdsu.imageSampler({{{}, offscreen_.target.vkImageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		tdsu.imageSampler({{{}, depthTarget().vkImageView(),
-			vk::ImageLayout::depthStencilReadOnlyOptimal}});
-		tdsu.imageSampler({{{}, offscreen_.velTarget.vkImageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		tdsu.uniform({{{taa_.ubo}}});
+		taa_.initBuffers(size,
+			offscreen_.target.vkImageView(),
+			depthTarget().vkImageView(),
+			offscreen_.velTarget.vkImageView());
 
 		vpp::DescriptorSetUpdate pdsu(pp_.ds);
 		// we can use inHistory here because the copy the data between
 		// the compute shader and the post processing shader from
 		// outHistory back to inHistory
-		pdsu.imageSampler({{{}, taa_.inHistory.vkImageView(),
+		pdsu.imageSampler({{{}, taa_.targetView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
+		pdsu.uniform({{{pp_.ubo}}});
 
 		// TODO: we should this using initBufferLayouts_ and
 		// the semaphore and wait when rendering instead of
@@ -613,8 +587,12 @@ public:
 		// The stalling below is not nice
 		vk::beginCommandBuffer(cbInitLayouts_, {});
 
+		// TODO: this also shouldn't be here, in TAAPass instead.
+		// We probably don't want to clear the image at all and
+		// rather just not read from it the first iteration after
+		// buffer recreation. Implement a mechanism for that in TAAPass
 		vk::ImageMemoryBarrier barrier;
-		barrier.image = taa_.inHistory.image();
+		barrier.image = taa_.targetImage();
 		barrier.oldLayout = vk::ImageLayout::undefined;
 		barrier.newLayout = vk::ImageLayout::transferDstOptimal;
 		barrier.dstAccessMask = vk::AccessBits::transferWrite;
@@ -625,7 +603,7 @@ public:
 			{}, {}, {}, {{barrier}});
 		vk::ClearColorValue cv {0.f, 0.f, 0.f, 1.f};
 		vk::ImageSubresourceRange range{vk::ImageAspectBits::color, 0, 1, 0, 1};
-		vk::cmdClearColorImage(cbInitLayouts_, taa_.inHistory.image(),
+		vk::cmdClearColorImage(cbInitLayouts_, taa_.targetImage(),
 			vk::ImageLayout::transferDstOptimal, cv, {{range}});
 
 		barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
@@ -733,8 +711,8 @@ public:
 		// 1: render offscreeen
 		std::array<vk::ClearValue, 3u> cv {};
 		cv[0] = {{0.f, 0.f, 0.f, 0.f}}; // color
-		cv[1].depthStencil = {1.f, 0u};
-		cv[3] = {{0.f, 0.f, 0.f, 0.f}}; // velocity
+		cv[1].depthStencil = {1.f, 0u}; // depth
+		cv[2] = {{0.f, 0.f, 0.f, 0.f}}; // velocity
 		vk::cmdBeginRenderPass(cb, {offscreen_.rp, offscreen_.fb,
 			{0u, 0u, width, height},
 			std::uint32_t(cv.size()), cv.data()}, {});
@@ -759,55 +737,7 @@ public:
 		vk::cmdEndRenderPass(cb);
 
 		// 2: apply TAA
-		// first make sure outHistory has the correct layout
-		vk::ImageMemoryBarrier obarrier;
-		obarrier.image = taa_.outHistory.image();
-		obarrier.oldLayout = vk::ImageLayout::undefined;
-		obarrier.newLayout = vk::ImageLayout::general;
-		obarrier.dstAccessMask = vk::AccessBits::shaderWrite;
-		obarrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
-			vk::PipelineStageBits::computeShader, {}, {}, {}, {{obarrier}});
-
-		auto cx = (width + 7) >> 3; // ceil(width / 8)
-		auto cy = (height + 7) >> 3; // ceil(height / 8)
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, taa_.pipe);
-		tkn::cmdBindComputeDescriptors(cb, taa_.pipeLayout, 0, {taa_.ds});
-		vk::cmdDispatch(cb, cx, cy, 1);
-
-		// copy from outHistory back to inHistory for next frame
-		// but we also use inHistory in the pp pass already
-		// outHistory can be discarded after this
-		vk::ImageMemoryBarrier ibarrier;
-		ibarrier.image = taa_.inHistory.image();
-		ibarrier.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		ibarrier.srcAccessMask = vk::AccessBits::shaderRead;
-		ibarrier.newLayout = vk::ImageLayout::transferDstOptimal;
-		ibarrier.dstAccessMask = vk::AccessBits::transferWrite;
-		ibarrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-
-		obarrier.oldLayout = vk::ImageLayout::general;
-		obarrier.newLayout = vk::ImageLayout::transferSrcOptimal;
-		obarrier.srcAccessMask = vk::AccessBits::shaderWrite;
-		obarrier.dstAccessMask = vk::AccessBits::transferRead;
-		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
-			vk::PipelineStageBits::transfer, {}, {}, {}, {{ibarrier, obarrier}});
-
-		vk::ImageCopy copy;
-		copy.extent = {width, height, 1};
-		copy.srcSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
-		copy.dstSubresource = {vk::ImageAspectBits::color, 0, 0, 1};
-		vk::cmdCopyImage(cb,
-			taa_.outHistory.vkImage(), vk::ImageLayout::transferSrcOptimal,
-			taa_.inHistory.vkImage(), vk::ImageLayout::transferDstOptimal,
-			{{copy}});
-
-		ibarrier.oldLayout = vk::ImageLayout::transferDstOptimal;
-		ibarrier.srcAccessMask = vk::AccessBits::transferWrite;
-		ibarrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		ibarrier.dstAccessMask = vk::AccessBits::shaderRead;
-		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
-			vk::PipelineStageBits::fragmentShader, {}, {}, {}, {{ibarrier}});
+		taa_.record(cb, {width, height});
 
 		// 3: post processing, apply to swapchain buffer
 		vk::cmdBeginRenderPass(cb, {pp_.rp, buf.framebuffer,
@@ -815,6 +745,11 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
 		tkn::cmdBindGraphicsDescriptors(cb, pp_.pipeLayout, 0, {pp_.ds});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad triangle fan
+
+		// gui stuff
+		rvgContext().bindDefaults(cb);
+		gui().draw(cb);
+
 		vk::cmdEndRenderPass(cb);
 
 		afterRender(cb);
@@ -944,9 +879,6 @@ public:
 				updateAOParams_ = true;
 				dlg_info("Static AO: {}", bool(mode_ & modeIrradiance));
 				return true;
-			case ny::Keycode::k5: // toggle TAA
-				taa_.mode = (taa_.mode + 1) % 6;
-				break;
 			default:
 				break;
 		}
@@ -985,6 +917,8 @@ public:
 	}
 
 	void updateDevice() override {
+		App::updateDevice();
+
 		if(camera_.update) {
 			updateLight_ = true; // for directional light
 		}
@@ -1000,53 +934,31 @@ public:
 			auto [width, height] = swapchainInfo().imageExtent;
 
 			using namespace nytl::vec::cw::operators;
-			taa_.sampleID = (taa_.sampleID + 1) % taa_.samples.size();
+			auto sample = disable_ ? nytl::Vec2f{0.f, 0.f} : taa_.nextSample();
 			auto pixSize = Vec2f{1.f / width, 1.f / height};
-			// range [-0.5f, 0.5f] pixel
-			// we don't jitter one whole pixel, only half
-			auto off = taa_.samples[taa_.sampleID] * pixSize;
-			// auto off = 2 * samples[taa_.sampleID] * pixSize;
-			if(taa_.mode == taaModePassthrough) { // disabed
-				off = {0.f, 0.f};
-			}
+			auto off = sample * pixSize;
 
-			auto proj = cameraVP();
-			auto jitterMat = tkn::translateMat({off.x, off.y, 0.f});
-			auto jproj = jitterMat * proj;
+			auto vp = cameraVP();
 
-			tkn::write(span, jproj);
-			tkn::write(span, taa_.lastProj);
-			tkn::write(span, camera_.pos);
+			tkn::write(span, vp);
+			tkn::write(span, lastVP_);
+			tkn::write(span, off);
 			tkn::write(span, near);
 			tkn::write(span, far);
+			tkn::write(span, camera_.pos);
 			camera_.update = false;
 			map.flush();
 
+			lastVP_ = vp;
+
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
-			// TODO: not sure about using jitterMat here
-			tkn::write(envSpan, jitterMat *
+			tkn::write(envSpan,
 				projectionMatrix() *
 				fixedViewMatrix(camera_));
 			envMap.flush();
 
-			auto taaMap = taa_.ubo.memoryMap();
-			auto taaSpan = taaMap.span();
-			tkn::write(taaSpan, nytl::Mat4f(nytl::inverse(jproj)));
-			tkn::write(taaSpan, taa_.lastProj);
-			tkn::write(taaSpan, jproj);
-			tkn::write(taaSpan, nytl::Mat4f(nytl::inverse(taa_.lastProj)));
-			tkn::write(taaSpan, off);
-			tkn::write(taaSpan, taa_.lastJitter);
-			tkn::write(taaSpan, near);
-			tkn::write(taaSpan, far);
-			tkn::write(taaSpan, taa_.minFac);
-			tkn::write(taaSpan, taa_.maxFac);
-			tkn::write(taaSpan, taa_.mode);
-			taaMap.flush();
-
-			taa_.lastProj = jproj;
-			taa_.lastJitter = off;
+			taa_.updateDevice(near, far);
 		}
 
 		auto semaphore = scene_.updateDevice(cameraVP());
@@ -1075,6 +987,12 @@ public:
 			tkn::write(span, u32(env_.convolutionMipmaps()));
 			map.flush();
 		}
+
+		auto map = pp_.ubo.memoryMap();
+		auto span = map.span();
+		tkn::write(span, pp_.sharpen);
+		tkn::write(span, pp_.exposure);
+		map.flush();
 	}
 
 	// only for visualizing the box/sphere
@@ -1143,24 +1061,9 @@ protected:
 		vpp::Framebuffer fb;
 	} offscreen_;
 
-	struct {
-		vpp::ViewableImage inHistory;
-		vpp::ViewableImage outHistory;
-		vpp::TrDsLayout dsLayout;
-		vpp::PipelineLayout pipeLayout;
-		vpp::Pipeline pipe;
-		vpp::TrDs ds;
-		vpp::SubBuffer ubo;
-		unsigned sampleID {0};
-		nytl::Mat4f lastProj = nytl::identity<4, float>();
-		nytl::Vec2f lastJitter;
-
-		float minFac {0.96};
-		float maxFac {0.995};
-		u32 mode {taaModeClipColor};
-
-		std::vector<nytl::Vec2f> samples;
-	} taa_;
+	TAAPass taa_;
+	nytl::Mat4f lastVP_ = nytl::identity<4, float>();
+	bool disable_ {false};
 
 	struct {
 		vpp::TrDsLayout dsLayout;
@@ -1168,6 +1071,10 @@ protected:
 		vpp::Pipeline pipe;
 		vpp::TrDs ds;
 		vpp::RenderPass rp;
+		vpp::SubBuffer ubo;
+
+		float sharpen {0.0};
+		float exposure {1.0};
 	} pp_;
 
 	vpp::Semaphore semaphoreInitLayouts_ {};

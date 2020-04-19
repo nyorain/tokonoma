@@ -181,8 +181,7 @@ public:
 	void create(InitData&, const PassCreateInfo&, const GaussianBlur& blur);
 	void init(InitData&, const PassCreateInfo&, const GaussianBlur& blur);
 
-	void createBuffers(InitBufferData&, const tkn::WorkBatcher&,
-		vk::Extent2D, const GaussianBlur&);
+	void createBuffers(InitBufferData&, const tkn::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::ImageView lightInput,
 		const GaussianBlur&);
 

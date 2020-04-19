@@ -1243,7 +1243,7 @@ void ViewApp::initStaticBuffers(const vk::Extent2D& size) {
 
 	LensFlare::InitBufferData lensData;
 	if(renderPasses_ & passLens) {
-		lens_.createBuffers(lensData, wb, size, blur_);
+		lens_.createBuffers(lensData, wb, size);
 	}
 
 	// init

@@ -20,6 +20,7 @@ layout(location = 7) out vec4 outClipLastPos;
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 proj; // view and pojection
 	mat4 lastProj; // view and pojection
+	vec2 jitter;
 } scene;
 
 layout(set = 1, binding = 0, std430) buffer ModelIDs {
@@ -49,5 +50,6 @@ void main() {
 	outClipLastPos = scene.lastProj * lm;
 
 	gl_Position = outClipPos;
+	gl_Position.xy += scene.jitter * gl_Position.w;
 	gl_Position.y = -gl_Position.y;
 }

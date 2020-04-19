@@ -106,7 +106,7 @@ void GaussianBlur::init(const vpp::Device& dev, vk::Sampler linearSampler) {
 
 	// pipe
 	vpp::ShaderModule blurShader(dev, deferred_gblur_comp_data);
-	ComputeGroupSizeSpec groupSizeSpec(groupDimSize, groupDimSize);
+	tkn::ComputeGroupSizeSpec groupSizeSpec(groupDimSize, groupDimSize);
 
 	vk::ComputePipelineCreateInfo cpi;
 	cpi.layout = pipeLayout_;
@@ -420,7 +420,7 @@ void LensFlare::init(InitData& data, const PassCreateInfo&,
 }
 
 void LensFlare::createBuffers(InitBufferData& data, const tkn::WorkBatcher& wb,
-		vk::Extent2D size, const GaussianBlur& blur) {
+		vk::Extent2D size) {
 	auto& dev = wb.dev;
 	size.width = std::max(size.width >> 1, 1u);
 	size.height = std::max(size.height >> 1, 1u);

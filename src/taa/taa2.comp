@@ -1,0 +1,239 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+#include "scene.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+const uint flagPassthrough = (1 << 0u);
+const uint flagClosestDepth = (1 << 1u);
+const uint flagTonemap = (1 << 2u);
+const uint flagDepthReject = (1 << 3u);
+const uint flagColorClip = (1 << 4u);
+const uint flagLuminanceWeigh = (1 << 5u);
+
+layout(set = 0, binding = 0) uniform sampler2D inHistory;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outHistory;
+layout(set = 0, binding = 2) uniform sampler2D renderedTex;
+layout(set = 0, binding = 3) uniform sampler2D depthTex; // non-linear, [0, 1]
+layout(set = 0, binding = 4) uniform sampler2D velocityTex;
+
+layout(set = 0, binding = 5, row_major) uniform UBO {
+	float near;
+	float far;
+	float minFac;
+	float maxFac;
+	float velWeight;
+	uint flags;
+} ubo;
+
+// Luninance vector. dot(light.rgb, luminance) will be used to
+// calculate the luminance. Must rerecord when changed.
+// See https://stackoverflow.com/questions/596216 for a discussion
+// about different conventions.
+const vec3 luminanceFac = vec3(0.25, 0.65, 0.1);
+
+// Find the depth-wise closes fragment (returns (offset, depth)) in a 3x3
+// box around the given uv pixel. Loads the depth at uv into uvDepth,
+// since that has to be loaded anyways for comparison
+vec3 closestFragment(vec2 uv, out float uvDepth) {
+	uvDepth = texture(depthTex, uv).x;
+	vec3 best = vec3(0, 0, uvDepth);
+	float d;
+
+	// NOTE: could use textureGather to minimize number of texture accesses
+	#define check(i, j) \
+		d = textureOffset(depthTex, uv, ivec2(i ,j)).r; \
+		if(d < best.z) { \
+			best = vec3(i, j, d); \
+		}
+
+	check(-1, -1);
+	check(-1, +0);
+	check(-1, +1);
+	check(+0, -1);
+	check(+0, +1);
+	check(+1, -1);
+	check(+1, +1);
+	check(+1, +0);
+	#undef check
+
+	return best;
+}
+
+vec3 clipAABB(vec3 aabb_min, vec3 aabb_max, vec3 p, vec3 q) {
+	vec3 r = q - p;
+	vec3 rmax = aabb_max - p.xyz;
+	vec3 rmin = aabb_min - p.xyz;
+	const float eps = 0.00000001f;
+
+	if(r.x > rmax.x + eps) r *= (rmax.x / r.x);
+	if(r.y > rmax.y + eps) r *= (rmax.y / r.y);
+	if(r.z > rmax.z + eps) r *= (rmax.z / r.z);
+
+	if(r.x < rmin.x - eps) r *= (rmin.x / r.x);
+	if(r.y < rmin.y - eps) r *= (rmin.y / r.y);
+	if(r.z < rmin.z - eps) r *= (rmin.z / r.z);
+
+	return p + r;
+}
+
+// Clip the given color against the neighbors in renderedTex
+vec3 colorClip(vec2 juv, vec3 color, vec3 hist) {
+	const ivec2 off01 = ivec2(1, 0);
+	const ivec2 off10 = ivec2(0, 1);
+
+	vec3 c00 = textureOffset(renderedTex, juv, off01).rgb;
+	vec3 c10 = textureOffset(renderedTex, juv, -off01).rgb;
+	vec3 c01 = textureOffset(renderedTex, juv, off10).rgb;
+	vec3 c11 = textureOffset(renderedTex, juv, -off10).rgb;
+
+	vec3 cmin = min(color, min(c00, min(c10, min(c01, c11))));
+	vec3 cmax = max(color, max(c00, max(c10, max(c01, c11))));
+	vec3 cavg = (color + c00 + c10 + c01 + c11) / 5;
+
+	return clipAABB(cmin, cmax, cavg, hist.rgb);
+}
+
+// Optional tonemapping operations.
+// We simply use reinhard tonemapping and its reverse
+vec3 tonemap(vec3 col) {
+	return ((ubo.flags & flagTonemap) != 0) ? (col / (1 + col)) : col;
+}
+
+vec3 untonemap(vec3 col) {
+	return ((ubo.flags & flagTonemap) != 0) ? (col / (1 - col)) : col;
+}
+
+// inverse reproject depth rejection
+// returns the correctenss
+// float irdr(vec2 uv, vec2 juv, float projZ, float histZ) {
+float irdr(vec2 uv, float velZ, float projZ, float histZ) {
+	const ivec2 offx = ivec2(1, 0);
+	const ivec2 offy = ivec2(0, 1);
+
+	// TODO: not sure whether to sample velocity for each as well
+	#define RZ(_o) \
+		depthtoz(textureOffset(depthTex, uv, _o).r, ubo.near, ubo.far) - velZ
+		// depthtoz(textureOffset(depthTex, uv, _o).r, ubo.near, ubo.far) - textureOffset(velocityTex, uv, _o).z
+
+	float z0 = RZ(+offx);
+	float z1 = RZ(-offx);
+	float z2 = RZ(+offy);
+	float z3 = RZ(-offy);
+	float zmin = min(projZ, min(z0, min(z1, min(z2, z3))));
+	float zmax = max(projZ, max(z0, max(z1, max(z2, z3))));
+
+	z0 = RZ(+offx + offy);
+	z1 = RZ(+offx - offy);
+	z2 = RZ(-offx + offy);
+	z3 = RZ(-offx - offy);
+	zmin = min(zmin, min(z0, min(z1, min(z2, z3))));
+	zmax = max(zmax, max(z0, max(z1, max(z2, z3))));
+	#undef RZ
+
+	// TODO: this depends on the size of the scene I guess?
+	// for very small scenes this might be too large already.
+	// Might make it too small and we might get issues 
+	// (pixels that should be considered continuous suddenly
+	// being detected as edge, in large-scale scenes)
+	float thl = 0.05;
+	float thh = 0.05;
+
+	// float correctness = step(zmin, histZ) * (1 - step(zmax, histZ));
+	float correctness = smoothstep(zmin - thl, zmin, histZ) *
+		(1 - smoothstep(zmax, zmax + thh, histZ));
+
+	return correctness;
+}
+
+void main() {
+	uvec2 size = imageSize(outHistory);
+	vec2 pixelSize = 1.f / size;
+
+	// get pixel this invocation is responsible for
+	// out of bounds can happen when image size isn't multiple of
+	// work group size
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 uv = (pixel + 0.5) * pixelSize;
+
+	// get depth of texel and velocity uv
+	float depth;
+	vec2 vuv = uv;
+	if((ubo.flags & flagClosestDepth) != 0) {
+		vec3 closest = closestFragment(uv, depth);
+		vuv += pixelSize * closest.xy;
+		depth = closest.z; // TODO: not sure
+	} else {
+		depth = texture(depthTex, uv).r;
+	}
+
+	float z = depthtoz(depth, ubo.near, ubo.far);
+	vec3 vel = texture(velocityTex, vuv).xyz;
+	vel.y *= -1.f; // TODO: move flipping into model pipeline
+	vec3 color = texture(renderedTex, uv).rgb;
+
+	// TODO: this seems to cause problems. Investigate why
+	// nothing rendered here
+	// if(depth == 1.0) {
+	// 	imageStore(outHistory, ivec2(pixel), vec4(color, z));
+	// 	return;
+	// }
+
+	// reprojection would be oustide of image, we know nothing
+	vec3 tc = vec3(uv, z) - vel;
+	if(tc.xy != clamp(tc.xy, 0, 1) || (ubo.flags & flagPassthrough) != 0) {
+		imageStore(outHistory, ivec2(pixel), vec4(color, z));
+		return;
+	}
+
+
+	// TAA rejections and weighting
+	color = tonemap(color);
+	vec4 histz = texture(inHistory, tc.xy);
+	vec3 hist = tonemap(histz.rgb);
+	float histZ = histz.w;
+	float weight = ubo.maxFac;
+
+	if((ubo.flags & flagColorClip) != 0) {
+		hist.rgb = colorClip(uv, color, hist.rgb);
+	}
+
+	if((ubo.flags & flagLuminanceWeigh) != 0) {
+		float lum0 = dot(luminanceFac, color);
+		float lum1 = dot(luminanceFac, hist.rgb);
+		float diff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.1)));
+		diff = 1.0 - diff;
+		weight = mix(ubo.minFac, ubo.maxFac, diff * diff);
+	}
+
+	if((ubo.flags & flagDepthReject) != 0) {
+		weight *= irdr(uv, vel.z, tc.z, histZ);
+
+		float npz = histZ + vel.z;
+		z = mix(z, npz, weight);
+	}
+
+	// the more movement, the less we trust the history value
+	// this helps to fight blurriness but obviously decreases
+	// AA quality for quick movement.
+	weight *= exp(-ubo.velWeight * length(vel));
+	color = mix(color, hist.rgb, weight);
+
+
+	// writeback
+	color = untonemap(color);
+
+	// debugging was fun.
+	// TODO: there still seems to be a nan case in the pbr pipeline...
+	// debug and fix it! then this can be removed
+	if(any(isnan(color))) {
+		color = vec3(0.0, 5.0, 0.0);
+	}
+
+	imageStore(outHistory, ivec2(pixel), vec4(color, z));
+}

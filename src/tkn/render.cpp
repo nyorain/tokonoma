@@ -189,4 +189,76 @@ void downscale(const vpp::Device& dev, vk::CommandBuffer cb,
 	downscale(cb, target, genLevels);
 }
 
+void barrier(vk::CommandBuffer cb, nytl::Span<const ImageBarrier> barriers) {
+	dlg_assert(!barriers.empty());
+
+	std::vector<vk::ImageMemoryBarrier> vkBarriers;
+	vkBarriers.reserve(barriers.size());
+	vk::PipelineStageFlags srcStages = {};
+	vk::PipelineStageFlags dstStages = {};
+	for(auto& b : barriers) {
+		if(!b.image) { // empty barriers allowed
+			continue;
+		}
+
+		srcStages |= b.src.stages;
+		dstStages |= b.dst.stages;
+
+		auto& barrier = vkBarriers.emplace_back();
+		barrier.image = b.image;
+		barrier.srcAccessMask = b.src.access;
+		barrier.oldLayout = b.src.layout;
+		barrier.dstAccessMask = b.dst.access;
+		barrier.newLayout = b.dst.layout;
+		barrier.subresourceRange = b.subres;
+	}
+
+	if(vkBarriers.empty()) {
+		return;
+	}
+
+	vk::cmdPipelineBarrier(cb, srcStages, dstStages, {}, {}, {}, vkBarriers);
+}
+
+void barrier(vk::CommandBuffer cb, vk::Image image, SyncScope src,
+		SyncScope dst, vk::ImageSubresourceRange subres) {
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = image;
+	barrier.srcAccessMask = src.access;
+	barrier.oldLayout = src.layout;
+	barrier.dstAccessMask = dst.access;
+	barrier.newLayout = dst.layout;
+	barrier.subresourceRange = subres;
+	vk::cmdPipelineBarrier(cb, src.stages, dst.stages, {}, {}, {}, {{barrier}});
+}
+
+bool operator==(SyncScope a, SyncScope b) {
+	return a.stages == b.stages &&
+		a.layout == b.layout &&
+		a.access == b.access;
+}
+
+bool operator!=(SyncScope a, SyncScope b) {
+	return a.stages != b.stages ||
+		a.layout != b.layout ||
+		a.access != b.access;
+}
+
+SyncScope& operator|=(SyncScope& a, SyncScope b) {
+	if(a.layout == vk::ImageLayout::undefined) {
+		a.layout = b.layout;
+	} else {
+		dlg_assert(b.layout == vk::ImageLayout::undefined ||
+			a.layout == b.layout);
+	}
+
+	a.stages |= b.stages;
+	a.access |= b.access;
+	return a;
+}
+
+SyncScope operator|(SyncScope a, SyncScope b) {
+	return a |= b;
+}
+
 } // namespace tkn
