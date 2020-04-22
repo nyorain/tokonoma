@@ -31,6 +31,12 @@ related to it.
 - cloth: Simple 3D cloth animation using verlet integration, includes cpu and
   gpu variants.
   ![cloth screenshot](./assets/pics/cloth1.png)
+- deferred: deferred renderer implementing various (mainly screen space)
+  effects. Bloom, SSR, SSAO, Luminance based exposure adaption,
+  volumetric light scattering, simple DOF, lens flare, FXAA. HDR pipeline using pbr concepts (for
+  lightning, most screen space algorithms are still roughly approximated
+  to what looks acceptable. Work in progress)
+  ![deferred screenshot](./assets/pics/deferred1.png)
 - fluids: fluid simulation on the gpu
   (somewhat outdated, heard a lecture on it since then, to be reworked
   hopefully sooner than later). The screenshot shows the HSV-visualized
@@ -49,10 +55,13 @@ related to it.
   ![lpgi screenshot](./assets/pics/lpgi2.png)
 - normals: implements the purely 2D normal mapping effect as
   described [here](https://github.com/mattdesl/lwjgl-basics/wiki/ShaderLesson6)
-- particles: extremely simple 2D particle system using the mouse
+- particles: simple 2D particle system using the mouse
   as attractor. Built for scalability, can run many million particles
   even on not high-end hardware (the screenshot shows
-  10 million transparent particles)
+  10 million transparent particles). Can also function as an audio
+  visualizer (for audio files or system audio on linux via pulse) using
+  the particles, varying the attraction based on particle properties
+  and current audio frequencies.
   ![particles screenshot](./assets/pics/particles1.png)
 - pbr: command line utility program for stuff required by the pbr renderer projects,
   like generating cubemaps from equirectangular environment maps, baking irradiance maps or
@@ -88,12 +97,6 @@ related to it.
 - sss: Comparable to smooth_shadow but uses a subsurface-scattering-like effect
   to achieve smooth shadows, i.e. the strength of light is "reduced" when traveling
   through an object
-- deferred: deferred renderer implementing various (mainly screen space)
-  effects. Bloom, SSR, SSAO, Luminance based exposure adaption,
-  light scattering, simple DOF. HDR pipeline using pbr concepts (for
-  lightning, most screen space algorithms are still roughly approximated
-  to what looks acceptable. Work in progress)
-  ![deferred screenshot](./assets/pics/deferred1.png)
 - taa: 3D temporal antialiasing renderer (supporting dynamic scenes)
   playground for different effects that have a synergy with TAA
   (mainly based on noise) like stochastic transparency and noisy shadow
@@ -103,7 +106,7 @@ related to it.
 - volume: volume rendering (mainly of 3D functions, no standard
   3D texture/volume file format supported yet) via marching cubes
   ![volume screenshot](./assets/pics/volume1.png)
-- Dynamic terrain subdivision based on the 2018 paper "Adaptive GPU
+- subd: Dynamic terrain subdivision based on the 2018 paper "Adaptive GPU
 Tessellation with Compute Shaders" by Jad Khoury, Jonathan Dupuy, and
 Christophe Riccio. Renders a whole planet with free-moving quaternion camera.
   ![terrain screenshot](./assets/pics/subd.png)
@@ -138,10 +141,25 @@ The files in `assets/gltf` have their copyright embedded.
 
 ---
 
-On windows: `meson build/win --default-library static --backend ninja`,
-using the latest MinGW. Alternatively, to use dynamic libraries just use
-the `flat` layout meson option (since windows can't find the dlls otherwise).
-Not always tested for windows, only done once
-in a while so the code may have small issues there. But all projects are in general
-written in a cross-platform manner so those issues are usually minor things
-or related to dependency management.
+On windows: `meson build/win --backend ninja`, using the latest MinGW (at least gcc 8.x).
+Linking shared libraries in different folders on windows is somewhat problematic
+since there is no RPATH equivalent on windows. Therefore you have to do one of the following
+things for applications to work out of the box (otherwise you'll get `libXXX.dll is missing`
+when trying to execute the applications out of the build folder):
+
+- __Recommended__: Just execute the `docs/links.bat` script in the build dir once,
+  it will link all required shared libraries into the build dir. Note that since
+  windows requires elevated command prompts for creating links by default you
+  either have to disable this restriction by enabling developer mode (the __recommended__ way, see 
+  e.g. [here](https://www.ghacks.net/2016/12/04/windows-10-creators-update-symlinks-without-elevation/))
+  or run it in an elevated prompt (the script is dead simple, just read it beforehand).
+- Use `layout=flat` meson option. This will cause all libraries and executables to be
+  output into the same folder.
+- Use `default_library=static` meson option. This might lead to problems, is not well tested
+  and therefore not recommended. Issue reports welcome though.
+
+Not all projects are always well-tested for windows, it's only done once
+in a while (or when I'm working on features that are not supported on Linux yet, such
+as HDR as of early 2020) so the code may have small issues there. 
+But all projects are in general written in a cross-platform manner so those issues are 
+usually minor issues or related to dependency management.

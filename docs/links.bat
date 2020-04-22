@@ -1,0 +1,15 @@
+mklink libtkn.dll src\tkn\libtkn.dll
+mklink libtinygltf.dll src\tkn\libtinygltf.dll
+mklink libcubeb.dll subprojects\cubeb\libcubeb.dll
+mklink libvpp.dll subprojects\vpp\src\vpp\libvpp.dll
+mklink libvkpp.dll subprojects\vkpp\libvkpp.dll
+mklink libdlg.dll subprojects\dlg\libdlg.dll
+mklink libswa.dll subprojects\swa\libswa.dll
+mklink libz.dll subprojects\zlib-1.2.11\libz.dll
+mklink librvg.dll subprojects\rvg\src\rvg\librvg.dll
+mklink libvui.dll subprojects\vui\src\vui\libvui.dll
+mklink libkatachi.dll subprojects\katachi\libkatachi.dll
+mklink libpng16-16.dll subprojects\libpng-1.6.37\libpng16-16.dll
+mklink libny.dll subprojects\ny\src\ny\libny.dll
+mklink libphonon.dll ..\..\subprojects\steamaudio_api\bin\Windows\x64\phonon.dll
+mklink libBox2D.dll subprojects\b2d\Box2D\libBox2D.dll

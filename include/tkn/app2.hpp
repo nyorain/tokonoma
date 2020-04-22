@@ -38,6 +38,11 @@ struct Features {
 
 class App {
 public:
+	// TODO: WIP
+	float maxLight {400.f};
+	float maxAvgLight {400.f};
+
+public:
 	App();
 	~App();
 

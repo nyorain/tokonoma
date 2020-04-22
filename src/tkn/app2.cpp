@@ -311,10 +311,10 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 		return false;
 	}
 
-	// auto iniexts = vk::enumerateInstanceExtensionProperties(nullptr);
-	// for(auto& ext : iniexts) {
-	// 	dlg_trace("Instance extension: {}", ext.extensionName.data());
-	// }
+	auto iniexts = vk::enumerateInstanceExtensionProperties(nullptr);
+	for(auto& ext : iniexts) {
+		dlg_trace("Instance extension: {}", ext.extensionName.data());
+	}
 
 	std::vector<const char*> iniExts;
 	unsigned swaExtsCount;
@@ -330,6 +330,9 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 		iniExts.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
 		// iniExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 	}
+
+	// TODO, WIP
+	iniExts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 
 	// TODO: don't require 1.1 since it's not really needed for any app
 	// (just some tests with it in sen). Also not supported in vkpp yet
@@ -457,10 +460,10 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 		return false;
 	}
 
-	// auto devexts = vk::enumerateDeviceExtensionProperties(phdev, nullptr);
-	// for(auto& ext : devexts) {
-	// 	dlg_trace("Device extension: {}", ext.extensionName.data());
-	// }
+	auto devexts = vk::enumerateDeviceExtensionProperties(phdev, nullptr);
+	for(auto& ext : devexts) {
+		dlg_trace("Device extension: {}", ext.extensionName.data());
+	}
 
 	auto p = vk::getPhysicalDeviceProperties(phdev);
 	dlg_debug("Using device: {}", p.deviceName.data());
@@ -471,11 +474,13 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	vk::DeviceCreateInfo devInfo;
 	vk::DeviceQueueCreateInfo queueInfo({}, queueFam, 1, priorities);
 
-	auto exts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+	auto exts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, 
+		// TODO, WIP
+		VK_EXT_HDR_METADATA_EXTENSION_NAME};
 	devInfo.pQueueCreateInfos = &queueInfo;
 	devInfo.queueCreateInfoCount = 1u;
 	devInfo.ppEnabledExtensionNames = exts.begin();
-	devInfo.enabledExtensionCount = 1u;
+	devInfo.enabledExtensionCount = exts.size();
 	devInfo.pEnabledFeatures = nullptr; // passed as pNext
 
 	Features enable {}, f {};
@@ -500,6 +505,18 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	auto prefs = swapchainPrefs(argsOut);
 	impl_->swapchainInfo = vpp::swapchainCreateInfo(vkDevice(),
 		vkSurf, {1, 1}, prefs);
+
+	// TODO: don't hardcode like this
+	auto formats = vk::getPhysicalDeviceSurfaceFormatsKHR(phdev, vkSurf);
+	for(auto f : formats) {
+		if(f.format == vk::Format::r16g16b16a16Sfloat &&
+				f.colorSpace == vk::ColorSpaceKHR::extendedSrgbLinearEXT) {
+			dlg_info("found swapchain format {} {}", (int) f.format, (int) f.colorSpace);
+			// impl_->swapchainInfo.imageFormat = f.format;
+			// impl_->swapchainInfo.imageColorSpace = f.colorSpace;
+			break;
+		}
+	}
 
 	return true;
 }
@@ -748,6 +765,20 @@ void App::run() {
 			impl_->renderer.invalidate();
 		}
 
+		// TODO: full hdr support
+		// this is probably only useful for exclusive fullscreen apps?
+		// scRGB
+		// vk::HdrMetadataEXT hdr {};
+		// hdr.displayPrimaryRed = {0.64, 0.33};
+		// hdr.displayPrimaryGreen = {0.3, 0.6};
+		// hdr.displayPrimaryBlue = {0.15, 0.06};
+		// hdr.whitePoint = {0.3127, 0.3290};
+		// hdr.maxLuminance = 0;
+		// hdr.minLuminance = 400;
+		// hdr.maxContentLightLevel = maxLight;
+		// hdr.maxFrameAverageLightLevel = maxAvgLight;
+		// vk::setHdrMetadataEXT(vkDevice(), 1, impl_->renderer.swapchain(), hdr);
+
 		rerecord_ = false;
 
 		// - submit and present -
@@ -825,6 +856,8 @@ void App::updateDevice() {
 
 vpp::SwapchainPreferences App::swapchainPrefs(const Args& args) const {
 	vpp::SwapchainPreferences prefs {};
+	prefs.format = vk::Format::r16g16b16a16Sfloat;
+	prefs.errorAction = vpp::SwapchainPreferences::ErrorAction::output;
 	if(args.vsync) {
 		prefs.presentMode = vk::PresentModeKHR::fifo; // vsync
 	}

@@ -234,7 +234,7 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		if(cubemap_) {
 			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {camDs_, texDs_});
-			vk::cmdDrawIndexed(cb, 14, 1, 0, 0, 0);
+			vk::cmdDraw(cb, 14, 1, 0, 0, 0);
 		} else {
 			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {texDs_});
 			vk::cmdDraw(cb, 4, 1, 0, 0);
@@ -331,6 +331,19 @@ public:
 			level_ = (level_ + levelCount_ - 1) % levelCount_;
 			recreateView_ = true;
 			dlg_info("Showing level {}", level_);
+			Base::scheduleRedraw();
+// TODO
+		} else if(ev.keycode == swa_key_pageup) {
+			maxLight *= 1.1;
+			Base::scheduleRedraw();
+		} else if(ev.keycode == swa_key_pagedown) {
+			maxLight /= 1.1;
+			Base::scheduleRedraw();
+		} else if(ev.keycode == swa_key_k9) {
+			maxAvgLight *= 1.1;
+			Base::scheduleRedraw();
+		} else if(ev.keycode == swa_key_k8) {
+			maxAvgLight /= 1.1;
 			Base::scheduleRedraw();
 		} else {
 			return false;
