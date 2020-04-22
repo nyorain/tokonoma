@@ -174,7 +174,7 @@ public:
 		};
 
 		gfx_.dsLayout = {dev, bindings};
-		gfx_.pipeLayout = {dev, {{gfx_.dsLayout}}, {}};
+		gfx_.pipeLayout = {dev, {{gfx_.dsLayout.vkHandle()}}, {}};
 
 		gfx_.ds = {dev.descriptorAllocator(), gfx_.dsLayout};
 		vpp::DescriptorSetUpdate dsu(gfx_.ds);
@@ -195,7 +195,7 @@ public:
 		};
 
 		comp_.update.dsLayout = {dev, bindings};
-		comp_.update.pipeLayout = {dev, {{comp_.update.dsLayout}}, {}};
+		comp_.update.pipeLayout = {dev, {{comp_.update.dsLayout.vkHandle()}}, {}};
 
 		comp_.update.ds = {dev.descriptorAllocator(), comp_.update.dsLayout};
 		vpp::DescriptorSetUpdate dsu(comp_.update.ds);
@@ -216,7 +216,7 @@ public:
 		};
 
 		comp_.indirect.dsLayout = {dev, bindings};
-		comp_.indirect.pipeLayout = {dev, {{comp_.indirect.dsLayout}}, {}};
+		comp_.indirect.pipeLayout = {dev, {{comp_.indirect.dsLayout.vkHandle()}}, {}};
 
 		comp_.indirect.ds = {dev.descriptorAllocator(), comp_.indirect.dsLayout};
 		vpp::DescriptorSetUpdate dsu(comp_.indirect.ds);
@@ -412,7 +412,7 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		tkn::cmdBindGraphicsDescriptors(cb, gfx_.pipeLayout, 0, {gfx_.ds});
-		vk::cmdBindVertexBuffers(cb, 0, {{keysCulled_.buffer()}},
+		vk::cmdBindVertexBuffers(cb, 0, {{keysCulled_.buffer().vkHandle()}},
 			{{keysCulled_.offset() + 8}}); // skip counter and padding
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);

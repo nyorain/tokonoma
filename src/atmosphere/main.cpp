@@ -43,7 +43,7 @@ public:
 		};
 
 		dsLayout_ = {dev, bindings};
-		pipeLayout_ = {dev, {{dsLayout_}}, {}};
+		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 
 		// pipeline
 		skyVert_ = {dev, atmosphere_sky_vert_data};
