@@ -104,17 +104,18 @@ float desiredLOD(uint key, uint ini, out vec3 v_out[3]) {
 // 		
 // }
 
-uint insideFrustum(vec3 p) {
+uint insideFrustum(vec3 p, out vec3 transformed) {
 	vec3 d1;
 	float d2;
 
 	vec4 t4 = scene.cullvp * vec4(displace(p, d1, d2), 1.0);
 	vec3 t = t4.xyz / t4.w;
-	if(t4.w < 0) {
-		return 63;
-	}
-
 	t.y = -t.y;
+	transformed = t;
+
+	if(t4.w < 0) {
+		return 63; // all bits set
+	}
 
 	uint code = 0;
 	if(t.x > 1) code |= 1;
@@ -185,11 +186,17 @@ void main() {
 	}
 	*/
 
-	uint i1 = insideFrustum(v_out[0]);
-	uint i2 = insideFrustum(v_out[1]);
-	uint i3 = insideFrustum(v_out[2]);
+	vec3 trans[3];
+	uint i1 = insideFrustum(v_out[0], trans[0]);
+	uint i2 = insideFrustum(v_out[1], trans[1]);
+	uint i3 = insideFrustum(v_out[2], trans[2]);
 
 	bool outside = (i1 & i2 & i3) != 0;
+
+	// TODO: fix!
+	// bool backFace = (cross(trans[1] - trans[0], trans[2] - trans[0]).z > 0.0);
+	// outside = outside || backFace;
+
 	if(scene.update == 0) {
 		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
 
@@ -199,7 +206,7 @@ void main() {
 		return;
 	}
 
-	if(klod < dlod /* && !outside*/) {
+	if(klod < dlod  /* && !outside*/) {
 		// subdivide
 		uint idx = atomicAdd(new.counter, 2);
 		new.keys[idx + 0] = uvec2((key << 1u) | 0u, ini);
@@ -210,7 +217,7 @@ void main() {
 			culled.keys[idx + 0] = uvec2((key << 1u) | 0u, ini);
 			culled.keys[idx + 1] = uvec2((key << 1u) | 1u, ini);
 		}
-	} else if(klod < (plod + 1)/* && !outside*/) {
+	} else if(klod < (plod + 1) /* && !outside*/) {
 		// just write
 		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
 

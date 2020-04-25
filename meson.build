@@ -332,6 +332,11 @@ subd = build_target('subd', [
 	], dependencies: [tkn_dep],
 	target_type: exetarget)
 
+scatter = build_target('scatter', [
+		'src/scatter/main.cpp',
+		scatter_shaders,
+	], dependencies: [tkn_dep],
+	target_type: exetarget)
 
 if android
 	subdir('apk')

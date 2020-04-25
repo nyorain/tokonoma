@@ -332,7 +332,7 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	}
 
 	// TODO, WIP
-	iniExts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+	// iniExts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 
 	// TODO: don't require 1.1 since it's not really needed for any app
 	// (just some tests with it in sen). Also not supported in vkpp yet
@@ -474,9 +474,11 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	vk::DeviceCreateInfo devInfo;
 	vk::DeviceQueueCreateInfo queueInfo({}, queueFam, 1, priorities);
 
-	auto exts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, 
+	auto exts = {
+		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 		// TODO, WIP
-		VK_EXT_HDR_METADATA_EXTENSION_NAME};
+		// VK_EXT_HDR_METADATA_EXTENSION_NAME
+	};
 	devInfo.pQueueCreateInfos = &queueInfo;
 	devInfo.queueCreateInfoCount = 1u;
 	devInfo.ppEnabledExtensionNames = exts.begin();

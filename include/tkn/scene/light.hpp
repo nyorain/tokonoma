@@ -8,6 +8,8 @@
 #include <vpp/image.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
+#include <vpp/shader.hpp>
+#include <vkpp/structs.hpp>
 
 // TODO: directional light: when depth clamp isn't supported, emulate.
 //   see shadowmap.vert. Pass via specialization constant
@@ -41,6 +43,7 @@ struct ShadowData {
 
 constexpr std::uint32_t lightFlagPcf = (1u << 0);
 constexpr std::uint32_t lightFlagShadow = (1u << 1);
+using SceneRenderFunc = std::function<void(vk::CommandBuffer, vk::PipelineLayout)>;
 
 class DirLight {
 public:
@@ -59,6 +62,9 @@ public:
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
+	void render(vk::CommandBuffer cb, const ShadowData&,
+		const SceneRenderFunc& renderScene);
+
 	void updateDevice(const nytl::Mat4f& camvp, float near, float far);
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
@@ -99,6 +105,9 @@ public:
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
+	void render(vk::CommandBuffer cb, const ShadowData&,
+		const SceneRenderFunc& renderScene);
+
 	void updateDevice();
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return shadowMap_.vkImageView(); }
@@ -119,7 +128,28 @@ protected:
 	std::vector<Face> faces_;
 };
 
+// Inits the shadow map renderer for a standard tkn::Scene geometry pipeline.
 ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,
 	vk::DescriptorSetLayout sceneDsLayout, bool multiview, bool depthClamp);
+
+// More detailed shadowmap api that allows using custom shaders, mainly
+// for custom geometry inputs. Otherwise they must behave as the
+// normal shadowmapping shaders.
+struct ShadowPipelineInfo {
+	struct Shaders {
+		nytl::Span<const u32> vertex;
+		nytl::Span<const u32> vertexMultiview;
+		nytl::Span<const u32> fragment;
+	};
+
+	Shaders dir;
+	Shaders point;
+	vk::PipelineVertexInputStateCreateInfo vertex;
+};
+
+ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,
+	bool multiview, bool depthClamp,
+	const ShadowPipelineInfo& info,
+	nytl::Span<const vk::DescriptorSetLayout> dss);
 
 } // namespace tkn

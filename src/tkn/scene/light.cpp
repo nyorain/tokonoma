@@ -11,12 +11,12 @@
 #include <vpp/device.hpp>
 #include <vpp/queue.hpp>
 
-#include <shaders/tkn.shadowmap.vert.h>
-#include <shaders/tkn.shadowmap.multiview.vert.h>
-#include <shaders/tkn.shadowmap.frag.h>
-#include <shaders/tkn.shadowmapCube.vert.h>
-#include <shaders/tkn.shadowmapCube.multiview.vert.h>
-#include <shaders/tkn.shadowmapCube.frag.h>
+#include <shaders/tkn.shadow-s.vert.h>
+#include <shaders/tkn.shadow-mv-s.vert.h>
+#include <shaders/tkn.shadow-s.frag.h>
+#include <shaders/tkn.shadowPoint-s.vert.h>
+#include <shaders/tkn.shadowPoint-mv-s.vert.h>
+#include <shaders/tkn.shadowPoint-s.frag.h>
 
 namespace tkn {
 
@@ -32,6 +32,26 @@ constexpr u32 nlastbits(u32 count) {
 
 ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		vk::DescriptorSetLayout sceneDsLayout, bool multiview, bool depthClamp) {
+	ShadowPipelineInfo spi;
+	spi.dir = {
+		tkn_shadow_s_vert_data,
+		tkn_shadow_mv_s_vert_data,
+		tkn_shadow_s_frag_data
+	};
+	spi.point = {
+		tkn_shadowPoint_s_vert_data,
+		tkn_shadowPoint_mv_s_vert_data,
+		tkn_shadowPoint_s_frag_data
+	};
+	spi.vertex = Scene::vertexInfo();
+	return initShadowData(dev, depthFormat, multiview, depthClamp,
+		spi, {{sceneDsLayout}});
+}
+
+ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
+		bool multiview, bool depthClamp,
+		const ShadowPipelineInfo& shaders,
+		nytl::Span<const vk::DescriptorSetLayout> dss) {
 	ShadowData data;
 	data.depthFormat = depthFormat;
 	data.multiview = multiview;
@@ -125,27 +145,26 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 
 	data.dsLayout = {dev, lightBindings};
 
-	// pipeline layout
-	if(!multiview) {
+	// pipeline
+	std::vector<vk::DescriptorSetLayout> dsLayouts;
+	dsLayouts.push_back(data.dsLayout);
+	dsLayouts.insert(dsLayouts.end(), dss.begin(), dss.end());
+
+	vpp::ShaderModule vertShader;
+	if(multiview) {
+		data.pl = {dev, dsLayouts, {}};
+		vertShader = {dev, shaders.dir.vertexMultiview};
+	} else {
 		vk::PushConstantRange facePcr;
 		facePcr.offset = 0u;
 		facePcr.stageFlags = vk::ShaderStageBits::vertex;
 		facePcr.size = 4u;
 
-		data.pl = {dev, {{data.dsLayout.vkHandle(), sceneDsLayout}}, {{facePcr}}};
-	} else {
-		data.pl = {dev, {{data.dsLayout.vkHandle(), sceneDsLayout}}, {}};
+		data.pl = {dev, dsLayouts, {{facePcr}}};
+		vertShader = {dev, shaders.dir.vertex};
 	}
 
-	// pipeline
-	vpp::ShaderModule vertShader;
-	if(multiview) {
-		vertShader = {dev, tkn_shadowmap_multiview_vert_data};
-	} else {
-		vertShader = {dev, tkn_shadowmap_vert_data};
-	}
-
-	vpp::ShaderModule fragShader(dev, tkn_shadowmap_frag_data);
+	vpp::ShaderModule fragShader(dev, shaders.dir.fragment);
 	vpp::GraphicsPipelineInfo gpi {data.rpDir, data.pl, {{{
 		{vertShader, vk::ShaderStageBits::vertex},
 		{fragShader, vk::ShaderStageBits::fragment},
@@ -153,7 +172,7 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 
 	// see cubemap pipeline below
 	gpi.flags(vk::PipelineCreateBits::allowDerivatives);
-	gpi.vertex = tkn::Scene::vertexInfo();
+	gpi.vertex = shaders.vertex;
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 
 	gpi.depthStencil.depthTestEnable = true;
@@ -182,11 +201,11 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	// cubemap pipe
 	vpp::ShaderModule cubeVertShader;
 	if(multiview) {
-		cubeVertShader = {dev, tkn_shadowmapCube_multiview_vert_data};
+		cubeVertShader = {dev, shaders.point.vertexMultiview};
 	} else {
-		cubeVertShader = {dev, tkn_shadowmapCube_vert_data};
+		cubeVertShader = {dev, shaders.point.vertex};
 	}
-	vpp::ShaderModule cubeFragShader(dev, tkn_shadowmapCube_frag_data);
+	vpp::ShaderModule cubeFragShader(dev, shaders.point.fragment);
 	vpp::GraphicsPipelineInfo cgpi {data.rpPoint, data.pl, {{{
 		{cubeVertShader, vk::ShaderStageBits::vertex},
 		{cubeFragShader, vk::ShaderStageBits::fragment},
@@ -263,7 +282,7 @@ DirLight::DirLight(const WorkBatcher& wb, const ShadowData& data) {
 }
 
 void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
-		const tkn::Scene& scene) {
+		const SceneRenderFunc& renderScene) {
 	vk::ClearValue clearValue {};
 	clearValue.depthStencil = {1.f, 0u};
 
@@ -286,7 +305,7 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pl, 0, {{ds_.vkHandle()}}, {});
 
-		scene.render(cb, pl, false);
+		renderScene(cb, pl);
 		vk::cmdEndRenderPass(cb);
 	} else {
 		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
@@ -309,10 +328,17 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 
 			vk::cmdPushConstants(cb, data.pl, vk::ShaderStageBits::fragment,
 				0, 4, &i);
-			scene.render(cb, pl, false);
+			renderScene(cb, pl);
 			vk::cmdEndRenderPass(cb);
 		}
 	}
+}
+
+void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
+		const tkn::Scene& scene) {
+	render(cb, data, [&scene](vk::CommandBuffer cb, vk::PipelineLayout pl){
+		scene.render(cb, pl, false);
+	});
 }
 
 // TODO: calculate stuff in update, not updateDevice
@@ -476,7 +502,7 @@ PointLight::PointLight(const WorkBatcher& wb, const ShadowData& data,
 }
 
 void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
-		const Scene& scene) {
+		const SceneRenderFunc& renderScene) {
 	vk::ClearValue clearValue {};
 	clearValue.depthStencil = {1.f, 0u};
 
@@ -497,7 +523,7 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pl, 0, {{ds_.vkHandle()}}, {});
 
-		scene.render(cb, pl, false);
+		renderScene(cb, pl);
 		vk::cmdEndRenderPass(cb);
 	} else {
 		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
@@ -519,10 +545,17 @@ void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
 
 			vk::cmdPushConstants(cb, data.pl, vk::ShaderStageBits::fragment,
 				0, 4, &i);
-			scene.render(cb, pl, false);
+			renderScene(cb, pl);
 			vk::cmdEndRenderPass(cb);
 		}
 	}
+}
+
+void PointLight::render(vk::CommandBuffer cb, const ShadowData& data,
+		const Scene& scene) {
+	render(cb, data, [&scene](vk::CommandBuffer cb, vk::PipelineLayout pl) {
+		scene.render(cb, pl, false);
+	});
 }
 
 void PointLight::updateDevice() {

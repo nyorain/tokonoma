@@ -285,4 +285,17 @@ vk::Format findDepthFormat(const vpp::Device& dev) {
 	return vpp::findSupported(dev, fmts, img, features);
 }
 
+bool isDepthFormat(vk::Format format) {
+	switch(format) {
+		case vk::Format::d32Sfloat:
+		case vk::Format::d32SfloatS8Uint:
+		case vk::Format::d24UnormS8Uint:
+		case vk::Format::d16Unorm:
+		case vk::Format::d16UnormS8Uint:
+			return true;
+		default:
+			return false;
+	}
+}
+
 } // namespace tkn

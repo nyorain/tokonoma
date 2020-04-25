@@ -36,12 +36,31 @@ scatter_glsl = files('../atmosphere/scatter.glsl')
 # The shader will be looked for in '../<groupname>/<shadername>'
 shaders_src = {
 	'tkn': [
-		['shaders/shadowmap.vert', scene_glsl],
-		['shaders/shadowmap.vert', scene_glsl, 'shadowmap.multiview.vert', ['-DMULTIVIEW']],
-		['shaders/shadowmap.frag', scene_glsl],
-		['shaders/shadowmapCube.vert', scene_glsl],
-		['shaders/shadowmapCube.vert', scene_glsl, 'shadowmapCube.multiview.vert', ['-DMULTIVIEW']],
-		['shaders/shadowmapCube.frag', scene_glsl],
+		# all possible shadowmap configuration permutations
+		['shaders/shadow.vert', scene_glsl],
+		['shaders/shadow.vert', scene_glsl,
+			'shadow-mv.vert', ['-DMULTIVIEW']],
+		['shaders/shadow.vert', scene_glsl,
+			'shadow-s.vert', ['-DSCENE']],
+		['shaders/shadow.vert', scene_glsl,
+			'shadow-mv-s.vert', ['-DMULTIVIEW', '-DSCENE']],
+
+		['shaders/shadow.frag', scene_glsl],
+		['shaders/shadow.frag', scene_glsl,
+			'shadow-s.frag', ['-DSCENE']],
+
+		['shaders/shadowPoint.vert', scene_glsl],
+		['shaders/shadowPoint.vert', scene_glsl,
+			'shadowPoint-mv.vert', ['-DMULTIVIEW']],
+		['shaders/shadowPoint.vert', scene_glsl,
+			'shadowPoint-s.vert', ['-DSCENE']],
+		['shaders/shadowPoint.vert', scene_glsl,
+			'shadowPoint-mv-s.vert', ['-DMULTIVIEW', '-DSCENE']],
+
+		['shaders/shadowPoint.frag', scene_glsl],
+		['shaders/shadowPoint.frag', scene_glsl,
+			'shadowPoint-s.frag', ['-DSCENE']],
+
 		['shaders/skybox.vert'],
 		['shaders/skybox.frag'],
 		['shaders/fullscreen.vert'],
@@ -220,6 +239,13 @@ shaders_src = {
 		['model.frag'],
 		['update.comp'],
 		['dispatch.comp'],
+	],
+	'scatter': [
+		['model.vert'],
+		['model.frag'],
+		['scatter.vert'],
+		['scatter.frag'],
+		['pp.frag'],
 	],
 }
 

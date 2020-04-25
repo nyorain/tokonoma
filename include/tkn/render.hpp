@@ -70,6 +70,7 @@ void downscale(const vpp::Device& dev, vk::CommandBuffer cb,
 
 /// Find a supported depth format (usage: attachment and sampled).
 vk::Format findDepthFormat(const vpp::Device& dev);
+bool isDepthFormat(vk::Format);
 
 struct SyncScope {
 	vk::PipelineStageFlags stages {};

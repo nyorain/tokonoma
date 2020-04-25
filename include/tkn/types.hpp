@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <nytl/vec.hpp>
+#include <nytl/mat.hpp>
 
 namespace tkn {
 inline namespace types {
@@ -30,6 +31,10 @@ using nytl::Vec4i;
 using nytl::Vec2ui;
 using nytl::Vec3ui;
 using nytl::Vec4ui;
+
+using nytl::Mat2f;
+using nytl::Mat3f;
+using nytl::Mat4f;
 
 } // namespace types
 } // namespace tkn
