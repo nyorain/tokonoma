@@ -13,13 +13,19 @@ void main() {
 
 	// blur it a little bit to get rid of dithering
 	vec4 scatter = texture(scatterTex, uv);
-	scatter += textureOffset(scatterTex, uv, ivec2(0, 1));
-	scatter += textureOffset(scatterTex, uv, ivec2(1, 0));
-	scatter += textureOffset(scatterTex, uv, ivec2(0, -1));
-	scatter += textureOffset(scatterTex, uv, ivec2(-1, 0));
-	scatter /= 5.f;
 
-	vec3 sum = color.rgb + 0.5 * scatter.rgb;
+#define OFF 1
+	scatter += textureOffset(scatterTex, uv, ivec2(0, OFF));
+	scatter += textureOffset(scatterTex, uv, ivec2(OFF, 0));
+	scatter += textureOffset(scatterTex, uv, ivec2(OFF, OFF));
+	scatter += textureOffset(scatterTex, uv, ivec2(-OFF, OFF));
+	scatter += textureOffset(scatterTex, uv, ivec2(OFF, -OFF));
+	scatter += textureOffset(scatterTex, uv, ivec2(0, -OFF));
+	scatter += textureOffset(scatterTex, uv, ivec2(-OFF, 0));
+	scatter += textureOffset(scatterTex, uv, ivec2(-OFF, -OFF));
+	scatter /= 9.f;
+
+	vec3 sum = color.rgb + 0.25 * scatter.rgb;
 	sum = 1 - exp(-exposure * sum);
 
 	fragColor = vec4(sum, 1.0);

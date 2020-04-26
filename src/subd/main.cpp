@@ -1,7 +1,7 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/shader.hpp>
 #include <tkn/window.hpp>
-#include <tkn/qcamera.hpp>
+#include <tkn/camera2.hpp>
 #include <tkn/timeWidget.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/scene/shape.hpp>
@@ -432,30 +432,10 @@ public:
 	void update(double dt) override {
 		Base::update(dt);
 
-		// tkn::checkMovement(camera_, *kc, dt);
-		tkn::QuatCameraMovement movement {};
-		movement.fastMult = 5.f;
-		movement.slowMult = 0.05f;
-		checkMovement(camera_, swaDisplay(), dt, movement);
-
-		if(swa_display_key_pressed(swaDisplay(), swa_key_z)) {
-			rollVel_ -= 0.1 * dt;
-		}
-
-		if(swa_display_key_pressed(swaDisplay(), swa_key_x)) {
-			rollVel_ += 0.1 * dt;
-		}
-
-		if(rotateView_) {
-			auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
-			auto delta = mpos_ - mposStart_;
-			auto yaw = 4 * dt * sign(delta.x) * std::pow(std::abs(delta.x), 1);
-			auto pitch = 4 * dt * sign(delta.y) * std::pow(std::abs(delta.y), 1);
-			tkn::rotateView(camera_, yaw, pitch, 0.f);
-		}
-
-		rollVel_ *= std::pow(0.001, dt);
-		tkn::rotateView(camera_, 0.f, 0.f, rollVel_);
+		tkn::SpaceshipCamControls ctrls;
+		ctrls.move.fastMult = 5.f;
+		ctrls.move.slowMult = 0.05f;
+		tkn::update(camera_, camcon_, swaDisplay(), dt);
 
 		if(camera_.update) {
 			Base::scheduleRedraw();
@@ -501,32 +481,6 @@ public:
 		}
 
 		updateStep_ = false;
-	}
-
-	void mouseMove(const swa_mouse_move_event& ev) override {
-		Base::mouseMove(ev);
-		using namespace nytl::vec::cw::operators;
-		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
-	}
-
-	bool mouseWheel(float dx, float dy) override {
-		return Base::mouseWheel(dx, dy);
-	}
-
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(Base::mouseButton(ev)) {
-			return true;
-		}
-
-		using namespace nytl::vec::cw::operators;
-		auto mpos = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			mposStart_ = mpos;
-			return true;
-		}
-
-		return false;
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -611,18 +565,14 @@ protected:
 		vpp::SubBuffer dispatch; // indirect dispatch command
 	} comp_;
 
-	bool rotateView_ {};
-	nytl::Vec2f mposStart_ {};
-	nytl::Vec2f mpos_ {};
+	tkn::Camera camera_ {};
+	tkn::SpaceshipCamCon camcon_ {};
 
-	tkn::QuatCamera camera_ {};
 	bool reload_ {};
 	nytl::Mat4f frozenVP_ {};
 
 	bool update_ {false};
 	bool updateStep_ {false};
-
-	float rollVel_ {0.f};
 
 	tkn::TimeWidget timeWidget_;
 	rvg::Transform windowTransform_;

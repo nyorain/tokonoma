@@ -4,7 +4,7 @@
 // See the fragment shader
 
 #include <tkn/config.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/camera2.hpp>
 #include <tkn/singlePassApp.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
@@ -395,7 +395,7 @@ public:
 		}
 #endif // BR_AUDIO
 
-		tkn::init(touch_, camera_, rvgContext());
+		// tkn::init(touch_, camera_, rvgContext());
 		return true;
 	}
 
@@ -545,14 +545,14 @@ public:
 			updateLight_ = true;
 		}
 
-		tkn::update(touch_, dt);
+		// tkn::update(touch_, dt);
 
 #ifdef BR_AUDIO
 		if(audio_.d3) {
-			auto zdir = dir(camera_);
-			auto right = nytl::normalized(nytl::cross(zdir, camera_.up));
-			auto up = nytl::normalized(nytl::cross(right, zdir));
-			audio_.d3->updateListener(camera_.pos, zdir, up);
+			// auto zdir = dir(camera_);
+			// auto right = nytl::normalized(nytl::cross(zdir, camera_.up));
+			// auto up = nytl::normalized(nytl::cross(right, zdir));
+			audio_.d3->updateListener(camera_.pos, dir(camera_), up(camera_));
 		}
 #endif // BR_AUDIO
 
@@ -650,25 +650,11 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			Base::scheduleRedraw();
-		}
+		tkn::mouseMove(camera_, camcon_, swaDisplay(), {ev.dx, ev.dy});
 	}
 
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(Base::mouseButton(ev)) {
-			return true;
-		}
 
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			return true;
-		}
-
-		return false;
-	}
-
+	/*
 	bool touchBegin(const swa_touch_event& ev) override {
 		if(Base::touchBegin(ev)) {
 			return true;
@@ -692,6 +678,7 @@ public:
 		Base::scheduleRedraw();
 		return true;
 	}
+	*/
 
 	nytl::Mat4f projectionMatrix() const {
 		auto aspect = float(windowSize().x) / windowSize().y;
@@ -816,10 +803,12 @@ protected:
 	bool multiDrawIndirect_ {};
 
 	float time_ {};
-	bool rotateView_ {false}; // mouseLeft down
+	// bool rotateView_ {false}; // mouseLeft down
 
 	tkn::Scene scene_; // no default constructor
+
 	tkn::Camera camera_ {};
+	tkn::FPCamCon camcon_ {};
 
 	struct DirLight : public tkn::DirLight {
 		using tkn::DirLight::DirLight;
@@ -846,7 +835,7 @@ protected:
 	tkn::Texture brdfLut_;
 
 	// args
-	tkn::TouchCameraController touch_;
+	// tkn::TouchCameraController touch_;
 
 #ifdef BR_AUDIO
 	class AudioPlayer : public tkn::AudioPlayer {

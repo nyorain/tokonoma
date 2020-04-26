@@ -1,5 +1,5 @@
 // Simple, lightweight and independent Quaternion implementation.
-// Mostly put together from snippets and implementation notes found on the internet.
+// Mostly put together from snippets and implementation notes on the internet.
 
 #pragma once
 

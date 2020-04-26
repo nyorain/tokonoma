@@ -1,7 +1,7 @@
 #include <tkn/app2.hpp>
 #include <tkn/render.hpp>
 #include <tkn/shader.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/camera2.hpp>
 #include <tkn/types.hpp>
 #include <tkn/util.hpp>
 #include <tkn/bits.hpp>
@@ -35,6 +35,14 @@
 #include <shaders/tkn.shadowPoint.frag.h>
 
 #include <random>
+
+// TODO:
+// - add TAAPass. This allows us to sample longer rays
+//   and go down with the steps. Investigate if this maybe
+//   even means we can get rid of the dithering?
+// - correctly resolve the dithering (4x4 blurs? maybe just use
+//   a really small gaussian pass?) instead of the current
+//   hack-mess in pp.frag
 
 using namespace tkn::types;
 
@@ -575,7 +583,9 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
-		tkn::checkMovement(camera_, swaDisplay(), dt);
+		if(!arcball_) {
+			tkn::checkMovement(camera_, swaDisplay(), dt);
+		}
 		App::scheduleRedraw();
 	}
 
@@ -630,11 +640,24 @@ public:
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
 
-		constexpr auto btn = swa_mouse_button_left;
-		constexpr auto fac = 0.005;
-		if(swa_display_mouse_button_pressed(swaDisplay(), btn)) {
-			tkn::rotateView(camera_, fac * ev.dx, fac * ev.dy);
+		if(arcball_) {
+			tkn::mouseMovePersp(camera_, camcon_, swaDisplay(), {ev.dx, ev.dy},
+				windowSize(), fov);
+		} else {
+			tkn::mouseMove(camera_, camconFP_, swaDisplay(), {ev.dx, ev.dy});
 		}
+	}
+
+	bool mouseWheel(float dx, float dy) override {
+		if(App::mouseWheel(dx, dy)) {
+			return true;
+		}
+
+		if(arcball_) {
+			tkn::mouseWheel(camera_, camcon_, dy);
+		}
+
+		return true;
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -657,7 +680,14 @@ public:
 				l.updateDevice();
 				App::scheduleRerecord();
 				break;
-			} default:
+			} case swa_key_t:
+				arcball_ ^= true;
+				if(!arcball_) {
+					camconFP_.pitch = xRot(camera_.rot);
+					camconFP_.yaw = yRot(camera_.rot);
+				}
+				break;
+			default:
 				return false;
 			}
 
@@ -671,9 +701,14 @@ public:
 
 protected:
 	vk::Format depthFormat_;
-	tkn::Camera camera_;
 	vpp::SubBuffer camUbo_;
 	vpp::Sampler sampler_;
+
+	bool arcball_ {true};
+	tkn::Camera camera_;
+	tkn::ArcballCamCon camcon_;
+	tkn::FPCamCon camconFP_;
+
 
 	struct {
 		bool multiview {};

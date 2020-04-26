@@ -49,10 +49,10 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, vec2 pixel) {
 
 	float rayLength = length(ray);
 	vec3 rayDir = ray / rayLength;
-	rayLength = min(rayLength, 10.f);
+	rayLength = min(rayLength, 20.f);
 	ray = rayDir * rayLength;
 
-	const uint steps = 10u;
+	const uint steps = 30u;
 	vec3 step = ray / steps;
 
 	float accum = 0.0;
@@ -61,20 +61,15 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, vec2 pixel) {
 	// random dithering, we smooth it out later on
 	vec2 ppixel = mod(pixel, vec2(4, 4));
 	float ditherValue = ditherPattern[int(ppixel.x)][int(ppixel.y)];
-	// vec2 ppixel = mod(pixel, vec2(8, 8));
-	// float ditherValue = dither8x8[int(ppixel.x) + 8 * int(ppixel.y)] / 64.f;
 	ipos.xyz += ditherValue * step.xyz;
-	// ipos += 0.5 * random(rayEnd) * step;
 
-	// TODO: falloff over time somehow?
+	// TODO: calculate out-scatter as well?
 	for(uint i = 0u; i < steps; ++i) {
 		accum += lightStrength(ipos);
 		ipos += step;
 	}
 
-	accum /= steps;
-	accum = clamp(accum, 0.0, 1.0);
-	return accum;
+	return 0.5 * accum * length(step);
 }
 
 void main() {
