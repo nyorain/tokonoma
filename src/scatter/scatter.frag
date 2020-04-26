@@ -20,10 +20,27 @@ layout(set = 1, binding = 0, row_major) uniform PointLightBuf {
 layout(set = 1, binding = 1) uniform samplerCubeShadow shadowCube;
 layout(set = 2, binding = 0) uniform sampler2D depthTex;
 
-float lightStrength(vec3 worldPos) {
+float phase(float cosTheta, float g) {
+	float gg = g * g;
+
+	// from csp atmosphere and gpugems, normalized
+	const float fac = 0.11936620731; // 3 / (8 * pi) for normalization
+	float cc = cosTheta * cosTheta;
+	return fac * ((1 - gg) * (1 + cc)) / ((2 + gg) * pow(1 + gg - 2 * g * cosTheta, 1.5));
+}
+
+float scatterStrength(vec3 worldPos) {
+	// const float mieG = -0.9;
+	const float mieG = -0.2;
 	float shadow = pointShadow(shadowCube, light.pos, light.radius, worldPos);
 	float att = defaultAttenuation(distance(worldPos, light.pos), light.radius);
-	return shadow * att;
+
+	vec3 ldir = normalize(worldPos - light.pos);
+	vec3 vdir = normalize(worldPos - scene.viewPos);
+	float cosTheta = dot(ldir, vdir);
+
+	float scatter = phase(cosTheta, mieG);
+	return max(scatter * shadow * att, 0.0);
 }
 
 // From deferred: scatter.glsl
@@ -39,8 +56,6 @@ const float ditherPattern[4][4] = {
 // To work, the shadowMap(worldPos) function has to be defined in the
 // calling shader.
 float lightScatterShadow(vec3 viewPos, vec3 pos, vec2 pixel) {
-	// first attempt at shadow-map based light scattering
-	// http://www.alexandre-pestana.com/volumetric-lights/
 	// TODO: here we probably really profit from different mipmaps
 	// or some other optimizations...
 	vec3 rayStart = viewPos;
@@ -49,10 +64,10 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, vec2 pixel) {
 
 	float rayLength = length(ray);
 	vec3 rayDir = ray / rayLength;
-	rayLength = min(rayLength, 20.f);
+	rayLength = min(rayLength, 10.f);
 	ray = rayDir * rayLength;
 
-	const uint steps = 30u;
+	const uint steps = 20u;
 	vec3 step = ray / steps;
 
 	float accum = 0.0;
@@ -65,11 +80,11 @@ float lightScatterShadow(vec3 viewPos, vec3 pos, vec2 pixel) {
 
 	// TODO: calculate out-scatter as well?
 	for(uint i = 0u; i < steps; ++i) {
-		accum += lightStrength(ipos);
+		accum += scatterStrength(ipos);
 		ipos += step;
 	}
 
-	return 0.5 * accum * length(step);
+	return accum * length(step);
 }
 
 void main() {

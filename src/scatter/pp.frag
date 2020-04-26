@@ -25,7 +25,7 @@ void main() {
 	scatter += textureOffset(scatterTex, uv, ivec2(-OFF, -OFF));
 	scatter /= 9.f;
 
-	vec3 sum = color.rgb + 0.25 * scatter.rgb;
+	vec3 sum = color.rgb + scatter.rgb;
 	sum = 1 - exp(-exposure * sum);
 
 	fragColor = vec4(sum, 1.0);
