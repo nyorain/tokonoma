@@ -1,6 +1,7 @@
 #include <tkn/camera2.hpp>
+#include <dlg/dlg.hpp>
 
-namespace tkn {
+namespace tkn::cam2 {
 
 // Spaceship
 void update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
@@ -59,7 +60,10 @@ void mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
 			con.pitch = std::clamp<float>(con.pitch, -pi / 2 + e, pi / 2 - e);
 		}
 
-		cam.rot = Quaternion::eulerAngle(con.pitch, con.yaw, 0.f);
+		// cam.rot = Quaternion::eulerAngle(con.pitch, con.yaw, 0.f);
+		// cam.rot = Quaternion::taitBryan(-con.yaw, 0.f, 0.f) * Quaternion::taitBryan(0.f, -con.pitch, 0.f);
+		cam.rot = Quaternion::yxz(con.yaw, con.pitch, 0.f);
+		// cam.rot = Quaternion::axisAngle(1, 0, 0, con.pitch) * Quaternion::axisAngle(0, 1, 0, con.yaw);
 		cam.update = true;
 	}
 }
@@ -89,10 +93,11 @@ void mouseMove(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
 		float pitch = controls.rotateFac.y * delta.y;
 		Quaternion rot;
 		if(controls.allowRoll) {
-			rot = cam.rot * Quaternion::eulerAngle(-pitch, -yaw, 0);
+			rot = cam.rot * Quaternion::yxz(-yaw, -pitch, 0);
+			// rot = Quaternion::taitBryan(yaw, pitch, 0) * cam.rot;
 		} else {
-			rot = cam.rot * Quaternion::eulerAngle(-pitch, 0, 0);
-			rot = Quaternion::eulerAngle(0, -yaw, 0) * rot;
+			rot = cam.rot * Quaternion::yxz(0, -pitch, 0);
+			rot = Quaternion::yxz(-yaw, 0, 0) * rot;
 		}
 
 		cam.rot = rot;
@@ -166,4 +171,4 @@ bool checkMovement(Camera& c, swa_display* dpy, float dt,
 	return update;
 }
 
-} // namespace tkn
+} // namespace tkn::cam2

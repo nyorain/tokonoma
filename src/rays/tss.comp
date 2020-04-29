@@ -72,7 +72,7 @@ vec3 colBlurred(vec2 uv) {
 	return final_color;
 }
 
-const float exposure = 4.f;
+const float exposure = 1.f;
 vec3 tonemap(vec3 c) {
 	return 1.f - exp(-exposure * c);
 }
@@ -128,7 +128,17 @@ void main() {
 		return;
 	}
 
+	float fac = 0.05f;
 	vec3 h = imageLoad(history, id).rgb;
+	h += fac * imageLoad(history, id + ivec2(1, 0)).rgb;
+	h += fac * imageLoad(history, id + ivec2(0, 1)).rgb;
+	h += fac * imageLoad(history, id + ivec2(0, -1)).rgb;
+	h += fac * imageLoad(history, id + ivec2(-1, 0)).rgb;
+	h += fac * imageLoad(history, id + ivec2(-1, 1)).rgb;
+	h += fac * imageLoad(history, id + ivec2(-1, -1)).rgb;
+	h += fac * imageLoad(history, id + ivec2(1, -1)).rgb;
+	h += fac * imageLoad(history, id + ivec2(1, 1)).rgb;
+	h /= (1 + 8 * fac);
 
 	// TODO: we really need a larger area to sample for this usecase,
 	// there may be a lot of space between rays. We could sample one pixel
@@ -212,6 +222,9 @@ void main() {
 	h.rgb = clip_aabb((0.2 + 0.8 * r1) * cmin, (1 + 4 * r2) * cmax, cavg, h.rgb);
 	*/
 
+	// TODO: noisy blur upscale? or use edge-information somehow?
+	// I guess we could render 1-bit edge-buffer, where we just render
+	// all segments as lines.
 	// vec3 rb = r;
 	vec3 rb = tonemap(colBlurred(uv));
 	// vec3 rb = colBlurred(uv);
@@ -223,11 +236,14 @@ void main() {
 	float lum1 = dot(luminanceFac, h);
 	float ndiff = abs(lum0 - lum1) / (max(lum0, max(lum1, 0.0001)));
 	// diff = pow(diff, 2.0);
-	float f = 1;
+	float f = 0.99;
 	// f -= diff * gradientNoise(0.05 * (h.rg + h.b));
 	// f -= 0.2 * pow(random(0.1 + h.rg + h.b), 2);
-	float n = gradientNoise(uv + 0.05 * (h.rg + h.b));
+	
+	float n = gradientNoise(1000 * uv + 10 * (h.rg + h.b));
+	// float n = gradientNoise(1000 * uv);
 	f -= 1.0 * pow(ndiff, 2) * n;
+
 	// float f = 0.9999;
 
 	vec3 res = mix(rb, h, f);

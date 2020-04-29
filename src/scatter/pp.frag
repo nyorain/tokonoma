@@ -3,30 +3,23 @@
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 fragColor;
 
-layout(set = 0, binding = 0) uniform sampler2D colorTex;
-layout(set = 0, binding = 1) uniform sampler2D scatterTex;
+layout(set = 0, binding = 0) uniform sampler2D inTex;
 
 const float exposure = 1.f;
 
 void main() {
-	vec4 color = texture(colorTex, uv);
+	// sharpening
+	vec3 original = texture(inTex, uv).rgb;
 
-	// blur it a little bit to get rid of dithering
-	vec4 scatter = texture(scatterTex, uv);
+	float fac = 0.1;
+	vec3 sharp = (1 + fac * 4) * original;
+	sharp += -fac * textureOffset(inTex, uv, ivec2(1, 0)).rgb;
+	sharp += -fac * textureOffset(inTex, uv, ivec2(0, 1)).rgb;
+	sharp += -fac * textureOffset(inTex, uv, ivec2(-1, 0)).rgb;
+	sharp += -fac * textureOffset(inTex, uv, ivec2(0, -1)).rgb;
+ 
+	vec3 color = sharp;
 
-#define OFF 1
-	scatter += textureOffset(scatterTex, uv, ivec2(0, OFF));
-	scatter += textureOffset(scatterTex, uv, ivec2(OFF, 0));
-	scatter += textureOffset(scatterTex, uv, ivec2(OFF, OFF));
-	scatter += textureOffset(scatterTex, uv, ivec2(-OFF, OFF));
-	scatter += textureOffset(scatterTex, uv, ivec2(OFF, -OFF));
-	scatter += textureOffset(scatterTex, uv, ivec2(0, -OFF));
-	scatter += textureOffset(scatterTex, uv, ivec2(-OFF, 0));
-	scatter += textureOffset(scatterTex, uv, ivec2(-OFF, -OFF));
-	scatter /= 9.f;
-
-	vec3 sum = color.rgb + scatter.rgb;
-	sum = 1 - exp(-exposure * sum);
-
-	fragColor = vec4(sum, 1.0);
+	// simple tonemap
+	fragColor = vec4(1.0 - exp(-exposure * color), 1.0);
 }

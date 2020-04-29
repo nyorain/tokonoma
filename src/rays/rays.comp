@@ -168,6 +168,7 @@ vec2 intersectionFacs(vec2 p1, vec2 d1, vec2 p2, vec2 d2) {
 	return (1 / det) * vec2(cross(ab, d2), cross(ab, d1));
 }
 
+// The factor on the intersected segment is returned in isfac
 const float eps = 0.0001;
 bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos, out float isfac) {
 	float m = -1;
@@ -193,9 +194,36 @@ bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos, out float isfac) 
 	return true;
 }
 
+// Returns the number of rays that should be generated at
+// the given bounce depth.
+// TODO: could make it dependent on the length that ray has traveled
+// so far.
+uint numRays(uint depth) {
+	// return 1 + min(4 * depth * depth, 3);
+	return 1;
+}
 
-const uint maxBounces = 7u;
+void insert(vec2 posStart, vec2 posEnd, vec4 colorStart, vec4 colorEnd) {
+	uint id = atomicAdd(pointCount, 2);
+	positions[id + 0] = posStart; 
+	positions[id + 1] = posEnd; 
+	colors[id + 0] = colorStart;
+	colors[id + 1] = colorEnd;
+}
+
+void insert(vec2 posStart, vec2 posEnd, vec3 colorStart, vec3 colorEnd) {
+	insert(posStart, posEnd, vec4(colorStart, 1.0), vec4(colorEnd, 1.0));
+}
+
+const uint maxBounces = 4u;
 const float lightEps = 0.001;
+
+struct Iteration {
+	vec2 pos;
+	vec2 normal;
+	vec3 color;
+	uint id;
+};
 
 void main() {
 	uint lightID = gl_GlobalInvocationID.x;
@@ -225,25 +253,130 @@ void main() {
 	// direction slightly random from offset
 	vec2 noff = vec2(-off.y, off.x);
 	float rf = -1 + 2 * random(view.time + sampleID);
+	// rf = 0.f;
 	// rf = 0.2 * rf;
 	// rf *= pow(abs(rf), 4);
-	vec2 dir = normalize(rf * noff + (1 - rf) * off);
+	vec2 dir = normalize(rf * noff + (1 - abs(rf)) * off);
 
 	float c = dot(dir, off);
 	// float s = sqrt(1 - c * c);
 	// if(dot(noff, dir) > 0) s = -s;
-	vec2 start = light.pos + light.radius * off;
+	// vec2 start = light.pos + light.radius * off;
+	vec2 start = light.pos - light.radius * off;
+
 	// vec2 start = light.pos + light.radius * (c * off + s * noff);
 
 	Segment seg;
 	vec2 pos = start;
 	vec3 color = (1.f / sampleCount) * light.color * c;
+	// vec3 color = (1.f / sampleCount) * light.color;
 	vec2 npos;
 
 	float dist = light.radius;
 	uint bounce = 0;
 	bool finished = false;
 	float isf;
+
+	/*
+	Iteration iterations[maxBounces];
+
+	// TODO: sad code duplication here with iteration
+	// initial ray
+	if(!trace(pos, dir, seg, npos, isf)) {
+		// the ray did not hit anything
+		// just add final ray out of screen
+		npos = clip_aabb(view.pos, view.pos + view.size, pos, dir);
+		insert(pos, npos, color, color);
+		return;
+	}
+
+	// ignore this ray, see iteration
+	// TODO: we could at least insert *this* ray
+	if(isf < eps || isf > 1 - eps) {
+		return;
+	}
+
+	vec2 tangent = normalize(seg.end - seg.start);
+	// TODO: left or right normal? define convention
+	// For now, all segments are double sided.
+	vec2 normal = vec2(-tangent.y, tangent.x);
+	if(dot(normal, -dir) < 0) {
+		normal *= -1;
+	}
+
+	Material mat = materials[seg.material];
+	iterations[0].pos = npos;
+	iterations[0].normal = normal;
+	iterations[0].color = color * mat.albedo * max(dot(-dir, normal), 0);
+	iterations[0].id = 0;
+
+	insert(pos, npos, color, color);
+
+	uint depth = 0u;
+	while(true) {
+		// we finished this depth for the current ray
+		if(iterations[depth].id++ > numRays(depth + 1)) {
+			if(depth == 0) {
+				break;
+			}
+
+			--depth;
+			continue;
+		}
+
+		// otherwise: generate new ray
+		vec2 pos = iterations[depth].pos;
+		vec2 normal = iterations[depth].normal;
+		vec2 tangent = vec2(-normal.y, normal.x);
+
+		// just lambert
+		// TODO: importance sample, better sampling in general!
+		float theta = pi * random(5 + iterations[depth].id + pos + view.time);
+		float ct = cos(theta);
+		float st = sin(theta);
+		vec2 dir = normalize(st * normal + ct * tangent);
+
+		if(!trace(pos, dir, seg, npos, isf)) {
+			// the ray did not hit anything
+			// just add final ray out of screen
+			npos = clip_aabb(view.pos, view.pos + view.size, pos, dir);
+			insert(pos, npos, color, color);
+			continue;
+		}
+
+		// don't let rays hit on outermost segment parts, we just
+		// abandon this ray.
+		// we do this so we don't get light leaks
+		// TODO: should be still write the current ray to buffer?
+		// I guess there is no harm doing this, really.
+		if(isf < eps || isf > 1 - eps) {
+			continue;
+		}
+
+		vec3 color = iterations[depth].color;
+		insert(pos, npos, color, color);
+
+		if((depth + 1) < maxBounces) {
+			// generate a new ray and follow it
+			vec2 tangent = normalize(seg.end - seg.start);
+			// TODO: left or right normal? define convention
+			// For now, all segments are double sided.
+			vec2 normal = vec2(-tangent.y, tangent.x);
+			if(dot(normal, -dir) < 0) {
+				normal *= -1;
+			}
+
+			Material mat = materials[seg.material];
+
+			++depth;
+			iterations[depth].pos = npos;
+			iterations[depth].normal = normal;
+			iterations[depth].color = color * mat.albedo * max(dot(-dir, normal), 0);
+			iterations[depth].id = 0;
+		}
+	}
+*/
+
 	while(trace(pos, dir, seg, npos, isf)) {
 		if(isf < eps || isf > 1 - eps) {
 			finished = true;

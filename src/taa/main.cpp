@@ -1,8 +1,5 @@
-// WIP: playing around, might be in an ugly state
-// Based upon br
-
-#include "taa.hpp"
-#include <tkn/camera.hpp>
+#include <tkn/taa.hpp>
+#include <tkn/camera2.hpp>
 #include <tkn/app2.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
@@ -54,6 +51,9 @@
 #include <vector>
 #include <string>
 
+// NOTE: this used to implement a temporal super sampling pass but that was
+// moved to tkn (see tkn/taa.hpp) since other projects use it now as well.
+
 using namespace tkn::types;
 
 class ViewApp : public tkn::App {
@@ -61,7 +61,7 @@ public:
 	static constexpr auto historyFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
 	// TODO: we can probably use a 8-bit buffer here with a proper encoding
-	static constexpr auto velocityFormat = vk::Format::r32g32b32a32Sfloat;
+	static constexpr auto velocityFormat = vk::Format::r16g16b16a16Sfloat;
 
 	static constexpr u32 modeDirLight = (1u << 0);
 	static constexpr u32 modePointLight = (1u << 1);
@@ -196,23 +196,24 @@ public:
 		}}, {}};
 
 		// offscreen render pass
+		auto dstScope = taa_.dstScopeInput();
 		std::array<vk::AttachmentDescription, 3> attachments;
 		attachments[0].initialLayout = vk::ImageLayout::undefined;
-		attachments[0].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		attachments[0].finalLayout = dstScope.layout;
 		attachments[0].format = offscreenFormat;
 		attachments[0].loadOp = vk::AttachmentLoadOp::clear;
 		attachments[0].storeOp = vk::AttachmentStoreOp::store;
 		attachments[0].samples = vk::SampleCountBits::e1;
 
 		attachments[1].initialLayout = vk::ImageLayout::undefined;
-		attachments[1].finalLayout = vk::ImageLayout::depthStencilReadOnlyOptimal;
+		attachments[1].finalLayout = dstScope.layout;
 		attachments[1].format = depthFormat_;
 		attachments[1].loadOp = vk::AttachmentLoadOp::clear;
 		attachments[1].storeOp = vk::AttachmentStoreOp::store;
 		attachments[1].samples = vk::SampleCountBits::e1;
 
 		attachments[2].initialLayout = vk::ImageLayout::undefined;
-		attachments[2].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		attachments[2].finalLayout = dstScope.layout;
 		attachments[2].format = velocityFormat;
 		attachments[2].loadOp = vk::AttachmentLoadOp::clear;
 		attachments[2].storeOp = vk::AttachmentStoreOp::store;
@@ -245,8 +246,8 @@ public:
 			vk::AccessBits::colorAttachmentWrite |
 			vk::AccessBits::depthStencilAttachmentWrite;
 		dependency.dstSubpass = vk::subpassExternal;
-		dependency.dstStageMask = vk::PipelineStageBits::computeShader;
-		dependency.dstAccessMask = vk::AccessBits::shaderRead;
+		dependency.dstStageMask = dstScope.stages;
+		dependency.dstAccessMask = dstScope.access;
 
 		vk::RenderPassCreateInfo rpi;
 		rpi.subpassCount = 1;
@@ -461,20 +462,20 @@ public:
 		};
 
 		createFlagCheckbox(panel, "depthReject", taa_.params.flags,
-			TAAPass::flagDepthReject);
+			tkn::TAAPass::flagDepthReject);
 		createFlagCheckbox(panel, "closestDepth", taa_.params.flags,
-			TAAPass::flagClosestDepth);
+			tkn::TAAPass::flagClosestDepth);
 		createFlagCheckbox(panel, "tonemap", taa_.params.flags,
-			TAAPass::flagTonemap);
+			tkn::TAAPass::flagTonemap);
 		createFlagCheckbox(panel, "colorClip", taa_.params.flags,
-			TAAPass::flagColorClip);
+			tkn::TAAPass::flagColorClip);
 		createFlagCheckbox(panel, "luminanceWeigh", taa_.params.flags,
-			TAAPass::flagLuminanceWeigh);
+			tkn::TAAPass::flagLuminanceWeigh);
 
 		auto& cbox = panel.create<Checkbox>("disable").checkbox();
 		cbox.onToggle = [&](auto&) {
 			disable_ ^= true;
-			taa_.params.flags ^= TAAPass::flagPassthrough;
+			taa_.params.flags ^= tkn::TAAPass::flagPassthrough;
 		};
 
 		return true;
@@ -590,52 +591,6 @@ public:
 		pdsu.imageSampler({{{}, taa_.targetView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		pdsu.uniform({{{pp_.ubo}}});
-
-		// TODO: we should this using initBufferLayouts_ and
-		// the semaphore and wait when rendering instead of
-		// stalling... not possible with current App architecture,
-		// we e.g. need guarantees that after every initBuffers
-		// updateDevice is called or something.
-		// The stalling below is not nice
-		vk::beginCommandBuffer(cbInitLayouts_, {});
-
-		// TODO: this also shouldn't be here, in TAAPass instead.
-		// We probably don't want to clear the image at all and
-		// rather just not read from it the first iteration after
-		// buffer recreation. Implement a mechanism for that in TAAPass
-		vk::ImageMemoryBarrier barrier;
-		barrier.image = taa_.targetImage();
-		barrier.oldLayout = vk::ImageLayout::undefined;
-		barrier.newLayout = vk::ImageLayout::transferDstOptimal;
-		barrier.dstAccessMask = vk::AccessBits::transferWrite;
-		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-		vk::cmdPipelineBarrier(cbInitLayouts_,
-			vk::PipelineStageBits::topOfPipe,
-			vk::PipelineStageBits::transfer,
-			{}, {}, {}, {{barrier}});
-		vk::ClearColorValue cv {0.f, 0.f, 0.f, 1.f};
-		vk::ImageSubresourceRange range{vk::ImageAspectBits::color, 0, 1, 0, 1};
-		vk::cmdClearColorImage(cbInitLayouts_, taa_.targetImage(),
-			vk::ImageLayout::transferDstOptimal, cv, {{range}});
-
-		barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
-		barrier.srcAccessMask = vk::AccessBits::transferWrite;
-		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		barrier.dstAccessMask = vk::AccessBits::shaderRead;
-		vk::cmdPipelineBarrier(cbInitLayouts_,
-			vk::PipelineStageBits::transfer,
-			vk::PipelineStageBits::computeShader,
-			{}, {}, {}, {{barrier}});
-
-		vk::endCommandBuffer(cbInitLayouts_);
-
-		auto& qs = vkDevice().queueSubmitter();
-		// vk::SubmitInfo submission;
-		// submission.commandBufferCount = 1;
-		// submission.pCommandBuffers = &cbInitLayouts_.vkHandle();
-		// submission.signalSemaphoreCount = 1;
-		// submission.pSignalSemaphores = &semaphoreInitLayouts_.vkHandle();
-		qs.wait(qs.add(cbInitLayouts_));
 	}
 
 	bool features(tkn::Features& enable,
@@ -751,6 +706,8 @@ public:
 
 		// 2: apply TAA
 		taa_.record(cb, {width, height});
+		tkn::barrier(cb, taa_.targetImage(), taa_.srcScope(),
+			tkn::SyncScope::fragmentSampled());
 
 		// 3: post processing, apply to swapchain buffer
 		vk::cmdBeginRenderPass(cb, {pp_.rp, buf.framebuffer,
@@ -885,23 +842,7 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			App::scheduleRedraw();
-		}
-	}
-
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(App::mouseButton(ev)) {
-			return true;
-		}
-
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			return true;
-		}
-
-		return false;
+		tkn::mouseMove(camera_, camcon_, swaDisplay(), {ev.dx, ev.dy});
 	}
 
 	nytl::Mat4f projectionMatrix() const {
@@ -955,8 +896,9 @@ public:
 				fixedViewMatrix(camera_));
 			envMap.flush();
 
-			taa_.updateDevice(near, far);
 		}
+
+		taa_.updateDevice(near, far);
 
 		auto semaphore = scene_.updateDevice(cameraVP());
 		if(semaphore) {
@@ -1055,7 +997,7 @@ protected:
 		vpp::Framebuffer fb;
 	} offscreen_;
 
-	TAAPass taa_;
+	tkn::TAAPass taa_;
 	nytl::Mat4f lastVP_ = nytl::identity<4, float>();
 	bool disable_ {false};
 
@@ -1080,10 +1022,10 @@ protected:
 	bool multiDrawIndirect_ {};
 
 	float time_ {};
-	bool rotateView_ {false}; // mouseLeft down
 
-	tkn::Scene scene_; // no default constructor
+	tkn::Scene scene_;
 	tkn::Camera camera_ {};
+	tkn::FPCamCon camcon_ {};
 
 	struct DirLight : public tkn::DirLight {
 		using tkn::DirLight::DirLight;
@@ -1115,10 +1057,5 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	ViewApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<ViewApp>(argc, argv);
 }

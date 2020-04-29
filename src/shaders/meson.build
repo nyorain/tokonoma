@@ -245,6 +245,7 @@ shaders_src = {
 		['model.frag'],
 		['scatter.vert'],
 		['scatter.frag'],
+		['combine.comp'],
 		['pp.frag'],
 	],
 }

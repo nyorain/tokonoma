@@ -170,6 +170,61 @@ nytl::SquareMat<4, P> perspective3RH(P fov, P aspect, P pnear, P pfar) {
 	return ret;
 }
 
+// - flips y axis
+// - flips z axis (from [-near, -far] to [0, 1])
+// Since it flips 2 axes, it keeps the handedness of the coordinate
+// system. For vulkan: when using this matrix, no additional
+// y-flipping or negative viewport height is needed.
+template<typename P>
+nytl::SquareMat<4, P> perspective3(P fov, P aspect, P n, P f) {
+	P const a = P(1) / std::tan(fov / P(2));
+
+	auto ret = nytl::Mat4f {};
+	ret[0][0] = a / aspect;
+	ret[1][1] = -a;
+
+	ret[2][2] = f / (f - n);
+	ret[3][2] = P(1);
+
+	ret[2][3] = -(f * n) / (f - n);
+	return ret;
+}
+
+// Reversed depth projection matrix.
+// - flips y axis
+// - does not flip z axis (but assumes it negative).
+//   From [-near, -far] to [1, 0].
+// Sicne it only flips one axis, handness is reversed and
+// front face winding needs to be reversed.
+template<typename P>
+nytl::SquareMat<4, P> perspective3Rev(P fov, P aspect, P n, P f) {
+	P const a = P(1) / std::tan(fov / P(2));
+
+	auto ret = nytl::Mat4f {};
+	ret[0][0] = a / aspect;
+	ret[1][1] = -a;
+
+	ret[2][2] = P(n) / (f - n);
+	ret[3][2] = -P(1);
+
+	ret[2][3] = (f * n) / (f - n);
+	return ret;
+}
+
+// - flips y
+// - flips z. From [near, inf] to [1, 0]
+// Preserves handedness.
+template<typename P>
+nytl::SquareMat<4, P> perspective3RevInf(P fov, P aspect, P n) {
+	P const a = P(1) / std::tan(fov / P(2));
+
+	auto ret = nytl::Mat4f {};
+	ret[0][0] = a / aspect;
+	ret[1][1] = -a;
+	ret[3][2] = P(1);
+	ret[2][3] = n;
+	return ret;
+}
 
 // rh_zo
 // near and far both positive
@@ -238,6 +293,21 @@ nytl::SquareMat<4, P> lookAtRH(const nytl::Vec3<P>& eye,
 	return ret;
 }
 
+// lookAt(pos, dir, up):
+// Returns a matrix (3x3 + translation) that when multiplied
+// with a vector, returns the coordinates for the vector of
+// a local coordinate system.
+// That local coordinate system has its origin at 'pos', its
+// z axis along 'dir', y axis along 'up' and x axis along
+// their cross product.
+
+
+// template<typename P>
+// nytl::SquareMat<4, P> lookAt2(const nytl::Vec3<P>& eye,
+// 		const nytl::Vec3<P>& dir, const nytl::Vec3<P>& up) {
+// 	const auto x = normalized(cross(up, dir));
+// 	const auto y = cross(dir, x);
+// }
 
 // == 2D coordinate transformations ==
 // A rectangular view of the level, in level coordinates.

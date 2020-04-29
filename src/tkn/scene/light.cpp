@@ -286,6 +286,16 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 	vk::ClearValue clearValue {};
 	clearValue.depthStencil = {1.f, 0u};
 
+	vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
+	vk::cmdSetViewport(cb, 0, 1, vp);
+	vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
+	vk::cmdSetDepthBias(cb, data.depthBias, 0.f, data.depthBiasSlope);
+
+	auto pl = data.pl.vkHandle();
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
+	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+		pl, 0, {{ds_.vkHandle()}}, {});
+
 	// render into shadow map
 	if(data.multiview) {
 		vk::cmdBeginRenderPass(cb, {
@@ -294,31 +304,9 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 			1, &clearValue
 		}, {});
 
-		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
-		vk::cmdSetViewport(cb, 0, 1, vp);
-		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
-
-		vk::cmdSetDepthBias(cb, data.depthBias, 0.f, data.depthBiasSlope);
-
-		auto pl = data.pl.vkHandle();
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pl, 0, {{ds_.vkHandle()}}, {});
-
 		renderScene(cb, pl);
 		vk::cmdEndRenderPass(cb);
 	} else {
-		vk::Viewport vp {0.f, 0.f, (float) size_.x, (float) size_.y, 0.f, 1.f};
-		vk::cmdSetViewport(cb, 0, 1, vp);
-		vk::cmdSetScissor(cb, 0, 1, {0, 0, size_.x, size_.y});
-
-		vk::cmdSetDepthBias(cb, data.depthBias, 0.f, data.depthBiasSlope);
-
-		auto pl = data.pl.vkHandle();
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, data.pipe);
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pl, 0, {{ds_.vkHandle()}}, {});
-
 		for(u32 i = 0u; i < cascadeCount; ++i) {
 			vk::cmdBeginRenderPass(cb, {
 				data.rpDir, cascades_[i].fb,

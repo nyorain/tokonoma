@@ -42,6 +42,7 @@ tkn_src = [
 	'util.cpp',
 	'headeronly.cpp',
 	'timeWidget.cpp',
+	'taa.cpp',
 
 	'scene/scene.cpp',
 	'scene/material.cpp',

@@ -16,6 +16,7 @@
 // structure or its controllers (as far as possible).
 
 namespace tkn {
+inline namespace cam2 {
 
 struct Camera {
 	Vec3f pos {0.f, 0.f, 1.f};
@@ -33,6 +34,34 @@ inline nytl::Vec3f up(const Camera& c) {
 
 inline nytl::Vec3f right(const Camera& c) {
 	return apply(c.rot, nytl::Vec3f {1.f, 0.f, 0.f});
+}
+
+inline nytl::Mat4f lookAt(const Quaternion& rot) {
+	auto ret = nytl::Mat4f {};
+	auto x = normalized(apply(rot, Vec3f {1.f, 0.f, 0.f}));
+	auto y = normalized(apply(rot, Vec3f {0.f, 1.f, 0.f}));
+	auto z = normalized(apply(rot, Vec3f {0.f, 0.f, -1.f}));
+	ret[0] = nytl::Vec4f(x);
+	ret[1] = nytl::Vec4f(y);
+	ret[2] = nytl::Vec4f(z);
+	ret[3][3] = 1.f;
+	return ret;
+}
+
+inline nytl::Mat4f ml(const Camera& c) {
+	auto ret = nytl::Mat4f {};
+	auto x = normalized(right(c));
+	auto y = normalized(up(c));
+	auto z = normalized(dir(c));
+
+	ret[0] = nytl::Vec4f(x);
+	ret[1] = nytl::Vec4f(y);
+	ret[2] = nytl::Vec4f(z);
+	ret[0][3] = -dot(c.pos, x);
+	ret[1][3] = -dot(c.pos, y);
+	ret[2][3] = -dot(c.pos, z);
+	ret[3][3] = 1.f;
+	return ret;
 }
 
 inline auto viewMatrix(const Camera& c) {
@@ -174,4 +203,5 @@ void mouseMovePersp(Camera&, ArcballCamCon&, swa_display*, Vec2i delta,
 void mouseWheel(Camera&, ArcballCamCon&, float delta);
 
 
+} // namespace cam2
 } // namespace tkn

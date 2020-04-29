@@ -2,6 +2,7 @@
 #include <tkn/window.hpp>
 #include <tkn/render.hpp>
 #include <tkn/transform.hpp>
+#include <tkn/timeWidget.hpp>
 #include <tkn/util.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/types.hpp>
@@ -63,9 +64,10 @@ struct Segment {
 class RaysApp : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
-	static constexpr auto sampleCount = 10 * 1024u;
-	static constexpr auto maxBounces = 8u; // XXX: defined again in rays.comp
+	static constexpr auto sampleCount = 32 * 1024u;
+	static constexpr auto maxBounces = 4u; // XXX: defined again in rays.comp
 	static constexpr auto renderFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto renderDownscale = 2u;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -101,6 +103,18 @@ public:
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
+
+		rvgInit();
+		windowTransform_ = {rvgContext()};
+
+		timeWidget_ = {rvgContext(), defaultFont()};
+		timeWidget_.reset();
+		timeWidget_.addTiming("update");
+		timeWidget_.addTiming("render");
+		timeWidget_.addTiming("tss");
+		timeWidget_.addTiming("pp");
+		timeWidget_.complete();
+
 		return true;
 	}
 
@@ -168,7 +182,7 @@ public:
 
 		// float fac = 10.f;
 		std::initializer_list<Light> lights = {
-			{20 * tkn::blackbody(3500), 0.1f, {-1.f, 1.f}},
+			{100 * tkn::blackbody(4000), 0.05f, {-1.f, 1.f}},
 			// {1 * tkn::blackbody(5500), 0.1f, {2.0f, 1.8f}},
 			// {fac * tkn::blackbody(5500), 0.1f, {-2.f, -1.8f}},
 			// {1 * tkn::blackbody(5000), 0.1f, {-2.f, 2.f}},
@@ -194,11 +208,11 @@ public:
 			// {{-1, -2}, {1, -2}, 4},
 
 			{{3, -2}, {3, 2}, 0},
-			{{3, 2}, {-1, 2}, 0},
-			{{-1, 2}, {-1, 3}, 0},
-			{{-1, 3}, {-3, 3}, 0},
-			{{-3, 3}, {-3, -3}, 0},
-			{{-3, -3}, {-1, -3}, 0},
+			{{3, 2}, {-1, 2}, 1},
+			{{-1, 2}, {-1, 3}, 1},
+			{{-1, 3}, {-3, 3}, 1},
+			{{-3, 3}, {-3, -3}, 1},
+			{{-3, -3}, {-1, -3}, 1},
 			{{-1, -3}, {-1, -2}, 0},
 			{{-1, -2}, {3, -2}, 0},
 
@@ -423,6 +437,9 @@ public:
 	void initBuffers(const vk::Extent2D& size,
 			nytl::Span<RenderBuffer> bufs) override {
 		Base::initBuffers(size, bufs);
+		auto dsize = size;
+		dsize.width = std::max(dsize.width >> renderDownscale, 1u);
+		dsize.height = std::max(dsize.height >> renderDownscale, 1u);
 
 		auto& dev = vkDevice();
 		auto info = vpp::ViewableImageCreateInfo(renderFormat,
@@ -433,6 +450,7 @@ public:
 		dlg_assert(vpp::supported(dev, info.img));
 		tss_.history = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
 
+		info.img.extent = {dsize.width, dsize.height, 1u};
 		info.img.usage = vk::ImageUsageBits::colorAttachment |
 			vk::ImageUsageBits::storage |
 			vk::ImageUsageBits::sampled;
@@ -443,7 +461,7 @@ public:
 		auto attachments = {gfx_.target.vkImageView()};
 		auto fbi = vk::FramebufferCreateInfo({}, gfx_.rp,
 			attachments.size(), attachments.begin(),
-			size.width, size.height, 1);
+			dsize.width, dsize.height, 1);
 		gfx_.fb = {dev, fbi};
 
 		// update descriptors
@@ -500,6 +518,7 @@ public:
 	// but i'm too lazy rn. And my gpu/mesa impl doesn't care anyways :(
 	void beforeRender(vk::CommandBuffer cb) override {
 		Base::beforeRender(cb);
+		timeWidget_.start(cb);
 
 		// reset vertex counter
 		vk::DrawIndirectCommand cmd {};
@@ -520,6 +539,7 @@ public:
 
 		u32 dy = sampleCount / 16;
 		vk::cmdDispatch(cb, nLights_, dy, 1);
+		timeWidget_.addTimestamp(cb);
 
 		// make sure the generated rays are visible to gfx pipe
 		barrier.srcAccessMask = vk::AccessBits::shaderRead |
@@ -532,14 +552,17 @@ public:
 
 		// render into offscreen buffer
 		auto [width, height] = swapchainInfo().imageExtent;
-		vk::Viewport vp{0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
+		auto dwidth = std::max(width >> renderDownscale, 1u);
+		auto dheight = std::max(height >> renderDownscale, 1u);
+
+		vk::Viewport vp{0.f, 0.f, (float) dwidth, (float) dheight, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);
-		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, dwidth, dheight});
 
 		std::array<vk::ClearValue, 1u> cv {};
 		cv[0] = {{0.f, 0.f, 0.f, 0.f}};
 		vk::cmdBeginRenderPass(cb, {gfx_.rp, gfx_.fb,
-			{0u, 0u, width, height},
+			{0u, 0u, dwidth, dheight},
 			std::uint32_t(cv.size()), cv.data()}, {});
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
@@ -555,6 +578,7 @@ public:
 			bufs_.raysCmd.offset(), 1, 0);
 
 		vk::cmdEndRenderPass(cb);
+		timeWidget_.addTimestamp(cb);
 
 		// apply tss
 		// work group size of tss.comp is 8x8
@@ -575,12 +599,19 @@ public:
 		ibarrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
 		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
 			vk::PipelineStageBits::fragmentShader, {}, {}, {}, {{ibarrier}});
+		timeWidget_.addTimestamp(cb);
 	}
 
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
 		tkn::cmdBindGraphicsDescriptors(cb, pp_.pipeLayout, 0, {pp_.ds});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
+
+		rvgContext().bindDefaults(cb);
+		windowTransform_.bind(cb);
+		timeWidget_.draw(cb);
+		timeWidget_.addTimestamp(cb);
+		timeWidget_.finish(cb);
 	}
 
 	void update(double dt) override {
@@ -621,6 +652,8 @@ public:
 			vk::endCommandBuffer(cb);
 			qs.wait(qs.add(cb));
 		}
+
+		timeWidget_.updateDevice();
 	}
 
 	void updateMatrix() {
@@ -633,6 +666,19 @@ public:
 	void resize(unsigned width, unsigned height) override {
 		Base::resize(width, height);
 		updateMatrix();
+
+		// update window transform
+		auto s = nytl::Vec{ 2.f / width, 2.f / height, 1};
+		auto transform = nytl::identity<4, float>();
+		tkn::scale(transform, s);
+		tkn::translate(transform, nytl::Vec3f {-1, -1, 0});
+		windowTransform_.matrix(transform);
+
+		// update time widget position
+		auto pos = nytl::Vec2ui{width, height};
+		pos.x -= 240;
+		pos.y = 10;
+		timeWidget_.move(nytl::Vec2f(pos));
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -730,6 +776,9 @@ protected:
 		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;
 	} pp_;
+
+	tkn::TimeWidget timeWidget_;
+	rvg::Transform windowTransform_;
 };
 
 int main(int argc, const char** argv) {

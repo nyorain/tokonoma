@@ -50,6 +50,6 @@ void main() {
 	outClipLastPos = scene.lastProj * lm;
 
 	gl_Position = outClipPos;
-	gl_Position.xy += scene.jitter * gl_Position.w;
+	gl_Position.xy += scene.jitter * gl_Position.w; // jitter in ndc space
 	gl_Position.y = -gl_Position.y;
 }

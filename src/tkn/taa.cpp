@@ -1,4 +1,4 @@
-#include "taa.hpp"
+#include <tkn/taa.hpp>
 
 #include <tkn/render.hpp>
 #include <tkn/bits.hpp>
@@ -6,9 +6,14 @@
 #include <vpp/shader.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/formats.hpp>
+#include <vpp/commandAllocator.hpp>
+#include <vpp/submit.hpp>
+#include <vpp/queue.hpp>
 #include <dlg/dlg.hpp>
 
 #include <shaders/taa.taa2.comp.h>
+
+namespace tkn {
 
 void TAAPass::init(vpp::Device& dev, vk::Sampler linearSampler) {
 	auto taaBindings = {
@@ -60,7 +65,7 @@ void TAAPass::init(vpp::Device& dev, vk::Sampler linearSampler) {
 		float r = 0.0f;
 		float f = 1.0f;
 		int i = index;
-		while (i > 0) {
+		while(i > 0) {
 			f /= prime;
 			r += f * (i % prime);
 			i = std::floor(i / (float)prime);
@@ -106,12 +111,48 @@ void TAAPass::initBuffers(vk::Extent2D size, vk::ImageView renderInput,
 	dsu.imageSampler({{{}, inHist_, vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.storage({{{}, outHist_, vk::ImageLayout::general}});
 	dsu.imageSampler({{{}, renderInput, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, depthInput, vk::ImageLayout::depthStencilReadOnlyOptimal}});
+	dsu.imageSampler({{{}, depthInput, vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.imageSampler({{{}, velInput, vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.uniform({{{ubo_}}});
+
+	// TODO: don't allocate cb everytime, don't stall and such.
+	auto& qs = dev.queueSubmitter();
+	auto cb = dev.commandAllocator().get(qs.queue().family());
+	vk::beginCommandBuffer(cb, {});
+
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = targetImage();
+	barrier.oldLayout = vk::ImageLayout::undefined;
+	barrier.newLayout = vk::ImageLayout::transferDstOptimal;
+	barrier.dstAccessMask = vk::AccessBits::transferWrite;
+	barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+	vk::cmdPipelineBarrier(cb,
+		vk::PipelineStageBits::topOfPipe,
+		vk::PipelineStageBits::transfer,
+		{}, {}, {}, {{barrier}});
+	vk::ClearColorValue cv {0.f, 0.f, 0.f, 1.f};
+	vk::ImageSubresourceRange range{vk::ImageAspectBits::color, 0, 1, 0, 1};
+	vk::cmdClearColorImage(cb, targetImage(),
+		vk::ImageLayout::transferDstOptimal, cv, {{range}});
+
+	barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
+	barrier.srcAccessMask = vk::AccessBits::transferWrite;
+	barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	barrier.dstAccessMask = vk::AccessBits::shaderRead;
+	vk::cmdPipelineBarrier(cb,
+		vk::PipelineStageBits::transfer,
+		vk::PipelineStageBits::computeShader,
+		{}, {}, {}, {{barrier}});
+
+	vk::endCommandBuffer(cb);
+	qs.wait(qs.add(cb));
+
+	resetHistory = true;
 }
 
 void TAAPass::record(vk::CommandBuffer cb, vk::Extent2D size) {
+	vpp::DebugLabel lbl(pipe_.device(), cb, "TAAPass");
+
 	// first make sure outHistory has the correct layout
 	// we don't need the old contents so we can use image layout undefined
 	vk::ImageMemoryBarrier obarrier;
@@ -156,24 +197,42 @@ void TAAPass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 		hist_, vk::ImageLayout::transferSrcOptimal,
 		hist_, vk::ImageLayout::transferDstOptimal,
 		{{copy}});
-
-	ibarrier.oldLayout = vk::ImageLayout::transferDstOptimal;
-	ibarrier.srcAccessMask = vk::AccessBits::transferWrite;
-	ibarrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	ibarrier.dstAccessMask = vk::AccessBits::shaderRead;
-	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
-		vk::PipelineStageBits::fragmentShader, {}, {}, {}, {{ibarrier}});
 }
 
 void TAAPass::updateDevice(float near, float far) {
 	auto map = ubo_.memoryMap();
 	auto span = map.span();
+
+	auto pc = params;
+	if(resetHistory) {
+		resetHistory = false;
+		pc.flags |= flagPassthrough;
+	}
+
 	tkn::write(span, near);
 	tkn::write(span, far);
-	tkn::write(span, params);
+	tkn::write(span, pc);
 	map.flush();
 }
 
 nytl::Vec2f TAAPass::nextSample() {
 	return samples_[++sampleID_ % samples_.size()];
 }
+
+tkn::SyncScope TAAPass::srcScope() const {
+	return {
+		vk::PipelineStageBits::transfer,
+		vk::ImageLayout::transferDstOptimal,
+		vk::AccessBits::transferWrite,
+	};
+}
+
+tkn::SyncScope TAAPass::dstScopeInput() const {
+	return {
+		vk::PipelineStageBits::computeShader,
+		vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::AccessBits::shaderRead,
+	};
+}
+
+} // namespace tkn

@@ -1,5 +1,8 @@
 #include <tkn/app2.hpp>
+#include <tkn/taa.hpp>
 #include <tkn/render.hpp>
+#include <tkn/image.hpp>
+#include <tkn/texture.hpp>
 #include <tkn/shader.hpp>
 #include <tkn/camera2.hpp>
 #include <tkn/types.hpp>
@@ -24,6 +27,7 @@
 #include <shaders/scatter.model.frag.h>
 #include <shaders/scatter.scatter.vert.h>
 #include <shaders/scatter.scatter.frag.h>
+#include <shaders/scatter.combine.comp.h>
 #include <shaders/scatter.pp.frag.h>
 #include <shaders/tkn.fullscreen.vert.h>
 
@@ -43,6 +47,11 @@
 // - correctly resolve the dithering (4x4 blurs? maybe just use
 //   a really small gaussian pass?) instead of the current
 //   hack-mess in pp.frag
+//   - 4x4 dithering is kinda bad. Rather use 3x3 and then
+//     just blur in 3x3 neighborhood.
+// - optimization: start and end ray at outer light radius,
+//   instead of starting at camera and going to infinity.
+//   Should *greatly* increase what we get for our samples
 
 using namespace tkn::types;
 
@@ -120,15 +129,24 @@ RenderPassInfo renderPassInfo(nytl::Span<const vk::Format> formats,
 
 class ScatterApp : public tkn::App {
 public:
+	// TODO: can probably make this unorm with right encoding
+	static constexpr auto velFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr float near = 0.1f;
 	static constexpr float far = 100.f;
 	static constexpr float fov = 0.5 * nytl::constants::pi;
+	static constexpr auto combineGroupDimSize = 8u;
+
+	static constexpr auto scatterDownscale = 0u;
 
 	struct CamUbo {
 		Mat4f vp;
-		Vec3f camPos;
-		float _;
+		Mat4f vpPrev;
 		Mat4f vpInv;
+		Vec3f camPos;
+		u32 frameCount;
+		Vec2f jitter;
+		float _near = near;
+		float _far = far;
 	};
 
 public:
@@ -168,6 +186,11 @@ public:
 
 		initGeom();
 		initScatter();
+		initCombine();
+		taa_.init(dev, sampler_);
+		taa_.params.velWeight = 0.f;
+		taa_.params.flags = taa_.flagClosestDepth |
+			taa_.flagColorClip;
 		initPP();
 
 		// init first light
@@ -199,13 +222,13 @@ public:
 		// we render using triangle list
 		std::vector<u32> indices = {
 			0, 1, 4,
-			4, 5, 1,
+			5, 4, 1,
 			1, 2, 5,
-			5, 6, 2,
+			6, 5, 2,
 			2, 3, 6,
-			6, 7, 3,
+			7, 6, 3,
 			3, 0, 7,
-			7, 4, 0,
+			4, 7, 0,
 		};
 
 		geom_.numIndices = indices.size();
@@ -231,10 +254,20 @@ public:
 		qs.wait(qs.add(cb));
 
 		// create render pass
-		auto pass0 = {0u, 1u};
+		auto pass0 = {0u, 1u, 2u};
 		auto rpi = renderPassInfo(
-			{{vk::Format::r16g16b16a16Sfloat, depthFormat_}},
-			{{pass0}});
+			{{vk::Format::r16g16b16a16Sfloat, velFormat, depthFormat_}},
+			{{{pass0}}});
+		vk::SubpassDependency dep;
+		dep.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+		dep.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+		dep.dstStageMask = vk::PipelineStageBits::computeShader;
+		dep.dstAccessMask = vk::AccessBits::shaderRead |
+			vk::AccessBits::shaderWrite;
+		dep.srcSubpass = 0u;
+		dep.dstSubpass = vk::subpassExternal;
+		rpi.dependencies.push_back(dep);
+		rpi.attachments[0].finalLayout = vk::ImageLayout::general;
 		geom_.rp = {dev, rpi.info()};
 		vpp::nameHandle(geom_.rp, "geom.rp");
 
@@ -278,9 +311,11 @@ public:
 		spi.vertex = vertex;
 		shadowData_ = tkn::initShadowData(dev, depthFormat_,
 			features_.multiview, features_.depthClamp, spi, {});
+		shadowData_.depthBias = 50.f;
+		shadowData_.depthBiasSlope = 100.f;
 
-		geom_.pipeLayout = {dev,
-			{{geom_.dsLayout, shadowData_.dsLayout}}, {}};
+		geom_.pipeLayout = {dev, {{geom_.dsLayout.vkHandle(),
+			shadowData_.dsLayout.vkHandle()}}, {}};
 		vpp::nameHandle(geom_.pipeLayout, "geom.pipeLayout");
 
 		// create pipeline
@@ -297,6 +332,14 @@ public:
 		gpi.depthStencil.depthWriteEnable = true;
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 		gpi.rasterization.cullMode = vk::CullModeBits::none;
+
+		auto bas = {
+			tkn::defaultBlendAttachment(),
+			tkn::defaultBlendAttachment(),
+		};
+
+		gpi.blend.attachmentCount = bas.size();
+		gpi.blend.pAttachments = bas.begin();
 
 		geom_.pipe = {dev, gpi.info()};
 		vpp::nameHandle(geom_.pipe, "geom.pipe");
@@ -316,7 +359,15 @@ public:
 		auto pass0 = {0u};
 		auto rpi = renderPassInfo(
 			{{vk::Format::r16g16b16a16Sfloat}},
-			{{pass0}});
+			{{{pass0}}});
+		vk::SubpassDependency dep;
+		dep.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+		dep.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+		dep.dstStageMask = vk::PipelineStageBits::fragmentShader;
+		dep.dstAccessMask = vk::AccessBits::shaderRead;
+		dep.srcSubpass = 0u;
+		dep.dstSubpass = vk::subpassExternal;
+		rpi.dependencies.push_back(dep);
 		scatter_.rp = {dev, rpi.info()};
 		vpp::nameHandle(scatter_.rp, "scatter.rp");
 
@@ -324,7 +375,11 @@ public:
 		auto bindings = {
 			vpp::descriptorBinding( // depthTex
 				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment,
+				vk::ShaderStageBits::fragment,
+				-1, 1, &sampler_.vkHandle()),
+			vpp::descriptorBinding( // noiseTex
+				vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment,
 				-1, 1, &sampler_.vkHandle())
 		};
 
@@ -360,8 +415,59 @@ public:
 		scatter_.pipe = {dev, gpi.info()};
 		vpp::nameHandle(scatter_.pipe, "scatter.pipe");
 
+		// noise tex
+		std::array<std::string, 64u> spaths;
+		std::array<const char*, 64u> paths;
+		for(auto i = 0u; i < 64; ++i) {
+			spaths[i] = dlg::format("noise/LDR_LLL1_{}.png", i);
+			paths[i] = spaths[i].data();
+		}
+
+		auto layers = tkn::read(paths);
+
+		tkn::TextureCreateParams tcp;
+		// TODO: fix blitting!
+		// tcp.format = vk::Format::r8Unorm;
+		tcp.format = vk::Format::r8g8b8a8Unorm;
+		tcp.srgb = false; // TODO: not sure tbh
+		auto tex = tkn::Texture(dev, tkn::read(paths), tcp);
+		scatter_.noise = std::move(tex.viewableImage());
+
 		// ds
 		scatter_.ds = {dev.descriptorAllocator(), scatter_.dsLayout};
+	}
+
+	void initCombine() {
+		auto& dev = vkDevice();
+
+		auto s = combineGroupDimSize;
+		tkn::ComputeGroupSizeSpec cgs(s, s);
+
+		auto bindings = {
+			vpp::descriptorBinding( // color (input/output)
+				vk::DescriptorType::storageImage,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding( // scatter tex
+				vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute,
+				-1, 1, &sampler_.vkHandle())
+		};
+
+		combine_.dsLayout = {dev, bindings};
+		combine_.pipeLayout = {dev, {{combine_.dsLayout.vkHandle()}}, {}};
+		vpp::nameHandle(combine_.dsLayout, "combine.dsLayout");
+		vpp::nameHandle(combine_.pipeLayout, "combine.pipeLayout");
+
+		vpp::ShaderModule mod(dev, scatter_combine_comp_data);
+		vk::ComputePipelineCreateInfo cpi;
+		cpi.layout = combine_.pipeLayout;
+		cpi.stage.module = mod;
+		cpi.stage.pName = "main";
+		cpi.stage.pSpecializationInfo = &cgs.spec;
+		cpi.stage.stage = vk::ShaderStageBits::compute;
+		combine_.pipe = {dev, cpi};
+
+		combine_.ds = {dev.descriptorAllocator(), combine_.dsLayout};
 	}
 
 	void initPP() {
@@ -371,7 +477,7 @@ public:
 		auto pass0 = {0u};
 		auto rpi = renderPassInfo(
 			{{swapchainInfo().imageFormat}},
-			{{pass0}});
+			{{{pass0}}});
 		rpi.attachments[0].finalLayout = vk::ImageLayout::presentSrcKHR;
 		pp_.rp = {dev, rpi.info()};
 		vpp::nameHandle(pp_.rp, "pp.rp");
@@ -381,9 +487,6 @@ public:
 			vpp::descriptorBinding( // colorTex
 				vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-			vpp::descriptorBinding( // scatterTex
-				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle())
 		};
 
 		pp_.dsLayout = {dev, bindings};
@@ -414,23 +517,34 @@ public:
 	void initBuffers(const vk::Extent2D& size,
 			nytl::Span<RenderBuffer> bufs) override {
 		auto& dev = vkDevice();
+		auto hsize = size;
+		hsize.width = std::max(hsize.width >> scatterDownscale, 1u);
+		hsize.height = std::max(hsize.height >> scatterDownscale, 1u);
 
 		// offscreen targets
 		auto cinfo = vpp::ViewableImageCreateInfo(
 			vk::Format::r16g16b16a16Sfloat,
 			vk::ImageAspectBits::color, size,
 			vk::ImageUsageBits::colorAttachment |
+				vk::ImageUsageBits::storage |
 				vk::ImageUsageBits::sampled);
 		vpp::Init<vpp::ViewableImage> initColor(dev.devMemAllocator(),
 			cinfo.img, dev.deviceMemoryTypes());
 
 		auto sinfo = vpp::ViewableImageCreateInfo(
 			vk::Format::r16g16b16a16Sfloat,
-			vk::ImageAspectBits::color, size,
+			vk::ImageAspectBits::color, hsize,
 			vk::ImageUsageBits::colorAttachment |
 				vk::ImageUsageBits::sampled);
 		vpp::Init<vpp::ViewableImage> initScatter(dev.devMemAllocator(),
 			sinfo.img, dev.deviceMemoryTypes());
+
+		auto vinfo = vpp::ViewableImageCreateInfo(
+			velFormat, vk::ImageAspectBits::color, size,
+			vk::ImageUsageBits::colorAttachment |
+				vk::ImageUsageBits::sampled);
+		vpp::Init<vpp::ViewableImage> initVel(dev.devMemAllocator(),
+			vinfo.img, dev.deviceMemoryTypes());
 
 		auto dinfo = vpp::ViewableImageCreateInfo(
 			depthFormat_,
@@ -442,7 +556,13 @@ public:
 
 		geom_.colorTarget = initColor.init(cinfo.view);
 		geom_.depthTarget = initDepth.init(dinfo.view);
+		geom_.velTarget = initVel.init(vinfo.view);
 		scatter_.target = initScatter.init(sinfo.view);
+
+		taa_.initBuffers(size,
+			geom_.colorTarget.imageView(),
+			geom_.depthTarget.imageView(),
+			geom_.velTarget.imageView());
 
 		// framebuffers
 		vk::FramebufferCreateInfo fbi;
@@ -460,6 +580,7 @@ public:
 
 		auto gatts = {
 			geom_.colorTarget.vkImageView(),
+			geom_.velTarget.vkImageView(),
 			geom_.depthTarget.vkImageView()};
 		fbi.renderPass = geom_.rp;
 		fbi.attachmentCount = gatts.size();
@@ -470,20 +591,28 @@ public:
 		fbi.renderPass = scatter_.rp;
 		fbi.attachmentCount = satts.size();
 		fbi.pAttachments = satts.begin();
+		fbi.width = hsize.width;
+		fbi.height = hsize.height;
 		scatter_.fb = {dev, fbi};
 
 		// descriptors
 		auto sdsu = vpp::DescriptorSetUpdate(scatter_.ds);
 		sdsu.imageSampler({{{}, geom_.depthTarget.vkImageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
+		sdsu.imageSampler({{{}, scatter_.noise.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
 
 		auto pdsu = vpp::DescriptorSetUpdate(pp_.ds);
-		pdsu.imageSampler({{{}, geom_.colorTarget.vkImageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		pdsu.imageSampler({{{}, scatter_.target.vkImageView(),
+		pdsu.imageSampler({{{}, taa_.targetView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 
-		vpp::apply({{sdsu, pdsu}});
+		auto cdsu = vpp::DescriptorSetUpdate(combine_.ds);
+		cdsu.storage({{{}, geom_.colorTarget.vkImageView(),
+			vk::ImageLayout::general}});
+		cdsu.imageSampler({{{}, scatter_.target.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+
+		vpp::apply({{{sdsu}, {pdsu}, {cdsu}}});
 	}
 
 	void record(const RenderBuffer& rb) override {
@@ -494,7 +623,7 @@ public:
 		vk::beginCommandBuffer(cb, {});
 
 		// bind geometry
-		vk::cmdBindVertexBuffers(cb, 0, {{geom_.vertices.buffer()}},
+		vk::cmdBindVertexBuffers(cb, 0, {{geom_.vertices.buffer().vkHandle()}},
 			{{geom_.vertices.offset()}});
 		vk::cmdBindIndexBuffer(cb, geom_.indices.buffer(),
 			geom_.indices.offset(), vk::IndexType::uint32);
@@ -519,9 +648,10 @@ public:
 		// render scene
 		{
 			vpp::DebugLabel lbl(dev, cb, "geometry");
-			std::array<vk::ClearValue, 2u> cv {};
+			std::array<vk::ClearValue, 3u> cv {};
 			cv[0] = {0.f, 0.f, 0.f, 0.f}; // color, rgba16f
-			cv[1].depthStencil = {1.f, 0u}; // depth
+			cv[1] = {0.f, 0.f, 0.f, 0.f}; // vel, rgba16f
+			cv[2].depthStencil = {1.f, 0u}; // depth
 
 			vk::cmdBeginRenderPass(cb, {geom_.rp, geom_.fb,
 				{0u, 0u, width, height},
@@ -542,10 +672,17 @@ public:
 		{
 			vpp::DebugLabel lbl(dev, cb, "scattering");
 
+			auto hwidth = std::max(width >> scatterDownscale, 1u);
+			auto hheight = std::max(height >> scatterDownscale, 1u);
+
+			vk::Viewport vp{0.f, 0.f, (float) hwidth, (float) hheight, 0.f, 1.f};
+			vk::cmdSetViewport(cb, 0, 1, vp);
+			vk::cmdSetScissor(cb, 0, 1, {0, 0, hwidth, hheight});
+
 			std::array<vk::ClearValue, 1u> cv {};
 			cv[0] = {0.f, 0.f, 0.f, 0.f}; // color
 			vk::cmdBeginRenderPass(cb, {scatter_.rp, scatter_.fb,
-				{0u, 0u, width, height},
+				{0u, 0u, hwidth, hheight},
 				u32(cv.size()), cv.data()}, {});
 
 			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, scatter_.pipe);
@@ -561,6 +698,28 @@ public:
 
 			vk::cmdEndRenderPass(cb);
 		}
+
+		vk::cmdSetViewport(cb, 0, 1, vp);
+		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
+
+		// combine
+		{
+			// basically ceil(width / groupSizeX)
+			auto cx = (width + combineGroupDimSize - 1) / combineGroupDimSize;
+			auto cy = (height + combineGroupDimSize - 1) / combineGroupDimSize;
+
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, combine_.pipe);
+			tkn::cmdBindComputeDescriptors(cb, combine_.pipeLayout, 0, {combine_.ds});
+			vk::cmdDispatch(cb, cx, cy, 1);
+
+			tkn::barrier(cb, geom_.colorTarget.image(),
+				tkn::SyncScope::computeReadWrite(), taa_.dstScopeInput());
+		}
+
+		// taa
+		taa_.record(cb, {width, height});
+		tkn::barrier(cb, taa_.targetImage(), taa_.srcScope(),
+			tkn::SyncScope::fragmentSampled());
 
 		// post process
 		{
@@ -605,13 +764,29 @@ public:
 			auto map = camUbo_.memoryMap();
 			auto span = map.span();
 
+			auto [width, height] = swapchainInfo().imageExtent;
+
+			using namespace nytl::vec::cw::operators;
+			auto disable = false;
+			auto sample = disable ? nytl::Vec2f{0.f, 0.f} : taa_.nextSample();
+			auto pixSize = Vec2f{1.f / width, 1.f / height};
+			auto off = sample * pixSize;
+
 			CamUbo ubo;
 			ubo.vp = cameraVP();
-			ubo.camPos = camera_.pos;
 			ubo.vpInv = nytl::Mat4f(nytl::inverse(ubo.vp));
+			ubo.vpPrev = lastVP_;
+			ubo.camPos = camera_.pos;
+			ubo.jitter = off;
+			ubo.frameCount = ++frameCount_;
+
 			tkn::write(span, ubo);
 			map.flush();
+
+			lastVP_ = ubo.vp;
 		}
+
+		taa_.updateDevice(near, far);
 	}
 
 	bool features(tkn::Features& enable,
@@ -644,7 +819,10 @@ public:
 			tkn::mouseMovePersp(camera_, camcon_, swaDisplay(), {ev.dx, ev.dy},
 				windowSize(), fov);
 		} else {
-			tkn::mouseMove(camera_, camconFP_, swaDisplay(), {ev.dx, ev.dy});
+			tkn::FPCamControls controls;
+			controls.rotateButton = swa_mouse_button_none;
+			tkn::mouseMove(camera_, camconFP_, swaDisplay(), {ev.dx, ev.dy},
+				controls);
 		}
 	}
 
@@ -680,14 +858,20 @@ public:
 				l.updateDevice();
 				App::scheduleRerecord();
 				break;
-			} case swa_key_t:
+			} case swa_key_t: {
 				arcball_ ^= true;
 				if(!arcball_) {
-					camconFP_.pitch = xRot(camera_.rot);
-					camconFP_.yaw = yRot(camera_.rot);
+					camconFP_.pitch = pitch(camera_.rot);
+					camconFP_.yaw = yaw(camera_.rot);
 				}
+				swa_cursor c {};
+				c.type = arcball_ ? swa_cursor_default : swa_cursor_none;
+				swa_window_set_cursor(swaWindow(), c);
 				break;
-			default:
+			} case swa_key_r: {
+				taa_.resetHistory = true;
+				break;
+			} default:
 				return false;
 			}
 
@@ -708,7 +892,8 @@ protected:
 	tkn::Camera camera_;
 	tkn::ArcballCamCon camcon_;
 	tkn::FPCamCon camconFP_;
-
+	Mat4f lastVP_;
+	unsigned frameCount_ {};
 
 	struct {
 		bool multiview {};
@@ -728,6 +913,7 @@ protected:
 		vpp::TrDs ds;
 		vpp::ViewableImage depthTarget;
 		vpp::ViewableImage colorTarget;
+		vpp::ViewableImage velTarget;
 		vpp::Framebuffer fb;
 
 		vpp::SubBuffer vertices;
@@ -745,9 +931,23 @@ protected:
 		vpp::Framebuffer fb;
 		vpp::SubBuffer ubo;
 		vpp::RenderPass rp;
+		vpp::ViewableImage noise;
 	} scatter_;
 
-	// pass 3: post processing
+	// pass 3: combine
+	// just adds scatter_.target onto geom_.colorTarget
+	// using a compute shader
+	struct {
+		vpp::TrDsLayout dsLayout;
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+		vpp::TrDs ds;
+	} combine_;
+
+	// pass 4: temporal antialiasing
+	tkn::TAAPass taa_;
+
+	// pass 5: post processing
 	struct {
 		vpp::TrDsLayout dsLayout;
 		vpp::PipelineLayout pipeLayout;

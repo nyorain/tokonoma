@@ -10,6 +10,7 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/shader.hpp>
 #include <vkpp/structs.hpp>
+#include <functional>
 
 // TODO: directional light: when depth clamp isn't supported, emulate.
 //   see shadowmap.vert. Pass via specialization constant
@@ -20,7 +21,6 @@
 namespace tkn {
 
 class Scene;
-struct Camera;
 
 struct ShadowData {
 	vk::Format depthFormat;

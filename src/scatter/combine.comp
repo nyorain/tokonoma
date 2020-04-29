@@ -1,0 +1,34 @@
+#version 460
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+layout(set = 0, binding = 0, rgba16f) uniform image2D ioColor;
+layout(set = 0, binding = 1) uniform sampler2D inScatter;
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(ioColor);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + 0.5) * pixelSize;
+
+	// blur it a little bit to get rid of dithering
+	vec4 scatter = texture(inScatter, uv);
+
+#define OFF 1
+	scatter += textureOffset(inScatter, uv, ivec2(0, OFF));
+	scatter += textureOffset(inScatter, uv, ivec2(OFF, 0));
+	scatter += textureOffset(inScatter, uv, ivec2(OFF, OFF));
+	scatter += textureOffset(inScatter, uv, ivec2(-OFF, OFF));
+	scatter += textureOffset(inScatter, uv, ivec2(OFF, -OFF));
+	scatter += textureOffset(inScatter, uv, ivec2(0, -OFF));
+	scatter += textureOffset(inScatter, uv, ivec2(-OFF, 0));
+	scatter += textureOffset(inScatter, uv, ivec2(-OFF, -OFF));
+	scatter /= 9.f;
+	// scatter /= 5.f;
+
+	vec3 sum = scatter.rgb + imageLoad(ioColor, ivec2(pixel)).rgb;
+	imageStore(ioColor, ivec2(pixel), vec4(sum, 1.0));
+}
