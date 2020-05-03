@@ -125,7 +125,7 @@ public:
 			return false;
 		}
 
-		// multipler
+		// network: multiplayer
 		if(network_) {
 			socket_.emplace();
 			player_ = socket_->player();

@@ -199,7 +199,8 @@ bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos, out float isfac) 
 // TODO: could make it dependent on the length that ray has traveled
 // so far.
 uint numRays(uint depth) {
-	// return 1 + min(4 * depth * depth, 3);
+	// return 1 + min(3 * depth, 8); // oof, too much
+	// return 1 + depth;
 	return 1;
 }
 
@@ -220,6 +221,7 @@ const float lightEps = 0.001;
 
 struct Iteration {
 	vec2 pos;
+	vec2 dir;
 	vec2 normal;
 	vec3 color;
 	uint id;
@@ -241,6 +243,7 @@ void main() {
 	// more uniformly distributed offset
 	// float fs = sampleID;
 	float fs = sampleID + random(-pi * view.time + sampleID);
+	// float fs = sampleID + random(-light.pos + sampleID);
 	float phi = 2 * pi * (fs / sampleCount);
 	vec2 off = vec2(cos(phi), sin(phi));
 
@@ -252,7 +255,8 @@ void main() {
 	// vec2 dir = off;
 	// direction slightly random from offset
 	vec2 noff = vec2(-off.y, off.x);
-	float rf = -1 + 2 * random(view.time + sampleID);
+	float rf = -1 + 2 * random(light.pos + view.time + sampleID);
+	// float rf = -1 + 2 * random(light.pos + 3 * sampleID);
 	// rf = 0.f;
 	// rf = 0.2 * rf;
 	// rf *= pow(abs(rf), 4);
@@ -268,8 +272,9 @@ void main() {
 
 	Segment seg;
 	vec2 pos = start;
-	vec3 color = (1.f / sampleCount) * light.color * c;
-	// vec3 color = (1.f / sampleCount) * light.color;
+	// vec3 color = (1.f / sampleCount) * light.color * c;
+	// TODO: use common unit, remove 1000 factor
+	vec3 color = (1.f / sampleCount) * light.color / light.radius;
 	vec2 npos;
 
 	float dist = light.radius;
@@ -277,8 +282,6 @@ void main() {
 	bool finished = false;
 	float isf;
 
-	/*
-	Iteration iterations[maxBounces];
 
 	// TODO: sad code duplication here with iteration
 	// initial ray
@@ -305,17 +308,24 @@ void main() {
 	}
 
 	Material mat = materials[seg.material];
+	insert(pos, npos, color, color);
+
+	if(maxBounces == 0) {
+		return;
+	}
+
+	Iteration iterations[1 + maxBounces];
 	iterations[0].pos = npos;
+	iterations[0].dir = dir;
 	iterations[0].normal = normal;
 	iterations[0].color = color * mat.albedo * max(dot(-dir, normal), 0);
 	iterations[0].id = 0;
 
-	insert(pos, npos, color, color);
-
 	uint depth = 0u;
 	while(true) {
 		// we finished this depth for the current ray
-		if(iterations[depth].id++ > numRays(depth + 1)) {
+		uint nr = numRays(depth + 1);
+		if(iterations[depth].id++ >= nr) {
 			if(depth == 0) {
 				break;
 			}
@@ -332,10 +342,16 @@ void main() {
 		// just lambert
 		// TODO: importance sample, better sampling in general!
 		float theta = pi * random(5 + iterations[depth].id + pos + view.time);
+		// float theta = pi * random(5 + iterations[depth].id + pos);
 		float ct = cos(theta);
 		float st = sin(theta);
 		vec2 dir = normalize(st * normal + ct * tangent);
 
+		if(seg.material == 1) {
+			dir = refract(-iterations[depth].dir, normal, 1.45f);
+		}
+
+		vec3 color = iterations[depth].color / nr;
 		if(!trace(pos, dir, seg, npos, isf)) {
 			// the ray did not hit anything
 			// just add final ray out of screen
@@ -353,7 +369,6 @@ void main() {
 			continue;
 		}
 
-		vec3 color = iterations[depth].color;
 		insert(pos, npos, color, color);
 
 		if((depth + 1) < maxBounces) {
@@ -372,11 +387,12 @@ void main() {
 			iterations[depth].pos = npos;
 			iterations[depth].normal = normal;
 			iterations[depth].color = color * mat.albedo * max(dot(-dir, normal), 0);
+			// iterations[depth].color = color * mat.albedo * max(dot(-dir, normal), 0);
 			iterations[depth].id = 0;
 		}
 	}
-*/
 
+	/*
 	while(trace(pos, dir, seg, npos, isf)) {
 		if(isf < eps || isf > 1 - eps) {
 			finished = true;
@@ -457,4 +473,5 @@ void main() {
 		dist += distance(npos, pos);
 		colors[id + 1] = vec4(color, dist);
 	}
+	*/
 }

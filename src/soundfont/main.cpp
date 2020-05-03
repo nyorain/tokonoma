@@ -89,8 +89,8 @@ bool from_chars(std::string_view view, int& val) {
 int main() {
 	tkn::AudioPlayer ap("tkn/soundfont", 0, 2);
 	auto& audio = ap.create<SoundFontAudio>(ap.rate());
-	auto& midiAudio = ap.create<tkn::MidiAudio>("violin.sf2",
-		TKN_BASE_DIR "/assets/audio/ibi/Some Sand.mid", ap.rate());
+	// auto& midiAudio = ap.create<tkn::MidiAudio>("violin.sf2",
+	// 	TKN_BASE_DIR "/assets/audio/ibi/Some Sand.mid", ap.rate());
 
 	int preset = 0;
 	float vel = 1.f;

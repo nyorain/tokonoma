@@ -220,6 +220,7 @@ shaders_src = {
 	],
 	'rays': [
 		['rays.comp'],
+		['raysRect.comp'],
 		['ray.vert'],
 		['ray.frag'],
 		['tss.comp'],

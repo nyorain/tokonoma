@@ -1,0 +1,411 @@
+#version 460
+
+const float pi = 3.1415926535897932;
+
+layout(local_size_x = 1, local_size_y = 16) in;
+
+struct Segment {
+	vec2 start;
+	vec2 end;
+	uint material;
+	uint _pad0;
+};
+
+layout(set = 0, binding = 0, std430) buffer Segments {
+	Segment segments[];
+};
+
+struct Material {
+	vec3 albedo;
+	float roughness;
+	float metallic;
+	float _pad0[3];
+};
+
+layout(set = 0, binding = 1, std430) buffer Materials {
+	Material materials[];
+};
+
+// Point light
+struct Light {
+	vec3 color;
+	float radius;
+	vec2 pos;
+	float _pad0[2];
+};
+
+layout(set = 0, binding = 2, std430) buffer Lights {
+	Light lights[];
+};
+
+layout(set = 0, binding = 3, std430) buffer DrawCommand {
+	// indirect draw command
+	uint pointCount;
+	uint _p0;
+	uint _p1;
+	uint _p2;
+};
+
+layout(set = 0, binding = 4, std430) buffer Positions {
+	// triangle list
+	vec2 positions[];
+};
+
+layout(set = 0, binding = 5, std430) buffer Colors {
+	// matching to positions[]
+	vec4 colors[];
+};
+
+
+layout(set = 0, binding = 6) uniform UBO {
+	vec2 pos;
+	vec2 size;
+	float time;
+	uint frameID;
+} view;
+
+layout(set = 0, binding = 7) uniform sampler2DArray noiseTex;
+
+vec2 clip_aabb(vec2 boxmin, vec2 boxmax, vec2 pos, vec2 dir) {
+	// if(abs(dir.x) < 0.001) dir.x = 0.001;
+	// if(abs(dir.y) < 0.001) dir.y = 0.001;
+
+	vec2 v1 = (boxmin - pos) / dir;
+	vec2 v2 = (boxmax - pos) / dir;
+	float m = 99999999;
+
+	// TODO: first condition really needed?
+	if(abs(dir.x) > 0.001 && v1.x > 0 && v1.x < m) m = v1.x;
+	if(abs(dir.y) > 0.001 && v1.y > 0 && v1.y < m) m = v1.y;
+	if(abs(dir.x) > 0.001 && v2.x > 0 && v2.x < m) m = v2.x;
+	if(abs(dir.y) > 0.001 && v2.y > 0 && v2.y < m) m = v2.y;
+	return pos + m * dir;
+}
+
+float random(float v) {
+    float a = 43758.5453;
+    float sn = mod(v, 3.14);
+    return fract(sin(sn) * a);
+}
+
+float random(vec2 v) {
+    float a = 43758.5453;
+    float b = 12.9898;
+    float c = 78.233;
+    float dt = dot(v, vec2(b, c));
+    float sn = mod(dt, 3.14);
+    return fract(sin(sn) * a);
+}
+
+vec2 random2(vec2 v) {
+	return vec2(
+		random(dot(v, vec2(15.32, 64.234))),
+		random(dot(v, vec2(-35.2234, 24.23588453))));
+}
+
+vec2 r2seq(float x) {
+	return vec2(random(25.32 * x), random(-35.12942 * x));
+}
+
+float cross(vec2 a, vec2 b) {
+	return a.x * b.y - a.y * b.x;
+}
+
+vec2 intersectionFacs(vec2 p1, vec2 d1, vec2 p2, vec2 d2) {
+	vec2 ab = p2 - p1;
+	float det = cross(d1, d2);
+	// TODO: if det == 0 the lines are collinear
+	return (1 / det) * vec2(cross(ab, d2), cross(ab, d1));
+}
+
+// The factor on the intersected segment is returned in isfac
+const float eps = 0.0001;
+bool trace(vec2 pos, vec2 dir, out uint segID, out vec2 npos, out float isfac) {
+	float m = -1;
+	for(uint i = 0u; i < segments.length(); ++i) {
+		Segment segi = segments[i];
+		vec2 is = intersectionFacs(pos, dir, segi.start, segi.end - segi.start);
+		if(is.y < -eps || is.y > 1 + eps || is.x < eps) {
+			continue;
+		}
+
+		if(m == -1 || is.x < m) {
+			segID = i;
+			isfac = is.y;
+			m = is.x;
+		}
+	}
+
+	if(m == -1) {
+		return false;
+	}
+
+	npos = pos + m * dir;
+	return true;
+}
+
+
+void insert(vec2 start0, vec2 end0, vec2 start1, vec2 end1,
+		vec4 cstart0, vec4 cend0, vec4 cstart1, vec4 cend1) {
+	uint id = atomicAdd(pointCount, 6);
+
+	positions[id + 0] = start0; 
+	positions[id + 1] = end0; 
+	positions[id + 2] = start1; 
+
+	positions[id + 3] = start1; 
+	positions[id + 4] = end0; 
+	positions[id + 5] = end1; 
+
+	// TODO: only valid if rays don't cross. Should be checked
+	// in every iteration
+	colors[id + 0] = cstart0;
+	colors[id + 1] = cend0;
+	colors[id + 2] = cstart1;
+
+	colors[id + 3] = cstart1;
+	colors[id + 4] = cend0;
+	colors[id + 5] = cend1;
+}
+
+void insert(vec2 start0, vec2 end0, vec2 start1, vec2 end1,
+		vec3 cstart0, vec3 cend0, vec3 cstart1, vec3 cend1) {
+	insert(start0, end0, start1, end1, 
+		vec4(cstart0, 1.0), vec4(cend0, 1.0), 
+		vec4(cstart1, 1.0), vec4(cend1, 1.0));
+}
+
+const uint maxBounces = 0u;
+const float lightEps = 0.001;
+
+void main() {
+	uint lightID = gl_GlobalInvocationID.x;
+	if(lightID >= lights.length()) {
+		return;
+	}
+
+	uint sampleCount = gl_WorkGroupSize.y * gl_NumWorkGroups.y;
+	uint sampleID = gl_GlobalInvocationID.y;
+	Light light = lights[lightID];
+
+	// simple, random offset
+	// vec2 off = normalize(-1 + 2 * r2seq(10 * view.time - 0.01 * sampleID));
+
+	// uniformly distributed offset
+	float mf = 1.f; // over-scale
+	float ssize = 1.f;
+	ssize += 10 * random(-4.321 * view.time - 4.2345 * sampleID);
+	float sid = sampleID;
+	// float sid = sampleID + 5 * (-0.5 + random(-4.321 * view.time + sampleID));
+	float phi0 = mf * 2 * pi * ((sid + 0.f) / sampleCount);
+	float phi1 = mf * 2 * pi * ((sid + ssize) / sampleCount);
+	// float phiM = 2 * pi * ((sampleID + 0.5) / sampleCount);
+
+	vec2 off0 = vec2(cos(phi0), sin(phi0));
+	vec2 off1 = vec2(cos(phi1), sin(phi1));
+
+	// float scale = 0.2 * pi;
+	// vec2 diff = vec2(1.5, 1.5) - light.pos;
+	// float phi = -0.5 * scale + scale * (fs / sampleCount) + atan(diff.y, diff.x);
+	// vec2 off = normalize(vec2(cos(phi), sin(phi)));
+
+	// TODO: figure this out! important for visual result, lights
+	// don't only shine outward
+	// vec2 dir = off;
+	// direction slightly random from offset
+	vec2 noff = normalize(off1 - off0);
+	float rf = -1 + 2 * random(light.pos + view.time + sampleID);
+	// float rf0 = -1 + 2 * random(light.pos + off0 + view.time + sampleID);
+	// float rf1 = -1 + 2 * random(light.pos - off1 * view.time + sampleID);
+	// float mid = 0.5 * (rf0 + rf1);
+	// rf0 = 0.5 * (mid + rf0);
+	// rf1 = 0.5 * (mid + rf1);
+
+	// vec2 puv = mod(vec2(sampleID, 2 * sampleID), textureSize(noiseTex, 0).xy);
+	// puv /= textureSize(noiseTex, 0).xy;
+	// uint layer = view.frameID % textureSize(noiseTex, 0).z;
+	// float rf = -1 + 2 * texture(noiseTex, vec3(puv, layer)).r;
+	// rf *= 10;
+
+	// float rf = -1 + 2 * random(light.pos + 3 * sampleID);
+	// rf = 0.f;
+	// rf = 0.2 * rf;
+	// rf *= pow(abs(rf), 4);
+	// vec2 dir = normalize(rf * noff + (1 - abs(rf)) * off);
+
+	vec2 nc = light.pos + light.radius * rf * noff;
+
+	// float c = dot(dir, off);
+	// float s = sqrt(1 - c * c);
+	// if(dot(noff, dir) > 0) s = -s;
+
+	// vec2 dir0 = off0;
+	// vec2 dir1 = off1;
+
+	// vec2 pos0 = light.pos;
+	// vec2 pos1 = light.pos;
+	vec2 pos0 = light.pos + light.radius * off0;
+	vec2 pos1 = light.pos + light.radius * off1;
+	// vec2 start = light.pos + light.radius * (c * off + s * noff);
+	
+	vec2 dir = normalize((1 - abs(rf)) * off0 + rf * noff);
+	// vec2 dir0 = normalize((1 - abs(rf0)) * off0 + rf0 * noff);
+	// vec2 dir1 = normalize((1 - abs(rf1)) * off1 + rf1 * noff);
+	vec2 dir0 = normalize(pos0 - nc);
+	vec2 dir1 = normalize(pos1 - nc);
+	// vec2 dir0 = off0;
+	// vec2 dir1 = off1;
+
+	uint seg0, seg1;
+	// vec3 color = (1.f / sampleCount) * light.color * c;
+	vec3 color0 = light.color / (mf * ssize);
+
+	// don't need to divide by sampleCount anymore, this is done
+	// via the width-color-weighting of the segments
+	// vec3 color0 = 2 * pi * light.color;
+	vec3 color1 = color0;
+	vec2 npos0, npos1;
+
+	// color0 *= pow(clamp(dot(dir0, off0), 0, 0.99), 10);
+	// color1 *= pow(clamp(dot(dir1, off1), 0, 0.99), 10);
+	// color0 *= dot(dir0, dir1) * 0.01;
+	// color1 *= dot(dir0, dir1) * 0.01;
+
+	uint bounce = 0;
+	bool finished = false;
+	float isf0, isf1;
+
+	float dist0 = light.radius;
+	float dist1 = light.radius;
+	// float dist0 = 0.0001;
+	// float dist1 = 0.0001;
+	float distM = light.radius; // distance in middle
+
+	while(true) {
+		bool t0 = trace(pos0, dir0, seg0, npos0, isf0);
+		bool t1 = trace(pos1, dir1, seg1, npos1, isf1);
+		// one of the rays didn't hit anything, i.e. out of screen
+		if(!t0 || !t1) {
+			break;
+		}
+
+		// edges
+		if(isf0 < eps || isf0 > 1 - eps || isf1 < eps || isf1 > 1 - eps) {
+			finished = true;
+			break;
+		}
+
+		// they end up on different segments, trivial rect tracing
+		// not possible.
+		// TODO: generate ray or reduced rect in that case?
+		// (probably rather reduced rect since then we don't need
+		// a separate pipe/buffer and it doesn't mess with
+		// energy conversation/rasterization properties we use).
+		// Maybe use the one of those that is in the front and check
+		// if it can be used all the way to its end. If it can't
+		// be used all the way, just discard (or maybe also check
+		// if the one in the back could be used all the way to
+		// the intersection and if so use it?)
+		if(seg0 != seg1) {
+			finished = true;
+			break;
+		}
+
+		vec2 mid = 0.5 * (npos0 + npos1);
+
+		// vec3 cstart0 = color0 / dist0;
+		// vec3 cstart1 = color1 / dist1;
+		vec4 cstart0 = vec4(color0, dist0 / light.radius);
+		vec4 cstart1 = vec4(color1, dist1 / light.radius);
+
+		dist0 += distance(npos0, pos0);
+		dist1 += distance(npos1, pos1);
+		distM += distance(0.5 * (pos0 + pos1), mid);
+
+		// vec3 cend0 = color0 / dist0;
+		// vec3 cend1 = color1 / dist1;
+		vec4 cend0 = vec4(color0, dist0 / light.radius);
+		vec4 cend1 = vec4(color1, dist1 / light.radius);
+
+
+		// TODO: we should check for intersection of the two rays
+		// first. If there is an intersection we have to generate more
+		// triangles to get the color correct (e.g. full intensity
+		// at the point they intersect)
+		insert(pos0, npos0, pos1, npos1, cstart0, cend0, cstart1, cend1);
+
+		// bounce
+		Segment seg = segments[seg0];
+		vec2 tangent = normalize(seg.end - seg.start);
+		vec2 normal = vec2(-tangent.y, tangent.x); // TODO: left or right normal?
+		if(dot(normal, -dir0) < 0) { // double sided for now
+			normal *= -1;
+		}
+
+		// TODO: check for rays hitting from different sides?
+		if(sign(dot(normal, dir0)) != sign(dot(normal, dir1))) {
+			finished = true;
+			break;
+		}
+
+		Material mat = materials[seg.material];
+
+		// just lambert atm
+		// use real full pbr BRDF...
+		float theta = pi * random(pos0 + dir1 + view.time);
+		// float theta = pi * random(pos0 + dir1);
+		float ct = cos(theta);
+		float st = sin(theta);
+		vec2 ndir = normalize(st * normal + ct * tangent);
+
+		// TODO: tmp
+		if(seg.material == 1) {
+			vec2 dir = normalize(mid - 0.5 * (pos0 + pos1));
+			ndir = refract(-dir, normal, 1.45f);
+		}
+
+		vec2 projCenter = mid - distM * ndir;
+		vec2 ndir0 = normalize(npos0 - projCenter);
+		vec2 ndir1 = normalize(npos1 - projCenter);
+
+		color0 *= mat.albedo * max(dot(-dir0, normal), 0);
+		color1 *= mat.albedo * max(dot(-dir1, normal), 0);
+		// color *= mat.albedo;
+
+		pos0 = npos0;
+		pos1 = npos1;
+		dir0 = ndir0;
+		dir1 = ndir1;
+
+		++bounce;
+		// if(bounce > maxBounces || length(color / (dist * dist)) < lightEps) {
+		if(bounce > maxBounces) {
+			finished = true;
+			break;
+		}
+	}
+
+	// add final ray out of screen
+	if(!finished) {
+		// TODO: both approaches have special cases that don't work....
+		npos0 = clip_aabb(view.pos, view.pos + view.size, pos0, dir0);
+		npos1 = clip_aabb(view.pos, view.pos + view.size, pos1, dir1);
+		// npos0 = pos0 + 10000 * dir0;
+		// npos1 = pos1 + 10000 * dir1;
+
+		// vec3 cstart0 = color0 / dist0;
+		// vec3 cstart1 = color1 / dist1;
+		vec4 cstart0 = vec4(color0, dist0 / light.radius);
+		vec4 cstart1 = vec4(color1, dist1 / light.radius);
+
+		dist0 += distance(npos0, pos0);
+		dist1 += distance(npos1, pos1);
+
+		// vec3 cend0 = color0 / dist0;
+		// vec3 cend1 = color1 / dist1;
+		vec4 cend0 = vec4(color0, dist0 / light.radius);
+		vec4 cend1 = vec4(color1, dist1 / light.radius);
+
+		insert(pos0, npos0, pos1, npos1, cstart0, cend0, cstart1, cend1);
+	}
+}

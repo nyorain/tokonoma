@@ -1,5 +1,7 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
+#include <tkn/image.hpp>
+#include <tkn/texture.hpp>
 #include <tkn/render.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/timeWidget.hpp>
@@ -29,6 +31,7 @@ using namespace tkn::types;
 
 #include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/rays.rays.comp.h>
+#include <shaders/rays.raysRect.comp.h>
 #include <shaders/rays.ray.vert.h>
 #include <shaders/rays.ray.frag.h>
 #include <shaders/rays.tss.comp.h>
@@ -65,9 +68,10 @@ class RaysApp : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
 	static constexpr auto sampleCount = 32 * 1024u;
+	// static constexpr auto sampleCount = 32;
 	static constexpr auto maxBounces = 4u; // XXX: defined again in rays.comp
 	static constexpr auto renderFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto renderDownscale = 2u;
+	static constexpr auto renderDownscale = 1u;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -114,6 +118,31 @@ public:
 		timeWidget_.addTiming("tss");
 		timeWidget_.addTiming("pp");
 		timeWidget_.complete();
+
+		// halton 16x
+		constexpr auto len = 16;
+		samples_.resize(len);
+
+		// http://en.wikipedia.org/wiki/Halton_sequence
+		// index not zero based
+		auto halton = [](int prime, int index = 1){
+			float r = 0.0f;
+			float f = 1.0f;
+			int i = index;
+			while(i > 0) {
+				f /= prime;
+				r += f * (i % prime);
+				i = std::floor(i / (float)prime);
+			}
+			return r;
+		};
+
+		// samples in range [-1, +1] per dimension, unit square
+		for (auto i = 0; i < len; i++) {
+			float u = 2 * (halton(2, i + 1) - 0.5f);
+			float v = 2 * (halton(3, i + 1) - 0.5f);
+			samples_[i] = {u, v};
+		}
 
 		return true;
 	}
@@ -180,26 +209,28 @@ public:
 		auto& dev = vkDevice();
 		auto devMem = dev.deviceMemoryTypes();
 
-		// float fac = 10.f;
+		// TODO: use common unit.
+		float fac = 25.f;
 		std::initializer_list<Light> lights = {
-			{100 * tkn::blackbody(4000), 0.05f, {-1.f, 1.f}},
-			// {1 * tkn::blackbody(5500), 0.1f, {2.0f, 1.8f}},
-			// {fac * tkn::blackbody(5500), 0.1f, {-2.f, -1.8f}},
+			{fac * tkn::blackbody(4000), 0.05f, {-1.f, 1.f}},
+			// {1.f * tkn::blackbody(3500), 0.1f, {2.0f, 1.8f}},
+			// {1.f * tkn::blackbody(5500), 0.1f, {-2.f, -1.8f}},
 			// {1 * tkn::blackbody(5000), 0.1f, {-2.f, 2.f}},
 			// {fac * tkn::blackbody(7000), 0.1f, {2.f, -1.f}},
 		};
 
+		// NOTE: descriptions not exactly up to date.
 		std::initializer_list<Material> mats {
-			{{0.5f, 0.5f, 0.5f}, 1.f, 0.f}, // white rough
-			{{0.8f, 0.7f, 0.7f}, 0.2f, 0.f}, // red shiny
+			{{1.f, 1.f, 1.f}, 1.f, 0.f}, // white rough
+			{{0.2f, 0.3f, 0.7f}, 0.2f, 0.f}, // red shiny
 			{{0.7f, 0.8f, 0.7f}, 0.2f, 1.f}, // green metal
 			{{0.7f, 0.6f, 0.8f}, 0.05f, 0.f}, // blue mirror
 			{{0.8f, 0.8f, 0.6f}, 0.05f, 1.f}, // yellow metal mirror
 			// {{1.0f, 1.0f, 1.f}, 0.01f, 0.f}, // white mirror
 		};
 
-		u32 mat = 0;
-		u32 matBox = 0;
+		// u32 mat = 0;
+		// u32 matBox = 0;
 		std::initializer_list<Segment> segs {
 			// {{1, 1}, {2, 1}, 0},
 			// {{2, 1}, {2, 2}, 1},
@@ -208,19 +239,19 @@ public:
 			// {{-1, -2}, {1, -2}, 4},
 
 			{{3, -2}, {3, 2}, 0},
-			{{3, 2}, {-1, 2}, 1},
-			{{-1, 2}, {-1, 3}, 1},
-			{{-1, 3}, {-3, 3}, 1},
-			{{-3, 3}, {-3, -3}, 1},
-			{{-3, -3}, {-1, -3}, 1},
+			{{3, 2}, {-1, 2}, 0},
+			{{-1, 2}, {-1, 3}, 0},
+			{{-1, 3}, {-3, 3}, 0},
+			{{-3, 3}, {-3, -3}, 0},
+			{{-3, -3}, {-1, -3}, 0},
 			{{-1, -3}, {-1, -2}, 0},
 			{{-1, -2}, {3, -2}, 0},
 
 			// box
-			{{-2, -1.2}, {2, -1.2}, 0},
-			{{2, -1.2}, {2, 1.2}, 0},
-			{{2, 1.2}, {-2, 1.2}, 0},
-			{{-2, 1.2}, {-2, -1.2}, 0},
+			{{-2, -1.2}, {2, -1.2}, 1},
+			{{2, -1.2}, {2, 1.2}, 1},
+			{{2, 1.2}, {-2, 1.2}, 1},
+			{{-2, 1.2}, {-2, -1.2}, 1},
 		};
 
 		// make sure they are all allocated on one buffer/device if possible
@@ -246,9 +277,13 @@ public:
 			vk::BufferUsageBits::transferDst |
 			vk::BufferUsageBits::vertexBuffer, devMem};
 		auto maxVerts = lights.size() * sampleCount * maxBounces * 2;
+		maxVerts *= 3u; // TODO: for rects/triangles
+		maxVerts *= 6u; // TODO: no idea
+		// maxVerts *= 64u; // TODO: for multi ray generation in higher bounces
 		bufs_.positions = {ibs[4], dev.bufferAllocator(),
 			maxVerts * sizeof(Vec2f),
-			vk::BufferUsageBits::storageBuffer, devMem};
+			vk::BufferUsageBits::storageBuffer |
+			vk::BufferUsageBits::vertexBuffer, devMem};
 		bufs_.colors = {ibs[5],
 			dev.bufferAllocator(), maxVerts * sizeof(Vec4f),
 			vk::BufferUsageBits::storageBuffer |
@@ -271,7 +306,8 @@ public:
 		vpp::fillDirect(cb, bufs_.raysCmd, tkn::bytes(cmd));
 
 		nLights_ = lights.size();
-		light_ = *lights.begin();
+		// light_ = *lights.begin();
+		lights_ = lights;
 	}
 
 	void initCompute() {
@@ -293,6 +329,8 @@ public:
 				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
 		};
 
 		comp_.dsLayout = {dev, bindings};
@@ -307,11 +345,34 @@ public:
 		cpi.stage.stage = vk::ShaderStageBits::compute;
 		comp_.pipe = {dev, cpi};
 
+		vpp::ShaderModule rectMod(dev, rays_raysRect_comp_data);
+		cpi.stage.module = rectMod;
+		comp_.rectPipe = {dev, cpi};
+
 		// ubo
-		auto uboSize = sizeof(Vec2f) * 2 + sizeof(float);
+		auto uboSize = sizeof(Vec2f) * 2 + sizeof(float) * 2;
 		auto hostBits = dev.hostMemoryTypes();
 		comp_.ubo = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, hostBits};
+
+		// noise
+		// noise tex
+		std::array<std::string, 64u> spaths;
+		std::array<const char*, 64u> paths;
+		for(auto i = 0u; i < 64; ++i) {
+			spaths[i] = dlg::format("noise/LDR_RGBA_{}.png", i);
+			paths[i] = spaths[i].data();
+		}
+
+		auto layers = tkn::read(paths);
+
+		tkn::TextureCreateParams tcp;
+		// TODO: fix blitting!
+		// tcp.format = vk::Format::r8Unorm;
+		tcp.format = vk::Format::r8g8b8a8Unorm;
+		tcp.srgb = false; // TODO: not sure tbh
+		auto tex = tkn::Texture(dev, tkn::read(paths), tcp);
+		noise_ = std::move(tex.viewableImage());
 
 		// ds
 		comp_.ds = {dev.descriptorAllocator(), comp_.dsLayout};
@@ -324,6 +385,8 @@ public:
 		dsu.storage({{{bufs_.positions}}});
 		dsu.storage({{{bufs_.colors}}});
 		dsu.uniform({{{comp_.ubo}}});
+		dsu.imageSampler({{{}, noise_.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
 	}
 
 	void initGfx() {
@@ -421,8 +484,11 @@ public:
 
 		gfx_.pipe = {dev, pipeInfo.info()};
 
+		pipeInfo.assembly.topology = vk::PrimitiveTopology::triangleList;
+		gfx_.rectPipe = {dev, pipeInfo.info()};
+
 		// ubo
-		auto uboSize = sizeof(nytl::Mat4f);
+		auto uboSize = sizeof(nytl::Mat4f) + sizeof(nytl::Vec2f);
 		auto hostMem = dev.hostMemoryTypes();
 		gfx_.ubo = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, hostMem};
@@ -534,7 +600,8 @@ public:
 			vk::PipelineStageBits::computeShader, {}, {{barrier}}, {}, {});
 
 		// generate rays to render
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, comp_.pipe);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
+			useRects_ ? comp_.rectPipe : comp_.pipe);
 		tkn::cmdBindComputeDescriptors(cb, comp_.pipeLayout, 0, {comp_.ds});
 
 		u32 dy = sampleCount / 16;
@@ -565,7 +632,8 @@ public:
 			{0u, 0u, dwidth, dheight},
 			std::uint32_t(cv.size()), cv.data()}, {});
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
+			useRects_ ? gfx_.rectPipe : gfx_.pipe);
 		tkn::cmdBindGraphicsDescriptors(cb, gfx_.pipeLayout, 0, {gfx_.ds});
 		vk::cmdBindVertexBuffers(cb, 0, {{
 			bufs_.positions.buffer().vkHandle(),
@@ -617,8 +685,8 @@ public:
 	void update(double dt) override {
 		Base::update(dt);
 
-		if(next_) {
-			// next_ = false;
+		if(next_ || run_) {
+			next_ = false;
 			Base::scheduleRedraw();
 		}
 
@@ -632,11 +700,26 @@ public:
 		auto span = map.span();
 		tkn::write(span, matrix_);
 
+		using namespace nytl::vec::cw::operators;
+		auto sampleID = frameID_ % samples_.size();
+		auto sample = samples_[sampleID];
+		auto [width, height] = swapchainInfo().imageExtent;
+		width = std::max(width >> renderDownscale, 1u);
+		height = std::max(height >> renderDownscale, 1u);
+		auto pixSize = Vec2f{1.f / width, 1.f / height};
+		sample = sample * pixSize;
+
+		// TODO
+		sample = {0.f, 0.f};
+		tkn::write(span, sample);
+
 		map = comp_.ubo.memoryMap();
 		span = map.span();
 		tkn::write(span, view_.center - 0.5f * view_.size);
 		tkn::write(span, view_.size);
 		tkn::write(span, time_);
+		// tkn::write(span, 0.f);
+		tkn::write(span, ++frameID_);
 		map.flush();
 
 		if(updateLight_) {
@@ -648,7 +731,7 @@ public:
 			auto qfam = qs.queue().family();
 			auto cb = dev.commandAllocator().get(qfam);
 			vk::beginCommandBuffer(cb, {});
-			vpp::fillDirect(cb, bufs_.lights, tkn::bytes(light_));
+			vpp::fillDirect(cb, bufs_.lights, tkn::bytes(lights_));
 			vk::endCommandBuffer(cb);
 			qs.wait(qs.add(cb));
 		}
@@ -689,11 +772,20 @@ public:
 		if(ev.pressed && ev.keycode == swa_key_n) {
 			next_ = true;
 			return true;
+		} else if(ev.pressed && ev.keycode == swa_key_r) {
+			run_ = !run_;
+			return true;
+		} else if(ev.pressed && ev.keycode == swa_key_t) {
+			useRects_ = !useRects_;
+			dlg_info("rects: {}", useRects_);
+			App::scheduleRerecord();
+			return true;
 		}
 
 		return false;
 	}
 
+	/*
 	bool touchBegin(const swa_touch_event& ev) override {
 		if(Base::touchBegin(ev)) {
 			return true;
@@ -710,11 +802,23 @@ public:
 		light_.pos = pos;
 		updateLight_ = true;
 	}
+	*/
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
 		auto pos = tkn::windowToLevel(windowSize(), view_, {ev.x, ev.y});
-		light_.pos = pos;
+		auto dpy = swaDisplay();
+		if(swa_display_mouse_button_pressed(dpy, swa_mouse_button_left)
+				&& lights_.size() > 0) {
+			lights_[0].pos = pos;
+		} else if(swa_display_mouse_button_pressed(dpy, swa_mouse_button_right)
+				&& lights_.size() > 1) {
+			lights_[1].pos = pos;
+		} else if(swa_display_mouse_button_pressed(dpy, swa_mouse_button_middle)
+				&& lights_.size() > 2) {
+			lights_[2].pos = pos;
+		}
+
 		updateLight_ = true;
 	}
 
@@ -722,16 +826,19 @@ public:
 	bool needsDepth() const override { return false; }
 
 protected:
-	Light light_;
+	std::vector<Light> lights_;
 	tkn::LevelView view_ {};
 	nytl::Mat4f matrix_;
 	unsigned nLights_ {};
 	float time_ {};
-	bool next_ {true};
+	bool next_ {false};
+	bool run_ {true};
 
 	bool updateView_ {true};
 	bool updateLight_ {false};
 	vpp::Sampler sampler_;
+
+	bool useRects_ = false;
 
 	struct {
 		vpp::SubBuffer segments;
@@ -745,6 +852,7 @@ protected:
 	struct {
 		vpp::SubBuffer ubo;
 		vpp::Pipeline pipe;
+		vpp::Pipeline rectPipe;
 		vpp::PipelineLayout pipeLayout;
 		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;
@@ -753,6 +861,7 @@ protected:
 	struct {
 		vpp::SubBuffer ubo;
 		vpp::Pipeline pipe;
+		vpp::Pipeline rectPipe;
 		vpp::PipelineLayout pipeLayout;
 		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;
@@ -779,6 +888,11 @@ protected:
 
 	tkn::TimeWidget timeWidget_;
 	rvg::Transform windowTransform_;
+
+	vpp::ViewableImage noise_;
+	unsigned frameID_ {};
+
+	std::vector<Vec2f> samples_ {};
 };
 
 int main(int argc, const char** argv) {

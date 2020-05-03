@@ -1,18 +1,24 @@
+#pragma once
+
+#include <tkn/types.hpp>
+#include <nytl/span.hpp>
+
 #include <asio/ip/udp.hpp>
 #include <asio/ip/host_name.hpp>
 #include <asio/io_service.hpp>
 #include <asio/buffer.hpp>
-#include <nytl/span.hpp>
 
 #include <optional>
 #include <functional>
 
 using asio::ip::udp;
-constexpr auto delay = 2u;
+using namespace tkn::types;
+
 constexpr auto broadcastPort = 49163; // for initial broadcast
+constexpr auto delay = 2u;
+static_assert(delay > 0);
 
 
-//XXX: stolen from kyo
 /// Represents an owned data buffer to send.
 /// Will allocate memory as needed. The "current" position is always the
 /// end of the data array, i.e. there shall never be unused values in the
@@ -58,8 +64,8 @@ private:
 	void recvSocket(udp::endpoint& ep, std::uint32_t& num, unsigned& state);
 
 private:
-	std::uint64_t step_ {1}; // current(next) step
-	std::uint64_t recv_ {0}; // last received
+	u32 step_ {1}; // current(next) step
+	u32 recv_ {0}; // last received
 	// std::uint64_t ack_ {0}; // last of our messages acked by other side
 
 	asio::io_service ioService_;

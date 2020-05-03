@@ -14,5 +14,13 @@ void main() {
 	// comes naturally with the light rays getting less dense far
 	// away from the source. That's how falloff works.
 	// float falloff = 1 / dist;
-	fragColor = vec4(inColor.rgb, 1);
+	// fragColor = vec4(inColor.rgb, 1);
+
+	float fac = 1.f / inColor.a;
+	if(inColor.a < 0.00001) {
+		fragColor = vec4(0, 0, 1, 1);	
+		return;
+	}
+
+	fragColor = vec4(fac * inColor.rgb, 1);
 }

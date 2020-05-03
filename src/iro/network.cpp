@@ -5,9 +5,29 @@
 #include <condition_variable>
 
 // TODO:
-// - invalid packages (currently using tkn::read, only asserts size)
+// - invalid packet (currently using tkn::read, only asserts size)
 //   probably best solved by exceptions in read function, caught here
 // - acknowledge and stuff
+// - make packet receiving (header processing, check whether re-send
+//   is needed and re-send, if so) async. That can happen in separate
+//   thread. Just sync via mutex.
+// - when a player knows it's behind (i.e. step < recv) it could execute
+//   multiple steps at once, trying to catch up.
+// - fix all comparisons for step logic. Maybe test it by just using
+//   an u8 for step_ and recv_ (should be enough anyways, makes
+//   packets smaller!)
+// - timeouts
+// - ping times
+
+struct Header {
+	std::uint32_t magic; // to minimize chance we handle misguided packets
+	std::uint32_t step; // the step this message belons to (for sender)
+
+	// acknowledge bitset
+	// if bit i is set (ack & (1 << i)), this means that message
+	// (step - delay + 1 + i) was received.
+	std::uint32_t ack;
+};
 
 Socket::Socket() {
 	auto bep = udp::endpoint(udp::v4(), broadcastPort);
@@ -79,6 +99,7 @@ Socket::Socket() {
 	broadcast_->async_receive_from(asio::buffer(&recvbuf2, 4), recvep2, brdHandler);
 
 	// will run until connected
+	// TODO: make this async
 	ioService_.run();
 
 	player_ = socket().local_endpoint() < socket().remote_endpoint();
@@ -87,9 +108,28 @@ Socket::Socket() {
 	// work...
 	socket().non_blocking(true);
 
+	// The buffers have to be of size 2 * delay, they are basically
+	// ring buffers.
+	// The worst case (in terms of used buffer slots) is this:
+	// the other side can at max be delay steps ahead of this sides'
+	// step_. But it may be possible that our packets for step_ already
+	// reached the other side (therefore the other side being at step_ + delay),
+	// but we still did not get the packets for (step_ - delay + 1), i.e.
+	// recv_ = step-delay. In that case we might get (id = step_ + delay)
+	// before the (2 * delay - 1) nuber of packets before that.
 	recvd_.resize(2 * delay);
+
+	// ownPending_ on the other hand could just be delay in size because
+	// we always process our own packets after exactly delay steps.
+	// But since we also use ownPending to resend packets, we need to
+	// additionally track the packets from furhter before, i.e.
+	// back to step_ - 2 * delay. We only know that the other side
+	// did get recv_ - delay (since otherwise it could not be at recv_)
+	// and we know that recv_ cannot be more than delay steps behind
+	// step_.
 	ownPending_.resize(2 * delay);
-	write(sending_, step_); // add dummy for next step
+
+	write(sending_, step_); // add dummy for next (first) step
 }
 
 void Socket::recvSocket(udp::endpoint& ep, std::uint32_t& num, unsigned& state) {
@@ -182,7 +222,7 @@ bool Socket::update(MsgHandler handler) {
 		}
 	}
 
-	// next step?
+	// check whether we can do the next step
 	if(step_ >= recv_ + delay) {
 		dlg_info("no update: {} vs {}", step_, recv_);
 		return false;

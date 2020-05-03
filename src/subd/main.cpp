@@ -115,7 +115,7 @@ public:
 		keysCulled_ = {dev.bufferAllocator(), bufSize + 8, usage, dev.deviceMemoryTypes()};
 
 		// write initial data to buffers
-		tkn::DynamicBuffer data0;
+		tkn::WriteBuffer data0;
 
 		dlg_assert(shape.indices.size() % 3 == 0);
 		auto numTris = shape.indices.size() / 3;

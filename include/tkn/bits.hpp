@@ -75,12 +75,12 @@ void write(std::byte*& data, T&& obj) {
 	data += sizeof(obj);
 }
 
-struct DynamicBuffer {
+struct WriteBuffer {
 	std::vector<std::byte> buffer;
 };
 
 template<typename T>
-void write(DynamicBuffer& buffer, T&& obj) {
+void write(WriteBuffer& buffer, T&& obj) {
 	buffer.buffer.resize(buffer.buffer.size() + sizeof(obj));
 	auto data = buffer.buffer.data() + buffer.buffer.size() - sizeof(obj);
 	std::memcpy(data, &obj, sizeof(obj));
