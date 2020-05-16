@@ -112,7 +112,7 @@ nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 
 	auto fov = 0.5 * nytl::constants::pi;
 	auto aspect = 1.f;
-	auto mat = tkn::perspective3RH<float>(fov, aspect, near, far);
+	auto mat = tkn::perspective<float>(fov, aspect, -near, -far);
 	return mat * view;
 }
 

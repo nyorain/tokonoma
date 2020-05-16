@@ -31,11 +31,13 @@ inline nytl::Vec3f dir(const Camera& c) {
 }
 
 inline auto viewMatrix(const Camera& c) {
-	return tkn::lookAtRH(c.pos, c.pos + dir(c), c.up);
+	// return tkn::lookAtRH(c.pos, c.pos + dir(c), c.up);
+	return tkn::lookAt(c.pos, -dir(c), c.up);
 }
 
 inline auto fixedViewMatrix(const Camera& c) {
-	return tkn::lookAtRH({}, dir(c), c.up);
+	// return tkn::lookAtRH({}, dir(c), c.up);
+	return tkn::lookAt({}, -dir(c), c.up);
 }
 
 inline void rotateView(Camera& c, float dyaw, float dpitch) {

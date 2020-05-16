@@ -18,7 +18,7 @@ struct QuatCamera {
 };
 
 inline nytl::Vec3f dir(const QuatCamera& c) {
-	return apply(c.rot, nytl::Vec3f {0.f, 0.f, -1.f});
+	return -apply(c.rot, nytl::Vec3f {0.f, 0.f, 1.f});
 }
 
 inline nytl::Vec3f up(const QuatCamera& c) {
@@ -30,18 +30,20 @@ inline nytl::Vec3f right(const QuatCamera& c) {
 }
 
 inline auto viewMatrix(const QuatCamera& c) {
-	return tkn::lookAtRH(c.pos, c.pos + dir(c), up(c));
+	// return tkn::lookAtRH(c.pos, c.pos + dir(c), up(c));
+	return tkn::lookAt(c.pos, dir(c), up(c));
 }
 
 inline auto fixedViewMatrix(const QuatCamera& c) {
-	return tkn::lookAtRH({}, dir(c), up(c));
+	// return tkn::lookAtRH({}, dir(c), up(c));
+	return tkn::lookAt({}, dir(c), up(c));
 }
 
 // yaw: rotation around y axis (i.e looking to left or right)
 // pitch: rotation around x axis (i.e looking down or up)
 // roll: rotation around z axis (i.e. tilting left or right)
 inline void rotateView(QuatCamera& c, float yaw, float pitch, float roll) {
-	c.rot = normalize(c.rot * Quaternion::eulerAngle(-pitch, -yaw, -roll));
+	c.rot = normalized(c.rot * Quaternion::yxz(-yaw, -pitch, -roll));
 	c.update = true;
 }
 

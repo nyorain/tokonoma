@@ -247,8 +247,8 @@ public:
 
 		gpi.depthStencil.depthTestEnable = true;
 		gpi.depthStencil.depthWriteEnable = true;
-		// gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
-		gpi.depthStencil.depthCompareOp = vk::CompareOp::greaterOrEqual;
+		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+		// gpi.depthStencil.depthCompareOp = vk::CompareOp::greaterOrEqual;
 
 		// NOTE: see the gltf material.doubleSided property. We can't switch
 		// this per material (without requiring two pipelines) so we simply
@@ -256,8 +256,8 @@ public:
 		// fragment shader. That is required since some models rely on
 		// backface culling for effects (e.g. outlines). See model.frag
 		gpi.rasterization.cullMode = vk::CullModeBits::none;
-		// gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 		gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
+		// gpi.rasterization.frontFace = vk::FrontFace::clockwise;
 
 		vpp::Pipeline ppp(dev, gpi.info());
 		pipe_ = std::move(ppp);
@@ -693,12 +693,19 @@ public:
 		auto aspect = float(windowSize().x) / windowSize().y;
 		// return tkn::perspective3RH(fov, aspect, near, far);
 		// return tkn::perspective3Rev(fov, aspect, near, far);
-		return tkn::perspective3RevInf(fov, aspect, near);
+		// return tkn::perspective3RevInf(fov, aspect, near);
+		// return tkn::perspective3RH(fov, aspect, near, far);
+		return tkn::perspective3NegZ(fov, aspect, near, far);
 	}
 
 	nytl::Mat4f cameraVP() const {
-		// return projectionMatrix() * viewMatrix(camera_);
-		return projectionMatrix() * ml(camera_);
+		dlg_debug("==================");
+		dlg_debug("viewMatrix: {}", viewMatrix(camera_));
+		dlg_debug("lookAtNegZ: {}", lookAtNegZ(camera_.rot, camera_.pos));
+
+		return projectionMatrix() * viewMatrix(camera_);
+		// return projectionMatrix() * lookAtNegZ(camera_.rot, camera_.pos);
+		// return projectionMatrix() * ml(camera_);
 	}
 
 	void updateDevice() override {
@@ -717,8 +724,9 @@ public:
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
-			// tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
-			tkn::write(envSpan, projectionMatrix() * lookAt(camera_.rot));
+			tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
+			// tkn::write(envSpan, projectionMatrix() * lookAt(camera_.rot));
+			// tkn::write(envSpan, projectionMatrix() * lookAtNegZ(camera_.rot, {0.f, 0.f, 0.f}));
 			envMap.flush();
 
 			updateLight_ = true;

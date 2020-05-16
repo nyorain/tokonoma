@@ -393,7 +393,8 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 		// maps that is not covered now due to the quantization move
 		auto q = (2.f * radius) / (size_.x - 1);
 
-		auto viewMat = lookAtRH({}, data.dir, {0.f, 1.f, 0.f});
+		// auto viewMat = lookAt({}, -data.dir, {0.f, 1.f, 0.f});
+		auto viewMat = orientMat(data.dir, nytl::Vec3f{0.f, 0.f, -1.f});
 		frustCenter = multPos(viewMat, frustCenter);
 
 		// Quantatizing in z is not really needed since that only
@@ -409,7 +410,7 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 		max.y -= std::fmod(max.y, q);
 		// max.z -= std::fmod(max.z, q);
 
-		// auto projMat = ortho3(min.x, max.x, max.y, min.y, -max.z, -min.z);
+		// auto projMat = ortho(min.x, max.x, min.y, max.y, -max.z, -min.z);
 		// projs[i] = projMat * viewMat;
 		projMin[i] = nytl::Vec4f{min.x, min.y, -max.z, 0.0};
 		projMax[i] = nytl::Vec4f{max.x, max.y, -min.z, 0.0};

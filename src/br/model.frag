@@ -67,6 +67,10 @@ vec4 readTex(MaterialTex tex) {
 void main() {
 	// uint inMatID = 0u;
 	// uint inModelID = 0u;
+	
+	// debug
+	// outCol = vec4(1.0, 1.0, 1.0, 1.0);
+	// return;
 
 	Material material = materials[inMatID];
 

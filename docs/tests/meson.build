@@ -6,3 +6,9 @@ test('graph', tgraph)
 
 tfb = executable('fb', 'fb.cpp', dependencies: tkn_dep)
 test('fb', tfb)
+
+tquat = executable('quaternion', 'quaternion.cpp', dependencies: tkn_dep)
+test('quat', tquat)
+
+ttransform = executable('transform', 'transform.cpp', dependencies: tkn_dep)
+test('transform', ttransform)

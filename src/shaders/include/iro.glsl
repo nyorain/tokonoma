@@ -16,6 +16,7 @@ const uint SideTopLeft = 2u;
 const uint SideLeft = 3u;
 const uint SideBotLeft = 4u;
 const uint SideBotRight = 5u;
+
 const float sqrt2 = 1.41421356237;
 const float isqrt2 = 0.70710678118;
 const float sinpi3 = 0.86602540378;

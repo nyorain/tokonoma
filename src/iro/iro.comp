@@ -87,8 +87,18 @@ layout(set = 0, binding = 2, std430) buffer Players {
 	uint step;
 } ubo;
 
+// Returns how much diffusion happens from a field to direction 'dir'
+// given that the field has velocity 'vel'.
 float diffuseFac(vec2 vel, vec2 dir) {
+	// When there is no velocity, half of the field diffuses evenly
+	// to all sides. Otherwise it diffuses stronger to the direction
+	// of the velocity. With a large enough velocity it's just
+	// capped to full diffusion into the direction of the velocity.
 	float fac = mix(0.5 * oneSixth, 50 * dot(dir, vel), 50 * dot(vel, vel));
+	// clamp is needed
+	// - fac can be negative (which we don't allow) when dir and vel
+	//   point in opposite directions
+	// - fac can be >1 which we don't allow as well.
 	return clamp(fac, 0.0, 1.0);
 }
 
@@ -142,10 +152,12 @@ void main() {
 			// TODO: also apply this for buildings?
 			if(field.type == FieldEmpty) {
 				// TODO: factor:
+				// 0.0: no modifiation of velocity at borders
 				// 1.0: erase all velocity in that direction
 				// 2.0: full bounce back
+				float borderFac = 1.8;
 				float d = max(dot(field.velocity, direction(i)), 0);
-				field.velocity -= 0.8 * d * direction(i);
+				field.velocity -= borderFac * d * direction(i);
 			}
 
 			continue;
@@ -208,7 +220,7 @@ void main() {
 		float fac = diffuseFac(next.velocity, -direction(i));
 
 		// TODO: strength cannot be greater than 1? normalize somehow everywhere!
-		// can't move into friendly building, only to attack
+		// can't move into friendly building, only to unfriendly (attack)
 		if(next.type == FieldEmpty && (field.type == FieldEmpty || next.player != field.player)) {
 			// diffuse (friendly or attack): next -> field
 			strengths[next.player] += fac * diffuse * next.strength;

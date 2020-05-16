@@ -142,7 +142,7 @@ TEST(large) {
 	EXPECT(float(almost1 + two), nytl::approx(3.f, 0.01));
 }
 
-// == less of a test, more of a playground ==
+// === NOTE: less of a test, more of a playground ===
 template<typename T>
 nytl::Mat2<T> inverse2(const nytl::Mat2<T>& v) {
 	return T(1) / (v[0][0] * v[1][1] - v[0][1] * v[1][0]) * nytl::Mat2<T>{

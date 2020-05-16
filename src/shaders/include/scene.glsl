@@ -78,7 +78,7 @@ struct Material {
 	vec2 pad;
 };
 
-// returns the z value belonging to the given depth buffer value
+// returns the (positive) z value belonging to the given depth buffer value
 // obviously requires the near and far plane values that were used
 // in the perspective projection.
 // depth expected in standard vulkan range [0,1]

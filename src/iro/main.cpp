@@ -13,7 +13,8 @@
 
 #include "network.hpp"
 
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
+#include <tkn/shader.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/window.hpp>
@@ -34,9 +35,6 @@
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
 #include <nytl/mat.hpp>
-
-#include <ny/mouseButton.hpp>
-#include <ny/key.hpp>
 
 #include <optional>
 #include <cstddef>
@@ -115,9 +113,10 @@ Vec2i neighborPos(Vec2i pos, Field::Side side) {
 	}
 }
 
-class HexApp : public tkn::App {
+class HexApp : public tkn::SinglePassApp {
 public:
 	static constexpr auto size = 32u;
+	using Base = tkn::SinglePassApp;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -132,7 +131,7 @@ public:
 		}
 
 		// layouts
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// resources
 		auto images = {
@@ -304,8 +303,9 @@ public:
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if(!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result,
+			Args& out) override {
+		if(!Base::handleArgs(result, out)) {
 			return false;
 		}
 
@@ -314,7 +314,7 @@ public:
 	}
 
 	void createComputeCb() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto qfamily = dev.queueSubmitter().queue().family();
 		compCb_ = dev.commandAllocator().get(qfamily);
 		vk::beginCommandBuffer(compCb_, {});
@@ -682,7 +682,7 @@ public:
 			commands_.clear();
 			fieldsMap_.flush();
 
-			auto& dev = vulkanDevice();
+			auto& dev = vkDevice();
 			vk::SubmitInfo info;
 			info.commandBufferCount = 1u;
 			info.pCommandBuffers = &compCb_.vkHandle();
@@ -721,12 +721,12 @@ public:
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
 		if(App::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			draggingView_ = ev.pressed;
 			return true;
 		}
@@ -734,34 +734,34 @@ public:
 		return false;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
+	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
 		if(!draggingView_) {
 			return;
 		}
 
 		using namespace nytl::vec::cw::operators;
-		auto normed = nytl::Vec2f(ev.delta) / window().size();
+		auto normed = nytl::Vec2f{float(ev.dx), float(ev.dy)} / windowSize();
 		normed.y *= -1.f;
 		view_.center -= view_.size * normed;
 		updateTransform_ = true;
 	}
 
-	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
-		if(App::mouseWheel(ev)) {
+	bool mouseWheel(float dx, float dy) override {
+		if(App::mouseWheel(dx, dy)) {
 			return true;
 		}
 
 		using namespace nytl::vec::cw::operators;
 
-		auto s = std::pow(0.95f, ev.value.y);
+		auto s = std::pow(0.95f, dy);
 		viewScale_ *= s;
 		view_.size *= s;
 		updateTransform_ = true;
 		return true;
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
+	bool key(const swa_key_event& ev) override {
 		if(App::key(ev)) {
 			return true;
 		}
@@ -774,7 +774,7 @@ public:
 			const float cospi3 = 0.5;
 			const float sinpi3 = 0.86602540378; // cos(pi/6) or sqrt(3)/2;
 			switch(ev.keycode) {
-				case ny::Keycode::r:
+				case swa_key_r:
 					reloadPipes_ = true;
 					return true;
 				// movement scheme 1
@@ -789,32 +789,32 @@ public:
 				// TODO: works only for current grid
 				// pos should probably be position on grid/pos on grid
 				// should be stored somewhere
-				case ny::Keycode::j:
+				case swa_key_j:
 					side = ((selected_ / size) % 2 == 1) ?
 						Field::Side::botLeft : Field::Side::botRight;
 					break;
-				case ny::Keycode::k:
+				case swa_key_k:
 					side = ((selected_ / size) % 2 == 1) ?
 						Field::Side::topLeft : Field::Side::topRight;
 					break;
-				case ny::Keycode::h: side = Field::Side::left; break;
-				case ny::Keycode::l: side = Field::Side::right; break;
+				case swa_key_h: side = Field::Side::left; break;
+				case swa_key_l: side = Field::Side::right; break;
 
 				// actions
-				case ny::Keycode::s: type = Field::Type::spawn; break;
-				case ny::Keycode::t: type = Field::Type::tower; break;
-				case ny::Keycode::v: type = Field::Type::accel; break;
-				case ny::Keycode::g: type = Field::Type::resource; break;
+				case swa_key_s: type = Field::Type::spawn; break;
+				case swa_key_t: type = Field::Type::tower; break;
+				case swa_key_v: type = Field::Type::accel; break;
+				case swa_key_g: type = Field::Type::resource; break;
 
 				// change velocity
-				case ny::Keycode::w: vel = {-cospi3, sinpi3}; break;
-				case ny::Keycode::e: vel = {cospi3, sinpi3}; break;
-				case ny::Keycode::a: vel = {-1, 0}; break;
-				case ny::Keycode::d: vel = {1, 0}; break;
-				case ny::Keycode::z: vel = {-cospi3, -sinpi3}; break;
-				case ny::Keycode::x: vel = {cospi3, -sinpi3}; break;
+				case swa_key_w: vel = {-cospi3, sinpi3}; break;
+				case swa_key_e: vel = {cospi3, sinpi3}; break;
+				case swa_key_a: vel = {-1, 0}; break;
+				case swa_key_d: vel = {1, 0}; break;
+				case swa_key_z: vel = {-cospi3, -sinpi3}; break;
+				case swa_key_x: vel = {cospi3, -sinpi3}; break;
 
-				case ny::Keycode::p: paused_ = !paused_; break;
+				case swa_key_p: paused_ = !paused_; break;
 				default: break;
 			}
 
@@ -849,15 +849,15 @@ public:
 		return false;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		view_.size = tkn::levelViewSize(ev.size.x / float(ev.size.y), viewScale_);
+	void resize(unsigned width, unsigned height) override {
+		App::resize(width, height);
+		view_.size = tkn::levelViewSize(width / float(height), viewScale_);
 		updateTransform_ = true;
 	}
 
 
 	bool initGfxPipe(bool dynamic) {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		vpp::ShaderModule modv, modf;
 
 		if(dynamic) {
@@ -922,7 +922,7 @@ public:
 	}
 
 	bool initCompPipe(bool dynamic) {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		vpp::ShaderModule mod;
 		if(dynamic) {
 			auto omod = tkn::loadShader(dev, "iro.comp");

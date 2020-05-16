@@ -13,60 +13,76 @@
 
 // What makes quaternions somewhat hard to work with is that once again
 // everybody has a different convention regarding roll, pitch, yaw and
-// attitude, heading, bank. We use it like this (taking the oriented
-// camera object as example):
-// - pitch: rotation around x-axis (up/down)
-// - yaw: rotation around y-axis (rotate left/right)
-// - roll: rotation around z-axis (tilt left/right)
+// attitude, heading, bank (i.e. the order of rotations, relevant
+// to convert from/to euler angles as it is sometimes needed).
+// No convention is implicitly assumed here, when creating a quaternion
+// from euler angles (rotation sequence) or the other way around,
+// the convention has to be specified.
+
+// Just as a reference (but this should not have any impact for this
+// header) to inuitively implement rotations in a standard
+// graphics coordinate system (e.g. for the camera, where y is up,
+// -z is front and x is the right, i.e. right-handed coordinate
+// system), the yxz rotation sequence (euler/tait-bryan angles)
+// is used.
+
+// Articles about quaternions usually just implicitly assume one of
+// the euler-angles rotation sequences when it's needed (without ever
+// specifying it). Googling something like "quaternion to euler
+// angles" or "euler angles to quaternions" gives many different formulas,
+// usually without people specififying for *which* euler rotation
+// sequence this formula actually works. Even worse, the association
+// between pitch, yaw, roll and the x, y, z axes (which is all quaternions
+// know about, there are no inherently attached semantics!) is usually
+// implicitly assumed as well.
+
+// Getting euler angles out of quaternions is not trivial, that's why it's
+// implemented below. Creating a quaternion out of euler angles can always
+// easily be done using the 'axisAngle' constructor and multiplication,
+// a yxz rotation by (yaw, pitch, roll) can for instance easily
+// be achieved by
+// 	Quaternion::axisAngle(0, 1, 0, yaw) *
+// 	Quaternion::axisAngle(1, 0, 0, pitch) *
+// 	Quaternion::axisAngle(0, 0, 1, roll).
 
 namespace tkn {
 
-/// Represents a mathematical quaternion, useful for representing 3D rotations.
-/// See https://en.wikipedia.org/wiki/Quaternion for the mathematical background.
+// fwd
+class Quaternion;
+[[nodiscard]] inline Quaternion conjugated(const Quaternion& q);
+[[nodiscard]] inline Quaternion normalized(const Quaternion& q);
+
+// Represents a mathematical quaternion, useful for representing 3D rotations.
 class Quaternion {
 public:
-	double x = 0.f, y = 0.f, z = 0.f;
-	double w = 1.f;
+	double x {0.f};
+	double y {0.f};
+	double z {0.f};
+	double w {1.f};
 
 public:
-	/// Constructs a Quaternion from an axis (given by x,y,z) and an angle (in radians)
-	/// to rotate around the axis.
-	static Quaternion axisAngle(double ax, double ay, double az, double angle) {
+	// Constructs a Quaternion from an axis (given by x,y,z) and an angle (in radians)
+	// to rotate around the axis.
+	[[nodiscard]] static
+	Quaternion axisAngle(double ax, double ay, double az, double angle) {
 		auto ha = std::sin(angle / 2);
 		return {ax * ha, ay * ha, az * ha, std::cos(angle / 2)};
 	}
 
-	/// Constructs a Quaternion by given angles (in degrees) to rotate around
-	/// the x,y,z axis.
-	static Quaternion eulerAngle(double rx, double ry, double rz) {
-		double cx = std::cos(rx * 0.5);
-		double sx = std::sin(rx * 0.5);
-		double cy = std::cos(ry * 0.5);
-		double sy = std::sin(ry * 0.5);
-		double cz = std::cos(rz * 0.5);
-		double sz = std::sin(rz * 0.5);
-
-		return {
-			sx * cy * cz - cx * sy * sz,
-			cx * sy * cz + sx * cy * sz,
-			cx * cy * sz - sx * sy * cz,
-			cx * cy * cz + sx * sy * sz,
-		};
-		// return {
-		// 	cx * sy * cz - sx * cy * sz,
-		// 	cx * cy * sz + sx * sy * cz,
-		// 	sx * cy * cz - cx * sy * sz
-		// 	cx * cy * cz + sx * sy * sz,
-		// };
-		// return {
-		// 	sx * cy * cz - cx * sy * sz,
-		// 	sx * cy * sz + cx * sy * cz,
-		// 	cx * cy * sz - sx * sy * cz,
-		// 	cx * cy * cz + sx * sy * sz,
-		// };
-	}
-
-	static Quaternion yxz(double yaw, double pitch, double roll) {
+	// Creates a quaternion from a yxz rotation sequence, where
+	// 'yaw' is the rotation around the y axis, 'pitch' around
+	// the x axis and 'roll' around the z axis.
+	// Same as
+	//   Quaternion::axisAngle(0, 1, 0, yaw) *
+	//   Quaternion::axisAngle(1, 0, 0, pitch) *
+	//   Quaternion::axisAngle(0, 0, 1, roll).
+	// Utility constructor provided for this rotation sequence since we
+	// often need it, constructing quaternions for other, custom,
+	// rotation sequences can be done with chaining axisAngle
+	// rotations as seen above (or by looking up the optimized
+	// formula, as done here).
+	[[nodiscard]] static
+	Quaternion yxz(double yaw, double pitch, double roll) {
 		double cy = std::cos(yaw * 0.5);
 		double sy = std::sin(yaw * 0.5);
 		double cp = std::cos(pitch * 0.5);
@@ -82,67 +98,75 @@ public:
 		};
 	}
 
-	// WIP
-	static Quaternion taitBryan(double yaw, double pitch, double roll) {
-		double cx = std::cos(roll * 0.5);
-		double sx = std::sin(roll * 0.5);
-		double cy = std::cos(pitch * 0.5);
-		double sy = std::sin(pitch * 0.5);
-		double cz = std::cos(yaw * 0.5);
-		double sz = std::sin(yaw * 0.5);
+	// Creates a quaternion from an orthogonal 3x3 rotation matrix.
+	// Undefined if the given matrix is not orthogonal.
+	// Can be used to create a quaternion that transforms the standard
+	// base from/to a given (orthogonal) vector base by setting the new
+	// base vectors as rows/columns.
+	[[nodiscard]] static
+	Quaternion fromMat(const nytl::Mat3d& m) {
+		assert(std::abs(dot(m[0], m[1])) < 0.05);
+		assert(std::abs(dot(m[0], m[2])) < 0.05);
+		assert(std::abs(dot(m[1], m[2])) < 0.05);
 
-		return {
-			sx * cy * cz + cx * sy * sz,
-			cx * cy * cz - sx * sy * sz,
-			cx * sy * cz - sx * cy * sz,
-			cx * cy * sz + sx * sy * cz,
-		};
+		// d3cw3dd2w32x2b.cloudfront.net/wp-content/uploads/2015/01/matrix-to-quat.pdf
+		double t;
+		Quaternion q;
+		if(m[2][2] < 0) {
+			if(m[0][0] > m[1][1]){
+				t = 1 + m[0][0] - m[1][1] - m[2][2];
+				q = {t, m[1][0] + m[0][1], m[0][2] + m[2][0], m[2][1] - m[1][2]};
+			} else{
+				t= 1 - m[0][0] + m[1][1] - m[2][2];
+				q = {m[1][0] + m[0][1], t, m[2][1] + m[1][2], m[0][2] - m[2][0]};
+			}
+		} else {
+			if(m[0][0] < -m[1][1]){
+				t = 1 - m[0][0] - m[1][1] + m[2][2];
+				q = {m[0][2] + m[2][0], m[2][1] + m[1][2], t, m[1][0] - m[0][1]};
+			} else{
+				t = 1 + m[0][0] + m[1][1] + m[2][2];
+				q = {m[2][1] - m[1][2], m[0][2] - m[2][0], m[1][0] - m[0][1], t};
+			}
+		}
+
+		float f = 0.5f / std::sqrt(t);
+		q.x *= f;
+		q.y *= f;
+		q.z *= f;
+		q.w *= f;
+		return q;
 	}
 
 public:
-	/// Default-constructs the Quaternion to a zero rotation.
+	// Default-constructs the Quaternion to a zero rotation.
 	Quaternion() noexcept = default;
 
-	Quaternion& operator+=(const Quaternion& rhs) {
-		x += rhs.x;
-		y += rhs.y;
-		z += rhs.z;
-		w += rhs.w;
-		return *this;
-	}
-
 	// hamilton product of quaternions
-	Quaternion& operator*=(const Quaternion& q) {
-		// lhs and rhs misnamed
-		const auto rhs = *this; // copy since this will be changed
-		const auto lhs = q; // might be the same as *this
-
-		x = rhs.w * lhs.x + rhs.x * lhs.w + rhs.y * lhs.z - rhs.z * lhs.y;
-		y = rhs.w * lhs.y - rhs.x * lhs.z + rhs.y * lhs.w + rhs.z * lhs.x;
-		z = rhs.w * lhs.z + rhs.x * lhs.y - rhs.y * lhs.x + rhs.z * lhs.w;
-		w = rhs.w * lhs.w - rhs.x * lhs.x - rhs.y * lhs.y - rhs.z * lhs.z;
+	Quaternion& operator*=(const Quaternion& rhs) {
+		auto nx = w * rhs.x + x * rhs.w + y * rhs.z - z * rhs.y;
+		auto ny = w * rhs.y - x * rhs.z + y * rhs.w + z * rhs.x;
+		auto nz = w * rhs.z + x * rhs.y - y * rhs.x + z * rhs.w;
+		auto nw = w * rhs.w - x * rhs.x - y * rhs.y - z * rhs.z;
+		*this = {nx, ny, nz, nw};
 		return *this;
 	}
-
-	// Quaternion& operator*=(double factor) {
-	// 	// x *= factor;
-	// 	// y *= factor;
-	// 	// z *= factor;
-	// 	w *= factor;
-	// 	return *this;
-	// }
 };
 
 // - operators and functions -
-inline Quaternion operator+(Quaternion a, const Quaternion& b) { return (a += b); }
-inline Quaternion operator*(Quaternion a, const Quaternion& b) { return (a *= b); }
+inline Quaternion operator*(Quaternion a, const Quaternion& b) {
+	return (a *= b);
+}
+inline bool operator==(const Quaternion& a, const Quaternion& b) {
+	return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+}
+inline bool operator!=(const Quaternion& a, const Quaternion& b) {
+	return a.x != b.x || a.y != b.y || a.z != b.z || a.w != b.w;
+}
 
-inline bool operator==(const Quaternion& a, const Quaternion& b)
-	{ return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w; }
-inline bool operator!=(const Quaternion& a, const Quaternion& b)
-	{ return a.x != b.x || a.y != b.y || a.z != b.z || a.w != b.w; }
-
-/// Returns a row-major NxN matrix that represents the given Quaternion.
+// Returns a row-major NxN matrix that represents the given Quaternion.
+// Same as an identity matrix with the first 3 colums being
+//   apply(q, {1, 0, 0}), apply(q, {0, 1, 0}), apply(q, {0, 0, 1})
 template<std::size_t N, typename T = float>
 nytl::SquareMat<N, T> toMat(const Quaternion& q) {
 	static_assert(N >= 3);
@@ -173,85 +197,198 @@ nytl::SquareMat<N, T> toMat(const Quaternion& q) {
 	return ret;
 }
 
-/// Returns the conjugate of the given Quaternion.
-inline Quaternion conjugate(const Quaternion& q) {
+// Returns the conjugate of the given Quaternion (simply taking the
+// negative of the non-real parts).
+[[nodiscard]] inline Quaternion conjugated(const Quaternion& q) {
 	return {-q.x, -q.y, -q.z, q.w};
 }
 
-/// Returns the norm of the given Quaternion.
-inline double norm(const Quaternion& q) {
+// Returns the norm of the given Quaternion.
+[[nodiscard]] inline double norm(const Quaternion& q) {
 	return std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
 }
 
-/// Returns a unit quaternion for the given quaternion.
-inline Quaternion normalize(const Quaternion& q) {
+// Returns a unit quaternion for the given quaternion.
+[[nodiscard]] inline Quaternion normalized(const Quaternion& q) {
 	auto l = norm(q);
 	if(l <= 0.0) return {0.0, 0.0, 0.0, 1.0};
 	return {q.x / l, q.y / l, q.z / l, q.w / l};
 }
 
-/// Returns the given vector rotated by the rotation represented by the given
-/// Quaternion.
+// Returns the given vector rotated by the rotation represented by the given
+// Quaternion.
 template<typename T>
-nytl::Vec3<T> apply(const Quaternion& q, const nytl::Vec3<T>& v) {
-	// TODO: can probably be implemented more efficiently
-	auto qv = Quaternion{v.x, v.y, v.z, 0.f};
-	auto qr = (q * qv) * conjugate(q);
-	assert(std::abs(qr.w) < 0.01f);
-	return {T(qr.x), T(qr.y), T(qr.z)};
+[[nodiscard]] nytl::Vec3<T> apply(const Quaternion& q, const nytl::Vec3<T>& v) {
+	// optimized version, see
+	// https://gamedev.stackexchange.com/questions/28395
+	nytl::Vec3d u {q.x, q.y, q.z};
+	auto r = 2.0 * dot(u, v) * u
+		+ (q.w * q.w - dot(u, u)) * v
+		+ 2.0 * q.w * cross(u, v);
+	return nytl::Vec3<T>(r);
+
+	// Reference implementation, using the mathematical definition.
+	// Same as above but less efficient.
+	// auto qv = Quaternion{v.x, v.y, v.z, 0.f};
+	// auto qr = (q * qv) * conjugated(q);
+	// // assert(std::abs(qr.w) < 0.01f);
+	// return {T(qr.x), T(qr.y), T(qr.z)};
 }
 
-/// Retrieves the x-axis rotation of the given Quaternion
-inline double xRot(const Quaternion& q) {
-	double t0 = 2.0 * (q.w * q.x + q.y * q.z);
-	double t1 = 1.0 - 2.0 * (q.x * q.x + q.y * q.y);
-	return std::atan2(t0, t1);
-}
+// Sequences of rotation around axes.
+// https://en.wikipedia.org/wiki/Euler_angles
+enum class RotationSequence {
+	// classic euler angles
+	xyx,
+	xzx,
+	yzy,
+	yxy,
+	zxz,
+	zyz,
 
-/// Retrieves the y-axis rotation of the given Quaternion
-inline double yRot(const Quaternion& q) {
-	double t2 = 2.0 * (q.w * q.y - q.z * q.x);
-	t2 = t2 > 1.0 ? 1.0 : t2;
-	t2 = t2 < -1.0 ? -1.0 : t2;
-	return std::asin(t2);
-}
+	// tait-bryan angles
+	xyz,
+	xzy,
+	yxz,
+	yzx,
+	zxy,
+	zyx,
+};
 
-/// Retrieves the z-axis rotation of the given Quaternion.
-inline double zRot(const Quaternion& q) {
-	double t3 = 2.0 * (q.w * q.z + q.x * q.y);
-	double t4 = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
-	return std::atan2(t3, t4);
-}
+// Returns the angles (in radians) for the given rotation sequence
+// to reach the orientation of the given quaternion (using intrinsic
+// rotation axis definition). For instance, for
+// `res = eulerAngles(q, RotationSequence::yxz)`, the rotation
+// rotY(res[0]) * rotX(res[1]) * rotZ(res[2]) (for global axes, notice how
+// this means global Z rotation is applied first) is the same as
+// the given quaternion.
+[[nodiscard]] inline std::array<double, 3>
+eulerAngles(const Quaternion& q, RotationSequence seq) {
+	// TODO: 'indet' handling somewhat hacky atm. We need that value
+	// in case the middle rotation is zero (indeterminite case)
+	auto classicEuler = [](double a, double b, double c, double d, double e,
+			double indet) {
+		auto res = std::array<double, 3> {
+			std::atan2(d, e),
+			std::acos(c),
+			std::atan2(a, b),
+		};
 
+		if(std::abs(res[1]) < 0.001) {
+			// need different handling in this case.
+			// (basically middle angle is zero, getting undefined
+			// results atm).
+			return std::array<double, 3>{std::asin(indet), 0.0, 0.0};
+		}
 
-/// WIP
-// inline double yaw(const Quaternion& q) {
-// 	double t0 = 2.f * (q.y * q.w + q.z * q.x);
-// 	double t1 = 1.f - 2.f * (q.y * q.y + q.x * q.x);
-// 	return -std::atan2(t0, t1);
-// }
+		return res;
+	};
 
-// inline double pitch(const Quaternion& q) {
-// 	double t0 = std::clamp(2.f * (q.z * q.y - q.x * q.w), -1.0, 1.0);
-// 	return std::asin(t0);
-// }
+	auto taitBryan = [](double a, double b, double c, double d, double e) {
+		return std::array<double, 3> {
+			std::atan2(a, b),
+			std::asin(c),
+			std::atan2(d, e),
+		};
+	};
 
-// WIP
-inline double roll(const Quaternion& q) {
-	double t0 = 2.f * (q.x * q.y + q.z * q.w);
-	double t1 = -q.z * q.z - q.x * q.x + q.y * q.y + q.w * q.w;
-	return std::atan2(t0, t1);
-}
+	switch(seq){
+	case RotationSequence::xyx:
+		return classicEuler(
+			2 * (q.x * q.y + q.w * q.z),
+			-2 * (q.x * q.z - q.w * q.y),
+			q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z,
+			2 * (q.x * q.y - q.w * q.z),
+			2 * (q.x * q.z + q.w * q.y),
+			2 * (q.w * q.x + q.y * q.z));
+	case RotationSequence::xzx:
+		return classicEuler(
+			2 * (q.x * q.z - q.w * q.y),
+			2 * (q.x * q.y + q.w * q.z),
+			q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z,
+			2 * (q.x * q.z + q.w * q.y),
+			-2 * (q.x * q.y - q.w * q.z),
+			2 * (q.w * q.x + q.y * q.z));
+	case RotationSequence::yxy:
+		return classicEuler(
+			2 * (q.x * q.y - q.w * q.z),
+			2 * (q.y * q.z + q.w * q.x),
+			q.w * q.w - q.x * q.x + q.y * q.y - q.z * q.z,
+			2 * (q.x * q.y + q.w * q.z),
+			-2 * (q.y * q.z - q.w * q.x),
+			2 * (q.w * q.y + q.x * q.z));
+	case RotationSequence::yzy:
+		return classicEuler(
+			2 * (q.y * q.z + q.w * q.x),
+			-2 * (q.x * q.y - q.w * q.z),
+			q.w * q.w - q.x * q.x + q.y * q.y - q.z * q.z,
+			2 * (q.y * q.z - q.w * q.x),
+			2 * (q.x * q.y + q.w * q.z),
+			2 * (q.w * q.y + q.x * q.z));
+	case RotationSequence::zxz:
+		return classicEuler(
+			2 * (q.x * q.z + q.w * q.y),
+			-2 * (q.y * q.z - q.w * q.x),
+			q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z,
+			2 * (q.x * q.z - q.w * q.y),
+			2 * (q.y * q.z + q.w * q.x),
+			2 * (q.x * q.y + q.w * q.z));
+	case RotationSequence::zyz:
+		return classicEuler(
+			2 * (q.y * q.z - q.w * q.x),
+			2 * (q.x * q.z + q.w * q.y),
+			q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z,
+			2 * (q.y * q.z + q.w * q.x),
+			-2 * (q.x * q.z - q.w * q.y),
+			2 * (q.x * q.y + q.w * q.z));
 
-inline double yaw(const Quaternion& q) {
-	double t0 = 2.f * (q.z * q.x + q.y * q.w);
-	double t1 = q.z * q.z - q.x * q.x - q.y * q.y + q.w * q.w;
-	return std::atan2(t0, t1);
-}
+	case RotationSequence::xyz:
+		return taitBryan(
+			-2 * (q.y * q.z - q.w * q.x),
+			q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z,
+			2 * (q.x * q.z + q.w * q.y),
+		   -2 * (q.x * q.y - q.w * q.z),
+			q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z);
+	case RotationSequence::xzy:
+		return taitBryan(
+			2 * (q.y * q.z + q.w * q.x),
+			q.w * q.w - q.x * q.x + q.y * q.y - q.z * q.z,
+			-2 *(q.x * q.y - q.w * q.z),
+			2 *(q.x * q.z + q.w * q.y),
+			q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z);
+	case RotationSequence::yxz:
+		return taitBryan(
+			2 * (q.x * q.z + q.w * q.y),
+			q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z,
+			-2 * (q.y * q.z - q.w * q.x),
+			2 * (q.x * q.y + q.w * q.z),
+			q.w * q.w - q.x * q.x + q.y * q.y - q.z * q.z);
+	case RotationSequence::yzx:
+		return taitBryan(
+			-2 * (q.x * q.z - q.w * q.y),
+			q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z,
+			2 * (q.x * q.y + q.w * q.z),
+			-2 * (q.y * q.z - q.w * q.x),
+			q.w * q.w - q.x * q.x + q.y * q.y - q.z * q.z);
+	case RotationSequence::zxy:
+		return taitBryan(
+			-2 * (q.x * q.y - q.w * q.z),
+			q.w * q.w - q.x * q.x + q.y * q.y - q.z * q.z,
+			2 * (q.y * q.z + q.w * q.x),
+			-2 * (q.x * q.z - q.w * q.y),
+			q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z);
+	case RotationSequence::zyx:
+	  	return taitBryan(
+			2 * (q.x * q.y + q.w * q.z),
+			q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z,
+			-2 * (q.x * q.z - q.w * q.y),
+			2 * (q.y * q.z + q.w * q.x),
+			q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z);
 
-inline double pitch(const Quaternion& q) {
-	double t0 = std::clamp(2.f * (q.x * q.w - q.z * q.y), -1.0, 1.0);
-	return std::asin(t0);
+	default:
+		assert(false && "Invalid rotation sequence");
+		break;
+   }
 }
 
 } // namespace tkn

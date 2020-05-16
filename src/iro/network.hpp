@@ -10,13 +10,25 @@
 
 #include <optional>
 #include <functional>
+#include <chrono>
 
 using asio::ip::udp;
 using namespace tkn::types;
 
+constexpr auto packetMagic = 0xFB6180CA;
 constexpr auto broadcastPort = 49163; // for initial broadcast
-constexpr auto delay = 2u;
-static_assert(delay > 0);
+
+// Returns whether the given number is a power of two or zero
+constexpr auto potOrZero(unsigned n) {
+	return (n & (n - 1)) == 0;
+}
+
+// must be power of two, and smaller than 16 (so we can fit
+// out ack bits in 32-bit numbers).
+// Important that this is an unsigned number, otherwise step_ + delay
+// might result in a signed number, messing with our wrapping logic.
+constexpr u32 delay = 8u;
+static_assert(delay > 0 && delay < 16 && potOrZero(delay));
 
 
 /// Represents an owned data buffer to send.
@@ -42,6 +54,7 @@ using RecvBuf = nytl::Span<const std::byte>;
 class Socket {
 public:
 	using MsgHandler = std::function<void(std::uint32_t player, RecvBuf&)>;
+	using Clock = std::chrono::steady_clock;
 
 public:
 	Socket();
@@ -64,20 +77,34 @@ private:
 	void recvSocket(udp::endpoint& ep, std::uint32_t& num, unsigned& state);
 
 private:
-	u32 step_ {1}; // current(next) step
-	u32 recv_ {0}; // last received
-	// std::uint64_t ack_ {0}; // last of our messages acked by other side
+	u32 step_ {0}; // current step (sent in next packets)
+	u32 recv_ {0}; // bitset of received packets
+	u32 ack_ {0}; // bitset of messages packets by other side (remoteAck)
+	// acknowledge bitsets:
+	// if bit i is set (ack & (1 << i)), this means that message
+	// (step - delay + i) was received/acknowledged.
+	// This means e.g. the bit at position 'delay' signals whether
+	// the message for the same step for received.
+
+	// counts the number of sent messages until we reach '2 * delay'
+	// messages sent.
+	u32 initCount_ {0};
 
 	asio::io_service ioService_;
 	std::optional<udp::socket> socket_;
 	std::optional<udp::socket> broadcast_;
 
-	std::vector<SendBuf> recvd_; // must be processed
-	std::vector<SendBuf> ownPending_; // must be processed
+	// receieved messages to be processed in future
+	std::vector<SendBuf> recvd_;
 
-	// std::vector<SendBuf> messages_; // old, for resending
-	SendBuf sending_; // to be sent
+	// sent messages to be processed in future.
+	// also used in case we have to re-send messages
+	std::vector<SendBuf> sent_;
+
+	SendBuf sending_; // to be sent, will be built in the current step
 	unsigned player_; // own player id
+
+	std::optional<Clock::time_point> waiting_;
 };
 
 enum class MessageType : std::uint32_t {

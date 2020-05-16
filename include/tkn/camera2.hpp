@@ -19,13 +19,13 @@ namespace tkn {
 inline namespace cam2 {
 
 struct Camera {
-	Vec3f pos {0.f, 0.f, 1.f};
-	Quaternion rot {};
+	Vec3f pos {0.f, 0.f, 1.f}; // position of camera in world space
+	Quaternion rot {}; // transforms from camera/view space to world space
 	bool update {true};
 };
 
 inline nytl::Vec3f dir(const Camera& c) {
-	return apply(c.rot, nytl::Vec3f {0.f, 0.f, -1.f});
+	return -apply(c.rot, nytl::Vec3f {0.f, 0.f, 1.f});
 }
 
 inline nytl::Vec3f up(const Camera& c) {
@@ -36,6 +36,7 @@ inline nytl::Vec3f right(const Camera& c) {
 	return apply(c.rot, nytl::Vec3f {1.f, 0.f, 0.f});
 }
 
+/*
 inline nytl::Mat4f lookAt(const Quaternion& rot) {
 	auto ret = nytl::Mat4f {};
 	auto x = normalized(apply(rot, Vec3f {1.f, 0.f, 0.f}));
@@ -63,13 +64,16 @@ inline nytl::Mat4f ml(const Camera& c) {
 	ret[3][3] = 1.f;
 	return ret;
 }
+*/
 
 inline auto viewMatrix(const Camera& c) {
-	return tkn::lookAtRH(c.pos, c.pos + dir(c), up(c));
+	// return tkn::lookAtLH(c.pos, c.pos + dir(c), up(c));
+	return tkn::lookAt(c.rot, c.pos);
 }
 
 inline auto fixedViewMatrix(const Camera& c) {
-	return tkn::lookAtRH({}, dir(c), up(c));
+	// return tkn::lookAtLH({}, dir(c), up(c));
+	return tkn::lookAt(c.rot, nytl::Vec3f{});
 }
 
 // yaw: rotation around y axis (i.e looking to left or right)
@@ -79,7 +83,7 @@ inline auto fixedViewMatrix(const Camera& c) {
 // due to this interpretation of rotation works. Usually better to
 // use a camera controller setup.
 inline void rotateView(Camera& c, float yaw, float pitch, float roll) {
-	c.rot = normalize(c.rot * Quaternion::eulerAngle(-pitch, -yaw, -roll));
+	c.rot = normalized(c.rot * Quaternion::yxz(-yaw, -pitch, -roll));
 	c.update = true;
 }
 

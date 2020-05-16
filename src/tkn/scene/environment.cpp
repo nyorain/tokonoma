@@ -85,14 +85,15 @@ void Environment::createPipe(const vpp::Device& dev,
 	// enable depth testing to only write where it's really needed
 	// (where no geometry was rendered yet)
 	gpi.depthStencil.depthTestEnable = true;
-	// gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
-	gpi.depthStencil.depthCompareOp = vk::CompareOp::greaterOrEqual;
+	gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+	// gpi.depthStencil.depthCompareOp = vk::CompareOp::greaterOrEqual;
 	gpi.depthStencil.depthWriteEnable = false;
 	gpi.assembly.topology = vk::PrimitiveTopology::triangleStrip;
 	// culling not really needed here
 	// gpi.rasterization.cullMode = vk::CullModeBits::back;
 	gpi.rasterization.cullMode = vk::CullModeBits::none;
-	gpi.rasterization.frontFace = vk::FrontFace::clockwise;
+	// gpi.rasterization.frontFace = vk::FrontFace::clockwise;
+	gpi.rasterization.frontFace = vk::FrontFace::counterClockwise;
 
 	gpi.blend.attachmentCount = battachments.size();
 	gpi.blend.pAttachments = battachments.begin();
