@@ -145,6 +145,9 @@ nytl::Vec3<P> rotate(nytl::Vec3<P> v, nytl::Vec3<P> axis, P angle) {
 
 // Returns a matrix that rotates by the given angle (in radians)
 // around the given axis vector 'r'. Expects 'axis' to be normalized.
+// NOTE: to make sure a given vector is mapped onto another vector
+//  by a rotation matrix, prefer to use orientMat instead of manually
+//  determining axis and angle.
 template<size_t D = 4, typename P> [[nodiscard]]
 nytl::SquareMat<D, P> rotateMat(const nytl::Vec3<P>& r, P angle) {
 	const auto c = std::cos(angle);
@@ -158,13 +161,28 @@ nytl::SquareMat<D, P> rotateMat(const nytl::Vec3<P>& r, P angle) {
 }
 
 // Returns a rotation matrix that maps 'from' to 'to'.
-// When from/to are not normalized, will also account for scale.
+// Expects both vectors to be normalized, cannot correctly account for scale
+// (this can be achieved by just normalizing the vectors and scaling
+// afterwards).
 // NOTE: does not work when 'from' and 'to' are the same vector in opposite
 // directions. In that case the rotation is not unique.
+// NOTE: the differences between this (with from = dir and
+// to = (0, 0, 1)) and lookAt:
+//  - lookAt additionally supports a translation
+//  - lookAt allows more explicit control of the roll via the 'up'
+//    parameter. For a fixed 'up', the returned matrix will always
+//    have the same rotation around 'dir'. With this implementation,
+//    no explicit control is possible and all axes will just be
+//    rotated consistently for the given 'from' and 'to'.
+//    So in cases where you don't want roll, lookAt is the
+//    better choice.
+// NOTE: basically the same as rotateMat, with the rotation axis
+// being `normalized(cross(from, to))` and angle being `acos(dot(from, to))`.
+// But this implementation is cleaner and faster.
 template<size_t D = 4, typename P> [[nodiscard]]
 nytl::SquareMat<D, P> orientMat(nytl::Vec3<P> from, nytl::Vec3<P> to) {
-	const auto s = cross(to, from); // rotation axis, length: sin(angle)
-	const auto c = dot(to, from); // cos(angle)
+	const auto s = cross(from, to); // rotation axis, length: sin(angle)
+	const auto c = dot(from, to); // cos(angle)
 	const auto k = P(1.0) / (P(1.0) + c);
 	return expandIdentity<D, P>(nytl::Mat3<P>{
 		s.x * s.x * k + c,    s.y * s.x * k - s.z,  s.z * s.x * k + s.y,
@@ -193,15 +211,43 @@ void scale(nytl::SquareMat<D, P>& mat, const nytl::Vec<R, P>& s) {
 	mat = scaleMat<D, P>(s) * mat;
 }
 
-
 // Flips the y-row of the given matrix.
-// `flipY(mat)` is equivalent to `mat = M * mat` where M is the
-// identity matrix, except that the second row has a '-1' on the diagonal.
-// After calling this, the given matrix will output negated y-coordinates.
+// `flipAxis<N>(mat)` is equivalent to `mat = M * mat` where M is the
+// identity matrix, except that the Nth row has a '-1' on the diagonal.
+// After calling this, the given matrix will just output negated coordinates
+// for axis N.
+template<size_t Axis, size_t D, typename P>
+void flipAxis(nytl::SquareMat<D, P>& mat) {
+	static_assert(Axis < D);
+	mat[Axis] = -mat[Axis];
+}
+
+template<size_t Axis, size_t D, typename P>
+nytl::SquareMat<D, P> flippedAxis(nytl::SquareMat<D, P> mat) {
+	flipAxis<Axis>(mat);
+	return mat;
+}
+
+template<size_t D, typename P>
+void flipY(nytl::SquareMat<D, P>& mat) {
+	return flipAxis<1>(mat);
+}
+
 // Useful to flip the viewport (e.g. for vulkan) like this:
-// flipY(perspective(fov, aspect, near, far)).
-inline void flipY(nytl::Mat4f& mat) {
-	mat[1] = -mat[1];
+// flippedY(perspective(fov, aspect, near, far)).
+template<size_t D, typename P> [[nodiscard]]
+nytl::SquareMat<D, P> flippedY(nytl::SquareMat<D, P> mat) {
+	return flippedAxis<1>(mat);
+}
+
+template<size_t D, typename P>
+void flipZ(nytl::SquareMat<D, P>& mat) {
+	return flipAxis<2>(mat);
+}
+
+template<size_t D, typename P>
+nytl::SquareMat<D, P> flippedZ(nytl::SquareMat<D, P> mat) {
+	return flippedAxis<2>(mat);
 }
 
 // Builds an orthographic projection matrix.
@@ -377,12 +423,16 @@ nytl::SquareMat<4, P> perspectiveRev(P fov, P aspect, P near, P far) {
 // better than near 1.
 template<typename P> [[nodiscard]]
 nytl::SquareMat<4, P> perspectiveRevInf(P fov, P aspect, P near) {
+	assert((near != 0) && "near must not be zero");
+
 	P const a = P(1) / std::tan(fov / P(2));
 	auto ret = nytl::Mat4f {};
 	ret[0][0] = a / aspect;
 	ret[1][1] = a;
-	ret[3][2] = P(1);
-	ret[2][3] = near;
+
+	auto s = near > P(0.0) ? P(1.0) : P(-1.0);
+	ret[3][2] = s;
+	ret[2][3] = s * near;
 	return ret;
 }
 
@@ -390,7 +440,7 @@ nytl::SquareMat<4, P> perspectiveRevInf(P fov, P aspect, P near) {
 // The returned matrix will just move 'pos' into the origin and
 // orient everything like the given quaternion.
 // Note that this version is independent from the handedness of
-// the coordinate system.
+// the coordinate system, it just preserves it.
 //
 // When using this with a camera:
 // For a right-handed view space, the camera would by default
@@ -423,7 +473,6 @@ nytl::SquareMat<D, P> lookAt(const Quaternion& rot, nytl::Vec3<P> pos) {
 	// return ret;
 }
 
-
 // Returns a lookAt matrix, that moves and orients the coordinate
 // system as specified. Useful to orient cameras or objects.
 // - pos: Position of the camera. This point will be mapped
@@ -433,9 +482,9 @@ nytl::SquareMat<D, P> lookAt(const Quaternion& rot, nytl::Vec3<P> pos) {
 //   Most lookAt implementations take
 //   a 'center' parameter, i.e. a point towards which the
 //   orientation should face.
-//   To make this matrix map into a RH-space, calculate
-//   z = normalize(pos - center), for LH-space,
-//   z = normalize(center - pos).
+//   Calculation to make this matrix map into an
+//   RH-space: z = normalize(pos - center),
+//   LH-space: z = normalize(center - pos).
 // - up: A global up vector. Doesn't have to be normalized. This
 //   is not necessarily the direction vector that gets mapped
 //   to (0, 1, 0), just a reference to create an orthonormal
@@ -452,14 +501,31 @@ nytl::SquareMat<4, P> lookAt(const nytl::Vec3<P>& pos,
 
 	auto ret = nytl::identity<4, P>();
 
-	ret[0] = nytl::Vec4f(x);
-	ret[1] = nytl::Vec4f(y);
-	ret[2] = nytl::Vec4f(z);
+	ret[0] = nytl::Vec4<P>(x);
+	ret[1] = nytl::Vec4<P>(y);
+	ret[2] = nytl::Vec4<P>(z);
 
 	ret[0][3] = -dot(x, pos);
 	ret[1][3] = -dot(y, pos);
 	ret[2][3] = -dot(z, pos);
 
+	return ret;
+}
+
+// Like the lookAt overload above but does not include a translation.
+// Can therefore fit the transformation into a 3x3 matrix.
+template<size_t D, typename P> [[nodiscard]]
+nytl::SquareMat<D, P> lookAt(const nytl::Vec3<P>& z, const nytl::Vec3<P>& up) {
+	static_assert(D >= 3);
+
+	const auto x = normalized(cross(up, z));
+	const auto y = cross(z, x); // automatically normalized
+
+	auto ret = nytl::identity<D, P>();
+
+	ret[0] = nytl::Vec<D, P>(x);
+	ret[1] = nytl::Vec<D, P>(y);
+	ret[2] = nytl::Vec<D, P>(z);
 	return ret;
 }
 

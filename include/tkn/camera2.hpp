@@ -24,55 +24,23 @@ struct Camera {
 	bool update {true};
 };
 
-inline nytl::Vec3f dir(const Camera& c) {
+[[nodiscard]] inline nytl::Vec3f dir(const Camera& c) {
 	return -apply(c.rot, nytl::Vec3f {0.f, 0.f, 1.f});
 }
 
-inline nytl::Vec3f up(const Camera& c) {
+[[nodiscard]] inline nytl::Vec3f up(const Camera& c) {
 	return apply(c.rot, nytl::Vec3f {0.f, 1.f, 0.f});
 }
 
-inline nytl::Vec3f right(const Camera& c) {
+[[nodiscard]] inline nytl::Vec3f right(const Camera& c) {
 	return apply(c.rot, nytl::Vec3f {1.f, 0.f, 0.f});
 }
 
-/*
-inline nytl::Mat4f lookAt(const Quaternion& rot) {
-	auto ret = nytl::Mat4f {};
-	auto x = normalized(apply(rot, Vec3f {1.f, 0.f, 0.f}));
-	auto y = normalized(apply(rot, Vec3f {0.f, 1.f, 0.f}));
-	auto z = normalized(apply(rot, Vec3f {0.f, 0.f, -1.f}));
-	ret[0] = nytl::Vec4f(x);
-	ret[1] = nytl::Vec4f(y);
-	ret[2] = nytl::Vec4f(z);
-	ret[3][3] = 1.f;
-	return ret;
-}
-
-inline nytl::Mat4f ml(const Camera& c) {
-	auto ret = nytl::Mat4f {};
-	auto x = normalized(right(c));
-	auto y = normalized(up(c));
-	auto z = normalized(dir(c));
-
-	ret[0] = nytl::Vec4f(x);
-	ret[1] = nytl::Vec4f(y);
-	ret[2] = nytl::Vec4f(z);
-	ret[0][3] = -dot(c.pos, x);
-	ret[1][3] = -dot(c.pos, y);
-	ret[2][3] = -dot(c.pos, z);
-	ret[3][3] = 1.f;
-	return ret;
-}
-*/
-
-inline auto viewMatrix(const Camera& c) {
-	// return tkn::lookAtLH(c.pos, c.pos + dir(c), up(c));
+[[nodiscard]] inline nytl::Mat4f viewMatrix(const Camera& c) {
 	return tkn::lookAt(c.rot, c.pos);
 }
 
-inline auto fixedViewMatrix(const Camera& c) {
-	// return tkn::lookAtLH({}, dir(c), up(c));
+[[nodiscard]] inline nytl::Mat4f fixedViewMatrix(const Camera& c) {
 	return tkn::lookAt(c.rot, nytl::Vec3f{});
 }
 
@@ -142,8 +110,8 @@ struct SpaceshipCamControls {
 	CamMoveControls move = {};
 };
 
-// Already calls checkMovement.
-void update(Camera&, SpaceshipCamCon&, swa_display* dpy, float dt,
+// Calls checkMovement as well.
+bool update(Camera&, SpaceshipCamCon&, swa_display* dpy, float dt,
 	const SpaceshipCamControls& = {});
 
 // First-person camera controller.
@@ -153,6 +121,8 @@ void update(Camera&, SpaceshipCamCon&, swa_display* dpy, float dt,
 struct FPCamCon {
 	float yaw {0.f};
 	float pitch {0.f};
+
+	[[nodiscard]] static FPCamCon fromOrientation(const Quaternion&);
 };
 
 struct FPCamControls {
@@ -162,7 +132,7 @@ struct FPCamControls {
 	float pitchEps = 0.1;
 };
 
-void mouseMove(Camera&, FPCamCon&, swa_display*, Vec2i delta,
+bool mouseMove(Camera&, FPCamCon&, swa_display*, Vec2i delta,
 	const FPCamControls& controls = {});
 
 // Third-person arcball controller.
@@ -184,7 +154,7 @@ struct ArcballControls {
 
 // Returns the rotation center of the camera with the given
 // arcball controller.
-Vec3f center(const Camera&, const ArcballCamCon&);
+[[nodiscard]] Vec3f center(const Camera&, const ArcballCamCon&);
 
 // Implements rotation and panning in response to mouse move events.
 // - delta: The delta of the mouse movement, in pixels.
@@ -192,7 +162,7 @@ Vec3f center(const Camera&, const ArcballCamCon&);
 //   into a position delta for the camera for a panning movement.
 //   See mouseMovePersp for calculating this based on the used
 //   perspective projection.
-void mouseMove(Camera&, ArcballCamCon&, swa_display*, Vec2i delta,
+bool mouseMove(Camera&, ArcballCamCon&, swa_display*, Vec2i delta,
 	const ArcballControls& = {}, Vec2f panFac = {0.01f, 0.01f});
 
 // Like mouseMove but instead of a hardcoded panning factor, uses
@@ -200,12 +170,12 @@ void mouseMove(Camera&, ArcballCamCon&, swa_display*, Vec2i delta,
 // movement for the mouse always results in the projection of the
 // rotation center being translated by one pixel (meaning that the
 // rotation center will exactly move with the mouse).
-void mouseMovePersp(Camera&, ArcballCamCon&, swa_display*, Vec2i delta,
+bool mouseMovePersp(Camera&, ArcballCamCon&, swa_display*, Vec2i delta,
 	Vec2ui winSize, float fov, const ArcballControls& = {});
 
 // Implements zooming for the given vertical mouse wheel delta.
-void mouseWheel(Camera&, ArcballCamCon&, float delta);
-
+void mouseWheelZoom(Camera&, ArcballCamCon&, float delta,
+	float zoomFac = 1.05f);
 
 } // namespace cam2
 } // namespace tkn

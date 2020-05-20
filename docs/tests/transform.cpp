@@ -114,6 +114,12 @@ TEST(perspective) {
 	EXPECT(multPos(mat, Vec3f {0.f, 0.01f, 0.01f}), approx(Vec3f {0.f, 1.f, 1.f}, eps));
 	EXPECT(multPos(mat, Vec3f {1000.f, -1000.f, 10000.f}),
 		approx(Vec3f {0.1f, -0.1f, float(eps)}, eps));
+
+	mat = perspectiveRevInf(fov, 1.f, -1.f);
+	EXPECT(multPos(mat, Vec3f {0.f, 0.f, -1.f}), approx(Vec3f {0.f, 0.f, 1.f}, eps));
+	EXPECT(multPos(mat, Vec3f {1.f, 1.f, -1.f}), approx(Vec3f {1.f, 1.f, 1.f}, eps));
+	EXPECT(multPos(mat, Vec3f {0.f, 0.f, -100000.f}),
+		approx(Vec3f {0.f, 0.f, float(eps)}, eps));
 }
 
 TEST(rotateVec) {
@@ -143,6 +149,22 @@ TEST(orient2) {
 	EXPECT(
 		approx(orientMat<2>(nytl::Vec2f{0.f, 1.f}, nytl::Vec2f{1.f, 0.f})),
 		rotateMat<2>(-0.5 * pi));
+}
+
+TEST(orient3) {
+	auto m = orientMat<3>(nytl::Vec3f{1.f, 0.f, 0.f}, nytl::Vec3f{1.f, 0.f, 0.f});
+	EXPECT(m, approx(nytl::identity<3, float>(), eps));
+
+	m = orientMat<3>(nytl::Vec3f{1.f, 0.f, 0.f}, nytl::Vec3f{0.f, 1.f, 0.f});
+	EXPECT((m * Vec3f{1.f, 0.f, 0.f}), approx(Vec3f{0.f, 1.f, 0.f}, eps));
+	EXPECT((m * Vec3f{0.f, 1.f, 0.f}), approx(Vec3f{-1.f, 0.f, 0.f}, eps));
+	EXPECT((m * Vec3f{0.f, 0.f, 1.f}), approx(Vec3f{0.f, 0.f, 1.f}, eps));
+
+	auto isqrt2 = 1.f / std::sqrt(2.f);
+	m = orientMat<3>(nytl::Vec3f{1.f, 0.f, 0.f}, nytl::Vec3f{isqrt2, isqrt2, 0.f});
+	EXPECT((m * Vec3f{1.f, 0.f, 0.f}), approx(Vec3f{isqrt2, isqrt2, 0.f}, eps));
+	EXPECT((m * Vec3f{0.f, 1.f, 0.f}), approx(Vec3f{-isqrt2, isqrt2, 0.f}, eps));
+	EXPECT((m * Vec3f{0.f, 0.f, 1.f}), approx(Vec3f{0.f, 0.f, 1.f}, eps));
 }
 
 TEST(frustumPos) {

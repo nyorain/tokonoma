@@ -4,7 +4,7 @@
 // See the fragment shader
 
 #include <tkn/config.hpp>
-#include <tkn/camera2.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/singlePassApp.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
@@ -74,9 +74,16 @@ public:
 		bool noaudio {};
 	};
 
-	static constexpr float near = 0.05f;
-	static constexpr float far = 25.f;
+	static constexpr float near = -0.05f;
+	static constexpr float far = -25.f;
+
+	// perspective
 	static constexpr float fov = 0.5 * nytl::constants::pi;
+	static constexpr auto perspectiveMode =
+		tkn::PerspectiveCamera::Mode::revDepthInf;
+
+	// ortho
+	static constexpr float orthoSize = 20.f;
 
 public:
 	bool init(nytl::Span<const char*> cargs) override {
@@ -87,6 +94,14 @@ public:
 
 		std::fflush(stdout);
 		rvgInit();
+
+		// init cam
+		using CCtrl = tkn::ControlledCamera::ControlType;
+		auto nc = std::make_unique<tkn::PerspectiveCamera>(
+			CCtrl::firstPerson, near, far);
+		nc->fov(fov);
+		nc->mode(perspectiveMode);
+		cam_ = std::move(nc);
 
 		// init pipeline
 		auto& dev = vkDevice();
@@ -247,8 +262,8 @@ public:
 
 		gpi.depthStencil.depthTestEnable = true;
 		gpi.depthStencil.depthWriteEnable = true;
-		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
-		// gpi.depthStencil.depthCompareOp = vk::CompareOp::greaterOrEqual;
+		// gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+		gpi.depthStencil.depthCompareOp = vk::CompareOp::greaterOrEqual;
 
 		// NOTE: see the gltf material.doubleSided property. We can't switch
 		// this per material (without requiring two pipelines) so we simply
@@ -511,8 +526,12 @@ public:
 			dirLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, false); // opaque
 
-		tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0, {envCameraDs_});
-		env_.render(cb);
+		// skybox doesn't make sense for orthographic projection
+		auto camptr = cam_.get();
+		if(typeid(*camptr) == typeid(tkn::PerspectiveCamera)) {
+			tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0, {envCameraDs_});
+			env_.render(cb);
+		}
 
 		/*
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
@@ -538,7 +557,9 @@ public:
 		time_ += dt;
 
 		// movement
-		tkn::checkMovement(camera_, swaDisplay(), dt);
+		// tkn::checkMovement(camera_, swaDisplay(), dt);
+		cam_->update(swaDisplay(), dt);
+
 		if(moveLight_) {
 			if(mode_ & modePointLight) {
 				pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
@@ -561,7 +582,8 @@ public:
 			// auto zdir = dir(camera_);
 			// auto right = nytl::normalized(nytl::cross(zdir, camera_.up));
 			// auto up = nytl::normalized(nytl::cross(right, zdir));
-			audio_.d3->updateListener(camera_.pos, dir(camera_), up(camera_));
+			audio_.d3->updateListener(cam_->position(),
+				cam_->dir(), cam_->up());
 		}
 #endif // BR_AUDIO
 
@@ -591,12 +613,12 @@ public:
 				if(audio_.source) audio_.source->direct = !audio_.source->direct;
 				return true;
 			case swa_key_o: // move audio source here
-				if(audio_.source) audio_.source->position(camera_.pos);
+				if(audio_.source) audio_.source->position(cam_->position());
 				return true;
 #endif // BR_AUDIO
 			case swa_key_m: // move light here
 				moveLight_ = false;
-				dirLight_.data.dir = -camera_.pos;
+				dirLight_.data.dir = -cam_->position();
 				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
 				scene_.updatedInstance(dirLight_.instanceID);
 				updateLight_ = true;
@@ -604,7 +626,7 @@ public:
 			case swa_key_n: // move light here
 				moveLight_ = false;
 				updateLight_ = true;
-				pointLight_.data.position = camera_.pos;
+				pointLight_.data.position = cam_->position();
 				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
 				scene_.updatedInstance(pointLight_.instanceID);
 				return true;
@@ -650,7 +672,44 @@ public:
 				updateAOParams_ = true;
 				dlg_info("Static AO: {}", bool(mode_ & modeIrradiance));
 				return true;
-			default:
+
+			case swa_key_j: { // toggle projection mode
+				auto data = cam_->camera();
+				auto ctrl = cam_->controlType();
+				auto aspect = float(windowSize().x) / windowSize().y;
+				auto ptr = cam_.get();
+				if(typeid(*ptr) == typeid(tkn::OrthographicCamera)) {
+					auto nc = std::make_unique<tkn::PerspectiveCamera>(ctrl,
+						near, far);
+					nc->fov(fov);
+					nc->aspect(aspect);
+					nc->mode(perspectiveMode);
+					cam_ = std::move(nc);
+				} else {
+					// we need to reverse near/far since we currently
+					// expect a reverse depth buffer
+					auto nc = std::make_unique<tkn::OrthographicCamera>(ctrl,
+						orthoSize, orthoSize / aspect, far, near);
+					cam_ = std::move(nc);
+				}
+
+				cam_->orientation(data.rot);
+				cam_->position(data.pos);
+				scheduleRerecord();
+				return true;
+			} case swa_key_k: {
+				using Ctrl = tkn::ControlledCamera::ControlType;
+				auto ctrl = cam_->controlType();
+				if(ctrl == Ctrl::arcball) {
+					cam_->useSpaceshipControl();
+				} else if(ctrl == Ctrl::spaceship) {
+					cam_->useFirstPersonControl();
+				} else if(ctrl == Ctrl::firstPerson) {
+					cam_->disableControl();
+				} else if(ctrl == Ctrl::none) {
+					cam_->useArcballControl();
+				}
+			} default:
 				break;
 		}
 
@@ -659,7 +718,17 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
-		tkn::mouseMove(camera_, camcon_, swaDisplay(), {ev.dx, ev.dy});
+		// tkn::mouseMove(camera_, camcon_, swaDisplay(), {ev.dx, ev.dy});
+		cam_->mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
+	}
+
+	bool mouseWheel(float dx, float dy) override {
+		if(Base::mouseWheel(dx, dy)) {
+			return true;
+		}
+
+		cam_->mouseWheel(dy);
+		return true;
 	}
 
 
@@ -689,50 +758,59 @@ public:
 	}
 	*/
 
+	/*
 	nytl::Mat4f projectionMatrix() const {
 		auto aspect = float(windowSize().x) / windowSize().y;
 		// return tkn::perspective3RH(fov, aspect, near, far);
 		// return tkn::perspective3Rev(fov, aspect, near, far);
 		// return tkn::perspective3RevInf(fov, aspect, near);
 		// return tkn::perspective3RH(fov, aspect, near, far);
-		return tkn::perspective3NegZ(fov, aspect, near, far);
+		// return tkn::perspective3NegZ(fov, aspect, near, far);
+		return tkn::flippedY(tkn::perspective(fov, aspect, -near, -far));
 	}
 
 	nytl::Mat4f cameraVP() const {
-		dlg_debug("==================");
-		dlg_debug("viewMatrix: {}", viewMatrix(camera_));
-		dlg_debug("lookAtNegZ: {}", lookAtNegZ(camera_.rot, camera_.pos));
+		// dlg_debug("==================");
+		// dlg_debug("viewMatrix: {}", viewMatrix(camera_));
+		// dlg_debug("lookAtNegZ: {}", lookAtNegZ(camera_.rot, camera_.pos));
 
-		return projectionMatrix() * viewMatrix(camera_);
+		// return projectionMatrix() * viewMatrix(camera_);
 		// return projectionMatrix() * lookAtNegZ(camera_.rot, camera_.pos);
 		// return projectionMatrix() * ml(camera_);
+
+		auto la = lookAt(camera_.rot, camera_.pos);
+		return projectionMatrix() * la;
 	}
+	*/
 
 	void updateDevice() override {
 		// update scene ubo
-		if(camera_.update) {
-			camera_.update = false;
+		if(cam_->needsUpdate()) {
+			// camera_.update = false;
 
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
 
-			tkn::write(span, cameraVP());
-			tkn::write(span, camera_.pos);
+			tkn::write(span, cam_->viewProjectionMatrix());
+			tkn::write(span, cam_->position());
 			tkn::write(span, near);
 			tkn::write(span, far);
 			map.flush();
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
-			tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
+			tkn::write(envSpan, cam_->fixedViewProjectionMatrix());
+			// tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
 			// tkn::write(envSpan, projectionMatrix() * lookAt(camera_.rot));
 			// tkn::write(envSpan, projectionMatrix() * lookAtNegZ(camera_.rot, {0.f, 0.f, 0.f}));
 			envMap.flush();
 
 			updateLight_ = true;
+			cam_->resetChanged();
 		}
 
-		auto semaphore = scene_.updateDevice(cameraVP());
+		// auto semaphore = scene_.updateDevice(cameraVP());
+		auto semaphore = scene_.updateDevice(cam_->viewProjectionMatrix());
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
 			Base::scheduleRerecord();
@@ -740,7 +818,8 @@ public:
 
 		if(updateLight_) {
 			if(mode_ & modeDirLight) {
-				dirLight_.updateDevice(cameraVP(), near, far);
+				// dirLight_.updateDevice(cameraVP(), near, far);
+				dirLight_.updateDevice(cam_->viewProjectionMatrix(), near, far);
 			}
 			if(mode_ & modePointLight) {
 				pointLight_.updateDevice();
@@ -771,7 +850,14 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		camera_.update = true;
+		// camera_.update = true;
+
+		auto aspect = float(windowSize().x) / windowSize().y;
+		if(auto* cam = dynamic_cast<tkn::OrthographicCamera*>(cam_.get())) {
+			cam->rect(orthoSize, orthoSize / aspect, near, far);
+		} else if(auto* cam = dynamic_cast<tkn::PerspectiveCamera*>(cam_.get())) {
+			cam->aspect(aspect);
+		}
 	}
 
 	bool needsDepth() const override { return true; }
@@ -828,8 +914,9 @@ protected:
 
 	tkn::Scene scene_; // no default constructor
 
-	tkn::Camera camera_ {};
-	tkn::FPCamCon camcon_ {};
+	std::unique_ptr<tkn::ControlledCamera> cam_;
+	// tkn::Camera camera_ {};
+	// tkn::FPCamCon camcon_ {};
 
 	struct DirLight : public tkn::DirLight {
 		using tkn::DirLight::DirLight;
@@ -881,11 +968,7 @@ protected:
 #endif // BR_AUDIO
 };
 
-int main(int argc, const char** argv) {
-	ViewApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
 
-	app.run();
+int main(int argc, const char** argv) {
+	return tkn::appMain<ViewApp>(argc, argv);
 }

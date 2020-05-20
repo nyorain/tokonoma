@@ -1,12 +1,13 @@
 #include <tkn/camera2.hpp>
 #include <dlg/dlg.hpp>
 
-namespace tkn::cam2 {
+namespace tkn {
+inline namespace cam2 {
 
 // Spaceship
-void update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
+bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 		const SpaceshipCamControls& controls) {
-	checkMovement(cam, dpy, dt, controls.move);
+	auto updated = checkMovement(cam, dpy, dt, controls.move);
 
 	// check if we are currently rotating
 	constexpr auto invalid = 0x7FFF;
@@ -22,6 +23,7 @@ void update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 			auto pitch = sign(d.y) * std::pow(std::abs(d.y), controls.rotatePow);
 			tkn::rotateView(cam, yaw, pitch, 0.f);
 			cam.update = true;
+			updated = true;
 		} else {
 			con.mposStart.x = invalid;
 		}
@@ -33,21 +35,33 @@ void update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 	// update roll
 	if(swa_display_key_pressed(dpy, controls.rollLeft)) {
 		con.rollVel -= controls.rollFac * dt;
+		updated = true;
 	}
 
 	if(swa_display_key_pressed(dpy, controls.rollRight)) {
 		con.rollVel += controls.rollFac * dt;
+		updated = true;
 	}
 
 	con.rollVel *= std::pow(1.f - controls.rollFriction, dt);
 	if(std::abs(con.rollVel) > -1.0001) {
 		tkn::rotateView(cam, 0.f, 0.f, con.rollVel);
 		cam.update = true;
+		updated = true;
 	}
+
+	return updated;
 }
 
 // FPS
-void mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
+FPCamCon FPCamCon::fromOrientation(const Quaternion& q) {
+	auto [yaw, pitch, roll] = eulerAngles(q, RotationSequence::yxz);
+	dlg_assertlm(dlg_level_warn, std::abs(roll) < 0.05,
+		"Disregarding non-zero roll in conversion to FPCamCon yaw/pitch");
+	return {float(yaw), float(pitch)};
+}
+
+bool mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
 		Vec2i delta, const FPCamControls& controls) {
 	if(controls.rotateButton == swa_mouse_button_none ||
 			swa_display_mouse_button_pressed(dpy, controls.rotateButton)) {
@@ -65,7 +79,10 @@ void mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
 		cam.rot = Quaternion::yxz(con.yaw, con.pitch, 0.f);
 		// cam.rot = Quaternion::axisAngle(1, 0, 0, con.pitch) * Quaternion::axisAngle(0, 1, 0, con.yaw);
 		cam.update = true;
+		return true;
 	}
+
+	return false;
 }
 
 // Arcball
@@ -73,17 +90,23 @@ Vec3f center(const Camera& cam, const ArcballCamCon& con) {
 	return cam.pos + con.offset * dir(cam);
 }
 
-void mouseMove(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
+bool mouseMove(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
 		Vec2i delta, const ArcballControls& controls, Vec2f panFac) {
+	bool ret = false;
 	auto mods = swa_display_active_keyboard_mods(dpy);
 	if(swa_display_mouse_button_pressed(dpy, controls.panButton) &&
 			mods == controls.panMod) {
 		// y is double flipped because of y-down convention for
 		// mouse corrds vs y-up convention of rendering
+		// TODO: maybe don't do this here but let the user decide
+		// by mirroring panFac? At least document it the behavior.
+		// Same for other functions though. Document how a movement
+		// (especially mouse up/down) is translated into camera rotation.
 		auto x = -panFac.x * delta.x * right(cam);
 		auto y = panFac.y * delta.y * up(cam);
 		cam.pos += x + y;
 		cam.update = true;
+		ret = true;
 	}
 
 	if(swa_display_mouse_button_pressed(dpy, controls.rotateButton) &&
@@ -103,21 +126,24 @@ void mouseMove(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
 		cam.rot = rot;
 		cam.pos = c - arc.offset * dir(cam);
 		cam.update = true;
+		ret = true;
 	}
+
+	return ret;
 }
 
-void mouseMovePersp(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
+bool mouseMovePersp(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
 		Vec2i delta, Vec2ui winSize, float fov, const ArcballControls& ctrls) {
 	auto aspect = winSize.x / float(winSize.y);
 	auto f = 0.5f / float(std::tan(fov / 2.f));
 	float fx = arc.offset * aspect / (f * winSize.x);
 	float fy = arc.offset / (f * winSize.y);
-	mouseMove(cam, arc, dpy, delta, ctrls, {fx, fy});
+	return mouseMove(cam, arc, dpy, delta, ctrls, {fx, fy});
 }
 
-void mouseWheel(Camera& cam, ArcballCamCon& arc, float delta) {
+void mouseWheelZoom(Camera& cam, ArcballCamCon& arc, float delta, float zoomFac) {
 	auto c = center(cam, arc);
-	arc.offset *= std::pow(1.05, delta);
+	arc.offset *= std::pow(zoomFac, delta);
 	cam.pos = c - arc.offset * dir(cam);
 	cam.update = true;
 }
@@ -171,4 +197,5 @@ bool checkMovement(Camera& c, swa_display* dpy, float dt,
 	return update;
 }
 
-} // namespace tkn::cam2
+} // namespace cam2
+} // namespace tkn

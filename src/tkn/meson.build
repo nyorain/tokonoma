@@ -33,6 +33,7 @@ tkn_src = [
 	'camera.cpp',
 	'qcamera.cpp',
 	'camera2.cpp',
+	'ccam.cpp',
 	'geometry.cpp',
 	'texture.cpp',
 	'render.cpp',

@@ -103,8 +103,8 @@ public:
 	// Can be used to create a quaternion that transforms the standard
 	// base from/to a given (orthogonal) vector base by setting the new
 	// base vectors as rows/columns.
-	[[nodiscard]] static
-	Quaternion fromMat(const nytl::Mat3d& m) {
+	template<typename P> static
+	Quaternion fromMat(const nytl::Mat3<P>& m) {
 		assert(std::abs(dot(m[0], m[1])) < 0.05);
 		assert(std::abs(dot(m[0], m[2])) < 0.05);
 		assert(std::abs(dot(m[1], m[2])) < 0.05);
@@ -114,23 +114,23 @@ public:
 		Quaternion q;
 		if(m[2][2] < 0) {
 			if(m[0][0] > m[1][1]){
-				t = 1 + m[0][0] - m[1][1] - m[2][2];
+				t = 1.0 + m[0][0] - m[1][1] - m[2][2];
 				q = {t, m[1][0] + m[0][1], m[0][2] + m[2][0], m[2][1] - m[1][2]};
 			} else{
-				t= 1 - m[0][0] + m[1][1] - m[2][2];
+				t= 1.0 - m[0][0] + m[1][1] - m[2][2];
 				q = {m[1][0] + m[0][1], t, m[2][1] + m[1][2], m[0][2] - m[2][0]};
 			}
 		} else {
 			if(m[0][0] < -m[1][1]){
-				t = 1 - m[0][0] - m[1][1] + m[2][2];
+				t = 1.0 - m[0][0] - m[1][1] + m[2][2];
 				q = {m[0][2] + m[2][0], m[2][1] + m[1][2], t, m[1][0] - m[0][1]};
 			} else{
-				t = 1 + m[0][0] + m[1][1] + m[2][2];
+				t = 1.0 + m[0][0] + m[1][1] + m[2][2];
 				q = {m[2][1] - m[1][2], m[0][2] - m[2][0], m[1][0] - m[0][1], t};
 			}
 		}
 
-		float f = 0.5f / std::sqrt(t);
+		double f = 0.5 / std::sqrt(t);
 		q.x *= f;
 		q.y *= f;
 		q.z *= f;
@@ -167,7 +167,7 @@ inline bool operator!=(const Quaternion& a, const Quaternion& b) {
 // Returns a row-major NxN matrix that represents the given Quaternion.
 // Same as an identity matrix with the first 3 colums being
 //   apply(q, {1, 0, 0}), apply(q, {0, 1, 0}), apply(q, {0, 0, 1})
-template<std::size_t N, typename T = float>
+template<std::size_t N, typename T = float> [[nodiscard]]
 nytl::SquareMat<N, T> toMat(const Quaternion& q) {
 	static_assert(N >= 3);
 	auto ret = nytl::identity<N, T>();

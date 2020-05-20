@@ -265,7 +265,8 @@ std::vector<vk::ClearValue> SinglePassApp::clearValues() {
 	}
 
 	if(depthFormat() != vk::Format::undefined && needsDepth()) {
-		clearValues.emplace_back(c).depthStencil = {1.f, 0u};
+		// clearValues.emplace_back(c).depthStencil = {1.f, 0u};
+		clearValues.emplace_back(c).depthStencil = {0.f, 0u};
 	}
 
 	return clearValues;
