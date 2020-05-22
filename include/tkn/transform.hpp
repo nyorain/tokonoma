@@ -27,6 +27,12 @@
 //   depending on the sign of the near/far values (this seems way
 //   more intuitive to me than having two separate functions
 //   and flipping signs under the hood...).
+// NOTE: for applications where floating-point depth fighting might
+//   be an issue, one should *definitely* use the reversed depth buffer.
+//   Great visualization:
+//   outerra.blogspot.com/2012/11/maximizing-depth-buffer-range-and.html
+//   Logarithmic depth buffer is probably not worth it given that it messes
+//   with early z-testing.
 
 namespace tkn {
 

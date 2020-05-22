@@ -152,39 +152,93 @@ std::vector<Vec3f> areaSmoothNormals(nytl::Span<const Vec3f> positions,
 	return normals;
 }
 
-// TODO: wip
-// Shape generateIco(unsigned subdivs) {
-// 	using nytl::constants::pi;
-//
-// 	// 1. generate basic icosahedron, 12 vertices
-// 	auto angleh = pi * 72.f / 180.f;
-// 	auto anglev = std::atan(1.f / 2);
-//
-// 	auto angle1 = -pi / 2 - angleh / 2;
-// 	auto angle2 = -pi / 2 - angleh / 2;
-//
-// 	std::vector<Vec3f> vertices;
-// 	vertices.push_back({0, 0, 1}); // top vertex
-// 	for(auto i = 0u; i < 5u; ++i) {
-// 		auto z = std::sin(angleh);
-// 		auto xy = std::cos(anglev);
-//
-// 		auto& v1 = vertices.emplace_back();
-// 		v1.x = xy * std::cos(angle1);
-// 		v1.y = xy * std::sin(angle1);
-// 		v1.z = z;
-//
-// 		auto& v2 = vertices.emplace_back();
-// 		v2.x = xy * std::cos(angle2);
-// 		v2.y = xy * std::sin(angle2);
-// 		v2.z = -z;
-//
-// 		angle1 += angleh;
-// 		angle2 += angleh;
-// 	}
-// 	vertices.push_back({0, 0, -1}); // bottom vertex
-//
-// 	// 2. subdivide it
-// }
+Shape generateIco(unsigned subdiv) {
+	// step 1: base ico
+	constexpr auto hStep = float(nytl::radians(72));
+	constexpr auto z = float(0.447213595499); // sin(atan(0.5f))
+	constexpr auto xy = float(0.894427191); // cos(atan(0.5f))
+	constexpr auto max = 11u; // number of base vertices
+
+	std::vector<nytl::Vec3f> verts;
+	verts.reserve(12 + 12 * std::exp2(subdiv));
+
+	std::vector<u32> inds;
+	inds.reserve(12);
+	auto addTri = [](auto& inds, u32 a, u32 b, u32 c) {
+		inds.push_back(a);
+		inds.push_back(b);
+		inds.push_back(c);
+	};
+
+	auto addVert = [&](Vec3f v) {
+		verts.push_back(v);
+		return verts.size() - 1;
+	};
+
+	verts.push_back({0.f, 0.f, 1.f});
+
+	for(auto i = 0u; i < 5; ++i) {
+		// top vertex
+		float h1 = i * hStep;
+		auto v1 = addVert({xy * std::cos(h1), xy * std::sin(h1), z});
+
+		// bottom vertex
+		float h2 = h1 + 0.5f * hStep;
+		auto v2 = addVert({xy * std::cos(h2), xy * std::sin(h2), -z});
+
+		auto nextTop = 1 + 2 * ((i + 1) % 5);
+		auto nextBot = 2 + 2 * ((i + 1) % 5);
+
+		addTri(inds, 0, v1, nextTop);
+		addTri(inds, v1, v2, nextTop);
+		addTri(inds, v2, nextBot, nextTop);
+		addTri(inds, max, nextBot, v2);
+	}
+
+	verts.push_back(Vec3f{0.f, 0.f, -1.f});
+
+	// step 2: subdivide!
+	// NOTE: allocation optimization: use ping-pong with pre-max-allocated
+	// index buffers
+	for(auto i = 0u; i < subdiv; ++i) {
+		std::vector<u32> ninds;
+		ninds.reserve(inds.size() * 4);
+
+		for(auto i = 0u; i < inds.size(); i += 3) {
+			auto ia = inds[i + 0];
+			auto ib = inds[i + 1];
+			auto ic = inds[i + 2];
+
+			auto a = verts[ia];
+			auto b = verts[ib];
+			auto c = verts[ic];
+
+			/*       a
+			//      / \
+			//  m1 *---* m3
+			//    / \ / \
+			//   b---*---c
+			//       m2      */
+			auto m1 = normalized(0.5f * (a + b));
+			auto m2 = normalized(0.5f * (b + c));
+			auto m3 = normalized(0.5f * (c + a));
+			auto i1 = addVert(m1);
+			auto i2 = addVert(m2);
+			auto i3 = addVert(m3);
+
+			addTri(ninds, ia, i1, i3); // a-m1-m3
+			addTri(ninds, i1, ib, i2); // m1-b-m2
+			addTri(ninds, i3, i2, ic); // m3-m2-c
+			addTri(ninds, i1, i2, i3); // middle one, m1-m2-m3
+		}
+
+		inds = std::move(ninds);
+	}
+
+	// NOTE: for (origin-centered unit) spheres, normals and positions
+	// are the same
+	return {verts, verts, inds};
+}
+
 
 } // namespace tkn

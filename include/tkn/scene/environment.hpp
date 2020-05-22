@@ -11,10 +11,13 @@
 #include <nytl/vec.hpp>
 #include <nytl/stringParam.hpp>
 
+// ArHoseSkyModel.h
+struct ArHosekSkyModelState;
+
 namespace tkn {
 
-/// Loads environment
-/// Not movable due to ds layout.
+// Loads a static environment map (including irradiance and pre-convoluted
+// levels for specular IBL).
 class Environment {
 public:
 	struct InitData {
@@ -59,6 +62,14 @@ protected:
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
 	unsigned convolutionMipmaps_;
+};
+
+// Dynamic sky environment based on an analytical sky model.
+class SkyEnvironment {
+public:
+	struct Cache {
+
+	};
 };
 
 } // namespace tkn

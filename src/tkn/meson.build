@@ -52,6 +52,8 @@ tkn_src = [
 	'scene/environment.cpp',
 	'scene/pbr.cpp',
 
+	'sky/ArHosekSkyModel.c',
+
 	'image.cpp',
 	'image/png.cpp',
 	'image/ktx.cpp',

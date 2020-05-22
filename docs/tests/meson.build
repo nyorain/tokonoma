@@ -12,3 +12,6 @@ test('quat', tquat)
 
 ttransform = executable('transform', 'transform.cpp', dependencies: tkn_dep)
 test('transform', ttransform)
+
+tsh = executable('sh', 'sh.cpp', dependencies: tkn_dep)
+test('tsh', tsh)

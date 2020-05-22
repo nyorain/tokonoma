@@ -80,7 +80,7 @@ public:
 	// perspective
 	static constexpr float fov = 0.5 * nytl::constants::pi;
 	static constexpr auto perspectiveMode =
-		tkn::PerspectiveCamera::Mode::revDepthInf;
+		tkn::ControlledCamera::PerspectiveMode::revDepth;
 
 	// ortho
 	static constexpr float orthoSize = 20.f;
@@ -96,12 +96,13 @@ public:
 		rvgInit();
 
 		// init cam
-		using CCtrl = tkn::ControlledCamera::ControlType;
-		auto nc = std::make_unique<tkn::PerspectiveCamera>(
-			CCtrl::firstPerson, near, far);
-		nc->fov(fov);
-		nc->mode(perspectiveMode);
-		cam_ = std::move(nc);
+		cam_.useControl(tkn::ControlledCamera::ControlType::firstPerson);
+		auto pers = cam_.defaultPerspective;
+		pers.far = far;
+		pers.near = near;
+		pers.fov = fov;
+		pers.mode = perspectiveMode;
+		cam_.perspective(pers);
 
 		// init pipeline
 		auto& dev = vkDevice();
@@ -262,8 +263,14 @@ public:
 
 		gpi.depthStencil.depthTestEnable = true;
 		gpi.depthStencil.depthWriteEnable = true;
+
 		// gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 		gpi.depthStencil.depthCompareOp = vk::CompareOp::greaterOrEqual;
+
+		// TODO: only for experiments
+		// if(depthClamp_) {
+		// 	gpi.rasterization.depthClampEnable = true;
+		// }
 
 		// NOTE: see the gltf material.doubleSided property. We can't switch
 		// this per material (without requiring two pipelines) so we simply
@@ -341,8 +348,13 @@ public:
 		cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
-		auto sphere = tkn::Sphere{{}, {0.05f, 0.05f, 0.05f}};
-		shape = tkn::generateUV(sphere);
+		// auto sphere = tkn::Sphere{{}, {0.05f, 0.05f, 0.05f}};
+		// shape = tkn::generateUV(sphere);
+		shape = tkn::generateIco(4);
+		for(auto& pos : shape.positions) {
+			pos *= 0.5f;
+		}
+
 		spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
@@ -354,7 +366,7 @@ public:
 		lmat.albedoFac[3] = 1.f;
 		// HACK: make sure it doesn't write to depth buffer and isn't
 		// rendered into shadow map
-		lmat.flags |= tkn::Material::Bit::blend;
+		// lmat.flags |= tkn::Material::Bit::blend;
 		dirLight_.materialID = scene_.addMaterial(lmat);
 		dirLight_.instanceID = scene_.addInstance(cubePrimitiveID_,
 			dirLightObjMatrix(), dirLight_.materialID);
@@ -527,8 +539,7 @@ public:
 		scene_.render(cb, pipeLayout_, false); // opaque
 
 		// skybox doesn't make sense for orthographic projection
-		auto camptr = cam_.get();
-		if(typeid(*camptr) == typeid(tkn::PerspectiveCamera)) {
+		if(!cam_.isOrthographic()) {
 			tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0, {envCameraDs_});
 			env_.render(cb);
 		}
@@ -558,7 +569,7 @@ public:
 
 		// movement
 		// tkn::checkMovement(camera_, swaDisplay(), dt);
-		cam_->update(swaDisplay(), dt);
+		cam_.update(swaDisplay(), dt);
 
 		if(moveLight_) {
 			if(mode_ & modePointLight) {
@@ -582,8 +593,7 @@ public:
 			// auto zdir = dir(camera_);
 			// auto right = nytl::normalized(nytl::cross(zdir, camera_.up));
 			// auto up = nytl::normalized(nytl::cross(right, zdir));
-			audio_.d3->updateListener(cam_->position(),
-				cam_->dir(), cam_->up());
+			audio_.d3->updateListener(cam_.position(), cam_.dir(), cam_.up());
 		}
 #endif // BR_AUDIO
 
@@ -613,12 +623,12 @@ public:
 				if(audio_.source) audio_.source->direct = !audio_.source->direct;
 				return true;
 			case swa_key_o: // move audio source here
-				if(audio_.source) audio_.source->position(cam_->position());
+				if(audio_.source) audio_.source->position(cam_.position());
 				return true;
 #endif // BR_AUDIO
 			case swa_key_m: // move light here
 				moveLight_ = false;
-				dirLight_.data.dir = -cam_->position();
+				dirLight_.data.dir = -cam_.position();
 				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
 				scene_.updatedInstance(dirLight_.instanceID);
 				updateLight_ = true;
@@ -626,7 +636,7 @@ public:
 			case swa_key_n: // move light here
 				moveLight_ = false;
 				updateLight_ = true;
-				pointLight_.data.position = cam_->position();
+				pointLight_.data.position = cam_.position();
 				scene_.instances()[pointLight_.instanceID].matrix = pointLightObjMatrix();
 				scene_.updatedInstance(pointLight_.instanceID);
 				return true;
@@ -674,40 +684,33 @@ public:
 				return true;
 
 			case swa_key_j: { // toggle projection mode
-				auto data = cam_->camera();
-				auto ctrl = cam_->controlType();
-				auto aspect = float(windowSize().x) / windowSize().y;
-				auto ptr = cam_.get();
-				if(typeid(*ptr) == typeid(tkn::OrthographicCamera)) {
-					auto nc = std::make_unique<tkn::PerspectiveCamera>(ctrl,
-						near, far);
-					nc->fov(fov);
-					nc->aspect(aspect);
-					nc->mode(perspectiveMode);
-					cam_ = std::move(nc);
+				if(cam_.isOrthographic()) {
+					auto p = cam_.defaultPerspective;
+					p.aspect = float(windowSize().x) / windowSize().y;
+					p.mode = perspectiveMode;
+					p.near = near;
+					p.far = far;
+					p.fov = fov;
+					cam_.perspective(p);
 				} else {
-					// we need to reverse near/far since we currently
-					// expect a reverse depth buffer
-					auto nc = std::make_unique<tkn::OrthographicCamera>(ctrl,
-						orthoSize, orthoSize / aspect, far, near);
-					cam_ = std::move(nc);
+					auto o = cam_.defaultOrtho;
+					o.aspect = float(windowSize().x) / windowSize().y;
+					cam_.orthographic(o);
 				}
 
-				cam_->orientation(data.rot);
-				cam_->position(data.pos);
-				scheduleRerecord();
+				scheduleRerecord(); // disable/enable skybox
 				return true;
 			} case swa_key_k: {
 				using Ctrl = tkn::ControlledCamera::ControlType;
-				auto ctrl = cam_->controlType();
+				auto ctrl = cam_.controlType();
 				if(ctrl == Ctrl::arcball) {
-					cam_->useSpaceshipControl();
+					cam_.useSpaceshipControl();
 				} else if(ctrl == Ctrl::spaceship) {
-					cam_->useFirstPersonControl();
+					cam_.useFirstPersonControl();
 				} else if(ctrl == Ctrl::firstPerson) {
-					cam_->disableControl();
+					cam_.useArcballControl();
 				} else if(ctrl == Ctrl::none) {
-					cam_->useArcballControl();
+					cam_.disableControl();
 				}
 			} default:
 				break;
@@ -719,7 +722,7 @@ public:
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
 		// tkn::mouseMove(camera_, camcon_, swaDisplay(), {ev.dx, ev.dy});
-		cam_->mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
+		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
 	bool mouseWheel(float dx, float dy) override {
@@ -727,7 +730,12 @@ public:
 			return true;
 		}
 
-		cam_->mouseWheel(dy);
+		cam_.mouseWheel(dy);
+		if(auto os = cam_.orthoSize(); os) {
+			*os *= std::pow(1.05, dy);
+			cam_.orthoSize(*os);
+		}
+
 		return true;
 	}
 
@@ -758,59 +766,34 @@ public:
 	}
 	*/
 
-	/*
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		// return tkn::perspective3RH(fov, aspect, near, far);
-		// return tkn::perspective3Rev(fov, aspect, near, far);
-		// return tkn::perspective3RevInf(fov, aspect, near);
-		// return tkn::perspective3RH(fov, aspect, near, far);
-		// return tkn::perspective3NegZ(fov, aspect, near, far);
-		return tkn::flippedY(tkn::perspective(fov, aspect, -near, -far));
-	}
-
-	nytl::Mat4f cameraVP() const {
-		// dlg_debug("==================");
-		// dlg_debug("viewMatrix: {}", viewMatrix(camera_));
-		// dlg_debug("lookAtNegZ: {}", lookAtNegZ(camera_.rot, camera_.pos));
-
-		// return projectionMatrix() * viewMatrix(camera_);
-		// return projectionMatrix() * lookAtNegZ(camera_.rot, camera_.pos);
-		// return projectionMatrix() * ml(camera_);
-
-		auto la = lookAt(camera_.rot, camera_.pos);
-		return projectionMatrix() * la;
-	}
-	*/
-
 	void updateDevice() override {
 		// update scene ubo
-		if(cam_->needsUpdate()) {
+		if(cam_.needsUpdate) {
 			// camera_.update = false;
 
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
 
-			tkn::write(span, cam_->viewProjectionMatrix());
-			tkn::write(span, cam_->position());
+			tkn::write(span, cam_.viewProjectionMatrix());
+			tkn::write(span, cam_.position());
 			tkn::write(span, near);
 			tkn::write(span, far);
 			map.flush();
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
-			tkn::write(envSpan, cam_->fixedViewProjectionMatrix());
+			tkn::write(envSpan, cam_.fixedViewProjectionMatrix());
 			// tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
 			// tkn::write(envSpan, projectionMatrix() * lookAt(camera_.rot));
 			// tkn::write(envSpan, projectionMatrix() * lookAtNegZ(camera_.rot, {0.f, 0.f, 0.f}));
 			envMap.flush();
 
 			updateLight_ = true;
-			cam_->resetChanged();
+			cam_.needsUpdate = false;
 		}
 
 		// auto semaphore = scene_.updateDevice(cameraVP());
-		auto semaphore = scene_.updateDevice(cam_->viewProjectionMatrix());
+		auto semaphore = scene_.updateDevice(cam_.viewProjectionMatrix());
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
 			Base::scheduleRerecord();
@@ -819,7 +802,7 @@ public:
 		if(updateLight_) {
 			if(mode_ & modeDirLight) {
 				// dirLight_.updateDevice(cameraVP(), near, far);
-				dirLight_.updateDevice(cam_->viewProjectionMatrix(), near, far);
+				dirLight_.updateDevice(cam_.viewProjectionMatrix(), near, far);
 			}
 			if(mode_ & modePointLight) {
 				pointLight_.updateDevice();
@@ -851,13 +834,7 @@ public:
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
 		// camera_.update = true;
-
-		auto aspect = float(windowSize().x) / windowSize().y;
-		if(auto* cam = dynamic_cast<tkn::OrthographicCamera*>(cam_.get())) {
-			cam->rect(orthoSize, orthoSize / aspect, near, far);
-		} else if(auto* cam = dynamic_cast<tkn::PerspectiveCamera*>(cam_.get())) {
-			cam->aspect(aspect);
-		}
+		cam_.aspect({w, h});
 	}
 
 	bool needsDepth() const override { return true; }
@@ -914,7 +891,7 @@ protected:
 
 	tkn::Scene scene_; // no default constructor
 
-	std::unique_ptr<tkn::ControlledCamera> cam_;
+	tkn::ControlledCamera cam_;
 	// tkn::Camera camera_ {};
 	// tkn::FPCamCon camcon_ {};
 

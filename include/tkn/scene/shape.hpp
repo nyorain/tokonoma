@@ -27,6 +27,9 @@ Shape generate(const Cube& cube);
 Shape generateUV(const Sphere& sphere, unsigned stackCount = 64,
 	unsigned sectorCount = 64);
 
+// TODO: allows position and radius as well
+Shape generateIco(unsigned subdiv);
+
 // generate smooth normals weighted by triangle area
 std::vector<Vec3f> areaSmoothNormals(nytl::Span<const Vec3f> positions,
 	nytl::Span<const u32> indices);

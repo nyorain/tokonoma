@@ -63,9 +63,10 @@ FPCamCon FPCamCon::fromOrientation(const Quaternion& q) {
 
 bool mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
 		Vec2i delta, const FPCamControls& controls) {
+	using nytl::constants::pi;
 	if(controls.rotateButton == swa_mouse_button_none ||
 			swa_display_mouse_button_pressed(dpy, controls.rotateButton)) {
-		con.yaw -= controls.fac * delta.x;
+		con.yaw = std::fmod(con.yaw - controls.fac * delta.x, 2 * pi);
 		con.pitch -= controls.fac * delta.y;
 
 		if(controls.limitPitch) {
