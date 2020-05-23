@@ -74,13 +74,13 @@ public:
 		bool noaudio {};
 	};
 
-	static constexpr float near = -0.05f;
-	static constexpr float far = -25.f;
+	static constexpr float near = 0.1f;
+	static constexpr float far = 20.f;
 
 	// perspective
 	static constexpr float fov = 0.5 * nytl::constants::pi;
 	static constexpr auto perspectiveMode =
-		tkn::ControlledCamera::PerspectiveMode::revDepth;
+		tkn::ControlledCamera::PerspectiveMode::normal;
 
 	// ortho
 	static constexpr float orthoSize = 20.f;
@@ -98,8 +98,8 @@ public:
 		// init cam
 		cam_.useControl(tkn::ControlledCamera::ControlType::firstPerson);
 		auto pers = cam_.defaultPerspective;
-		pers.far = far;
-		pers.near = near;
+		pers.far = -far;
+		pers.near = -near;
 		pers.fov = fov;
 		pers.mode = perspectiveMode;
 		cam_.perspective(pers);
@@ -221,11 +221,19 @@ public:
 			return false;
 		}
 
-		env_.create(initEnv, batch,
-			tkn::read(std::move(convFile)),
-			tkn::read(std::move(irrFile)), sampler_);
-		env_.createPipe(vkDevice(), cameraDsLayout_, renderPass(), 0u, samples());
-		env_.init(initEnv, batch);
+		// env_.create(initEnv, batch,
+		// 	tkn::read(std::move(convFile)),
+		// 	tkn::read(std::move(irrFile)), sampler_);
+		// env_.createPipe(vkDevice(), cameraDsLayout_, renderPass(), 0u, samples());
+		// env_.init(initEnv, batch);
+
+		tkn::SkyboxRenderer::PipeInfo pi;
+		pi.renderPass = renderPass();
+		pi.samples = samples();
+		pi.camDsLayout = cameraDsLayout_;
+		pi.linear = sampler_;
+		pi.reverseDepth = false;
+		skyboxRenderer_.create(vkDevice(), pi);
 
 		// ao
 		auto aoBindings = {
@@ -233,8 +241,8 @@ public:
 				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+			// vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+			// 	vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 		};
@@ -247,7 +255,7 @@ public:
 			cameraDsLayout_.vkHandle(),
 			scene_.dsLayout().vkHandle(),
 			shadowData_.dsLayout.vkHandle(),
-			// shadowData_.dsLayout.vkHandle(),
+			shadowData_.dsLayout.vkHandle(),
 			aoDsLayout_.vkHandle(),
 		}}, {}};
 
@@ -264,8 +272,8 @@ public:
 		gpi.depthStencil.depthTestEnable = true;
 		gpi.depthStencil.depthWriteEnable = true;
 
-		// gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
-		gpi.depthStencil.depthCompareOp = vk::CompareOp::greaterOrEqual;
+		gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+		// gpi.depthStencil.depthCompareOp = vk::CompareOp::greaterOrEqual;
 
 		// TODO: only for experiments
 		// if(depthClamp_) {
@@ -310,11 +318,14 @@ public:
 
 		updateLight_ = true;
 
+		sky_ = {vkDevice(), skyboxRenderer_.dsLayout(), -dirLight_.data.dir,
+			Vec3f{1.f, 1.f, 1.f}, turbidity_};
+
 		// bring lights initially into correct layout and stuff
 		dirLight_.render(cb, shadowData_, scene_);
 		pointLight_.render(cb, shadowData_, scene_);
 
-		auto aoUboSize = 3 * 4u;
+		auto aoUboSize = sizeof(tkn::SH9<Vec4f>) + 3 * 4u;
 		aoUbo_ = {dev.bufferAllocator(), aoUboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 		aoDs_ = {dev.descriptorAllocator(), aoDsLayout_};
@@ -329,12 +340,14 @@ public:
 		edsu.apply();
 
 		vpp::DescriptorSetUpdate adsu(aoDs_);
-		adsu.imageSampler({{{}, env_.envMap().imageView(),
+		// adsu.imageSampler({{{}, env_.envMap().imageView(),
+		// 	vk::ImageLayout::shaderReadOnlyOptimal}});
+		adsu.imageSampler({{{}, sky_.cubemap.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		adsu.imageSampler({{{}, brdfLut_.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.imageSampler({{{}, env_.irradiance().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
+		// adsu.imageSampler({{{}, env_.irradiance().imageView(),
+		// 	vk::ImageLayout::shaderReadOnlyOptimal}});
 		adsu.uniform({{{aoUbo_}}});
 		adsu.apply();
 
@@ -348,12 +361,13 @@ public:
 		cubePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
 
-		// auto sphere = tkn::Sphere{{}, {0.05f, 0.05f, 0.05f}};
-		// shape = tkn::generateUV(sphere);
-		shape = tkn::generateIco(4);
-		for(auto& pos : shape.positions) {
-			pos *= 0.5f;
-		}
+		auto r = 0.05f;
+		auto sphere = tkn::Sphere{{}, {r, r, r}};
+		shape = tkn::generateUV(sphere);
+		// shape = tkn::generateIco(4);
+		// for(auto& pos : shape.positions) {
+		// 	pos *= r;
+		// }
 
 		spherePrimitiveID_ = scene_.addPrimitive(std::move(shape.positions),
 			std::move(shape.normals), std::move(shape.indices));
@@ -366,7 +380,7 @@ public:
 		lmat.albedoFac[3] = 1.f;
 		// HACK: make sure it doesn't write to depth buffer and isn't
 		// rendered into shadow map
-		// lmat.flags |= tkn::Material::Bit::blend;
+		lmat.flags |= tkn::Material::Bit::blend;
 		dirLight_.materialID = scene_.addMaterial(lmat);
 		dirLight_.instanceID = scene_.addInstance(cubePrimitiveID_,
 			dirLightObjMatrix(), dirLight_.materialID);
@@ -532,27 +546,32 @@ public:
 	void render(vk::CommandBuffer cb) override {
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
-		// tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
-		// 	dirLight_.ds(), pointLight_.ds(), aoDs_});
 		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
-			dirLight_.ds(), aoDs_});
+			dirLight_.ds(), pointLight_.ds(), aoDs_});
+		// tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+		// 	dirLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, false); // opaque
 
 		// skybox doesn't make sense for orthographic projection
 		if(!cam_.isOrthographic()) {
-			tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0, {envCameraDs_});
-			env_.render(cb);
+			// tkn::cmdBindGraphicsDescriptors(cb, env_.pipeLayout(), 0, {envCameraDs_});
+			// env_.render(cb);
+			tkn::cmdBindGraphicsDescriptors(cb, skyboxRenderer_.pipeLayout(),
+				0, {envCameraDs_});
+
+			auto& sky = animateSky_ ?
+				steppedSkies_[animateSkyID_].sky :
+				sky_;
+			skyboxRenderer_.render(cb, sky.ds);
 		}
 
-		/*
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
 		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {cameraDs_});
-		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
-			dirLight_.ds(), aoDs_});
 		// tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
-		// 	dirLight_.ds(), pointLight_.ds(), aoDs_});
+		// 	dirLight_.ds(), aoDs_});
+		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 2, {
+			dirLight_.ds(), pointLight_.ds(), aoDs_});
 		scene_.render(cb, pipeLayout_, true); // transparent/blend
-		*/
 
 		// if(touch_.alt) {
 		// 	rvgContext().bindDefaults(cb);
@@ -602,7 +621,23 @@ public:
 		// 	Base::scheduleRedraw();
 		// }
 
+		if(animateSky_) {
+			animateSkyDeltaAccum_ += dt;
+			if(animateSkyDeltaAccum_ >= 0.05) {
+				animateSkyDeltaAccum_ = 0.0;
+				animateSkyID_ = (animateSkyID_ + 1) % steppedSkies_.size();
+				dirLight_.data.dir = -steppedSkies_[animateSkyID_].sunDir;
+				updateLight_ = true;
+				animateSkyUpdate_ = true;
+			}
+		}
+
 		Base::scheduleRedraw();
+	}
+
+	void updateSky() {
+		newSky_ = {vkDevice(), skyboxRenderer_.dsLayout(),
+			-dirLight_.data.dir, Vec3f{1.f, 1.f, 1.f}, turbidity_};
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -632,6 +667,8 @@ public:
 				scene_.instances()[dirLight_.instanceID].matrix = dirLightObjMatrix();
 				scene_.updatedInstance(dirLight_.instanceID);
 				updateLight_ = true;
+				updateSky();
+
 				return true;
 			case swa_key_n: // move light here
 				moveLight_ = false;
@@ -688,8 +725,8 @@ public:
 					auto p = cam_.defaultPerspective;
 					p.aspect = float(windowSize().x) / windowSize().y;
 					p.mode = perspectiveMode;
-					p.near = near;
-					p.far = far;
+					p.near = -near;
+					p.far = -far;
 					p.fov = fov;
 					cam_.perspective(p);
 				} else {
@@ -712,7 +749,42 @@ public:
 				} else if(ctrl == Ctrl::none) {
 					cam_.disableControl();
 				}
-			} default:
+
+				break;
+			} case swa_key_pageup:
+				turbidity_ *= 1.1;
+				dlg_info("turb: {}", turbidity_);
+				updateSky();
+				break;
+			case swa_key_pagedown:
+				turbidity_ /= 1.1;
+				dlg_info("turb: {}", turbidity_);
+				updateSky();
+				break;
+			case swa_key_b:
+				animateSky_ ^= true;
+				if(animateSky_ && steppedSkies_.empty()) {
+					dlg_info(">> generating skies...");
+
+					using nytl::constants::pi;
+					auto steps = 500u;
+					for(auto i = 0u; i < steps; ++i) {
+						auto t = float(2 * pi * float(i) / steps);
+						auto dir = Vec3f{0.1f * std::sin(t), std::cos(t), std::sin(t)};
+
+						auto& state = steppedSkies_.emplace_back();
+						state.sunDir = dir;
+						state.sky = {vkDevice(), skyboxRenderer_.dsLayout(),
+							dir, Vec3f{1.f, 1.f, 1.f}, turbidity_};
+
+						// TODO: hack
+						Base::update(0.001);
+					}
+
+					dlg_info(">> done!");
+				}
+				break;
+			default:
 				break;
 		}
 
@@ -767,6 +839,31 @@ public:
 	*/
 
 	void updateDevice() override {
+		if(newSky_) {
+			sky_ = std::move(*newSky_);
+			newSky_ = {};
+
+			updateAOParams_ = true;
+			scheduleRerecord();
+
+			vpp::DescriptorSetUpdate adsu(aoDs_);
+			adsu.imageSampler({{{}, sky_.cubemap.imageView(),
+				vk::ImageLayout::shaderReadOnlyOptimal}});
+		}
+
+		if(animateSkyUpdate_) {
+			dlg_assert(animateSkyID_ < steppedSkies_.size());
+			animateSkyUpdate_ = false;
+
+			updateAOParams_ = true;
+			scheduleRerecord();
+
+			auto& sky = steppedSkies_[animateSkyID_].sky;
+			vpp::DescriptorSetUpdate adsu(aoDs_);
+			adsu.imageSampler({{{}, sky.cubemap.imageView(),
+				vk::ImageLayout::shaderReadOnlyOptimal}});
+		}
+
 		// update scene ubo
 		if(cam_.needsUpdate) {
 			// camera_.update = false;
@@ -783,9 +880,6 @@ public:
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
 			tkn::write(envSpan, cam_.fixedViewProjectionMatrix());
-			// tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
-			// tkn::write(envSpan, projectionMatrix() * lookAt(camera_.rot));
-			// tkn::write(envSpan, projectionMatrix() * lookAtNegZ(camera_.rot, {0.f, 0.f, 0.f}));
 			envMap.flush();
 
 			updateLight_ = true;
@@ -815,9 +909,17 @@ public:
 			updateAOParams_ = false;
 			auto map = aoUbo_.memoryMap();
 			auto span = map.span();
+
+			if(animateSky_) {
+				tkn::write(span, steppedSkies_[animateSkyID_].sky.luminance);
+			} else {
+				tkn::write(span, sky_.luminance);
+			}
+
 			tkn::write(span, mode_);
 			tkn::write(span, aoFac_);
-			tkn::write(span, u32(env_.convolutionMipmaps()));
+			// tkn::write(span, u32(env_.convolutionMipmaps()));
+			tkn::write(span, u32(1));
 			map.flush();
 		}
 	}
@@ -876,7 +978,8 @@ protected:
 	static constexpr u32 modePointLight = (1u << 1);
 	static constexpr u32 modeSpecularIBL = (1u << 2);
 	static constexpr u32 modeIrradiance = (1u << 3);
-	u32 mode_ {modeIrradiance | modeSpecularIBL};
+	// u32 mode_ {modeIrradiance | modeSpecularIBL};
+	u32 mode_ {modeIrradiance};
 
 	tkn::Texture dummyTex_;
 	bool moveLight_ {false};
@@ -916,8 +1019,26 @@ protected:
 	PointLight pointLight_;
 	bool updateLight_ {true};
 
-	tkn::Environment env_;
+	// tkn::Environment env_;
+	tkn::SkyboxRenderer skyboxRenderer_;
+	tkn::Sky sky_;
+	std::optional<tkn::Sky> newSky_;
+
+	float turbidity_ = 2.f;
+
 	tkn::Texture brdfLut_;
+
+	float animateSkyDeltaAccum_ {0.f};
+	bool animateSky_ {false};
+	bool animateSkyUpdate_ {false};
+	unsigned animateSkyID_ {0u};
+
+	struct SkyState {
+		tkn::Sky sky;
+		nytl::Vec3f sunDir;
+	};
+
+	std::vector<SkyState> steppedSkies_;
 
 	// args
 	// tkn::TouchCameraController touch_;

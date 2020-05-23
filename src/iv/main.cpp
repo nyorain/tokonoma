@@ -5,7 +5,7 @@
 #include <tkn/bits.hpp>
 #include <tkn/defer.hpp>
 #include <tkn/types.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/scene/environment.hpp>
 
 #include <vpp/handles.hpp>
@@ -243,20 +243,19 @@ public:
 
 	void update(double delta) override {
 		Base::update(delta);
-	}
-
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
+		camera_.update(swaDisplay(), delta);
+		if(camera_.needsUpdate) {
+			Base::scheduleRedraw();
+		}
 	}
 
 	void updateDevice() override {
 		// update scene ubo
-		if(camera_.update) {
-			camera_.update = false;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, projectionMatrix() * fixedViewMatrix(camera_));
+			tkn::write(span, camera_.fixedViewProjectionMatrix());
 			map.flush();
 		}
 
@@ -284,23 +283,18 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
-		if(cubemap_ && rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			Base::scheduleRedraw();
+		if(cubemap_) {
+			camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 		}
 	}
 
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(Base::mouseButton(ev)) {
+	bool mouseWheel(float dx, float dy) override {
+		if(Base::mouseWheel(dx, dy)) {
 			return true;
 		}
 
-		if(cubemap_ && ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			return true;
-		}
-
-		return false;
+		camera_.mouseWheel(dy);
+		return true;
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -332,7 +326,17 @@ public:
 			recreateView_ = true;
 			dlg_info("Showing level {}", level_);
 			Base::scheduleRedraw();
-// TODO
+		} else if(ev.keycode == swa_key_k) {
+			using Ctrl = tkn::ControlledCamera::ControlType;
+			auto ctrl = camera_.controlType();
+			if(ctrl == Ctrl::arcball) {
+				camera_.useSpaceshipControl();
+			} else if(ctrl == Ctrl::spaceship) {
+				camera_.useFirstPersonControl();
+			} else if(ctrl == Ctrl::firstPerson) {
+				camera_.useArcballControl();
+			}
+		// TODO
 		} else if(ev.keycode == swa_key_pageup) {
 			maxLight *= 1.1;
 			Base::scheduleRedraw();
@@ -354,7 +358,7 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	bool needsDepth() const override { return false; }
@@ -386,8 +390,7 @@ protected:
 	// cubemap
 	bool cubemap_ {};
 	vpp::SubBuffer cameraUbo_;
-	bool rotateView_ {};
-	tkn::Camera camera_;
+	tkn::ControlledCamera camera_ {tkn::ControlledCamera::ControlType::firstPerson};
 };
 
 int main(int argc, const char** argv) {

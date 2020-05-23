@@ -123,8 +123,8 @@ mat4 ortho(vec3 vmin, vec3 vmax) {
 	r[0][0] = 2 / diff.x;
 	r[1][1] = 2 / diff.y;
 	r[2][2] = 1 / diff.z;
-	r[3].xy = (vmin.xy + vmax.xy) / (vmin.xy - vmax.xy);
-	r[3].z = vmin.z / (vmin.z - vmax.z);
+	r[3].xy = -(vmin.xy + vmax.xy) / diff.xy;
+	r[3].z = -vmin.z / diff.z;
 	return r;
 }
 

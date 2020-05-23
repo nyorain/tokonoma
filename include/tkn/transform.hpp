@@ -393,7 +393,7 @@ nytl::Mat4<P> frustumRevInf(P left, P right, P bot, P top, P near) {
 //   Negative near, far means RH (right-handed) interpreation of the
 //   projected coordinates, positive values LH interpreation.
 //   To get a reversed depth buffer, near and far can be swapped.
-template<typename P> [[nodiscard]]
+template<typename P = float> [[nodiscard]]
 nytl::SquareMat<4, P> perspective(P fov, P aspect, P near, P far) {
 	assert((near != 0) && "near must not be zero");
 	assert((near != far) && "near and far must not be the same value");
@@ -416,7 +416,7 @@ nytl::SquareMat<4, P> perspective(P fov, P aspect, P near, P far) {
 // Like 'perspective' but reversed the depth buffer, i.e. maps
 // z = near to depth = 1 and z = far to depth = 0.
 // Just a shortcut for reversing the two parameters.
-template<typename P> [[nodiscard]]
+template<typename P = float> [[nodiscard]]
 nytl::SquareMat<4, P> perspectiveRev(P fov, P aspect, P near, P far) {
 	return perspective(fov, aspect, far, near);
 }
@@ -427,7 +427,7 @@ nytl::SquareMat<4, P> perspectiveRev(P fov, P aspect, P near, P far) {
 // Reversing the depth buffer for this operation is important since
 // the precision of floating point values near 0 is significantly
 // better than near 1.
-template<typename P> [[nodiscard]]
+template<typename P = float> [[nodiscard]]
 nytl::SquareMat<4, P> perspectiveRevInf(P fov, P aspect, P near) {
 	assert((near != 0) && "near must not be zero");
 

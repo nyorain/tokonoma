@@ -166,7 +166,7 @@ public:
 			auto span = map.span();
 			// tkn::write(span, fixedMatrix(camera_));
 			auto V = fixedViewMatrix(camera_);
-			auto P = tkn::perspective3RH<float>(fov, aspect, near, far);
+			auto P = tkn::flippedY(tkn::perspective<float>(fov, aspect, -near, -far));
 			tkn::write(span, P * V);
 			tkn::write(span, camera_.pos);
 			tkn::write(span, time_);

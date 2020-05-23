@@ -4,6 +4,7 @@
 #include "pbr.glsl"
 #include "scene.glsl"
 #include "scene.frag.glsl"
+#include "spharm.glsl"
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
@@ -38,16 +39,19 @@ layout(set = 2, binding = 0, row_major) uniform DirLightBuf {
 layout(set = 2, binding = 1) uniform sampler2DArrayShadow shadowMap;
 
 // point light
-// layout(set = 3, binding = 0, row_major) uniform PointLightBuf {
-// 	PointLight pointLight;
-// };
-// layout(set = 3, binding = 1) uniform samplerCubeShadow shadowCube;
+layout(set = 3, binding = 0, row_major) uniform PointLightBuf {
+	PointLight pointLight;
+};
+layout(set = 3, binding = 1) uniform samplerCubeShadow shadowCube;
 
-layout(set = 3, binding = 0) uniform samplerCube envMap;
-layout(set = 3, binding = 1) uniform sampler2D brdfLut;
-layout(set = 3, binding = 2) uniform samplerCube irradianceMap;
+// environment/AO
+layout(set = 4, binding = 0) uniform samplerCube envMap;
+layout(set = 4, binding = 1) uniform sampler2D brdfLut;
+// layout(set = 4, binding = 2) uniform samplerCube irradianceMap;
 
-layout(set = 3, binding = 3) uniform Params {
+// layout(set = 4, binding = 3) uniform Params {
+layout(set = 4, binding = 2) uniform Params {
+	vec3 radianceCoeffs[9]; // stored as vec4 on cpu due to padding
 	uint mode;
 	float aoFac;
 	uint envLods;
@@ -102,20 +106,24 @@ void main() {
 	float metalness = material.metallicFac * mr.b;
 	float roughness = material.roughnessFac * mr.g;
 
-	/*
 	if(bool(params.mode & modeDirLight)) {
 		float between;
 		float linearz = depthtoz(gl_FragCoord.z, scene.near, scene.far);
 		uint index = getCascadeIndex(dirLight, linearz, between);
+		vec3 lcolor = dirLight.color;
 
 		// color the different levels for debugging
-		// switch(index) {
-		// 	case 0: lcolor = mix(lcolor, vec3(1, 1, 0), 0.8); break;
-		// 	case 1: lcolor = mix(lcolor, vec3(0, 1, 1), 0.8); break;
-		// 	case 2: lcolor = mix(lcolor, vec3(1, 0, 1), 0.8); break;
-		// 	case 3: lcolor = mix(lcolor, vec3(1, 0, 1), 0.8); break;
-		// 	default: lcolor = vec3(1, 1, 1); break;
-		// };
+#if 0
+		switch(index) {
+			case 0: lcolor = mix(lcolor, vec3(1, 1, 0), 0.8); break;
+			case 1: lcolor = mix(lcolor, vec3(0, 1, 1), 0.8); break;
+			case 2: lcolor = mix(lcolor, vec3(1, 0, 1), 0.8); break;
+			case 3: lcolor = mix(lcolor, vec3(1, 0, 1), 0.8); break;
+
+			case 4: lcolor = mix(lcolor, vec3(1, 0, 0), 0.8); break;
+			default: lcolor = vec3(0, 0, 1); break;
+		};
+#endif
 
 		bool pcf = bool(dirLight.flags & lightPcf);
 		float shadow = dirShadowIndex(dirLight, shadowMap, inPos, index, int(pcf));
@@ -124,11 +132,9 @@ void main() {
 		vec3 light = cookTorrance(normal, -ldir, -viewDir, roughness,
 			metalness, albedo.xyz);
 		light *= shadow;
-		color.rgb += dirLight.color * light;
+		color.rgb += lcolor * light;
 	}
-	*/
 
-	/*
 	if(bool(params.mode & modePointLight)) {
 		vec3 ldir = inPos - pointLight.pos;
 		float lightDist = length(ldir);
@@ -154,21 +160,18 @@ void main() {
 			color.rgb += pointLight.color * light;
 		}
 	}
-	*/
 
 	vec3 f0 = vec3(0.04);
 	f0 = mix(f0, albedo.rgb, metalness);
 	float ambientFac = params.aoFac * readTex(material.occlusion).r;
 
-	// NOTE: when specular IBL isn't enabled we could put all the
-	// energy into diffuse IBL or the other way around. Would look
-	// somewhat weird though probably
-	float cosTheta = clamp(dot(normal, -viewDir), 0.0, 1);
-	vec3 kS = fresnelSchlickRoughness(cosTheta, f0, roughness);
-	// vec3 kS = vec3(0.5);
-	vec3 kD = 1.0 - kS;
-	kD *= 1.0 - metalness;
+	vec3 kD = vec3(1.0 - metalness);
+
 	if(bool(params.mode & modeSpecularIBL)) {
+		float cosTheta = clamp(dot(normal, -viewDir), 0.0, 1);
+		vec3 kS = fresnelSchlickRoughness(cosTheta, f0, roughness);
+		kD *= 1.0 - kS;
+
 		vec3 R = reflect(viewDir, normal);
 		float lod = roughness * params.envLods;
 		vec3 filtered = textureLod(envMap, R, lod).rgb;
@@ -179,7 +182,8 @@ void main() {
 	}
 
 	if(bool(params.mode & modeIrradiance)) {
-		vec3 irradiance = texture(irradianceMap, normal).rgb;
+		// vec3 irradiance = texture(irradianceMap, normal).rgb;
+		vec3 irradiance = evalIrradianceSH(normal, params.radianceCoeffs);
 		vec3 diffuse = kD * irradiance * albedo.rgb;
 		color.rgb += ambientFac * diffuse;
 	}

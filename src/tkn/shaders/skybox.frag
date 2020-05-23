@@ -12,10 +12,12 @@ void main() {
 	outColor.a = 1.0;
 
 	// for debugging positions
+	// // uvw = normalize(uvw); // smooth
 	// outColor = vec4(0.5 + 0.5 * uvw, 1.0);
 
+	// TODO: make optional via specialization constant?
 	// simple tonemap, obviously only needed if the skybox is rendered
 	// after tonemap step (shouldn't be case)
-	// float exposure = 1.0;
-	// outColor = 1.0 - exp(-outColor * exposure);
+	float exposure = 1.0;
+	outColor = 1.0 - exp(-outColor * exposure);
 }

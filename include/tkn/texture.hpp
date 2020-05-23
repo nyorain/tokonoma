@@ -40,8 +40,8 @@ struct TextureCreateParams {
 	// interpreted as srgb (only for overloads that don't explicitly
 	// specify dataFormat).
 	// TODO: allow to just use the format of the image data?
-	// but then the the caller has to know the resulting format somehow,
-	// store it?
+	// by making this std::optional<vk::Format>? The caller can always
+	// just query the format from the ImageProvider.
 	vk::Format format = defaultFormat;
 
 	// If given, will force interpret the data as srgb/non-srgb.

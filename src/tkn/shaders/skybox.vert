@@ -5,6 +5,8 @@ layout(set = 0, binding = 0, row_major) uniform UBO {
 	mat4 transform;
 } ubo;
 
+layout(constant_id = 0) const bool reverseDepth = false;
+
 void main() {
 	// Buffer-free cube generation, using triangle strip
 	// see e.g. "Eric Lengyel, Game Engine Gems 3" or this discussion:
@@ -18,17 +20,19 @@ void main() {
 	uvw = pos;
 
 	gl_Position = ubo.transform * vec4(pos, 1.0);
-	// gl_Position.y = -gl_Position.y;
 
-	// Basically saying ndcPosition.z = 1.f.
-	// Requires pipeline to have lessOrEqual as depth test.
-	// Will always project vertices on the far plane, behind
-	// all other geometry, allowing to render the skybox after
-	// the scene.
-	// gl_Position = gl_Position.xyww;
-
-	// This just means ndcPosition.z = 0.f. Rendering it behind all other
-	// geometry for a reversed depth buffer, i.e. greaterOrEqual
-	// depth testing.
-	gl_Position.z = 0.f;
+	if(reverseDepth) {
+		// This just means ndcPosition.z = 0.f. Rendering it behind all other
+		// geometry for a reversed depth buffer, i.e. greaterOrEqual
+		// depth testing.
+		gl_Position.z = 0.f;
+	} else {
+		// Basically saying ndcPosition.z = 1.f.
+		// gl_Position.z = 1.f won't work since it's divided by w.
+		// Requires pipeline to have lessOrEqual as depth test.
+		// Will always project vertices on the far plane, behind
+		// all other geometry, allowing to render the skybox after
+		// the scene.
+		gl_Position = gl_Position.xyww;
+	}
 }

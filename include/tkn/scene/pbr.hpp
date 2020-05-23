@@ -6,8 +6,8 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <nytl/vec.hpp>
 
-// just a collection of various utilities useful for pbr.
-// should probably be split into their own files
+// Just a collection of various utilities useful for pbr.
+// Some of them should probably be split into their own files.
 
 namespace tkn {
 
@@ -69,7 +69,6 @@ protected:
 	vpp::Pipeline pipe_; // compute
 };
 
-// TODO: filter from mipmaps to avoid artefacts
 // TODO: can probably be just a functions that returns staging
 // objects? Otherwise separate init and run methods for quick
 // back processing.
@@ -128,6 +127,27 @@ protected:
 	vpp::TrDs ds_;
 	vpp::SubBuffer dst_;
 };
+
+// Physically based camera lens and shutter.
+struct PBRCamera {
+	float shutterSpeed; // in seconds, N
+	float iso; // iso value: e.g. 100, 400, 1600, t
+	float aperture; // f-stop, e.g. 1/125.f, S
+};
+
+// Returns the exposure value (EV100) for given aperature and shutter speed.
+// See https://en.wikipedia.org/wiki/Exposure_value
+// - N: f-stop number
+// - t: shutterSpeed time (in seconds)
+float ev100(float N, float t) {
+	return std::log2(N * N / t);
+}
+
+// Returns the EV100 value for the given camera.
+float ev100(struct PBRCamera& cam) {
+	auto [N, t, S] = cam;
+	return std::log2((N * N / t) * (100 / S));
+}
 
 } // namesapce tkn
 
