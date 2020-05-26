@@ -68,6 +68,13 @@ vec4 readTex(MaterialTex tex) {
 	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
 }
 
+// TODO: WIP
+// vec3 toneMapFilmicALU(in vec3 color) {
+//     color = max(vec3(0.0), color - 0.004f);
+//     color = (color * (6.2f * color + 0.5f)) / (color * (6.2f * color + 1.7f)+ 0.06f);
+//     return color;
+// }
+
 void main() {
 	// uint inMatID = 0u;
 	// uint inModelID = 0u;
@@ -196,5 +203,7 @@ void main() {
 	// tonemap
 	// TODO: shouldn't be here but in post processing
 	// destroys blending
-	outCol.rgb = 1.0 - exp(-outCol.rgb);
+	float exposure = 3.255e-05; // sunny16
+	exposure /= 0.00001; // fp16 scale
+	outCol.rgb = 1.0 - exp(-exposure * outCol.rgb);
 }

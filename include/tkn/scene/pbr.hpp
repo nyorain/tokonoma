@@ -11,6 +11,9 @@
 
 namespace tkn {
 
+constexpr auto fullLumEfficacy = 683.f;
+constexpr auto f16Scale = 0.00001f;
+
 /// Creates a cubemap from an equirect environment map.
 class Cubemapper {
 public:
@@ -79,6 +82,15 @@ protected:
 /// Renders them as mipmap levels onto the cubemap.
 class EnvironmentMapFilter {
 public:
+	struct Mip {
+		vpp::ImageView view;
+		vpp::TrDs ds;
+	};
+
+public:
+	void create(const vpp::Device& dev, vk::Sampler linear,
+		unsigned sampleCount = 1024);
+
 	/// Will record the command to pre-convolute a given cubemap into
 	/// the levels needed for specular IBL.
 	/// The given images must have r16g16b16a16Sfloat format.
@@ -93,9 +105,11 @@ public:
 	///   Should allow filtering all mip levels and not have a mip level bias.
 	/// - sampleCount: The number of samples to take per output pixel.
 	///   Setting this higher will avoid artifacts.
-	void record(const vpp::Device& dev, vk::CommandBuffer cb,
-		vk::ImageView cupemap, vk::Image filtered, vk::Sampler linear,
-		unsigned mipLevels, nytl::Vec2ui size, unsigned sampleCount = 1024);
+	/// The returned vector of miplevel data must stay valid until
+	/// the command buffer has finished execution.
+	[[nodiscard]] std::vector<Mip> record(vk::CommandBuffer cb,
+		vk::ImageView cupemap, vk::Image filtered,
+		unsigned mipLevels, nytl::Vec2ui size);
 
 protected:
 	static constexpr auto groupDimSize = 8u;
@@ -103,13 +117,6 @@ protected:
 	vpp::TrDsLayout dsLayout_;
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_; // compute
-
-	struct Mip {
-		vpp::ImageView view;
-		vpp::TrDs ds;
-	};
-
-	std::vector<Mip> mips_;
 };
 
 /// Projects cubemaps to sphere harmonics (up to l=2, i.e. 9 coefficients).
@@ -129,24 +136,36 @@ protected:
 };
 
 // Physically based camera lens and shutter.
+// ISO value is interpreted as saturation-based sensitivity.
 struct PBRCamera {
-	float shutterSpeed; // in seconds, N
-	float iso; // iso value: e.g. 100, 400, 1600, t
-	float aperture; // f-stop, e.g. 1/125.f, S
+	float shutterSpeed; // in seconds, t
+	float iso; // iso value: e.g. 100, 400, 1600, S
+	float aperture; // f-stop, e.g. 16 for f/16, N
 };
 
 // Returns the exposure value (EV100) for given aperature and shutter speed.
 // See https://en.wikipedia.org/wiki/Exposure_value
 // - N: f-stop number
 // - t: shutterSpeed time (in seconds)
-float ev100(float N, float t) {
+[[nodiscard]] inline float ev100(float N, float t) {
 	return std::log2(N * N / t);
 }
 
 // Returns the EV100 value for the given camera.
-float ev100(struct PBRCamera& cam) {
-	auto [N, t, S] = cam;
+[[nodiscard]] inline float ev100(struct PBRCamera& cam) {
+	auto [t, S, N] = cam;
 	return std::log2((N * N / t) * (100 / S));
+}
+
+// Returns an exposure value simulating the given camera.
+// Basically a factor used to transform incoming illuminance to the
+// captured luminance per pixel.
+[[nodiscard]] inline float exposure(const PBRCamera& cam) {
+	constexpr float q = 0.65; // capturing factor of the lens
+
+	auto [t, S, N] = cam;
+	float maxLum = 78 * N * N / (S * q * t);
+	return 1.0 / maxLum;
 }
 
 } // namesapce tkn

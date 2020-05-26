@@ -10,6 +10,7 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/vec.hpp>
+#include <nytl/vecOps.hpp>
 #include <nytl/stringParam.hpp>
 
 // TODO: use independent SkyboxRenderer for Environment as well.
@@ -100,13 +101,26 @@ protected:
 };
 
 // Dynamic sky environment based on an analytical sky model.
+// Produces a cubemap in rgba16fSfloat format.
 struct Sky {
+	static constexpr auto sunSize = nytl::radians(0.27f);
+	static constexpr auto up = Vec3f{0.f, 1.f, 0.f};
+	static constexpr auto cubemapFormat = vk::Format::r16g16b16a16Sfloat;
+
+	static constexpr auto faceWidth = 32u;
+	static constexpr auto faceHeight = 32u;
+
 	Texture cubemap;
 	vpp::TrDs ds;
-	SH9<Vec4f> luminance {};
+	SH9<Vec4f> skyRadiance {};
+
+	nytl::Vec3f sunRadiance {};
+	nytl::Vec3f sunIrradiance {};
 
 	Sky() = default;
-	Sky(const vpp::Device& dev, const vpp::TrDsLayout&,
+
+	// When no dslayout is given, will not create ds.
+	Sky(const vpp::Device& dev, const vpp::TrDsLayout*,
 		Vec3f sunDir, Vec3f groundAlbedo, float turbidity);
 };
 

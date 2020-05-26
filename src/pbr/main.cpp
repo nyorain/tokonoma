@@ -5,6 +5,7 @@
 #include <tkn/image.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/scene/pbr.hpp>
+#include <tkn/scene/environment.hpp>
 
 #include <vpp/vk.hpp>
 #include <vpp/formats.hpp>
@@ -31,9 +32,6 @@
 
 using namespace tkn::types;
 
-// TODO: create normal envmap mipmaps before convolution/irradiance?
-//   should help with bright dots (but didn't for irradiance, strangely)
-
 vpp::Sampler linearSampler(const vpp::Device& dev);
 void saveBrdf(const char* outfile, const vpp::Device& dev);
 void saveCubemap(const char* equirect, const char* outfile,
@@ -44,9 +42,16 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 	const vpp::Device& dev);
 void saveSHProj(const char* cubemap, const char* outfile,
 	const vpp::Device& dev);
+int saveSkies(float turbidity, const char* outEnv, const char* outSH,
+	const vpp::Device& dev);
 
 int main(int argc, const char** argv) {
 	auto parser = tkn::HeadlessArgs::defaultParser();
+	parser.definitions.push_back({
+		"output", {"--output", "-o"},
+		"The file to write the output to. Otherwise default is used", 1});
+
+	// commands
 	parser.definitions.push_back({
 		"brdflut", {"--brdflut"},
 		"Write a brdf specular IBL lookup table to brdflut.ktx", 0});
@@ -60,11 +65,12 @@ int main(int argc, const char** argv) {
 		"convolute", {"--convolute"},
 		"Convolute a cube environment map for specular IBL", 1});
 	parser.definitions.push_back({
-		"output", {"--output", "-o"},
-		"The file to write the output to. Otherwise default is used", 1});
-	parser.definitions.push_back({
 		"shproj", {"--shproj"},
 		"Project an irradiance map onto spherical harmonics", 1});
+	parser.definitions.push_back({
+		"baseksky", {"--bakeksky"},
+		"Bakes environment maps and irradiance spherical harmonics for \
+			hosek-wilkie skies for given turbidity", 1});
 
 	auto usage = std::string("Usage: ") + argv[0] + " [options]\n\n";
 	argagg::parser_results result;
@@ -108,8 +114,13 @@ int main(int argc, const char** argv) {
 	} else if(result.has_option("shproj")) {
 		auto out = output.value_or("sh.bin");
 		saveSHProj(result["shproj"], out, dev);
+	} else if(result.has_option("bakesky")) {
+		float turbidity = result["bakesky"].as<float>();
+		auto outEnv = output.value_or("skyEnvs.ktx");
+		auto outSH = "skySHs.bin"; // TODO
+		return saveSkies(turbidity, outEnv, outSH, dev);
 	} else {
-		dlg_fatal("No command given!");
+		dlg_fatal("No/unsupported command given!");
 		argagg::fmt_ostream help(std::cerr);
 		help << usage << parser << std::endl;
 		return -1;
@@ -415,6 +426,7 @@ void saveConvoluted(const char* cubemapFile, const char* outfile,
 
 	auto sampler = linearSampler(dev);
 	tkn::EnvironmentMapFilter convoluter;
+	convoluter.create(dev, sampler, 4096);
 
 	auto& qs = dev.queueSubmitter();
 	auto cb = dev.commandAllocator().get(qs.queue().family());
@@ -432,8 +444,8 @@ void saveConvoluted(const char* cubemapFile, const char* outfile,
 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
 		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
 
-	convoluter.record(dev, cb, cubemap.imageView(), envMap,
-		sampler, mipLevels, size, 4096);
+	auto mips = convoluter.record(cb, cubemap.imageView(), envMap,
+		mipLevels, size);
 
 	barrier.oldLayout = vk::ImageLayout::general;
 	barrier.srcAccessMask = vk::AccessBits::shaderWrite;
@@ -600,4 +612,32 @@ void saveSHProj(const char* cubemap, const char* outfile,
 	}
 
 	file.write(reinterpret_cast<const char*>(&coeffs), sizeof(coeffs));
+}
+
+int saveSkies(float turbidity, const char* outSkies, const char* outSHs,
+		const vpp::Device& dev) {
+	using nytl::constants::pi;
+	if(turbidity < 1.f || turbidity > 10.f) {
+		dlg_fatal("Invalid turbitity: {}", turbidity);
+		return -1;
+	}
+
+	auto sampler = linearSampler(dev);
+	tkn::EnvironmentMapFilter filter;
+	filter.create(dev, sampler, 4096);
+
+	// TODO: these should be parameters.
+	// Maybe load via configuration file?
+	constexpr auto steps = 200u;
+	constexpr auto groundAlbedo = Vec3f{0.4, 0.8, 1.0};
+	auto sunDir = [](float t) {
+		return Vec3f{0.1f + 0.2f * std::sin(t), std::cos(t), std::sin(t)};
+	};
+
+	for(auto i = 0u; i < steps; ++i) {
+		auto t = float(2 * pi * float(i) / steps);
+		auto dir = sunDir(t);
+
+		auto sky = tkn::Sky(dev, nullptr, dir, groundAlbedo, turbidity);
+	}
 }

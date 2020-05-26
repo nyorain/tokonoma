@@ -1,6 +1,9 @@
 #include <tkn/scene/environment.hpp>
+#include <tkn/scene/pbr.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/color.hpp>
+#include <tkn/transform.hpp>
 #include <tkn/image.hpp>
 #include <tkn/f16.hpp>
 #include <tkn/render.hpp>
@@ -25,6 +28,8 @@ extern "C" {
 #include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/tkn.skybox.vert.h>
 #include <shaders/tkn.skybox.frag.h>
+
+using nytl::constants::pi;
 
 namespace tkn {
 
@@ -201,6 +206,20 @@ Vec3f faceUVToDir(unsigned face, float u, float v) {
 	return data.dir + u * data.s + v * data.t;
 }
 
+// Some code taken from MJP's (Matt Pettineo) sample framework, licensed
+// under MIT as well. Copyright (c) 2016 MJP
+// github.com/TheRealMJP/DeferredTexturing/tree/master/SampleFramework12/v1.01
+Vec3f sampleDirectionCone(float u1, float u2, float cosThetaMax) {
+    float cosTheta = (1.0f - u1) + u1 * cosThetaMax;
+    float sinTheta = std::sqrt(1.0f - cosTheta * cosTheta);
+    float phi = u2 * 2.0f * pi;
+    return Vec3f{std::cos(phi) * sinTheta, std::sin(phi) * sinTheta, cosTheta};
+}
+
+float sampleDirectionCone_PDF(float cosThetaMax) {
+    return 1.0f / (2.0f * pi * (1.0f - cosThetaMax));
+}
+
 // Computes the outer product of two vectors and returns a nested vector.
 template<size_t D1, size_t D2, typename T1, typename T2>
 auto outerProductVec(const nytl::Vec<D1, T1>& a, const nytl::Vec<D2, T2>& b) {
@@ -231,28 +250,34 @@ auto mangle(Vec3f a, Vec3f b) {
 	return std::acos(std::max(0.001f, dot(a, b)));
 }
 
-Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
-		Vec3f sunDir, Vec3f albedo, float turbidity) {
+float irradianceIntegral(float theta) {
+    float sinTheta = std::sin(theta);
+    return pi * sinTheta * sinTheta;
+}
+
+Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
+		Vec3f sunDir, Vec3f ground, float turbidity) {
 	dlg_assert(sunDir.y >= 0.f);
 	dlg_assert(turbidity >= 1.f && turbidity <= 10.f);
 	normalize(sunDir);
 
-	using nytl::constants::pi;
-
-	constexpr auto up = Vec3f{0.f, 1.f, 0.f};
-	constexpr auto fullLumEfficacy = 683.f;
-	constexpr auto cubemapFormat = vk::Format::r16g16b16a16Sfloat;
-
 	auto theta = mangle(sunDir, up);
 	auto elevation = 0.5f * pi - theta;
 
-	auto sR = arhosek_rgb_skymodelstate_alloc_init(turbidity, albedo.x, elevation);
-	auto sG = arhosek_rgb_skymodelstate_alloc_init(turbidity, albedo.y, elevation);
-	auto sB = arhosek_rgb_skymodelstate_alloc_init(turbidity, albedo.z, elevation);
+	auto sR = arhosek_rgb_skymodelstate_alloc_init(turbidity, ground.x, elevation);
+	auto sG = arhosek_rgb_skymodelstate_alloc_init(turbidity, ground.y, elevation);
+	auto sB = arhosek_rgb_skymodelstate_alloc_init(turbidity, ground.z, elevation);
+
+	const auto cosSunSize = std::cos(sunSize);
+
+	auto groundSpectral = SpectralColor::fromSRGBRefl(ground);
+	std::array<ArHosekSkyModelState*, nSpectralSamples> sSpectral;
+	for(auto i = 0u; i < nSpectralSamples; ++i) {
+		sSpectral[i] = arhosekskymodelstate_alloc_init(elevation, turbidity,
+			groundSpectral.samples[i]);
+	}
 
 	// store cubemap pixels and already project onto SH9
-	constexpr auto width = 32u;
-	constexpr auto height = 32u;
 
 	using Pixel = nytl::Vec4<f16>;
 	std::array<std::vector<Pixel>, 6> faces;
@@ -260,13 +285,13 @@ Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 
 	float wsum = 0.f;
 	for(auto face = 0u; face < 6u; ++face) {
-		faces[face].reserve(width * height);
+		faces[face].reserve(faceWidth * faceHeight);
 		ptrs[face] = reinterpret_cast<std::byte*>(faces[face].data());
 
-		for(auto y = 0u; y < height; ++y) {
-			for(auto x = 0u; x < width; ++x) {
-				float u = (x + 0.5f) / width;
-				float v = (y + 0.5f) / height;
+		for(auto y = 0u; y < faceHeight; ++y) {
+			for(auto x = 0u; x < faceWidth; ++x) {
+				float u = (x + 0.5f) / faceWidth;
+				float v = (y + 0.5f) / faceHeight;
 
 				auto dir = normalized(faceUVToDir(face, u, v));
 				float theta = mangle(dir, up);
@@ -278,33 +303,93 @@ Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 				rad[2] = arhosek_tristim_skymodel_radiance(sB, theta, gamma, 2);
 				rad[3] = 1.f;
 
-				// convert radiance to luminance
 				auto lum = fullLumEfficacy * rad;
-				lum *= 0.0001; // TODO: use PBR units in shaders and pp to make this work
-				faces[face].push_back(Pixel(lum));
+				lum *= f16Scale; // so we can safely convert to f16 below
 
 				u = 2 * u - 1;
 				v = 2 * v - 1;
 				float t = 1.f + u * u + v * v;
 				float w = 4.f / (std::sqrt(t) * t);
 
+				// convert radiance to luminance
 				wsum += w;
-				lum *= w;
-				this->luminance.coeffs += outerProductVec(projectSH9(dir).coeffs, lum);
+				auto wlum = w * lum;
+				this->skyRadiance.coeffs +=
+					outerProductVec(projectSH9(dir).coeffs, wlum);
+
+				// sample sun color here
+				// NOTE: this would require a way higher cubemap
+				// resolution to become visible. Instead, we should
+				// render the sun explicitly. Using the skymodel internals,
+				// we should be able to precomput a small texture for
+				// limb darkening (or just evaluate it in the shader using
+				// some pre-determined coefficients).
+				// if(gamma < sunSize) {
+				// 	SpectralColor radiance;
+				// 	for(auto i = 0u; i < nSpectralSamples; ++i) {
+				// 		radiance.samples[i] = arhosekskymodel_solar_radiance(
+				// 			sSpectral[i], theta, gamma, radiance.wavelength(i));
+				// 	}
+				// 	auto f = f16Scale * std::clamp(dot(dir, sunDir), 0.f, 1.f);
+				// 	lum += f * Vec4f(XYZtoSRGB(toXYZ(radiance)));
+				// }
+
+				faces[face].push_back(Pixel(lum));
 			}
 		}
 	}
 
 	auto normalization = 4 * pi / wsum;
-	this->luminance.coeffs *= normalization;
-
+	this->skyRadiance.coeffs *= normalization;
 
 	arhosekskymodelstate_free(sR);
 	arhosekskymodelstate_free(sG);
 	arhosekskymodelstate_free(sB);
 
+	// evaluate sun irradiance
+	auto nSunSamples = 8u;
+	auto [sunBaseX, sunBaseY] = base(sunDir);
+	nytl::Vec3f sunIrradiance {};
+	for(auto x = 0u; x < nSunSamples; ++x) {
+		for(auto y = 0u; y < nSunSamples; ++y) {
+			auto u = (x + 0.5f) / nSunSamples;
+			auto v = (y + 0.5f) / nSunSamples;
+			auto coneDir = sampleDirectionCone(u, v, cosSunSize);
+			auto sampleDir = coneDir.z * sunDir +
+				coneDir.x * sunBaseX + coneDir.y * sunBaseY;
+
+			auto theta = mangle(sampleDir, up);
+			auto gamma = mangle(sampleDir, sunDir);
+
+			SpectralColor radiance;
+			for(auto i = 0u; i < nSpectralSamples; ++i) {
+				radiance.samples[i] = arhosekskymodel_solar_radiance(
+					sSpectral[i], theta, gamma, radiance.wavelength(i));
+			}
+
+			auto f = std::clamp(dot(sampleDir, sunDir), 0.f, 1.f);
+			sunIrradiance += f * XYZtoSRGB(toXYZ(radiance));
+		}
+	}
+
+	for(auto& s : sSpectral) {
+		arhosekskymodelstate_free(s);
+	}
+
+	auto pdf = sampleDirectionCone_PDF(cosSunSize);
+	sunIrradiance *= 1.f / (nSunSamples * nSunSamples * pdf);
+
+	this->sunIrradiance = fullLumEfficacy * sunIrradiance;
+	this->sunIrradiance *= 100.f; // TODO: no idea where factor comes from
+
+	float irrad = 1.f / irradianceIntegral(sunSize);
+	this->sunRadiance = irrad * this->sunIrradiance;
+
+	// dlg_info("irradiance: {}", this->sunIrradiance);
+	// dlg_info("radiance: {}", this->sunRadiance);
+
 	// create cubemap on device
-	auto img = wrap({width, height}, vk::Format::r16g16b16a16Sfloat,
+	auto img = wrap({faceWidth, faceHeight}, vk::Format::r16g16b16a16Sfloat,
 		1u, 1u, 6u, nytl::span(ptrs));
 	TextureCreateParams params;
 	params.format = cubemapFormat;
@@ -313,11 +398,13 @@ Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout& dsLayout,
 	vpp::nameHandle(this->cubemap.viewableImage(), "Sky:cubemap");
 
 	// create ds
-	this->ds = {dev.descriptorAllocator(), dsLayout};
-	vpp::DescriptorSetUpdate dsu(this->ds);
-	dsu.imageSampler({{{}, cubemap.vkImageView(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	vpp::nameHandle(this->ds, "Sky:ds");
+	if(dsLayout) {
+		this->ds = {dev.descriptorAllocator(), *dsLayout};
+		vpp::DescriptorSetUpdate dsu(this->ds);
+		dsu.imageSampler({{{}, cubemap.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		vpp::nameHandle(this->ds, "Sky:ds");
+	}
 }
 
 } // namespace tkn

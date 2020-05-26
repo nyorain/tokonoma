@@ -209,6 +209,7 @@ vpp::ViewableImage SinglePassApp::createDepthTarget(const vk::Extent2D& size) {
 	auto usage = vk::ImageUsageBits::depthStencilAttachment;
 	auto info = vpp::ViewableImageCreateInfo(depthFormat(),
 		vk::ImageAspectBits::depth, size, usage);
+	info.img.samples = samples();
 
 	// create the viewable image
 	// will set the created image in the view info for us

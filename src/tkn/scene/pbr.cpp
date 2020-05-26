@@ -261,9 +261,8 @@ vpp::ViewableImage Irradiancer::finish() {
 }
 
 // EnvironmentMapFilter
-void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
-		vk::ImageView cubemap, vk::Image filtered, vk::Sampler linear,
-		unsigned mipLevels, nytl::Vec2ui size, unsigned sampleCount) {
+void EnvironmentMapFilter::create(const vpp::Device& dev, vk::Sampler linear,
+		unsigned sampleCount) {
 	auto bindings = {
 		vpp::descriptorBinding( // output image, convolution
 			vk::DescriptorType::storageImage,
@@ -307,9 +306,17 @@ void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
 	vk::Pipeline vkpipe;
 	vk::createComputePipelines(dev, {}, 1u, cpi, nullptr, vkpipe);
 	pipe_ = {dev, vkpipe};
+}
+
+std::vector<EnvironmentMapFilter::Mip> EnvironmentMapFilter::record(
+		vk::CommandBuffer cb, vk::ImageView cubemap, vk::Image filtered,
+		unsigned mipLevels, nytl::Vec2ui size) {
+
+	std::vector<Mip> mips;
+	auto& dev = pipe_.device();
 
 	// record
-	mips_.reserve(mipLevels - 1);
+	mips.reserve(mipLevels - 1);
 	vk::ImageViewCreateInfo ivi;
 	ivi.format = vk::Format::r16g16b16a16Sfloat;
 	ivi.image = filtered;
@@ -333,7 +340,7 @@ void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
 			vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::compute,
 				0u, sizeof(face), &face);
 
-			auto& mip = mips_.emplace_back();
+			auto& mip = mips.emplace_back();
 
 			ivi.subresourceRange.baseMipLevel = m;
 			mip.view = {dev, ivi};
@@ -350,6 +357,8 @@ void EnvironmentMapFilter::record(const vpp::Device& dev, vk::CommandBuffer cb,
 			vk::cmdDispatch(cb, dx, dy, 1);
 		}
 	}
+
+	return mips;
 }
 
 // SHProjector

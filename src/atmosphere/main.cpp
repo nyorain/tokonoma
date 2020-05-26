@@ -2,6 +2,7 @@
 #include <tkn/shader.hpp>
 #include <tkn/window.hpp>
 #include <tkn/render.hpp>
+#include <tkn/f16.hpp>
 #include <tkn/qcamera.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/glsl.hpp>

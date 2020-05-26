@@ -18,6 +18,7 @@
 #include <tkn/scene/light.hpp>
 #include <tkn/scene/scene.hpp>
 #include <tkn/scene/environment.hpp>
+#include <tkn/scene/pbr.hpp>
 #include <argagg.hpp>
 
 #include <rvg/context.hpp>
@@ -309,7 +310,6 @@ public:
 		// example light
 		dirLight_ = {batch, shadowData_};
 		dirLight_.data.dir = {5.8f, -12.0f, 4.f};
-		dirLight_.data.color = {5.f, 5.f, 5.f};
 
 		pointLight_ = {batch, shadowData_};
 		pointLight_.data.position = {0.f, 5.0f, 0.f};
@@ -318,8 +318,9 @@ public:
 
 		updateLight_ = true;
 
-		sky_ = {vkDevice(), skyboxRenderer_.dsLayout(), -dirLight_.data.dir,
+		sky_ = {vkDevice(), &skyboxRenderer_.dsLayout(), -dirLight_.data.dir,
 			Vec3f{1.f, 1.f, 1.f}, turbidity_};
+		dirLight_.data.color = tkn::f16Scale * sky_.sunIrradiance;
 
 		// bring lights initially into correct layout and stuff
 		dirLight_.render(cb, shadowData_, scene_);
@@ -623,21 +624,29 @@ public:
 
 		if(animateSky_) {
 			animateSkyDeltaAccum_ += dt;
-			if(animateSkyDeltaAccum_ >= 0.05) {
+			if(animateSkyDeltaAccum_ >= animateSkyStep) {
 				animateSkyDeltaAccum_ = 0.0;
 				animateSkyID_ = (animateSkyID_ + 1) % steppedSkies_.size();
-				dirLight_.data.dir = -steppedSkies_[animateSkyID_].sunDir;
-				updateLight_ = true;
+
+				auto& sky = steppedSkies_[animateSkyID_];
+				dirLight_.data.color = tkn::f16Scale * sky.sky.sunIrradiance;
 				animateSkyUpdate_ = true;
 			}
+
+			auto& sky = steppedSkies_[animateSkyID_];
+			auto& next = steppedSkies_[animateSkyID_ + 1];
+			float f = animateSkyDeltaAccum_ / animateSkyStep;
+			dirLight_.data.dir = -nytl::mix(sky.sunDir, next.sunDir, f);
+			updateLight_ = true;
 		}
 
 		Base::scheduleRedraw();
 	}
 
 	void updateSky() {
-		newSky_ = {vkDevice(), skyboxRenderer_.dsLayout(),
+		newSky_ = {vkDevice(), &skyboxRenderer_.dsLayout(),
 			-dirLight_.data.dir, Vec3f{1.f, 1.f, 1.f}, turbidity_};
+		dirLight_.data.color = tkn::f16Scale * newSky_->sunIrradiance;
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -753,11 +762,13 @@ public:
 				break;
 			} case swa_key_pageup:
 				turbidity_ *= 1.1;
+				turbidity_ = std::min(turbidity_, 10.f);
 				dlg_info("turb: {}", turbidity_);
 				updateSky();
 				break;
 			case swa_key_pagedown:
 				turbidity_ /= 1.1;
+				turbidity_ = std::max(turbidity_, 1.f);
 				dlg_info("turb: {}", turbidity_);
 				updateSky();
 				break;
@@ -770,14 +781,17 @@ public:
 					auto steps = 500u;
 					for(auto i = 0u; i < steps; ++i) {
 						auto t = float(2 * pi * float(i) / steps);
-						auto dir = Vec3f{0.1f * std::sin(t), std::cos(t), std::sin(t)};
+						auto dir = Vec3f{0.1f + 0.2f * std::sin(t), std::cos(t), std::sin(t)};
 
 						auto& state = steppedSkies_.emplace_back();
 						state.sunDir = dir;
-						state.sky = {vkDevice(), skyboxRenderer_.dsLayout(),
+						state.sky = {vkDevice(), &skyboxRenderer_.dsLayout(),
 							dir, Vec3f{1.f, 1.f, 1.f}, turbidity_};
 
-						// TODO: hack
+						// TODO: hack. Apparently needed to not lose
+						// connection on wayland?
+						// Clean solution would be to just start
+						// a new thread.
 						Base::update(0.001);
 					}
 
@@ -911,9 +925,9 @@ public:
 			auto span = map.span();
 
 			if(animateSky_) {
-				tkn::write(span, steppedSkies_[animateSkyID_].sky.luminance);
+				tkn::write(span, steppedSkies_[animateSkyID_].sky.skyRadiance);
 			} else {
-				tkn::write(span, sky_.luminance);
+				tkn::write(span, sky_.skyRadiance);
 			}
 
 			tkn::write(span, mode_);
@@ -1028,6 +1042,7 @@ protected:
 
 	tkn::Texture brdfLut_;
 
+	static constexpr auto animateSkyStep = 0.05f;
 	float animateSkyDeltaAccum_ {0.f};
 	bool animateSky_ {false};
 	bool animateSkyUpdate_ {false};

@@ -14,4 +14,7 @@ ttransform = executable('transform', 'transform.cpp', dependencies: tkn_dep)
 test('transform', ttransform)
 
 tsh = executable('sh', 'sh.cpp', dependencies: tkn_dep)
-test('tsh', tsh)
+test('sh', tsh)
+
+tmisc = executable('misc', 'misc.cpp', dependencies: tkn_dep)
+test('misc', tmisc)

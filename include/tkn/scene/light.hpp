@@ -50,7 +50,7 @@ public:
 	static constexpr u32 cascadeCount = 4u;
 
 	struct {
-		nytl::Vec3f color {1.f, 1.f, 1.f};
+		nytl::Vec3f color {1.f, 1.f, 1.f}; // unit: illuminance
 		std::uint32_t flags {lightFlagPcf | lightFlagShadow};
 		nytl::Vec3f dir {1.f, 1.f, 1.f};
 		float _ {}; // padding

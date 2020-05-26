@@ -14,6 +14,9 @@ struct Typesafe {
 	constexpr Typesafe operator++(int) { auto cpy = *this; ++value; return cpy; }
 	constexpr Typesafe& operator--() { --value; return *this; }
 	constexpr Typesafe operator--(int) { auto cpy = *this; --value; return cpy; }
+
+	explicit operator T&() { return value; }
+	explicit operator const T&() const { return value; }
 };
 
 template<typename Tag, typename T>

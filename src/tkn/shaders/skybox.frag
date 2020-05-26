@@ -18,6 +18,8 @@ void main() {
 	// TODO: make optional via specialization constant?
 	// simple tonemap, obviously only needed if the skybox is rendered
 	// after tonemap step (shouldn't be case)
-	float exposure = 1.0;
+	// float exposure = 1.0;
+	float exposure = 3.255e-05; // sunny16
+	exposure /= 0.00001; // fp16 scale
 	outColor = 1.0 - exp(-outColor * exposure);
 }
