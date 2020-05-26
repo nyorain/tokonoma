@@ -54,9 +54,13 @@ Texture::Texture(InitData& data, const WorkBatcher& wb,
 	auto layers = img->layers();
 	auto faces = img->faces();
 	if(params.cubemap) {
-		dlg_assert(faces == 6);
-		dlg_assert(params.view.layerCount == 0 || params.view.layerCount == 6);
-		dlg_assertm(layers == 1, "cubemap arrays not supported");
+		dlg_assertm(faces == 6, "A cubemap image must have 6 faces");
+		dlg_assertm(params.view.layerCount % 6u == 0u, "A cubemap image view "
+			"must have 6 layers (or a multiple of 6 for cubemap arrays)");
+
+		// vulkan does not have a concept of faces. Instead, they
+		// are treated as additional layers (i.e. every cubemap
+		// layer has effectively 6 sequential layers)
 		layers *= 6u;
 	}
 
@@ -173,7 +177,11 @@ void Texture::init(InitData& data, const WorkBatcher& wb) {
 	ivi.subresourceRange.layerCount = data.view.layerCount;
 	ivi.subresourceRange.levelCount = data.view.levelCount;
 	if(data.cubemap) {
-		ivi.viewType = vk::ImageViewType::cube;
+		if(ivi.subresourceRange.layerCount > 6u) {
+			ivi.viewType = vk::ImageViewType::cubeArray;
+		} else {
+			ivi.viewType = vk::ImageViewType::cube;
+		}
 	} else if(ivi.subresourceRange.layerCount > 1) {
 		ivi.viewType = vk::ImageViewType::e2dArray;
 	} else {
@@ -218,8 +226,8 @@ void Texture::init(InitData& data, const WorkBatcher& wb) {
 				// TODO: could offer optimization in case the
 				// data is subresource layout is tightly packed:
 				// directly let provider write to map
-				auto layer = data.cubemap ? 0u : l;
-				auto face = data.cubemap ? l : 0u;
+				auto layer = data.cubemap ? l / 6 : l;
+				auto face = data.cubemap ? l % 6 : 0u;
 				auto span = data.image->read(m, layer, face);
 				dlg_assertm(span.size() == lsize, "{} vs {}",
 					span.size(), lsize);
@@ -281,8 +289,8 @@ void Texture::init(InitData& data, const WorkBatcher& wb) {
 			auto lsize = mwidth * mheight * vpp::formatSize(dataFormat);
 
 			for(auto l = 0u; l < layerCount; ++l) {
-				auto layer = data.cubemap ? 0u : l;
-				auto face = data.cubemap ? l : 0u;
+				auto layer = data.cubemap ? l / 6 : l;
+				auto face = data.cubemap ? l % 6 : 0u;
 
 				auto layerSpan = mapSpan.first(lsize);
 				if(!data.image->read(layerSpan, m, layer, face)) {
@@ -373,7 +381,7 @@ void Texture::init(InitData& data, const WorkBatcher& wb) {
 	// wait for transfer to complete
 	vk::cmdPipelineBarrier(cb,
 		vk::PipelineStageBits::transfer,
-		vk::PipelineStageBits::allCommands | vk::PipelineStageBits::topOfPipe,
+		vk::PipelineStageBits::allCommands | vk::PipelineStageBits::bottomOfPipe,
 		{}, {}, {}, {{barrier}});
 }
 

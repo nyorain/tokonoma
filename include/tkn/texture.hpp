@@ -71,6 +71,9 @@ struct TextureCreateParams {
 	// ignored.
 	bool cubemap {};
 
+	// When cubemap is true and there is more than one layer (either
+	// explicitly set or by leaving layerCount to 0), the device
+	// must have the 'imageCubeArray' feature enabled.
 	struct ViewRange {
 		unsigned baseMipLevel = 0;
 		unsigned baseArrayLayer = 0;

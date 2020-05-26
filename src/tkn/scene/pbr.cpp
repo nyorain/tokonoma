@@ -310,7 +310,7 @@ void EnvironmentMapFilter::create(const vpp::Device& dev, vk::Sampler linear,
 
 std::vector<EnvironmentMapFilter::Mip> EnvironmentMapFilter::record(
 		vk::CommandBuffer cb, vk::ImageView cubemap, vk::Image filtered,
-		unsigned mipLevels, nytl::Vec2ui size) {
+		unsigned mipLevels, nytl::Vec2ui size, unsigned baseLayer) {
 
 	std::vector<Mip> mips;
 	auto& dev = pipe_.device();
@@ -322,9 +322,9 @@ std::vector<EnvironmentMapFilter::Mip> EnvironmentMapFilter::record(
 	ivi.image = filtered;
 	ivi.viewType = vk::ImageViewType::cube;
 	ivi.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+	ivi.subresourceRange.baseArrayLayer = baseLayer;
 	ivi.subresourceRange.layerCount = 6u;
 	ivi.subresourceRange.levelCount = 1u;
-	ivi.subresourceRange.baseArrayLayer = 0u;
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
 	for(auto m = 0u; m < mipLevels; ++m) {

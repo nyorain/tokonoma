@@ -1,5 +1,6 @@
 #include <tkn/app2.hpp>
 #include <tkn/transform.hpp>
+#include <tkn/features.hpp>
 #include <dlg/dlg.hpp>
 #include <dlg/output.h>
 #include <vpp/vk.hpp>
@@ -33,11 +34,6 @@
 
 namespace tkn {
 inline namespace app2 {
-
-
-Features::Features() {
-	base.pNext = &multiview;
-}
 
 // App::Renderer
 // We simply import the implementation from the App class basically.
@@ -509,16 +505,16 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 		vkSurf, {1, 1}, prefs);
 
 	// TODO: don't hardcode like this
-	auto formats = vk::getPhysicalDeviceSurfaceFormatsKHR(phdev, vkSurf);
-	for(auto f : formats) {
-		if(f.format == vk::Format::r16g16b16a16Sfloat &&
-				f.colorSpace == vk::ColorSpaceKHR::extendedSrgbLinearEXT) {
-			dlg_info("found swapchain format {} {}", (int) f.format, (int) f.colorSpace);
-			// impl_->swapchainInfo.imageFormat = f.format;
-			// impl_->swapchainInfo.imageColorSpace = f.colorSpace;
-			break;
-		}
-	}
+	// auto formats = vk::getPhysicalDeviceSurfaceFormatsKHR(phdev, vkSurf);
+	// for(auto f : formats) {
+	// 	if(f.format == vk::Format::r16g16b16a16Sfloat &&
+	// 			f.colorSpace == vk::ColorSpaceKHR::extendedSrgbLinearEXT) {
+	// 		dlg_info("found swapchain format {} {}", (int) f.format, (int) f.colorSpace);
+	// 		// impl_->swapchainInfo.imageFormat = f.format;
+	// 		// impl_->swapchainInfo.imageColorSpace = f.colorSpace;
+	// 		break;
+	// 	}
+	// }
 
 	return true;
 }
@@ -858,7 +854,7 @@ void App::updateDevice() {
 
 vpp::SwapchainPreferences App::swapchainPrefs(const Args& args) const {
 	vpp::SwapchainPreferences prefs {};
-	prefs.format = vk::Format::r16g16b16a16Sfloat;
+	// prefs.format = vk::Format::r16g16b16a16Sfloat;
 	prefs.errorAction = vpp::SwapchainPreferences::ErrorAction::output;
 	if(args.vsync) {
 		prefs.presentMode = vk::PresentModeKHR::fifo; // vsync

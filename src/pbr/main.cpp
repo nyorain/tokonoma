@@ -2,6 +2,7 @@
 #include <tkn/bits.hpp>
 #include <tkn/types.hpp>
 #include <tkn/render.hpp>
+#include <tkn/features.hpp>
 #include <tkn/image.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/scene/pbr.hpp>
@@ -14,10 +15,12 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/submit.hpp>
+#include <vpp/init.hpp>
 #include <vpp/queue.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/commandAllocator.hpp>
 #include <vpp/image.hpp>
+#include <vpp/util/file.hpp>
 
 #include <dlg/dlg.hpp>
 #include <nytl/vec.hpp>
@@ -42,7 +45,7 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 	const vpp::Device& dev);
 void saveSHProj(const char* cubemap, const char* outfile,
 	const vpp::Device& dev);
-int saveSkies(float turbidity, const char* outEnv, const char* outSH,
+int saveSkies(float turbidity, const char* outEnv, const char* outData,
 	const vpp::Device& dev);
 
 int main(int argc, const char** argv) {
@@ -68,9 +71,9 @@ int main(int argc, const char** argv) {
 		"shproj", {"--shproj"},
 		"Project an irradiance map onto spherical harmonics", 1});
 	parser.definitions.push_back({
-		"baseksky", {"--bakeksky"},
-		"Bakes environment maps and irradiance spherical harmonics for \
-			hosek-wilkie skies for given turbidity", 1});
+		"bakesky", {"--bakesky"},
+		"Bakes environment maps and irradiance spherical harmonics data for "
+			"hosek-wilkie skies for given turbidity", 1});
 
 	auto usage = std::string("Usage: ") + argv[0] + " [options]\n\n";
 	argagg::parser_results result;
@@ -91,6 +94,18 @@ int main(int argc, const char** argv) {
 	}
 
 	auto args = tkn::HeadlessArgs(result);
+	if(result.has_option("bakesky")) {
+		args.featureChecker = [](tkn::Features& enable, const tkn::Features& supported) {
+			if(!supported.base.features.imageCubeArray) {
+				dlg_fatal("Required feature 'imageCubeArray' not supported");
+				return false;
+			}
+
+			enable.base.features.imageCubeArray = true;
+			return true;
+		};
+	}
+
 	auto headless = tkn::Headless(args);
 
 	auto& dev = *headless.device;
@@ -117,8 +132,8 @@ int main(int argc, const char** argv) {
 	} else if(result.has_option("bakesky")) {
 		float turbidity = result["bakesky"].as<float>();
 		auto outEnv = output.value_or("skyEnvs.ktx");
-		auto outSH = "skySHs.bin"; // TODO
-		return saveSkies(turbidity, outEnv, outSH, dev);
+		auto outData = "skyData.bin"; // TODO
+		return saveSkies(turbidity, outEnv, outData, dev);
 	} else {
 		dlg_fatal("No/unsupported command given!");
 		argagg::fmt_ostream help(std::cerr);
@@ -458,7 +473,7 @@ void saveConvoluted(const char* cubemapFile, const char* outfile,
 		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
 
 	auto fmtSize = vpp::formatSize(format);
-	// over approximation of all mip levels (the times 2)
+	// over approximation of all mip levels (times 2)
 	auto totalSize = 2 * 6u * size.x * size.y * fmtSize;
 	auto align = dev.properties().limits.optimalBufferCopyOffsetAlignment;
 	align = std::max<vk::DeviceSize>(align, fmtSize);
@@ -614,7 +629,7 @@ void saveSHProj(const char* cubemap, const char* outfile,
 	file.write(reinterpret_cast<const char*>(&coeffs), sizeof(coeffs));
 }
 
-int saveSkies(float turbidity, const char* outSkies, const char* outSHs,
+int saveSkies(float turbidity, const char* outSkies, const char* outData,
 		const vpp::Device& dev) {
 	using nytl::constants::pi;
 	if(turbidity < 1.f || turbidity > 10.f) {
@@ -622,22 +637,139 @@ int saveSkies(float turbidity, const char* outSkies, const char* outSHs,
 		return -1;
 	}
 
+	constexpr auto format = vk::Format::r16g16b16a16Sfloat;
+	constexpr auto mipLevels = 3u;
+	struct SkyData {
+		tkn::SH9<Vec4f> skyRadiance; // cosine lobe not applied yet
+		Vec3f sunIrradiance;
+		Vec3f sunDir;
+	};
+
 	auto sampler = linearSampler(dev);
 	tkn::EnvironmentMapFilter filter;
-	filter.create(dev, sampler, 4096);
+	filter.create(dev, sampler, 128);
 
 	// TODO: these should be parameters.
 	// Maybe load via configuration file?
-	constexpr auto steps = 200u;
+	// also make configurable:
+	// - Sky::faceWidth
+	// - Sky::faceHeight
+	// - Sky::sunSize
+	constexpr auto steps = 50u;
+	constexpr auto faceWidth = tkn::Sky::faceWidth;
+	constexpr auto faceHeight = tkn::Sky::faceHeight;
 	constexpr auto groundAlbedo = Vec3f{0.4, 0.8, 1.0};
 	auto sunDir = [](float t) {
-		return Vec3f{0.1f + 0.2f * std::sin(t), std::cos(t), std::sin(t)};
+		// standing at the equator, north pole is pointing straight up
+		return normalized(Vec3f{0.f, std::cos(t), std::sin(t)});
+
+		// don't really get why this doesn't work
+		// float theta = t;
+		// float phi = 0.45 * pi * std::sin(t);
+		// return Vec3f{
+		// 	std::cos(theta) * std::cos(phi),
+		// 	std::sin(phi),
+		// 	std::sin(theta) * std::cos(phi),
+		// };
 	};
 
+	auto& qs = dev.queueSubmitter();
+	auto cb = dev.commandAllocator().get(qs.queue().family());
+	vk::beginCommandBuffer(cb, {});
+
+	// auto wb = tkn::WorkBatcher::createDefault(dev);
+	// wb.cb = cb;
+
+	vk::ImageCreateInfo ic;
+	ic.format = format;
+	ic.extent = {faceWidth, faceHeight, 1u};
+	ic.imageType = vk::ImageType::e2d;
+	ic.usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::transferSrc;
+	ic.samples = vk::SampleCountBits::e1;
+	ic.initialLayout = vk::ImageLayout::undefined;
+	ic.arrayLayers = 6u * steps;
+	ic.flags = vk::ImageCreateBits::cubeCompatible;
+	ic.mipLevels = mipLevels;
+	auto initCombined = vpp::Init<vpp::Image>(dev.devMemAllocator(), ic,
+		dev.deviceMemoryTypes());
+
+	std::vector<tkn::Sky> skies;
+	std::vector<SkyData> datas;
+	skies.reserve(steps);
+	datas.reserve(steps);
 	for(auto i = 0u; i < steps; ++i) {
 		auto t = float(2 * pi * float(i) / steps);
 		auto dir = sunDir(t);
 
-		auto sky = tkn::Sky(dev, nullptr, dir, groundAlbedo, turbidity);
+		// TODO: defer uploading and stuff as well
+		auto& sky = skies.emplace_back(dev, nullptr, dir, groundAlbedo, turbidity);
+
+		auto& data = datas.emplace_back();
+		data.sunDir = -dir;
+		data.sunIrradiance = sky.sunIrradiance();
+		data.skyRadiance = sky.skyRadiance();
 	}
+
+	vpp::writeFile(outData, tkn::bytes(datas), true);
+
+	auto combined = initCombined.init();
+	std::vector<std::vector<tkn::EnvironmentMapFilter::Mip>> mips;
+
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = combined;
+	barrier.oldLayout = vk::ImageLayout::undefined;
+	barrier.srcAccessMask = {};
+	barrier.newLayout = vk::ImageLayout::general;
+	barrier.dstAccessMask = vk::AccessBits::shaderWrite;
+	barrier.subresourceRange = {vk::ImageAspectBits::color, 0, mipLevels, 0, 6 * steps};
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
+		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
+
+	for(auto i = 0u; i < steps; ++i) {
+		auto& sky = skies[i];
+
+		auto m = filter.record(cb, sky.cubemap().imageView(), combined,
+			mipLevels, {faceWidth, faceHeight}, i * 6);
+		mips.push_back(std::move(m));
+	}
+
+	barrier.oldLayout = vk::ImageLayout::general;
+	barrier.srcAccessMask = vk::AccessBits::shaderWrite;
+	barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
+	barrier.dstAccessMask = vk::AccessBits::transferRead;
+	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
+		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
+
+	auto stage = vpp::retrieveStagingRange(cb, combined, format,
+		vk::ImageLayout::transferSrcOptimal, {faceWidth, faceHeight, 1u},
+		{vk::ImageAspectBits::color, 0, mipLevels, 0, 6 * steps});
+
+	vk::endCommandBuffer(cb);
+	qs.wait(qs.add(cb));
+
+	auto map = stage.memoryMap();
+	auto fmtSize = vpp::formatSize(format);
+	std::vector<const std::byte*> ptrs;
+	auto debugOff = 0u;
+	for(auto mip = 0u; mip < mipLevels; ++mip) {
+		auto w = std::max(faceWidth >> mip, 1u);
+		auto h = std::max(faceHeight >> mip, 1u);
+		auto faceSize = w * h * fmtSize;
+
+		for(auto l = 0u; l < 6 * steps; ++l) {
+			auto off = vpp::imageBufferOffset(fmtSize,
+				{faceWidth, faceHeight, 1u}, 6u * steps, mip, l);
+			dlg_assertm(debugOff == off, "{}, {}: {} vs {}", mip, l, debugOff, off);
+			ptrs.push_back(map.ptr() + off);
+
+			debugOff += faceSize;
+		}
+	}
+
+	auto provider = tkn::wrap({faceWidth, faceHeight}, format,
+		mipLevels, steps, 6u, ptrs);
+	auto res = tkn::writeKtx(outSkies, *provider);
+	dlg_assertm(res == tkn::WriteError::none, (int) res);
+
+	return 0;
 }

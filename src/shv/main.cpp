@@ -179,8 +179,6 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {ds_});
 		if(skybox_) {
-			vk::cmdBindIndexBuffer(cb, indices_.buffer(),
-				indices_.offset(), vk::IndexType::uint16);
 			vk::cmdDraw(cb, 14, 1, 0, 0, 0);
 		} else {
 			vk::cmdBindVertexBuffers(cb, 0, {{spherePositions_.buffer()}},
@@ -192,18 +190,18 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
+		Base::update(dt);
 		tkn::checkMovement(camera_, swaDisplay(), dt);
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 	}
 
 	nytl::Mat4f projectionMatrix() const {
 		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
+		return tkn::perspective(fov, aspect, -near, -far);
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 
 		if(camera_.update) {
 			camera_.update = false;
@@ -216,15 +214,15 @@ public:
 	}
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
-		App::mouseMove(ev);
+		Base::mouseMove(ev);
 		if(rotateView_) {
 			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
 	}
 
 	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(App::mouseButton(ev)) {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
@@ -237,12 +235,12 @@ public:
 	}
 
 	void resize(unsigned w, unsigned h) override {
-		App::resize(w, h);
+		Base::resize(w, h);
 		camera_.update = true;
 	}
 
 	argagg::parser argParser() const override {
-		auto parser = App::argParser();
+		auto parser = Base::argParser();
 		parser.definitions.push_back({
 			"sphere", {"--sphere"},
 			"Visualize as sphere instead of cubemap", 0});
@@ -250,8 +248,8 @@ public:
 	}
 
 	bool handleArgs(const argagg::parser_results& result,
-			App::Args& bout) override {
-		if(!App::handleArgs(result, bout)) {
+			Base::Args& bout) override {
+		if(!Base::handleArgs(result, bout)) {
 			return false;
 		}
 

@@ -181,7 +181,7 @@ public:
 		for(auto i = 0u; i < mip; ++i) {
 			auto faceSize = this->faceSize(i);
 			auto mipSize = layers() * faces_ * vpp::align(faceSize, 4u);
-			auto expectedImageSize = faceSize;
+			auto expectedImageSize = mipSize;
 			if(arrayElements_ == 0 && faces_ == 6) {
 				// ktx special cubemap imageSize case
 				expectedImageSize = faceSize;

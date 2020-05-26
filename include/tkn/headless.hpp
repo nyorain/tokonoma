@@ -8,11 +8,15 @@
 
 namespace tkn {
 
+struct Features;
 enum class DevType {
 	igpu,
 	dgpu,
 	choose
 };
+
+using FeatureChecker = std::function<bool(Features& enable,
+		const Features& supported)>;
 
 struct HeadlessArgs {
 	static argagg::parser defaultParser();
@@ -22,9 +26,10 @@ struct HeadlessArgs {
 
 	bool renderdoc {};
 	bool layers {};
-	std::variant<DevType, unsigned, const char*> phdev = DevType::dgpu;
+	std::variant<DevType, unsigned, const char*> phdev = DevType::choose;
 	std::vector<const char*> iniExts {};
 	std::vector<const char*> devExts {};
+	FeatureChecker featureChecker {};
 };
 
 struct Headless {

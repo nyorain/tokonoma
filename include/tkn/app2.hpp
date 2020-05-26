@@ -9,9 +9,6 @@
 #include <nytl/vec.hpp>
 
 // - header shame -
-// needed for features
-// pulls in other vkpp headers. Maybe move features to extra header?
-#include <vkpp/structs.hpp>
 #include <vpp/renderer.hpp> // only needed for Renderer::RenderBuffer
 
 #include <memory>
@@ -28,20 +25,12 @@ namespace argagg { // fwd
 } // namespace argagg
 
 namespace tkn {
+
+struct Features;
+
 inline namespace app2 {
 
-struct Features {
-	vk::PhysicalDeviceFeatures2 base;
-	vk::PhysicalDeviceMultiviewFeatures multiview;
-	Features();
-};
-
 class App {
-public:
-	// TODO: WIP
-	float maxLight {400.f};
-	float maxAvgLight {400.f};
-
 public:
 	App();
 	~App();

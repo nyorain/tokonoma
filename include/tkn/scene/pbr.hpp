@@ -108,8 +108,8 @@ public:
 	/// The returned vector of miplevel data must stay valid until
 	/// the command buffer has finished execution.
 	[[nodiscard]] std::vector<Mip> record(vk::CommandBuffer cb,
-		vk::ImageView cupemap, vk::Image filtered,
-		unsigned mipLevels, nytl::Vec2ui size);
+		vk::ImageView cubemap, vk::Image filtered,
+		unsigned mipLevels, nytl::Vec2ui size, unsigned baseLayer = 0u);
 
 protected:
 	static constexpr auto groupDimSize = 8u;

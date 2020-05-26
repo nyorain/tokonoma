@@ -20,6 +20,8 @@ struct ArHosekSkyModelState;
 
 namespace tkn {
 
+class f16;
+
 // Loads a static environment map (including irradiance and pre-convoluted
 // levels for specular IBL).
 class Environment {
@@ -102,26 +104,46 @@ protected:
 
 // Dynamic sky environment based on an analytical sky model.
 // Produces a cubemap in rgba16fSfloat format.
-struct Sky {
+class Sky {
+public:
 	static constexpr auto sunSize = nytl::radians(0.27f);
 	static constexpr auto up = Vec3f{0.f, 1.f, 0.f};
 	static constexpr auto cubemapFormat = vk::Format::r16g16b16a16Sfloat;
 
-	static constexpr auto faceWidth = 32u;
-	static constexpr auto faceHeight = 32u;
+	static constexpr auto faceWidth = 64u;
+	static constexpr auto faceHeight = 64u;
 
-	Texture cubemap;
-	vpp::TrDs ds;
-	SH9<Vec4f> skyRadiance {};
+	struct Baked {
+		using Pixel = nytl::Vec4<tkn::f16>; // must match cubemapFormat
+		std::array<std::vector<Pixel>, 6u> faces;
+		SH9<Vec4f> skyRadiance {};
+		nytl::Vec3f avgSunRadiance {};
+		nytl::Vec3f sunIrradiance {};
+	};
 
-	nytl::Vec3f sunRadiance {};
-	nytl::Vec3f sunIrradiance {};
+	static Baked bake(Vec3f sunDir, Vec3f groundAlbeo, float turbidity);
 
+public:
 	Sky() = default;
 
 	// When no dslayout is given, will not create ds.
 	Sky(const vpp::Device& dev, const vpp::TrDsLayout*,
 		Vec3f sunDir, Vec3f groundAlbedo, float turbidity);
+
+	const auto& cubemap() const { return cubemap_; }
+	const auto& ds() const { return ds_; }
+	const auto& skyRadiance() const { return skyRadiance_; }
+
+	const auto& avgSunRadiance() const { return avgSunRadiance_; }
+	const auto& sunIrradiance() const { return sunIrradiance_; }
+
+private:
+	Texture cubemap_;
+	vpp::TrDs ds_;
+	SH9<Vec4f> skyRadiance_ {};
+
+	nytl::Vec3f avgSunRadiance_ {};
+	nytl::Vec3f sunIrradiance_ {};
 };
 
 } // namespace tkn

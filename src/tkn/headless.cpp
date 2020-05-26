@@ -1,4 +1,5 @@
 #include <tkn/headless.hpp>
+#include <tkn/features.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/physicalDevice.hpp>
 #include <dlg/dlg.hpp>
@@ -86,6 +87,7 @@ Headless::Headless(const HeadlessArgs& args) {
 		}
 	}
 
+	// TODO: fall back to just another device here?
 	if(!phdev) {
 		dlg_error("Could not find physical device");
 		throw std::runtime_error("Could not find physical device");
@@ -99,6 +101,15 @@ Headless::Headless(const HeadlessArgs& args) {
 
 	vk::DeviceCreateInfo devInfo;
 	vk::DeviceQueueCreateInfo queueInfo({}, queueFam, 1, priorities);
+
+	Features enable {}, f {};
+	if(args.featureChecker) {
+		vk::getPhysicalDeviceFeatures2(phdev, f.base);
+		if(!args.featureChecker(enable, f)) {
+			throw std::runtime_error("Required feature not supported");
+		}
+		devInfo.pNext = &f.base;
+	}
 
 	devInfo.pQueueCreateInfos = &queueInfo;
 	devInfo.queueCreateInfoCount = 1u;

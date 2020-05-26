@@ -53,7 +53,7 @@ public:
 	bool read(nytl::Span<std::byte> data, unsigned mip = 0, unsigned layer = 0,
 			unsigned face = 0) override {
 		dlg_assert(face < faces() && layer < layers() && mip < mipLevels());
-		// make sure two forward layer as face
+		// make sure to forward layer as face
 		return impl_->read(data, mip, 0u, layer);
 	}
 };
@@ -95,13 +95,15 @@ public:
 		}
 
 		tkn::TextureCreateParams params;
-		params.cubemap = cubemap_ = (p->faces() == 6 && p->layers() == 1);
+		params.cubemap = cubemap_ = (p->faces() == 6);
 		params.format = p->format();
 		if(!params.cubemap) {
 			params.view.baseArrayLayer = 0;
 			params.view.layerCount = 1u;
 			params.view.baseMipLevel = 0;
 			params.view.levelCount = 1u;
+		} else {
+			params.view.layerCount = 6u;
 		}
 
 		format_ = p->format();
@@ -268,11 +270,12 @@ public:
 			viewInfo.format = format_;
 			viewInfo.image = image_;
 			viewInfo.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-			viewInfo.subresourceRange.baseArrayLayer = layer_;
+			viewInfo.subresourceRange.baseArrayLayer = cubemap_ ? 6u * layer_ : layer_;
 			viewInfo.subresourceRange.baseMipLevel = level_;
-			viewInfo.subresourceRange.layerCount = 1u;
+			viewInfo.subresourceRange.layerCount = cubemap_ ? 6u : 1u;
 			viewInfo.subresourceRange.levelCount = 1u;
 			view_ = {vkDevice(), viewInfo};
+
 			vpp::DescriptorSetUpdate dsu(texDs_);
 			dsu.imageSampler({{{{}, view_,
 				vk::ImageLayout::shaderReadOnlyOptimal}}});
@@ -306,12 +309,12 @@ public:
 			return false;
 		}
 
-		if(!cubemap_ && ev.keycode == swa_key_right) {
+		if(ev.keycode == swa_key_right) {
 			layer_ = (layer_ + 1) % layerCount_;
 			recreateView_ = true;
 			dlg_info("Showing layer {}", layer_);
 			Base::scheduleRedraw();
-		} else if(!cubemap_ && ev.keycode == swa_key_left) {
+		} else if(ev.keycode == swa_key_left) {
 			layer_ = (layer_ + layerCount_ - 1) % layerCount_;
 			recreateView_ = true;
 			dlg_info("Showing layer {}", layer_);
@@ -337,6 +340,7 @@ public:
 				camera_.useArcballControl();
 			}
 		// TODO
+		/*
 		} else if(ev.keycode == swa_key_pageup) {
 			maxLight *= 1.1;
 			Base::scheduleRedraw();
@@ -349,6 +353,7 @@ public:
 		} else if(ev.keycode == swa_key_k8) {
 			maxAvgLight /= 1.1;
 			Base::scheduleRedraw();
+		*/
 		} else {
 			return false;
 		}
@@ -359,6 +364,13 @@ public:
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
 		camera_.aspect({w, h});
+	}
+
+	vpp::SwapchainPreferences swapchainPrefs(const App::Args& args) const override {
+		auto prefs = Base::swapchainPrefs(args);
+		prefs.preferSrgb = false;
+		prefs.format = vk::Format::b8g8r8a8Unorm;
+		return prefs;
 	}
 
 	bool needsDepth() const override { return false; }

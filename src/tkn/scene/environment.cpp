@@ -255,8 +255,9 @@ float irradianceIntegral(float theta) {
     return pi * sinTheta * sinTheta;
 }
 
-Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
-		Vec3f sunDir, Vec3f ground, float turbidity) {
+Sky::Baked Sky::bake(Vec3f sunDir, Vec3f ground, float turbidity) {
+	Baked out;
+
 	dlg_assert(sunDir.y >= 0.f);
 	dlg_assert(turbidity >= 1.f && turbidity <= 10.f);
 	normalize(sunDir);
@@ -278,15 +279,9 @@ Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
 	}
 
 	// store cubemap pixels and already project onto SH9
-
-	using Pixel = nytl::Vec4<f16>;
-	std::array<std::vector<Pixel>, 6> faces;
-	std::array<const std::byte*, 6> ptrs;
-
 	float wsum = 0.f;
 	for(auto face = 0u; face < 6u; ++face) {
-		faces[face].reserve(faceWidth * faceHeight);
-		ptrs[face] = reinterpret_cast<std::byte*>(faces[face].data());
+		out.faces[face].reserve(faceWidth * faceHeight);
 
 		for(auto y = 0u; y < faceHeight; ++y) {
 			for(auto x = 0u; x < faceWidth; ++x) {
@@ -314,33 +309,16 @@ Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
 				// convert radiance to luminance
 				wsum += w;
 				auto wlum = w * lum;
-				this->skyRadiance.coeffs +=
+				out.skyRadiance.coeffs +=
 					outerProductVec(projectSH9(dir).coeffs, wlum);
 
-				// sample sun color here
-				// NOTE: this would require a way higher cubemap
-				// resolution to become visible. Instead, we should
-				// render the sun explicitly. Using the skymodel internals,
-				// we should be able to precomput a small texture for
-				// limb darkening (or just evaluate it in the shader using
-				// some pre-determined coefficients).
-				// if(gamma < sunSize) {
-				// 	SpectralColor radiance;
-				// 	for(auto i = 0u; i < nSpectralSamples; ++i) {
-				// 		radiance.samples[i] = arhosekskymodel_solar_radiance(
-				// 			sSpectral[i], theta, gamma, radiance.wavelength(i));
-				// 	}
-				// 	auto f = f16Scale * std::clamp(dot(dir, sunDir), 0.f, 1.f);
-				// 	lum += f * Vec4f(XYZtoSRGB(toXYZ(radiance)));
-				// }
-
-				faces[face].push_back(Pixel(lum));
+				out.faces[face].push_back(Baked::Pixel(lum));
 			}
 		}
 	}
 
 	auto normalization = 4 * pi / wsum;
-	this->skyRadiance.coeffs *= normalization;
+	out.skyRadiance.coeffs *= normalization;
 
 	arhosekskymodelstate_free(sR);
 	arhosekskymodelstate_free(sG);
@@ -379,14 +357,28 @@ Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
 	auto pdf = sampleDirectionCone_PDF(cosSunSize);
 	sunIrradiance *= 1.f / (nSunSamples * nSunSamples * pdf);
 
-	this->sunIrradiance = fullLumEfficacy * sunIrradiance;
-	this->sunIrradiance *= 100.f; // TODO: no idea where factor comes from
+	out.sunIrradiance = fullLumEfficacy * sunIrradiance;
+
+	// TODO: no idea where factor comes from. We need it as well to get
+	// realistic sun irradiance values here (around 100.000 at daytime).
+	// MJP's comment: transform to our coordinate space.
+	// But per docs, the hosek model uses the same units we use...
+	out.sunIrradiance *= 100.f;
 
 	float irrad = 1.f / irradianceIntegral(sunSize);
-	this->sunRadiance = irrad * this->sunIrradiance;
+	out.avgSunRadiance = irrad * out.sunIrradiance;
 
-	// dlg_info("irradiance: {}", this->sunIrradiance);
-	// dlg_info("radiance: {}", this->sunRadiance);
+	return out;
+}
+
+Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
+		Vec3f sunDir, Vec3f ground, float turbidity) {
+	auto data = bake(sunDir, ground, turbidity);
+
+	std::array<const std::byte*, 6> ptrs;
+	for(auto i = 0u; i < 6u; ++i) {
+		ptrs[i] = reinterpret_cast<const std::byte*>(data.faces[i].data());
+	}
 
 	// create cubemap on device
 	auto img = wrap({faceWidth, faceHeight}, vk::Format::r16g16b16a16Sfloat,
@@ -394,16 +386,16 @@ Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
 	TextureCreateParams params;
 	params.format = cubemapFormat;
 	params.cubemap = true;
-	this->cubemap = {dev, std::move(img), params};
-	vpp::nameHandle(this->cubemap.viewableImage(), "Sky:cubemap");
+	cubemap_ = {dev, std::move(img), params};
+	vpp::nameHandle(cubemap_.viewableImage(), "Sky:cubemap");
 
 	// create ds
 	if(dsLayout) {
-		this->ds = {dev.descriptorAllocator(), *dsLayout};
-		vpp::DescriptorSetUpdate dsu(this->ds);
-		dsu.imageSampler({{{}, cubemap.vkImageView(),
+		ds_ = {dev.descriptorAllocator(), *dsLayout};
+		vpp::DescriptorSetUpdate dsu(ds_);
+		dsu.imageSampler({{{}, cubemap_.vkImageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		vpp::nameHandle(this->ds, "Sky:ds");
+		vpp::nameHandle(ds_, "Sky:ds");
 	}
 }
 
