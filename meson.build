@@ -338,6 +338,11 @@ scatter = build_target('scatter', [
 	], dependencies: [tkn_dep],
 	target_type: exetarget)
 
+clouds = build_target('clouds', [
+		'src/clouds/main.cpp',
+	], dependencies: [tkn_dep],
+	target_type: exetarget)
+
 if android
 	subdir('apk')
 endif

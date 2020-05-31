@@ -144,6 +144,9 @@ int main(int argc, const char** argv) {
 	return 0;
 }
 
+vpp::Sampler linearSampler(const vpp::Device& dev) {
+	return {dev, tkn::linearSamplerInfo()};
+}
 
 // BRDF lut
 // NOTE: we don't need an hdr format since the values are always
@@ -276,21 +279,6 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 	auto provider = tkn::wrap({size, size}, format, map.span());
 	auto res = tkn::writeKtx(filename, *provider);
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
-}
-
-// TODO: might move that to tkn
-vpp::Sampler linearSampler(const vpp::Device& dev) {
-	vk::SamplerCreateInfo sci;
-	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
-	sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
-	sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
-	sci.magFilter = vk::Filter::linear;
-	sci.minFilter = vk::Filter::linear;
-	sci.mipmapMode = vk::SamplerMipmapMode::linear;
-	sci.minLod = 0.0;
-	sci.maxLod = 100.0;
-	sci.anisotropyEnable = false;
-	return {dev, sci};
 }
 
 void saveCubemap(const char* equirectPath, const char* outfile,

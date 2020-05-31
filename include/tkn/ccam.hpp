@@ -4,6 +4,7 @@
 #include <tkn/camera2.hpp>
 #include <tkn/transform.hpp>
 #include <variant>
+#include <optional>
 
 // High-level and easy-to-use camera concept that (in comparison
 // to the low-level lightweight tkn::Camera) fully manages projection

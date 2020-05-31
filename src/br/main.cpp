@@ -5,6 +5,7 @@
 
 #include <tkn/config.hpp>
 #include <tkn/ccam.hpp>
+#include <tkn/features.hpp>
 #include <tkn/singlePassApp.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
@@ -320,7 +321,7 @@ public:
 
 		sky_ = {vkDevice(), &skyboxRenderer_.dsLayout(), -dirLight_.data.dir,
 			Vec3f{1.f, 1.f, 1.f}, turbidity_};
-		dirLight_.data.color = tkn::f16Scale * sky_.sunIrradiance;
+		dirLight_.data.color = tkn::f16Scale * sky_.sunIrradiance();
 
 		// bring lights initially into correct layout and stuff
 		dirLight_.render(cb, shadowData_, scene_);
@@ -343,7 +344,7 @@ public:
 		vpp::DescriptorSetUpdate adsu(aoDs_);
 		// adsu.imageSampler({{{}, env_.envMap().imageView(),
 		// 	vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.imageSampler({{{}, sky_.cubemap.imageView(),
+		adsu.imageSampler({{{}, sky_.cubemap().imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		adsu.imageSampler({{{}, brdfLut_.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
@@ -563,7 +564,7 @@ public:
 			auto& sky = animateSky_ ?
 				steppedSkies_[animateSkyID_].sky :
 				sky_;
-			skyboxRenderer_.render(cb, sky.ds);
+			skyboxRenderer_.render(cb, sky.ds());
 		}
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, blendPipe_);
@@ -629,7 +630,7 @@ public:
 				animateSkyID_ = (animateSkyID_ + 1) % steppedSkies_.size();
 
 				auto& sky = steppedSkies_[animateSkyID_];
-				dirLight_.data.color = tkn::f16Scale * sky.sky.sunIrradiance;
+				dirLight_.data.color = tkn::f16Scale * sky.sky.sunIrradiance();
 				animateSkyUpdate_ = true;
 			}
 
@@ -646,7 +647,8 @@ public:
 	void updateSky() {
 		newSky_ = {vkDevice(), &skyboxRenderer_.dsLayout(),
 			-dirLight_.data.dir, Vec3f{1.f, 1.f, 1.f}, turbidity_};
-		dirLight_.data.color = tkn::f16Scale * newSky_->sunIrradiance;
+		dirLight_.data.color = tkn::f16Scale * newSky_->sunIrradiance();
+		dlg_info("light color: {}", dirLight_.data.color);
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -670,6 +672,9 @@ public:
 				if(audio_.source) audio_.source->position(cam_.position());
 				return true;
 #endif // BR_AUDIO
+			case swa_key_f:
+				swa_window_set_state(swaWindow(), swa_window_state_fullscreen);
+				break;
 			case swa_key_m: // move light here
 				moveLight_ = false;
 				dirLight_.data.dir = -cam_.position();
@@ -861,7 +866,7 @@ public:
 			scheduleRerecord();
 
 			vpp::DescriptorSetUpdate adsu(aoDs_);
-			adsu.imageSampler({{{}, sky_.cubemap.imageView(),
+			adsu.imageSampler({{{}, sky_.cubemap().imageView(),
 				vk::ImageLayout::shaderReadOnlyOptimal}});
 		}
 
@@ -874,7 +879,7 @@ public:
 
 			auto& sky = steppedSkies_[animateSkyID_].sky;
 			vpp::DescriptorSetUpdate adsu(aoDs_);
-			adsu.imageSampler({{{}, sky.cubemap.imageView(),
+			adsu.imageSampler({{{}, sky.cubemap().imageView(),
 				vk::ImageLayout::shaderReadOnlyOptimal}});
 		}
 
@@ -925,9 +930,9 @@ public:
 			auto span = map.span();
 
 			if(animateSky_) {
-				tkn::write(span, steppedSkies_[animateSkyID_].sky.skyRadiance);
+				tkn::write(span, steppedSkies_[animateSkyID_].sky.skyRadiance());
 			} else {
-				tkn::write(span, sky_.skyRadiance);
+				tkn::write(span, sky_.skyRadiance());
 			}
 
 			tkn::write(span, mode_);
@@ -993,7 +998,7 @@ protected:
 	static constexpr u32 modeSpecularIBL = (1u << 2);
 	static constexpr u32 modeIrradiance = (1u << 3);
 	// u32 mode_ {modeIrradiance | modeSpecularIBL};
-	u32 mode_ {modeIrradiance};
+	u32 mode_ {modePointLight | modeDirLight | modeIrradiance};
 
 	tkn::Texture dummyTex_;
 	bool moveLight_ {false};

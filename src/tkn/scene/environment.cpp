@@ -374,6 +374,9 @@ Sky::Baked Sky::bake(Vec3f sunDir, Vec3f ground, float turbidity) {
 Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
 		Vec3f sunDir, Vec3f ground, float turbidity) {
 	auto data = bake(sunDir, ground, turbidity);
+	avgSunRadiance_ = data.avgSunRadiance;
+	sunIrradiance_ = data.sunIrradiance;
+	skyRadiance_ = data.skyRadiance;
 
 	std::array<const std::byte*, 6> ptrs;
 	for(auto i = 0u; i < 6u; ++i) {

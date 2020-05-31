@@ -32,10 +32,11 @@ void main() {
 	
 	float exposure = 3.255e-05; // sunny16
 	exposure /= 0.00001; // fp16 scale
-	outColor.rgb = 1.0 - exp(-outColor.rgb * exposure);
+	outColor.rgb *= exposure;
+	// outColor.rgb = 1.0 - exp(-outColor.rgb * exposure);
 
 	float gamma = 2.2f;
-	outColor.rgb = pow(outColor.rgb, vec3(1 / gamma)); // bad linear to srgb
+	// outColor.rgb = pow(outColor.rgb, vec3(1 / gamma)); // bad linear to srgb
 
 	// anti-banding
 	// important that we do this after conversion to srgb, i.e. on the
@@ -44,5 +45,5 @@ void main() {
 	float rnd1 = random(gl_FragCoord.xy + 0.17);
 	float rnd2 = random(gl_FragCoord.xy + 0.85);
 	float dither = 0.5 * (rnd1 + rnd2) - 0.5;
-	outColor.rgb += dither / 255.f;
+	// outColor.rgb += dither / 255.f;
 }

@@ -190,7 +190,7 @@ void main() {
 
 	if(bool(params.mode & modeIrradiance)) {
 		// vec3 irradiance = texture(irradianceMap, normal).rgb;
-		vec3 irradiance = evalIrradianceSH(normal, params.radianceCoeffs);
+		vec3 irradiance = evalIrradianceSH(normal, params.radianceCoeffs).rgb;
 		vec3 diffuse = kD * irradiance * albedo.rgb;
 		color.rgb += ambientFac * diffuse;
 	}
@@ -205,5 +205,7 @@ void main() {
 	// destroys blending
 	float exposure = 3.255e-05; // sunny16
 	exposure /= 0.00001; // fp16 scale
-	outCol.rgb = 1.0 - exp(-exposure * outCol.rgb);
+	outCol.rgb *= exposure;
+
+	// outCol.rgb = 1.0 - exp(-outCol.rgb);
 }

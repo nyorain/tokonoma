@@ -5,6 +5,7 @@
 #include <argagg.hpp>
 #include <memory>
 #include <variant>
+#include <functional>
 
 namespace tkn {
 

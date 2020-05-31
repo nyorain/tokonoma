@@ -23,9 +23,9 @@ const float atmosphereRadius = 6400000;
 
 // rayleigh scattering coefficients roughly for RGB wavelengths, from
 // http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
-// TODO: g values for mie?
 const vec3 rayleighScatteringRGB = vec3(6.95e-6, 1.18e-5, 2.44e-5);
 
+// TODO: g values for mie?
 // different fog strengths
 const vec3 mieScatteringRGB0 = vec3(0, 0, 0);
 const vec3 mieScatteringRGB1 = vec3(2e-5, 3e-5, 4e-5);

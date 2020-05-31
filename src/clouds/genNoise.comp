@@ -1,0 +1,107 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : require
+#include "snoise.glsl"
+#include "noise.glsl"
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+layout(set = 0, binding = 0) writeonly uniform image3D outNoise;
+
+float tiledVoronoiNoise(vec3 v, uvec3 tileSize) {
+	vec3 cell = floor(v);
+	vec3 fra = fract(v);
+
+	float minDistSqr = 1000.f; // we know the min distance is smaller
+	float minDistSqr2 = 1000.f;
+
+	for(int x = -1; x <= 1; ++x) {
+		for(int y = -1; y <= 1; ++y) {
+			for(int z = -1; z <= 1; ++z) {
+				vec3 off = vec3(x, y, z);
+				vec3 dist = off + random3(mod(cell + off, tileSize)) - fra;
+				float dsqr = dot(dist, dist);
+				if(dsqr < minDistSqr) {
+					minDistSqr2 = minDistSqr;
+					minDistSqr = dsqr;
+				} else if(dsqr < minDistSqr2) {
+					minDistSqr2 = dsqr;
+				}
+			}
+		}
+	}
+
+	return sqrt(minDistSqr);
+}
+
+float fbmTiled(vec3 pos, uvec3 tile) {
+	const uint gain = 2;
+
+	float accum = 0.0;
+	float amp = 1.0;
+	for(uint i = 0u; i < 8u; ++i) {
+		accum += amp * gradientNoiseTiled(pos, tile);
+
+		pos *= gain;
+		tile *= gain;
+		amp *= 0.6;
+	}
+
+	return accum;
+}
+
+float sfbm(vec3 pos) {
+	float accum = 0.0;
+	float amp = 1.0;
+	for(uint i = 0u; i < 5u; ++i) {
+		accum += amp * snoise(pos);
+
+		pos *= 2.0;
+		amp *= 0.5;
+	}
+
+	return accum;
+}
+
+float vfbm(vec3 pos, uvec3 tile) {
+	float accum = 0.0;
+	float amp = 1.0;
+	for(uint i = 0u; i < 10u; ++i) {
+		accum += amp * tiledVoronoiNoise(pos, tile);
+
+		pos *= 2.0;
+		amp *= 0.5;
+		tile *= 2;
+	}
+
+	return accum;
+}
+
+
+void main() {
+	ivec3 pixel = ivec3(gl_GlobalInvocationID.xyz);
+	uvec3 extent = imageSize(outNoise);
+	if(pixel.x >= extent.x || pixel.y >= extent.y || pixel.z >= extent.z) {
+		return;
+	}
+
+	vec3 coords = pixel + 0.5;
+
+	// red channel: snoise
+	uint rTile = 2;
+	uvec3 rPixelPerUnit = extent / rTile;
+	float r = gradientNoiseTiled(coords / rPixelPerUnit, uvec3(rTile));
+	// float r = snoise(coords / rPixelPerUnit);
+
+	// green channel: snoise fbm
+	uint gTile = 2;
+	uvec3 gPixelPerUnit = extent / gTile;
+	float g = fbmTiled(coords / gPixelPerUnit, uvec3(gTile));
+
+	// blue channel: tiled voronoi
+	uint bTile = 2;
+	uvec3 bPixelPerUnit = extent / bTile;
+	// float b = tiledVoronoiNoise(coords / bPixelPerUnit, uvec3(bTile));
+	float b = vfbm(coords / bPixelPerUnit, uvec3(bTile));
+
+	imageStore(outNoise, pixel, vec4(r, g, b, 1.0));
+}

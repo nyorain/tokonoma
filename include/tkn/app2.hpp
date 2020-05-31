@@ -213,8 +213,11 @@ protected:
 	bool resize_ {};
 	nytl::Vec2ui winSize_ {0, 0};
 
-	// available features
+	// available features and extensions
 	bool hasClipDistance_ {}; // tracked for rvg
+
+	bool hasExtColorSpace_ {};
+	bool hasExtHdrMetadata_ {};
 };
 
 

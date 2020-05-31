@@ -339,6 +339,8 @@ public:
 			} else if(ctrl == Ctrl::firstPerson) {
 				camera_.useArcballControl();
 			}
+		} else if(ev.keycode == swa_key_f) {
+			swa_window_set_state(swaWindow(), swa_window_state_fullscreen);
 		// TODO
 		/*
 		} else if(ev.keycode == swa_key_pageup) {
@@ -368,8 +370,9 @@ public:
 
 	vpp::SwapchainPreferences swapchainPrefs(const App::Args& args) const override {
 		auto prefs = Base::swapchainPrefs(args);
-		prefs.preferSrgb = false;
-		prefs.format = vk::Format::b8g8r8a8Unorm;
+		// prefs.preferSrgb = false;
+		// prefs.format = vk::Format::b8g8r8a8Unorm;
+		// prefs.format = vk::Format::r16g16b16a16Sfloat;
 		return prefs;
 	}
 

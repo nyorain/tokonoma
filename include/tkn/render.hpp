@@ -13,7 +13,7 @@
 
 namespace tkn {
 
-/// Shortcuts for vk::cmdBindDescriptorSets
+// Shortcuts for vk::cmdBindDescriptorSets
 void cmdBindGraphicsDescriptors(vk::CommandBuffer, vk::PipelineLayout,
 	unsigned first, std::initializer_list<vk::DescriptorSet>,
 	std::initializer_list<uint32_t> = {});
@@ -23,54 +23,33 @@ void cmdBindComputeDescriptors(vk::CommandBuffer, vk::PipelineLayout,
 
 void cmdCopyBuffer(vk::CommandBuffer, vpp::BufferSpan src, vpp::BufferSpan dst);
 
-/// Returns a PipelineColorBlendAttachmentState that disables blending
-/// but allows all components to be written.
+// The blend attachment functions return const references to internal
+// static blend attachments. Useful so one can directly take their
+// address when passing them to pipeline creation.
+
+// Returns a PipelineColorBlendAttachmentState that disables blending
+// but allows all components to be written.
 const vk::PipelineColorBlendAttachmentState& noBlendAttachment();
 
-/// Returns a PipelineColorBlendAttachmentState with default oneMinusSrcAlpha
-/// blending (and replacing alpha blending) and full write mask.
+// Returns a PipelineColorBlendAttachmentState with default oneMinusSrcAlpha
+// blending (and replacing alpha blending) and full write mask.
 const vk::PipelineColorBlendAttachmentState& defaultBlendAttachment();
 
-/// Returns a blend attachment that has blending disabled and the color
-/// write mask set to empty, i.e. it disables all writing to this
-/// attachment
+// Returns a blend attachment that has blending disabled and the color
+// write mask set to empty, i.e. it disables all writing to this
+// attachment
 const vk::PipelineColorBlendAttachmentState& disableBlendAttachment();
 
-/// Returns the size of mipmap level 'i' for an image that has size 'full'
+// Returns the size of mipmap level 'i' for an image that has size 'full'
 vk::Extent2D mipmapSize(vk::Extent2D full, unsigned i);
 
-// See downscale command.
-struct DownscaleTarget {
-	vk::Image image {};
-	vk::Format format {};
-	vk::ImageLayout layout {};
-	unsigned width {};
-	unsigned height {};
-	unsigned layerCount {1};
-
-	// source scope of writing mipmap level 0
-	vk::AccessFlags srcAccess {};
-	vk::PipelineStageFlags srcStages {};
-};
-
-/// Pass that dynamically generates mipmap levels of a color image.
-/// Doesn't work for image with depth format since those don't allow
-/// linear filtered blitting in vulkan.
-/// The given target must have at least genLevels + 1 mipLevels.
-/// Undefined for genLevels == 0 (doesn't make sense).
-/// Will overwrite the current contents of the first 'genLevels' levels.
-/// Afterwards, the first 'genLevels' levels will be transferSrcOptimal
-/// layout, with AccessBits::transferRead access in transfer stage.
-/// Not optimal for non-power-of-two textures, see source code
-/// for more details/example.
-void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
-		unsigned genLevels);
-void downscale(const vpp::Device& dev, vk::CommandBuffer cb,
-		const DownscaleTarget& target, unsigned genLevels);
-
-/// Find a supported depth format (usage: attachment and sampled).
+// Find a supported depth format (usage: attachment and sampled).
 vk::Format findDepthFormat(const vpp::Device& dev);
 bool isDepthFormat(vk::Format);
+
+// Returns a default SamplerCreateInfo for a (tri-)linear sampler with
+// clampToEdge addressMode.
+vk::SamplerCreateInfo linearSamplerInfo();
 
 struct SyncScope {
 	vk::PipelineStageFlags stages {};
@@ -120,6 +99,47 @@ void barrier(vk::CommandBuffer cb, nytl::Span<const ImageBarrier> barriers);
 void barrier(vk::CommandBuffer cb, vk::Image image, SyncScope src,
 		SyncScope dst, vk::ImageSubresourceRange subres =
 			{vk::ImageAspectBits::color, 0, 1, 0, 1});
+
+// See downscale command.
+struct DownscaleTarget {
+	vk::Image image {};
+	vk::Format format {};
+	vk::Extent3D extent {};
+	unsigned layerCount {1};
+
+	// src synchronization scope for the whole image (i.e. should include
+	// reads from higher mip levels that the call will write to).
+	// ImageLayout only relevant for first level.
+	SyncScope srcScope;
+};
+
+// Pass that dynamically generates mipmap levels of a color image.
+// Doesn't work for image with depth format since those don't allow
+// linear filtered blitting in vulkan.
+// The given target must have at least genLevels + 1 mipLevels.
+// Undefined for genLevels == 0 (doesn't make sense).
+// Will overwrite the current contents of the first 'genLevels' levels.
+// Afterwards, the first 'genLevels' levels will be transferSrcOptimal
+// layout, with AccessBits::transferRead access in transfer stage.
+// Not optimal for non-power-of-two textures, see source code
+// for more details/example.
+// If the 'dst' SyncScope is given, will automatically insert a barrier
+// for it after generation. Otherwise, a manual barrier has to be
+// inserted after this. The src SyncScope of this operation is:
+//  layout = vk::ImageLayout::transferSrcOptimal
+//  srcAccess = vk::AccessBits::transferRead | vk::AccessBits::transferWrite
+//  stages = vk::PipelineStageBits::transfer
+void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
+	unsigned genLevels, const SyncScope* dst = nullptr);
+
+// Same as above, but these overloads know the vpp::Device and can
+// therefore set a debug label.
+void downscale(const vpp::Device& dev, vk::CommandBuffer cb,
+	const DownscaleTarget& target, unsigned genLevels,
+	const SyncScope* dst = nullptr);
+void downscale(const vpp::CommandBuffer& cb,
+	const DownscaleTarget& target, unsigned genLevels,
+	const SyncScope* dst = nullptr);
 
 // Pipeline specialization info the compute group size.
 // Use it like this: `auto cgss = ComputeGroupSizeSpec<2>({16, 16}, {0, 1})`,

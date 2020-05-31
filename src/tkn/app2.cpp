@@ -242,6 +242,7 @@ bool App::init(nytl::Span<const char*> args) {
 }
 
 bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
+	constexpr auto outputExtensions = false;
 	impl_ = std::make_unique<Impl>();
 
 	// We set a custom dlg handler that allows to set breakpoints
@@ -307,16 +308,28 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 		return false;
 	}
 
+	std::vector<const char*> iniExts;
 	auto iniexts = vk::enumerateInstanceExtensionProperties(nullptr);
 	for(auto& ext : iniexts) {
-		dlg_trace("Instance extension: {}", ext.extensionName.data());
+		auto name = std::string_view(ext.extensionName.data());
+		if(outputExtensions) {
+			dlg_trace("Instance extension: {}", name);
+		}
+
+		if(name == VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) {
+			dlg_info("Found ext_swapchain_color_space");
+			iniExts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+		}
+
+		// useful for swapchain color space
+		if(name == VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME) {
+			iniExts.push_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+		}
 	}
 
-	std::vector<const char*> iniExts;
 	unsigned swaExtsCount;
 	auto swaExts = swa_display_vk_extensions(dpy, &swaExtsCount);
 	iniExts.insert(iniExts.end(), swaExts, swaExts + swaExtsCount);
-	iniExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
 	if(argsOut.layers) {
 		iniExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -324,11 +337,7 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 
 	if(onAndroid) {
 		iniExts.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-		// iniExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 	}
-
-	// TODO, WIP
-	// iniExts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 
 	// TODO: don't require 1.1 since it's not really needed for any app
 	// (just some tests with it in sen). Also not supported in vkpp yet
@@ -457,8 +466,20 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	}
 
 	auto devexts = vk::enumerateDeviceExtensionProperties(phdev, nullptr);
+	std::vector<const char*> devExts = {
+		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+	};
+
 	for(auto& ext : devexts) {
-		dlg_trace("Device extension: {}", ext.extensionName.data());
+		auto name = std::string_view(ext.extensionName.data());
+		if(outputExtensions) {
+			dlg_trace("Device extension: {}", name);
+		}
+
+		if(name == VK_EXT_HDR_METADATA_EXTENSION_NAME) {
+			hasExtHdrMetadata_ = true;
+			devExts.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+		}
 	}
 
 	auto p = vk::getPhysicalDeviceProperties(phdev);
@@ -470,15 +491,10 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	vk::DeviceCreateInfo devInfo;
 	vk::DeviceQueueCreateInfo queueInfo({}, queueFam, 1, priorities);
 
-	auto exts = {
-		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-		// TODO, WIP
-		// VK_EXT_HDR_METADATA_EXTENSION_NAME
-	};
 	devInfo.pQueueCreateInfos = &queueInfo;
 	devInfo.queueCreateInfoCount = 1u;
-	devInfo.ppEnabledExtensionNames = exts.begin();
-	devInfo.enabledExtensionCount = exts.size();
+	devInfo.ppEnabledExtensionNames = devExts.data();
+	devInfo.enabledExtensionCount = devExts.size();
 	devInfo.pEnabledFeatures = nullptr; // passed as pNext
 
 	Features enable {}, f {};
@@ -504,17 +520,35 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	impl_->swapchainInfo = vpp::swapchainCreateInfo(vkDevice(),
 		vkSurf, {1, 1}, prefs);
 
-	// TODO: don't hardcode like this
-	// auto formats = vk::getPhysicalDeviceSurfaceFormatsKHR(phdev, vkSurf);
-	// for(auto f : formats) {
-	// 	if(f.format == vk::Format::r16g16b16a16Sfloat &&
-	// 			f.colorSpace == vk::ColorSpaceKHR::extendedSrgbLinearEXT) {
-	// 		dlg_info("found swapchain format {} {}", (int) f.format, (int) f.colorSpace);
-	// 		// impl_->swapchainInfo.imageFormat = f.format;
-	// 		// impl_->swapchainInfo.imageColorSpace = f.colorSpace;
-	// 		break;
-	// 	}
-	// }
+	// TODO: remove
+	// static vk::SurfaceFullScreenExclusiveWin32InfoEXT fwin;
+	// fwin.hmonitor = ::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+//
+	// static vk::SurfaceFullScreenExclusiveInfoEXT fullscreen;
+	// fullscreen.fullScreenExclusive = vk::FullScreenExclusiveEXT::applicationControlled;
+
+	// fullscreen.pNext = &fwin;
+	// impl_->swapchainInfo.pNext = &fullscreen;
+
+	if(hasExtColorSpace_) {
+		// TODO: don't hardcode like this
+		// TODO: communicate to application what colorspace it should output
+		// TODO: hdr does only work in fullscreen on windows (amd, 2020).
+		//   somehow account for that?
+		auto formats = vk::getPhysicalDeviceSurfaceFormatsKHR(phdev, vkSurf);
+		for(auto f : formats) {
+			dlg_info("found swapchain format {} {}", (int) f.format, (int) f.colorSpace);
+			if(f.format == vk::Format::r16g16b16a16Sfloat &&
+					f.colorSpace == vk::ColorSpaceKHR::extendedSrgbLinearEXT) {
+			// if(f.format == vk::Format::a2r10g10b10UnormPack32 &&
+			// 		f.colorSpace == vk::ColorSpaceKHR::extendedSrgbNonlinearEXT) {
+				impl_->swapchainInfo.imageFormat = f.format;
+				impl_->swapchainInfo.imageColorSpace = f.colorSpace;
+				dlg_info("  >> using");
+				break;
+			}
+		}
+	}
 
 	return true;
 }
@@ -763,6 +797,7 @@ void App::run() {
 			impl_->renderer.invalidate();
 		}
 
+
 		// TODO: full hdr support
 		// this is probably only useful for exclusive fullscreen apps?
 		// scRGB
@@ -773,8 +808,8 @@ void App::run() {
 		// hdr.whitePoint = {0.3127, 0.3290};
 		// hdr.maxLuminance = 0;
 		// hdr.minLuminance = 400;
-		// hdr.maxContentLightLevel = maxLight;
-		// hdr.maxFrameAverageLightLevel = maxAvgLight;
+		// hdr.maxContentLightLevel = 0.f;
+		// hdr.maxFrameAverageLightLevel = 400.f;
 		// vk::setHdrMetadataEXT(vkDevice(), 1, impl_->renderer.swapchain(), hdr);
 
 		rerecord_ = false;

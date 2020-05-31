@@ -387,7 +387,7 @@ eulerAngles(const Quaternion& q, RotationSequence seq) {
 
 	default:
 		assert(false && "Invalid rotation sequence");
-		break;
+		return {};
    }
 }
 

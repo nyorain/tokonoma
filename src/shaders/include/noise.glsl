@@ -1,3 +1,6 @@
+// NOTE: the functions here are mainly naive implementations to
+// get started with but almost never optimal for a usecase.
+
 // The random/noise/fbm functions return a number between 0 and 1
 float random(float v) {
     float a = 43758.5453;
@@ -90,17 +93,67 @@ float gradientNoise(vec2 v) {
 	return 0.5 + 0.5 * sgradientNoise(v);
 }
 
+float dotRandom3OffsetTiled(vec3 base, ivec3 off, vec3 frac, uvec3 tileSize) {
+	vec3 c = mod(base + off, tileSize);
+	return dot(-1.0 + 2.0 * random3(c), frac - off);
+}
+
+float gradientNoiseTiled(vec3 v, uvec3 tileSize) {
+	vec3 i = floor(v);
+	vec3 f = fract(v);
+	vec3 u = smoothstep(0, 1, f);
+
+	// random gradients, needed in range [-1, 1]
+    float r000 = dotRandom3OffsetTiled(i, ivec3(0, 0, 0), f, tileSize);
+    float r001 = dotRandom3OffsetTiled(i, ivec3(0, 0, 1), f, tileSize);
+    float r010 = dotRandom3OffsetTiled(i, ivec3(0, 1, 0), f, tileSize);
+    float r011 = dotRandom3OffsetTiled(i, ivec3(0, 1, 1), f, tileSize);
+    float r100 = dotRandom3OffsetTiled(i, ivec3(1, 0, 0), f, tileSize);
+    float r101 = dotRandom3OffsetTiled(i, ivec3(1, 0, 1), f, tileSize);
+    float r110 = dotRandom3OffsetTiled(i, ivec3(1, 1, 0), f, tileSize);
+    float r111 = dotRandom3OffsetTiled(i, ivec3(1, 1, 1), f, tileSize);
+
+	float n = mix(
+		mix(mix(r000, r001, u.z), mix(r010, r011, u.z), u.y), 
+		mix(mix(r100, r101, u.z), mix(r110, r111, u.z), u.y), 
+		u.x);
+	return 0.5 + 0.5 * n;
+}
+
+// worley-noise
 float voronoiNoise(vec2 v) {
 	vec2 cell = floor(v);
-	float minDistSqr = 10.f;
+	vec2 fra = fract(v);
+
+	float minDistSqr = 1000.f; // we know the min distance is smaller
 	for(int x = -1; x <= 1; ++x) {
 		for(int y = -1; y <= 1; ++y) {
-			vec2 ocell = cell + vec2(x, y);
-			vec2 point = ocell + random2(ocell);
-			vec2 dist = v - point;
+			vec2 off = vec2(x, y);
+			vec2 dist = off + random2(cell + off) - fra;
 			float dsqr = dot(dist, dist);
 			if(dsqr < minDistSqr) {
 				minDistSqr = dsqr;
+			}
+		}
+	}
+
+	return sqrt(minDistSqr);
+}
+
+float voronoiNoise(vec3 v) {
+	vec3 cell = floor(v);
+	vec3 fra = fract(v);
+
+	float minDistSqr = 1000.f; // we know the min distance is smaller
+	for(int x = -1; x <= 1; ++x) {
+		for(int y = -1; y <= 1; ++y) {
+			for(int z = -1; z <= 1; ++z) {
+				vec3 off = vec3(x, y, z);
+				vec3 dist = off + random3(cell + off) - fra;
+				float dsqr = dot(dist, dist);
+				if(dsqr < minDistSqr) {
+					minDistSqr = dsqr;
+				}
 			}
 		}
 	}

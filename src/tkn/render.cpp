@@ -84,7 +84,7 @@ vk::Extent2D mipmapSize(vk::Extent2D full, unsigned i) {
 }
 
 void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
-		unsigned genLevels) {
+		unsigned genLevels, const SyncScope* dst) {
 	dlg_assert(cb && target.image && target.layerCount);
 	dlg_assert(genLevels > 0);
 
@@ -95,8 +95,8 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 	barrier0.subresourceRange.layerCount = target.layerCount;
 	barrier0.subresourceRange.levelCount = 1;
 	barrier0.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-	barrier0.oldLayout = target.layout;
-	barrier0.srcAccessMask = target.srcAccess;
+	barrier0.oldLayout = target.srcScope.layout;
+	barrier0.srcAccessMask = target.srcScope.access;
 	barrier0.newLayout = vk::ImageLayout::transferSrcOptimal;
 	barrier0.dstAccessMask = vk::AccessBits::transferRead;
 
@@ -112,7 +112,8 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 	barrierRest.dstAccessMask = vk::AccessBits::transferWrite;
 
 	vk::cmdPipelineBarrier(cb,
-		vk::PipelineStageBits::topOfPipe | target.srcStages,
+		// topOfPipe for the mip levels
+		vk::PipelineStageBits::topOfPipe | target.srcScope.stages,
 		vk::PipelineStageBits::transfer,
 		{}, {}, {}, {{barrier0, barrierRest}});
 
@@ -129,27 +130,29 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 		// textures since there we e.g. have mip level size 3x3 and then
 		// 1x1 on the next smaller one. In that case the 1x1 would simply
 		// contain the center texel from the 3x3 mip which is not what
-		// we what (think about getting the average texture value via
+		// we want (think about getting the average texture value via
 		// downsampling e.g. for luminance; we simply dicard 8/9 of the
 		// texture). With this we will at least scale 2x2 from the first
 		// mipmap level to the next one and so only discard the 5 right/bottom
 		// outer pixels. Still somewhat bad though!
-		blit.srcOffsets[1].x = std::max((target.width >> (i - 1)) & ~1u, 1u);
-		blit.srcOffsets[1].y = std::max((target.height >> (i - 1)) & ~1u, 1u);
-		blit.srcOffsets[1].z = 1u;
+		blit.srcOffsets[1].x = std::max((target.extent.width >> (i - 1)) & ~1u, 1u);
+		blit.srcOffsets[1].y = std::max((target.extent.height >> (i - 1)) & ~1u, 1u);
+		blit.srcOffsets[1].z = std::max((target.extent.depth >> (i - 1)) & ~1u, 1u);
 
 		blit.dstSubresource.layerCount = target.layerCount;
 		blit.dstSubresource.mipLevel = i;
 		blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
-		blit.dstOffsets[1].x = std::max(target.width >> i, 1u);
-		blit.dstOffsets[1].y = std::max(target.height >> i, 1u);
-		blit.dstOffsets[1].z = 1u;
+		blit.dstOffsets[1].x = std::max(target.extent.width >> i, 1u);
+		blit.dstOffsets[1].y = std::max(target.extent.height >> i, 1u);
+		blit.dstOffsets[1].z = std::max(target.extent.depth >> i, 1u);
 
 		vk::cmdBlitImage(cb, target.image, vk::ImageLayout::transferSrcOptimal,
 			target.image, vk::ImageLayout::transferDstOptimal, {{blit}},
 			vk::Filter::linear);
 
 		// change layout of current mip level to transferSrc for next mip level
+		// we even do it for the last level so that we have consistent src
+		// scopes for all levels.
 		vk::ImageMemoryBarrier barrieri;
 		barrieri.image = target.image;
 		barrieri.subresourceRange.baseMipLevel = i;
@@ -166,27 +169,34 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 			{}, {}, {}, {{barrieri}});
 	}
 
-	// NOTE: that's what a barrier transitioning to use after this would
-	// look like.
-	// vk::ImageMemoryBarrier barrier;
-	// barrier.image = target.image;
-	// barrier.subresourceRange.layerCount = target.layerCount;
-	// barrier.subresourceRange.levelCount = genLevels + 1;
-	// barrier.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-	// barrier.oldLayout = vk::ImageLayout::transferSrcOptimal;
-	// barrier.srcAccessMask = vk::AccessBits::transferRead;
-	// barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-	// barrier.dstAccessMask = vk::AccessBits::shaderRead;
-	// vk::cmdPipelineBarrier(cb,
-	// 	vk::PipelineStageBits::transfer,
-	// 	vk::PipelineStageBits::allCommands,
-	// 	{}, {}, {}, {{barrier}});
+	if(dst) {
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = target.image;
+		barrier.subresourceRange.baseMipLevel = 0u;
+		barrier.subresourceRange.layerCount = target.layerCount;
+		barrier.subresourceRange.levelCount = genLevels + 1;
+		barrier.subresourceRange.aspectMask = vk::ImageAspectBits::color;
+		barrier.oldLayout = vk::ImageLayout::transferSrcOptimal;
+		barrier.srcAccessMask = vk::AccessBits::transferRead;
+		barrier.newLayout = dst->layout;
+		barrier.dstAccessMask = dst->access;
+		vk::cmdPipelineBarrier(cb,
+			vk::PipelineStageBits::transfer, dst->stages,
+			{}, {}, {}, {{barrier}});
+	}
 }
 
 void downscale(const vpp::Device& dev, vk::CommandBuffer cb,
-		const DownscaleTarget& target, unsigned genLevels) {
+		const DownscaleTarget& target, unsigned genLevels,
+		const SyncScope* dst) {
 	vpp::DebugLabel(dev, cb, "tkn::downscale");
-	downscale(cb, target, genLevels);
+	downscale(cb, target, genLevels, dst);
+}
+
+void downscale(const vpp::CommandBuffer& cb,
+		const DownscaleTarget& target, unsigned genLevels,
+		const SyncScope* dst) {
+	downscale(cb.device(), cb, target, genLevels, dst);
 }
 
 void barrier(vk::CommandBuffer cb, nytl::Span<const ImageBarrier> barriers) {
@@ -296,6 +306,20 @@ bool isDepthFormat(vk::Format format) {
 		default:
 			return false;
 	}
+}
+
+vk::SamplerCreateInfo linearSamplerInfo() {
+	vk::SamplerCreateInfo sci;
+	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
+	sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
+	sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
+	sci.magFilter = vk::Filter::linear;
+	sci.minFilter = vk::Filter::linear;
+	sci.mipmapMode = vk::SamplerMipmapMode::linear;
+	sci.minLod = 0.0;
+	sci.maxLod = 100.0;
+	sci.anisotropyEnable = false;
+	return sci;
 }
 
 } // namespace tkn

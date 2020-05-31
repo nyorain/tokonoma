@@ -435,15 +435,16 @@ void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 
 		tkn::DownscaleTarget target;
 		target.image = target_.image();
-		target.srcAccess = vk::AccessBits::colorAttachmentWrite;
-		target.srcStages = vk::PipelineStageBits::colorAttachmentOutput;
-		target.layout = vk::ImageLayout::transferSrcOptimal;
+		target.srcScope.access = vk::AccessBits::colorAttachmentWrite;
+		target.srcScope.stages = vk::PipelineStageBits::colorAttachmentOutput;
+		target.srcScope.layout = vk::ImageLayout::transferSrcOptimal;
 		target.layerCount = 1;
-		target.width = width;
-		target.height = height;
-		tkn::downscale(cb, target, levelCount - 1);
+		target.extent = {width, height, 1u};
 
-		// make sure transfer to last level has completed
+		tkn::downscale(dstBuffer_.device(), cb, target, levelCount - 1);
+
+		// make sure transfer to last level has completed, we don't need
+		// the other levels for anything.
 		vk::ImageMemoryBarrier barrierLast;
 		barrierLast.image = target_.image();
 		barrierLast.subresourceRange.layerCount = 1;

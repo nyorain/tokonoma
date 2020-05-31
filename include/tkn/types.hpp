@@ -7,6 +7,8 @@
 namespace tkn {
 inline namespace types {
 
+using std::byte;
+
 using i8 = std::int8_t;
 using i16 = std::int16_t;
 using i32 = std::int32_t;

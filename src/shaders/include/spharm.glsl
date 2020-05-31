@@ -20,6 +20,7 @@ vec3 evalSH(vec3 nrm, vec3 coeffs[9]) {
 		coeffs[8] * sh8(nrm);
 }
 
+// TODO: should probably rather be pre-convoluted on cpu
 vec3 evalIrradianceSH(vec3 nrm, vec3 coeffs[9]) {
 	const float pi = 3.1415926535897932;
 	const float h0 = pi;

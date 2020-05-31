@@ -1,6 +1,8 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/camera2.hpp>
+#include <tkn/types.hpp>
 #include <tkn/shader.hpp>
 #include <tkn/image.hpp>
 #include <tkn/util.hpp>
@@ -27,12 +29,26 @@
 
 #include <shaders/tkn.fullscreen.vert.h>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <tkn/stb_image_write.h>
+// #define STB_IMAGE_WRITE_IMPLEMENTATION
+// #include <tkn/stb_image_write.h>
 
 // Specification of the frag shader ubo in ./spec.glsl
 
+using namespace tkn::types;
+
 class ViewerApp : public tkn::SinglePassApp {
+public:
+	struct ShaderData {
+		Vec2f mpos;
+		float time;
+		u32 effect;
+
+		Vec3f camPos;
+		float aspect;
+		Vec3f camDir;
+		float fov {0.5 * nytl::constants::pi};
+	};
+
 public:
 	using Base = tkn::SinglePassApp;
 	static constexpr auto cacheFile = "sviewer.cache";
@@ -50,7 +66,7 @@ public:
 
 		auto& dev = vkDevice();
 		auto mem = dev.hostMemoryTypes();
-		ubo_ = {dev.bufferAllocator(), sizeof(float) * 64, // should be 'nough
+		ubo_ = {dev.bufferAllocator(), sizeof(ShaderData),
 			vk::BufferUsageBits::uniformBuffer, mem};
 
 		auto renderBindings = {
@@ -78,7 +94,7 @@ public:
 			return false;
 		}
 
-		// TODO: only init when needed
+		// TODO: only init when needed, lazily
 		initScreenshot();
 		return true;
 	}
@@ -119,48 +135,25 @@ public:
 
 	void update(double dt) override {
 		time_ += dt;
+		tkn::checkMovement(cam_, swaDisplay(), dt);
 		Base::update(dt);
-		Base::scheduleRedraw(); // we always redraw; shaders are usually dynamic
-
-		// TODO: add as real, full-featured 3D camera
-		// maybe even quaternion camera? optionally quat camera, via
-		// command line flag?
-		// auto kc = appContext().keyboardContext();
-		// auto fac = dt;
-		// if(kc->pressed(ny::Keycode::d)) {
-		// 	camPos_ += nytl::Vec {fac, 0.f, 0.f};
-		// 	Base::scheduleRedraw();
-		// }
-		// if(kc->pressed(ny::Keycode::a)) {
-		// 	camPos_ += nytl::Vec {-fac, 0.f, 0.f};
-		// 	Base::scheduleRedraw();
-		// }
-		// if(kc->pressed(ny::Keycode::w)) {
-		// 	camPos_ += nytl::Vec {0.f, 0.f, -fac};
-		// 	Base::scheduleRedraw();
-		// }
-		// if(kc->pressed(ny::Keycode::s)) {
-		// 	camPos_ += nytl::Vec {0.f, 0.f, fac};
-		// 	Base::scheduleRedraw();
-		// }
-		// if(kc->pressed(ny::Keycode::q)) { // up
-		// 	camPos_ += nytl::Vec {0.f, fac, 0.f};
-		// 	Base::scheduleRedraw();
-		// }
-		// if(kc->pressed(ny::Keycode::e)) { // down
-		// 	camPos_ += nytl::Vec {0.f, -fac, 0.f};
-		// 	Base::scheduleRedraw();
-		// }
+		Base::scheduleRedraw(); // we always redraw; shaders are assumed dynamic
 	}
 
 	void updateDevice() override {
 		// static constexpr auto align = 0.f;
 		auto map = ubo_.memoryMap();
 		auto span = map.span();
-		tkn::write(span, mpos_);
-		tkn::write(span, time_);
-		tkn::write(span, effect_);
-		tkn::write(span, camPos_);
+
+		ShaderData data;
+		data.time = time_;
+		data.mpos = mpos_;
+		data.effect = effect_;
+		data.camPos = cam_.pos;
+		data.camDir = tkn::apply(cam_.rot, Vec3f{0.f, 0.f, -1.f});
+		data.aspect = float(windowSize().x) / windowSize().y;
+
+		tkn::write(span, data);
 
 		if(reload_) {
 			initPipe(shaderFile_, renderPass(), pipeline_);
@@ -180,6 +173,7 @@ public:
 		Base::mouseMove(ev);
 		using namespace nytl::vec::cw::operators;
 		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
+		tkn::mouseMove(cam_, camCon_, swaDisplay(), {ev.dx, ev.dy});
 	}
 
 	bool initPipe(std::string_view shaderFile, vk::RenderPass rp,
@@ -368,7 +362,6 @@ protected:
 	nytl::Vec2f mpos_ {}; // normalized (0 to 1)
 	float time_ {}; // in seconds
 	std::uint32_t effect_ {};
-	nytl::Vec3f camPos_ {};
 
 	vpp::ShaderModule vertShader_;
 	vpp::ShaderModule fragShader_;
@@ -378,6 +371,9 @@ protected:
 	vpp::TrDsLayout dsLayout_;
 	vpp::TrDs ds_;
 	vpp::PipelineCache cache_;
+
+	tkn::Camera cam_;
+	tkn::FPCamCon camCon_;
 
 	struct {
 		// TODO: use this! own rp and pipe for it to make sure we
