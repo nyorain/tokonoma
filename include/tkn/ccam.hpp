@@ -77,7 +77,10 @@ public:
 	static constexpr auto defaultPerspective = Perspective{
 		defaultNear, defaultFar,
 		1.f, 0.5 * nytl::constants::pi,
-		PerspectiveMode::revDepthInf
+		// NOTE: revDepthInf is better but most applications
+		// use this already (and for most applications it does not
+		// really make a difference, anyways)
+		PerspectiveMode::normal
 	};
 
 	static constexpr auto defaultOrtho = Orthographic{
@@ -92,8 +95,8 @@ public:
 	bool needsUpdate {true};
 
 public:
-	ControlledCamera() = default;
-	explicit ControlledCamera(ControlType, const Perspective& = defaultPerspective);
+	explicit ControlledCamera(ControlType = ControlType::firstPerson,
+		const Perspective& = defaultPerspective);
 	explicit ControlledCamera(ControlType, const Orthographic&);
 
 	nytl::Mat4f viewMatrix();
@@ -166,7 +169,7 @@ public:
 	// Returns the size of an unprojected unit square (size (1, 1)) at
 	// the given depth. Basically answers: "by how far do i have to move
 	// something in pre-projection space so it moves by (1, 1) in projection
-	// space".
+	// space, given its depth".
 	nytl::Vec2f unprojectUnit(float depth) const;
 
 protected:

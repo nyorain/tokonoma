@@ -233,7 +233,7 @@ public:
 		pi.renderPass = renderPass();
 		pi.samples = samples();
 		pi.camDsLayout = cameraDsLayout_;
-		pi.linear = sampler_;
+		pi.sampler = sampler_;
 		pi.reverseDepth = false;
 		skyboxRenderer_.create(vkDevice(), pi);
 
@@ -797,7 +797,7 @@ public:
 						// connection on wayland?
 						// Clean solution would be to just start
 						// a new thread.
-						Base::update(0.001);
+						// Base::update(0.001);
 					}
 
 					dlg_info(">> done!");

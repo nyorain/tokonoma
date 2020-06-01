@@ -2,7 +2,7 @@
 #include <tkn/bits.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/types.hpp>
 #include <argagg.hpp>
 
@@ -247,23 +247,7 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			Base::scheduleRedraw();
-		}
-	}
-
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(Base::mouseButton(ev)) {
-			return true;
-		}
-
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			return true;
-		}
-
-		return false;
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
 	// actually returns spring force plus dampening force
@@ -347,7 +331,7 @@ public:
 
 	void update(double dt) override {
 		Base::update(dt);
-		tkn::checkMovement(camera_, swaDisplay(), dt);
+		camera_.update(swaDisplay(), dt);
 
 		// simulate
 		// fixed time step
@@ -367,23 +351,14 @@ public:
 		Base::scheduleRedraw();
 	}
 
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
-	}
-
-	nytl::Mat4f cameraVP() const {
-		return projectionMatrix() * viewMatrix(camera_);
-	}
-
 	void updateDevice() override {
 		Base::updateDevice();
 
-		if(camera_.update) {
-			camera_.update = false;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 			auto map = gfx_.ubo.memoryMap();
 			auto span = map.span();
-			tkn::write(span, cameraVP());
+			tkn::write(span, camera_.viewProjectionMatrix());
 			map.flush();
 		}
 
@@ -428,7 +403,7 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	const char* name() const override { return "cloth"; }
@@ -443,12 +418,11 @@ protected:
 		vpp::Pipeline pipe;
 	} gfx_;
 
-	tkn::Camera camera_;
+	tkn::ControlledCamera camera_;
 	unsigned gridSize_ {40};
 	std::vector<Node> nodes_;
 	vpp::SubBuffer nodesBuf_;
 	vpp::SubBuffer indexBuf_;
-	bool rotateView_ {};
 	unsigned indexCount_ {};
 
 	float accumdt_ {};

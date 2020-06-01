@@ -11,6 +11,9 @@
 
 // All wavelengths measured in angstrom (10^-10 meter)
 
+// TODO: add spectrum-based blackbody function.
+//   move approx rgb blackbody function here
+
 namespace tkn {
 
 constexpr auto matXYZToSRGB = nytl::Mat3f {

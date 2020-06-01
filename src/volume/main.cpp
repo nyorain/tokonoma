@@ -9,7 +9,7 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/render.hpp>
 #include <tkn/types.hpp>
 
@@ -331,10 +331,6 @@ class VolumeApp : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
 
-	static constexpr float fov = 0.5 * nytl::constants::pi;
-	static constexpr float near = 0.1f;
-	static constexpr float far = 10.f;
-
 public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!Base::init(args)) {
@@ -427,7 +423,7 @@ public:
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 
-		tkn::init(touch_, camera_, rvgContext());
+		// tkn::init(touch_, camera_, rvgContext());
 		return true;
 	}
 
@@ -441,74 +437,49 @@ public:
 			vk::IndexType::uint32);
 		vk::cmdDrawIndexed(cb, indexCount_, 1, 0, 0, 0);
 
-		if(touch_.alt) {
-			rvgContext().bindDefaults(cb);
-			rvgWindowTransform().bind(cb);
-			touch_.paint.bind(cb);
-			touch_.move.circle.fill(cb);
-			touch_.rotate.circle.fill(cb);
-		}
+		// if(touch_.alt) {
+		// 	rvgContext().bindDefaults(cb);
+		// 	rvgWindowTransform().bind(cb);
+		// 	touch_.paint.bind(cb);
+		// 	touch_.move.circle.fill(cb);
+		// 	touch_.rotate.circle.fill(cb);
+		// }
 	}
 
 	void update(double dt) override {
 		Base::update(dt);
-		tkn::checkMovement(camera_, swaDisplay(), dt);
-		tkn::update(touch_, dt);
-		if(camera_.update) {
+		camera_.update(swaDisplay(), dt);
+		if(camera_.needsUpdate) {
 			Base::scheduleRedraw();
 		}
-	}
-
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
-	}
-
-	nytl::Mat4f cameraVP() const {
-		return projectionMatrix() * viewMatrix(camera_);
 	}
 
 	void updateDevice() override {
 		Base::updateDevice();
 
-		if(camera_.update) {
-			camera_.update = false;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
 
-			auto mat = cameraVP();
+			auto mat = camera_.viewProjectionMatrix();
 			tkn::write(span, mat);
-			tkn::write(span, camera_.pos);
+			tkn::write(span, camera_.position());
 			map.flush();
 		}
 	}
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			Base::scheduleRedraw();
-		}
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(Base::mouseButton(ev)) {
-			return true;
-		}
-
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			return true;
-		}
-
-		return false;
-	}
-
+	/*
 	bool touchBegin(const swa_touch_event& ev) override {
 		if(Base::touchBegin(ev)) {
 			return true;
@@ -533,6 +504,7 @@ public:
 		Base::scheduleRedraw();
 		return true;
 	}
+	*/
 
 	const char* name() const override { return "volume"; }
 	bool needsDepth() const override { return true; }
@@ -548,10 +520,7 @@ protected:
 	vpp::SubBuffer normals_;
 	vpp::SubBuffer indices_;
 	vpp::SubBuffer cameraUbo_;
-	tkn::Camera camera_;
-	bool rotateView_ {};
-
-	tkn::TouchCameraController touch_;
+	tkn::ControlledCamera camera_;
 };
 
 int main(int argc, const char** argv) {

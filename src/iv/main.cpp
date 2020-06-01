@@ -368,14 +368,6 @@ public:
 		camera_.aspect({w, h});
 	}
 
-	vpp::SwapchainPreferences swapchainPrefs(const App::Args& args) const override {
-		auto prefs = Base::swapchainPrefs(args);
-		// prefs.preferSrgb = false;
-		// prefs.format = vk::Format::b8g8r8a8Unorm;
-		// prefs.format = vk::Format::r16g16b16a16Sfloat;
-		return prefs;
-	}
-
 	bool needsDepth() const override { return false; }
 	const char* name() const override { return "iv"; }
 	const char* usageParams() const override { return "file [options]"; }

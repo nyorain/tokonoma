@@ -335,7 +335,7 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 
 	// calculate split depths
 	// https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
-	constexpr auto splitLambda = 0.5f; // higher: nearer at log split scheme
+	constexpr auto splitLambda = 0.8f; // higher: nearer at log split scheme
 
 	// 1: calculate split depths
 	std::array<float, cascadeCount> splits;

@@ -55,7 +55,6 @@ void main() {
 	outPos = m.xyz / m.w;
 
 	gl_Position = scene.proj * m;
-	gl_Position.y = -gl_Position.y;
 
 	// TODO: doesn't work like that. More performant to do it here though
 	// noperspective only makes it worse

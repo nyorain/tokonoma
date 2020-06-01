@@ -74,13 +74,29 @@ protected:
 class SkyboxRenderer {
 public:
 	struct PipeInfo {
-		vk::Sampler linear;
-		vk::DescriptorSetLayout camDsLayout;
-		vk::RenderPass renderPass;
+		vk::Sampler sampler; // should be linear
+		vk::DescriptorSetLayout camDsLayout; // layout of ds bound at slot 0
+		vk::RenderPass renderPass; // render pass in which it is rendered
 
 		vk::SampleCountBits samples {vk::SampleCountBits::e1};
-		bool reverseDepth {true};
+		bool reverseDepth {false}; // whether to use reversed depth checking
 		unsigned subpass {0u};
+
+		// When this is true, will create a skybox that reads from
+		// a layered cubemap. Instead of a samplerCube, expects
+		// a samplerCubeArray in the ds passed to render then.
+		// Additionally expects a float in the ubo holding the
+		// matrix (as described below, for 'render') that holds the
+		// layer to render from. Will interpolate in the shader.
+		// See skybox.frag for more details.
+		bool layered {false};
+
+		// When this is not true, will tonemap the output in the shader.
+		// Expects the exposure to use for tonemapping as float in the ubo at
+		// slot 0 (see documentation below for 'render'), after
+		// the matrix (and the layer if layered is true).
+		// See skybox.frag for more details.
+		bool tonemap {false};
 	};
 
 public:
@@ -89,8 +105,13 @@ public:
 	SkyboxRenderer& operator=(SkyboxRenderer&&) = delete;
 
 	void create(const vpp::Device& dev, const PipeInfo&,
-		nytl::Span<const vk::PipelineColorBlendAttachmentState>
-			battachments = {&defaultBlendAttachment(), 1});
+		nytl::Span<const vk::PipelineColorBlendAttachmentState> =
+			{&defaultBlendAttachment(), 1});
+
+	// Expects a descriptor set bound at slot 0, containing
+	// a ubo at binding 0. That ubo starts with a mat4 holding
+	// the view and projection matrix to be used for the skybox.
+	// Simply see skybox.vert.
 	void render(vk::CommandBuffer cb, vk::DescriptorSet ds);
 
 	const auto& pipeLayout() const { return pipeLayout_; }

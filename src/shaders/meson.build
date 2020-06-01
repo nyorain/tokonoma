@@ -63,6 +63,11 @@ shaders_src = {
 
 		['shaders/skybox.vert'],
 		['shaders/skybox.frag'],
+		['shaders/skybox.frag', [], 'skybox.layered.frag', ['-DLAYERED']],
+		['shaders/skybox.frag', [], 'skybox.tonemap.frag', ['-DTONEMAP']],
+		['shaders/skybox.frag', [], 'skybox.layered.tonemap.frag',
+			['-DLAYERED', '-DTONEMAP']],
+
 		['shaders/fullscreen.vert'],
 		['shaders/fullscreen_transform.vert'],
 		['shaders/equirectToCube.comp'],

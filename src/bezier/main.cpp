@@ -1,6 +1,6 @@
 #include "util.hpp"
 #include <tkn/singlePassApp.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/render.hpp>
 #include <tkn/bits.hpp>
@@ -43,10 +43,6 @@ public:
 		u32 id;
 		float depth;
 	};
-
-	static constexpr float near = 0.05f;
-	static constexpr float far = 25.f;
-	static constexpr float fov = 0.5 * nytl::constants::pi;
 
 public:
 	using Base::init;
@@ -153,9 +149,7 @@ public:
 
 	void update(double dt) override {
 		Base::update(dt);
-		if(tkn::checkMovement(camera_, swaDisplay(), dt)) {
-			Base::scheduleRedraw();
-		}
+		camera_.update(swaDisplay(), dt);
 
 		if(updateVerts_) {
 			if(auto* bezier = std::get_if<0>(&controlPoints_)) {
@@ -169,25 +163,20 @@ public:
 
 			Base::scheduleRedraw();
 		}
-	}
 
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
-	}
-
-	nytl::Mat4f cameraVP() const {
-		return projectionMatrix() * viewMatrix(camera_);
+		if(camera_.needsUpdate) {
+			Base::scheduleRedraw();
+		}
 	}
 
 	void updateDevice() override {
 		Base::updateDevice();
 
-		if(camera_.update) {
-			camera_.update = false;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, cameraVP());
+			tkn::write(span, camera_.viewProjectionMatrix());
 			map.flush();
 		}
 
@@ -259,7 +248,7 @@ public:
 
 	std::optional<Drag> pointAt(nytl::Vec2f pos) {
 		using namespace nytl::vec::cw::operators;
-		auto proj = cameraVP();
+		auto proj = camera_.viewProjectionMatrix();
 
 		// TODO: depth sort? in case there are multiple points
 		// over each other. Not really a sort, just a "best
@@ -267,7 +256,6 @@ public:
 		auto points = this->points();
 		for(auto i = 0u; i < points.size(); ++i) {
 			auto ndc = tkn::multPos(proj, points[i]);
-			ndc.y = -ndc.y;
 			auto xy = 0.5f * nytl::Vec2f{ndc.x + 1, ndc.y + 1};
 			auto screen = windowSize() * xy;
 			if(length(pos - screen) < 10.f) {
@@ -285,8 +273,7 @@ public:
 			// unproject
 			auto s = windowSize();
 			auto xy = Vec2f{-1.f + 2 * p.x / s.x, -1.f + 2 * p.y / s.y};
-			xy.y = -xy.y;
-			auto invProj = nytl::Mat4f(nytl::inverse(cameraVP()));
+			auto invProj = nytl::Mat4f(nytl::inverse(camera_.viewProjectionMatrix()));
 			auto world = tkn::multPos(invProj, Vec3f{xy.x, xy.y, drag_->depth});
 			points()[drag_->id] = world;
 			if(auto* ppts = std::get_if<1>(&controlPoints_)) {
@@ -302,10 +289,7 @@ public:
 			return;
 		}
 
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			Base::scheduleRedraw();
-		}
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 
 		if(auto i = pointAt(p); i) {
 			swa_cursor c {};
@@ -347,7 +331,7 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	std::vector<vk::ClearValue> clearValues() override {
@@ -379,7 +363,7 @@ public:
 		if(ev.keycode == swa_key_c) {
 			if(auto* ppts = std::get_if<1>(&controlPoints_)) {
 				auto& pts = *ppts;
-				auto p = camera_.pos + dir(camera_);
+				auto p = camera_.position() + camera_.dir();
 				pts.push_back(p);
 				pts[pts.size() - 2] = p;
 				pts[pts.size() - 3] = p;
@@ -421,7 +405,7 @@ public:
 	bool needsDepth() const override { return false; }
 
 protected:
-	tkn::Camera camera_;
+	tkn::ControlledCamera camera_;
 	std::variant<Bezier<3>, std::vector<Vec3f>> controlPoints_;
 	bool rotateView_ {};
 	std::vector<Vec3f> flattened_;

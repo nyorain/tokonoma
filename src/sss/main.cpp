@@ -3,6 +3,7 @@
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/transform.hpp>
+#include <tkn/levelView.hpp>
 #include <vui/gui.hpp>
 #include <vui/dat.hpp>
 #include <nytl/mat.hpp>

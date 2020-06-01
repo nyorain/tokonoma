@@ -109,6 +109,8 @@ vec3 lightProbe(vec3 pos, vec3 nrm, float coord, inout float total, inout float 
 	res += sh8(nrm) * texture(irradiance, vec2(coord, 8)).rgb;
 
 	total += fac;
+
+	const float oneOverPi = 0.318309886183;
 	return oneOverPi * fac * res;
 }
 

@@ -2,6 +2,7 @@
 #include <tkn/app.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/window.hpp>
+#include <tkn/levelView.hpp>
 #include <rvg/shapes.hpp>
 #include <rvg/paint.hpp>
 #include <rvg/context.hpp>
@@ -156,8 +157,8 @@ public:
 			(-2.f / (fac * h)), 1
 		};
 
-		auto mat = tkn::scaleMat({s.x, s.y, 1.f});
-		mat = tkn::translateMat({-1, 1, 0}) * mat;
+		auto mat = tkn::scaleMat(nytl::Vec2f{s.x, s.y});
+		mat = tkn::translateMat(nytl::Vec2f{-1, 1}) * mat;
 		levelTransform_.matrix(mat);
 	}
 
@@ -201,7 +202,7 @@ public:
 			auto r = m.rigid.body->GetAngle();
 
 			auto mat = tkn::rotateMat(r);
-			mat = tkn::translateMat({p.x, p.y, 0.f}) * mat;
+			mat = tkn::translateMat(nytl::Vec2f{p.x, p.y}) * mat;
 			mat = levelTransform_.matrix() * mat;
 			m.transform.matrix(mat);
 

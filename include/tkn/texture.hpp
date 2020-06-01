@@ -10,6 +10,10 @@
 
 // NOTE: none of the functions/classes have support for compressed/packed
 // or depth/stencil formats
+// TODO: honestly, tkn::Texture should just be functions (basically
+//  all constructors/init/create as functions).
+//  And then maybe create a high level texture class, storing
+//  formats, size, layers, mip etc?
 
 namespace tkn {
 

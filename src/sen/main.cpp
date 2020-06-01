@@ -2,7 +2,8 @@
 #include <tkn/bits.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/ccam.hpp>
+#include <tkn/features.hpp>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <tkn/stb_image_write.h>
@@ -35,9 +36,6 @@ constexpr auto faceHeight = 1024u;
 class SenApp : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
-	static constexpr float near = 0.05f;
-	static constexpr float far = 25.f;
-	static constexpr float fov = 0.5 * nytl::constants::pi;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -513,22 +511,7 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-		}
-	}
-
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(App::mouseButton(ev)) {
-			return true;
-		}
-
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			return true;
-		}
-
-		return false;
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
@@ -599,7 +582,7 @@ public:
 			App::scheduleRerecord();
 			return true;
 		} else if(ev.keycode == swa_key_l) {
-			camera_.update = true; // updates ubo
+			camera_.needsUpdate = true; // updates ubo
 			if(ev.modifiers & swa_keyboard_mod_shift) {
 				showLightTex_ = (showLightTex_ + 2) % 3;
 			} else {
@@ -614,20 +597,11 @@ public:
 		return false;
 	}
 
-	void update(double delta) override {
-		App::update(delta);
-		time_ += delta;
-		tkn::checkMovement(camera_, swaDisplay(), delta);
+	void update(double dt) override {
+		App::update(dt);
+		time_ += dt;
+		camera_.update(swaDisplay(), dt);
 		App::scheduleRedraw();
-	}
-
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
-	}
-
-	nytl::Mat4f cameraVP() const {
-		return projectionMatrix() * viewMatrix(camera_);
 	}
 
 	void updateDevice() override {
@@ -636,11 +610,11 @@ public:
 		auto rspan = rmap.span();
 		auto aspect = float(windowSize().x) / windowSize().y;
 
-		tkn::write(rspan, camera_.pos);
+		tkn::write(rspan, camera_.position());
 		tkn::write(rspan, 0.f); // padding
-		tkn::write(rspan, dir(camera_));
+		tkn::write(rspan, camera_.dir());
 		tkn::write(rspan, 0.f); // padding
-		tkn::write(rspan, fov);
+		tkn::write(rspan, *camera_.perspectiveFov());
 		tkn::write(rspan, aspect);
 		tkn::write(rspan, float(windowSize().x));
 		tkn::write(rspan, float(windowSize().y));
@@ -648,15 +622,15 @@ public:
 		tkn::write(rspan, float(time_));
 
 		// update scene ubo
-		if(camera_.update) {
-			camera_.update = false;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 
 			// raster
 			{
 				auto map = rasterSceneUbo_.memoryMap();
 				auto span = map.span();
-				tkn::write(span, cameraVP());
-				tkn::write(span, camera_.pos);
+				tkn::write(span, camera_.viewProjectionMatrix());
+				tkn::write(span, camera_.position());
 				tkn::write(span, showLightTex_);
 				tkn::write(span, nytl::Vec2f{faceWidth, faceHeight});
 				tkn::write(span, nytl::Vec2f(atlasSize_));
@@ -705,7 +679,7 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		App::resize(w, h);
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	bool needsDepth() const override {
@@ -754,8 +728,7 @@ private:
 
 	std::vector<RenderBox> boxes_;
 
-	tkn::Camera camera_;
-	bool rotateView_ {};
+	tkn::ControlledCamera camera_;
 	float time_ {};
 	std::uint32_t showLightTex_ {0};
 

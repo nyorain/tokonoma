@@ -57,7 +57,6 @@ void main() {
 #endif // SCENE
 
 	gl_Position = cascadeProj(light, cascadeIndex) * pos;
-	gl_Position.y = -gl_Position.y;
 
 	// TODO: only needed if there is no depth clamping
 	// probably best enable/disable this via specialization constant,

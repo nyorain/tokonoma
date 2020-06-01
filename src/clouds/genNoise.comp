@@ -69,7 +69,7 @@ float vfbm(vec3 pos, uvec3 tile) {
 		accum += amp * tiledVoronoiNoise(pos, tile);
 
 		pos *= 2.0;
-		amp *= 0.5;
+		amp *= 0.8;
 		tile *= 2;
 	}
 

@@ -1,6 +1,7 @@
 #include <tkn/app.hpp>
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/levelView.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/render.hpp>
 #include <ny/mouseButton.hpp>

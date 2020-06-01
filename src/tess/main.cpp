@@ -140,7 +140,7 @@ public:
 
 	nytl::Mat4f projectionMatrix() const {
 		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
+		return tkn::perspective(fov, aspect, -near, -far);
 	}
 
 	nytl::Mat4f cameraVP() const {

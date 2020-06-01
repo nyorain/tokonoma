@@ -60,6 +60,8 @@ void main() {
 	outPos = pos.xyz / pos.w;
 
 	gl_Position = light.proj[faceIndex] * pos;
+
+	// TODO: do this in projection matrix on cpu.
 	gl_Position.y = -gl_Position.y;
 }
 

@@ -1,7 +1,8 @@
 #include <tkn/taa.hpp>
-#include <tkn/camera2.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/app2.hpp>
 #include <tkn/render.hpp>
+#include <tkn/features.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/texture.hpp>
@@ -68,10 +69,6 @@ public:
 	static constexpr u32 modeSpecularIBL = (1u << 2);
 	static constexpr u32 modeIrradiance = (1u << 3);
 
-	static constexpr float near = 0.1f;
-	static constexpr float far = 5.f;
-	static constexpr float fov = 0.5 * nytl::constants::pi;
-
 	struct Args : public App::Args {
 		std::string model;
 		float scale {1.f};
@@ -83,6 +80,9 @@ public:
 		if(!tkn::App::doInit(cargs, args)) {
 			return false;
 		}
+
+		camera_.near(-0.1f);
+		camera_.far(-8.f);
 
 		auto& dev = vkDevice();
 		auto hostMem = dev.hostMemoryTypes();
@@ -133,7 +133,7 @@ public:
 		dummyTex_ = {batch, std::move(p), params};
 
 		// Load scene
-		auto mat = tkn::scaleMat<4, float>({args.scale, args.scale, args.scale});
+		auto mat = tkn::scaleMat<4, float>(nytl::Vec3f{args.scale, args.scale, args.scale});
 		auto samplerAnisotropy = 1.f;
 		if(anisotropy_) {
 			samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
@@ -729,7 +729,7 @@ public:
 		time_ += dt;
 
 		// movement
-		tkn::checkMovement(camera_, swaDisplay(), dt);
+		camera_.update(swaDisplay(), dt);
 		if(moveLight_) {
 			if(mode_ & modePointLight) {
 				pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
@@ -751,7 +751,7 @@ public:
 		// movingVel_ *= std::pow(0.99, dt);
 		movingVel_.x += 0.1 * dt * std::cos(0.5 * time_);
 		movingPos_ += dt * movingVel_;
-		auto mat = tkn::translateMat(movingPos_) * tkn::scaleMat({2.f, 2.f, 2.f});
+		auto mat = tkn::translateMat(movingPos_) * tkn::scaleMat(nytl::Vec3f{2.f, 2.f, 2.f});
 		auto& ini = scene_.instances()[movingInstance_];
 		ini.lastMatrix = ini.matrix;
 		ini.matrix = mat;
@@ -777,7 +777,7 @@ public:
 		switch(ev.keycode) {
 			case swa_key_m: { // move light here
 				moveLight_ = false;
-				dirLight_.data.dir = -camera_.pos;
+				dirLight_.data.dir = -camera_.position();
 				auto& ini = scene_.instances()[dirLight_.instanceID];
 				ini.lastMatrix = ini.matrix = dirLightObjMatrix();
 				scene_.updatedInstance(dirLight_.instanceID);
@@ -786,7 +786,7 @@ public:
 			} case swa_key_n: { // move light here
 				moveLight_ = false;
 				updateLight_ = true;
-				pointLight_.data.position = camera_.pos;
+				pointLight_.data.position = camera_.position();
 				auto& ini = scene_.instances()[pointLight_.instanceID];
 				ini.lastMatrix = ini.matrix = pointLightObjMatrix();
 				scene_.updatedInstance(pointLight_.instanceID);
@@ -842,24 +842,14 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
-		tkn::mouseMove(camera_, camcon_, swaDisplay(), {ev.dx, ev.dy});
-	}
-
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective(fov, aspect, -near, -far);
-	}
-
-	nytl::Mat4f cameraVP() const {
-		return projectionMatrix() * viewMatrix(camera_);
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
 	void updateDevice() override {
 		App::updateDevice();
+		updateLight_ |= camera_.needsUpdate; // for directional light
 
-		if(camera_.update) {
-			updateLight_ = true; // for directional light
-		}
+		auto vp = camera_.viewProjectionMatrix();
 
 		// always update the camera matrix
 		// update scene ubo
@@ -876,31 +866,27 @@ public:
 			auto pixSize = Vec2f{1.f / width, 1.f / height};
 			auto off = sample * pixSize;
 
-			auto vp = cameraVP();
-
 			tkn::write(span, vp);
 			tkn::write(span, lastVP_);
 			tkn::write(span, off);
-			tkn::write(span, near);
-			tkn::write(span, far);
-			tkn::write(span, camera_.pos);
-			camera_.update = false;
+			tkn::write(span, -camera_.near());
+			tkn::write(span, -camera_.far());
+			tkn::write(span, camera_.position());
+			camera_.needsUpdate = false;
 			map.flush();
 
 			lastVP_ = vp;
 
 			auto envMap = envCameraUbo_.memoryMap();
 			auto envSpan = envMap.span();
-			tkn::write(envSpan,
-				projectionMatrix() *
-				fixedViewMatrix(camera_));
+			tkn::write(envSpan, camera_.fixedViewProjectionMatrix());
 			envMap.flush();
 
 		}
 
-		taa_.updateDevice(near, far);
+		taa_.updateDevice(-camera_.near(), -camera_.far());
 
-		auto semaphore = scene_.updateDevice(cameraVP());
+		auto semaphore = scene_.updateDevice(vp);
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
 			App::scheduleRerecord();
@@ -908,7 +894,19 @@ public:
 
 		if(updateLight_) {
 			if(mode_ & modeDirLight) {
-				dirLight_.updateDevice(cameraVP(), near, far);
+				dirLight_.updateDevice(vp, -camera_.near(), -camera_.far());
+
+				// NOTE: tight view frustum just for shadow mapping
+				// should be easier than this...
+				// auto lnear = -0.2f;
+				// auto lfar = -4.f;
+				// auto on = camera_.near();
+				// auto of = camera_.far();
+				// camera_.near(lnear);
+				// camera_.far(lfar);
+				// dirLight_.updateDevice(camera_.viewProjectionMatrix(), -lnear, -lfar);
+				// camera_.near(on);
+				// camera_.far(of);
 			}
 			if(mode_ & modePointLight) {
 				pointLight_.updateDevice();
@@ -945,7 +943,7 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		App::resize(w, h);
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	const char* name() const override { return "Temporal Anti aliasing"; }
@@ -1024,8 +1022,7 @@ protected:
 	float time_ {};
 
 	tkn::Scene scene_;
-	tkn::Camera camera_ {};
-	tkn::FPCamCon camcon_ {};
+	tkn::ControlledCamera camera_ {};
 
 	struct DirLight : public tkn::DirLight {
 		using tkn::DirLight::DirLight;

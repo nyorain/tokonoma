@@ -26,26 +26,23 @@ layout(set = 2, binding = 0) uniform sampler2D depthTex;
 layout(set = 2, binding = 1) uniform sampler2DArray noiseTex;
 
 float phase(float cosTheta, float g) {
+	float fac = .079577471545; // 1 / (4 * pi), normalization
 	float gg = g * g;
-
-	// from csp atmosphere and gpugems, normalized
-	const float fac = 0.11936620731; // 3 / (8 * pi) for normalization
-	float cc = cosTheta * cosTheta;
-	return fac * ((1 - gg) * (1 + cc)) / ((2 + gg) * pow(1 + gg - 2 * g * cosTheta, 1.5));
+	return fac * (1 - gg) / (pow(1 + gg - 2 * g * cosTheta, 1.5));
 }
 
 float scatterStrength(vec3 worldPos) {
 	// const float mieG = -0.9;
 	// const float mieG = -0.6;
-	const float mieG = -0.2;
+	const float phaseG = 0.9;
 	float shadow = pointShadow(shadowCube, light.pos, light.radius, worldPos);
 	float att = defaultAttenuation(distance(worldPos, light.pos), light.radius);
 
 	vec3 ldir = normalize(worldPos - light.pos);
 	vec3 vdir = normalize(worldPos - scene.viewPos);
-	float cosTheta = dot(ldir, vdir);
+	float cosTheta = dot(-ldir, vdir);
 
-	float scatter = phase(cosTheta, mieG);
+	float scatter = phase(cosTheta, phaseG);
 	return max(scatter * shadow * att, 0.0);
 }
 
@@ -113,6 +110,8 @@ float lightScatterShadow(vec3 rayStart, vec3 rayEnd, vec2 pixel) {
 	// step = ray / steps;
 
 	// TODO: calculate out-scatter as well?
+	//   horrible integration... should use transmission and in
+	//   scattering
 	for(uint i = 0u; i < steps; ++i) {
 		accum += scatterStrength(ipos);
 		ipos += step;

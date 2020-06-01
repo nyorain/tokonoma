@@ -120,7 +120,7 @@ float irdr(vec2 uv, float velZ, float projZ, float histZ) {
 	// TODO: not sure whether to sample velocity for each as well
 #define RZ(_o) \
 	depthtoz(textureOffset(depthTex, uv, _o).r, ubo.near, ubo.far) - velZ
-	// depthtoz(textureOffset(depthTex, uv, _o).r, ubo.near, ubo.far) \
+	// depthtoz(textureOffset(depthTex, uv, _o).r, ubo.near, ubo.far)
 	// 	- textureOffset(velocityTex, uv, _o).z
 
 	float z0 = RZ(+offx);
@@ -258,7 +258,9 @@ void main() {
 	vec3 vel = texture(velocityTex, vuv).xyz;
 	// vec3 vel = texture(velocityTex, uv).xyz;
 	vel.xy += 0.5f * (ubo.lastJitter - ubo.jitter);
-	vel.y *= -1.f;
+
+	// TODO: not sure
+	// vel.y *= -1.f;
 
 	// vec3 world = reconstructWorldPos(uv, ubo.invProj, depth);
 	vec3 color = T(texture(renderedTex, uv).rgb);

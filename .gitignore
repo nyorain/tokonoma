@@ -1,4 +1,4 @@
 build/
 subprojects/*/
-*.sublime*
 .vscode
+external/include/asio/*

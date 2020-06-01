@@ -14,7 +14,7 @@
 #include <tkn/app2.hpp>
 #include <tkn/f16.hpp>
 #include <tkn/render.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/types.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
@@ -22,6 +22,7 @@
 #include <tkn/bits.hpp>
 #include <tkn/gltf.hpp>
 #include <tkn/defer.hpp>
+#include <tkn/features.hpp>
 #include <tkn/image.hpp>
 #include <tkn/scene/shape.hpp>
 #include <tkn/scene/light.hpp>
@@ -59,6 +60,15 @@
 using namespace tkn::types;
 using tkn::f16;
 
+namespace tkn {
+	// TODO: hack that we have to declare it here.
+	// remove when the old camera class is removed
+
+nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
+	float near = 0.01f, float far = 30.f);
+
+}
+
 class ViewApp : public tkn::App {
 public:
 	static constexpr auto pointLight = false;
@@ -76,10 +86,6 @@ public:
 
 	static constexpr auto probeSize = vk::Extent2D {2048, 2048};
 	static constexpr auto probeFaceSize = probeSize.width * probeSize.height * 8;
-
-	static constexpr float near = 0.1f;
-	static constexpr float far = 10.f;
-	static constexpr float fov = 0.5 * nytl::constants::pi;
 
 public:
 	struct Args : public App::Args {
@@ -109,9 +115,6 @@ public:
 	void updateDevice() override;
 	const char* name() const override { return "Deferred Renderer"; }
 
-	nytl::Mat4f projectionMatrix() const;
-	nytl::Mat4f cameraVP() const;
-
 protected:
 	// TODO: add vpp methods to merge them to one (or into the default
 	// one) after initialization
@@ -129,8 +132,6 @@ protected:
 
 	std::optional<Alloc> alloc;
 	vpp::TrDsLayout cameraDsLayout_;
-
-	float fov_ {fov};
 
 	// light and shadow
 	tkn::ShadowData shadowData_;
@@ -171,8 +172,7 @@ protected:
 	bool multiDrawIndirect_ {};
 
 	float time_ {};
-	bool rotateView_ {}; // mouseLeft down
-	tkn::Camera camera_ {};
+	tkn::ControlledCamera camera_ {};
 	bool updateLights_ {true};
 	bool updateScene_ {true};
 
@@ -490,7 +490,8 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
-		l.updateDevice(cameraVP(), near, far);
+		l.updateDevice(camera_.viewProjectionMatrix(), -camera_.near(),
+			-camera_.far());
 		// pp_.params.scatterLightColor = 0.05f * l.data.color;
 	}
 
@@ -567,7 +568,7 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	cbs.set(updateScene_);
 	cbs.onToggle = [&](auto&) {
 		updateScene_ ^= true;
-		camera_.update = true; // trigger update
+		camera_.needsUpdate = true;
 	};
 
 	// == general/post processing folder ==
@@ -1443,10 +1444,10 @@ void ViewApp::update(double dt) {
 	time_ += dt;
 
 	// movement
-	tkn::checkMovement(camera_, swaDisplay(), dt);
+	camera_.update(swaDisplay(), dt);
 
 	// TODO: something about potential changes in pass parameters
-	auto update = camera_.update || updateLights_ || selectionPos_;
+	auto update = camera_.needsUpdate || updateLights_ || selectionPos_;
 	update |= selectionPending_;
 	if(update) {
 		App::scheduleRedraw();
@@ -1624,11 +1625,11 @@ void ViewApp::screenshot() {
 		auto map = probe_.faces[i].ubo.memoryMap();
 		auto span = map.span();
 
-		auto mat = tkn::cubeProjectionVP(camera_.pos, i);
+		auto mat = tkn::cubeProjectionVP(camera_.position(), i);
 		auto inv = nytl::Mat4f(nytl::inverse(mat));
 		tkn::write(span, mat);
 		tkn::write(span, inv);
-		tkn::write(span, camera_.pos);
+		tkn::write(span, camera_.position());
 		tkn::write(span, 0.01f); // near
 		tkn::write(span, 30.f); // far
 		map.flush();
@@ -1657,9 +1658,9 @@ bool ViewApp::key(const swa_key_event& ev) {
 	switch(ev.keycode) {
 		case swa_key_m: // move light here
 			if(!dirLights_.empty()) {
-				dirLights_[0].data.dir = -nytl::normalized(camera_.pos);
+				dirLights_[0].data.dir = -nytl::normalized(camera_.position());
 			} else {
-				pointLights_[0].data.position = camera_.pos;
+				pointLights_[0].data.position = camera_.position();
 			}
 			updateLights_ = true;
 			return true;
@@ -1672,12 +1673,12 @@ bool ViewApp::key(const swa_key_event& ev) {
 			updateLights_ = true;
 			return true;
 		case swa_key_v:
-			fov_ *= 0.98;
-			camera_.update = true;
+			camera_.perspectiveFov(*camera_.perspectiveFov() * 0.98);
+			camera_.needsUpdate = true;
 			break;
 		case swa_key_b:
-			fov_ /= 0.98;
-			camera_.update = true;
+			camera_.perspectiveFov(*camera_.perspectiveFov() / 0.98);
+			camera_.needsUpdate = true;
 			break;
 		case swa_key_n:
 			debugMode_ = (debugMode_ + 1) % numModes;
@@ -1698,11 +1699,11 @@ bool ViewApp::key(const swa_key_event& ev) {
 			return true;
 		} case swa_key_comma: {
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-			addPointLight(camera_.pos, {dist(rnd), dist(rnd), dist(rnd)}, 0.5, false);
+			addPointLight(camera_.position(), {dist(rnd), dist(rnd), dist(rnd)}, 0.5, false);
 			break;
 		 } case swa_key_z: {
 			std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-			addPointLight(camera_.pos, {dist(rnd), dist(rnd), dist(rnd)}, 5.0, true);
+			addPointLight(camera_.position(), {dist(rnd), dist(rnd), dist(rnd)}, 5.0, true);
 			break;
 		} case swa_key_f: {
 			hideTimeWidget_ ^= true;
@@ -1729,10 +1730,7 @@ bool ViewApp::key(const swa_key_event& ev) {
 
 void ViewApp::mouseMove(const swa_mouse_move_event& ev) {
 	App::mouseMove(ev);
-	if(rotateView_) {
-		tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-		App::scheduleRedraw();
-	}
+	camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 }
 
 bool ViewApp::mouseButton(const swa_mouse_button_event& ev) {
@@ -1740,10 +1738,7 @@ bool ViewApp::mouseButton(const swa_mouse_button_event& ev) {
 		return true;
 	}
 
-	if(ev.button == swa_mouse_button_left) {
-		rotateView_ = ev.pressed;
-		return true;
-	} else if(ev.pressed && ev.button == swa_mouse_button_right) {
+	if(ev.pressed && ev.button == swa_mouse_button_right) {
 		auto ipos = nytl::Vec2i {ev.x, ev.y};
 		auto& ie = swapchainInfo().imageExtent;
 		if(ipos.x >= 0 && ipos.y >= 0) {
@@ -1755,15 +1750,6 @@ bool ViewApp::mouseButton(const swa_mouse_button_event& ev) {
 	}
 
 	return false;
-}
-
-nytl::Mat4f ViewApp::projectionMatrix() const {
-	auto aspect = float(windowSize().x) / windowSize().y;
-	return tkn::perspective3RH(fov_, aspect, near, far);
-}
-
-nytl::Mat4f ViewApp::cameraVP() const {
-	return projectionMatrix() * viewMatrix(camera_);
 }
 
 void ViewApp::updateDevice() {
@@ -1786,6 +1772,9 @@ void ViewApp::updateDevice() {
 
 		recreateStaticBufs_ = true; // recreate buffers and stuff
 	}
+
+	auto near = -camera_.near();
+	auto far = -camera_.far();
 
 	if(recreateStaticBufs_ && renderer().swapchain()) {
 		auto e = swapchainInfo().imageExtent;
@@ -1852,14 +1841,14 @@ void ViewApp::updateDevice() {
 	}
 
 	// update scene ubo
-	if(camera_.update) {
-		camera_.update = false;
+	if(camera_.needsUpdate) {
+		camera_.needsUpdate = false;
 		auto map = cameraUbo_.memoryMap();
 		auto span = map.span();
-		auto mat = cameraVP();
+		auto mat = camera_.viewProjectionMatrix();
 		tkn::write(span, mat);
 		tkn::write(span, nytl::Mat4f(nytl::inverse(mat)));
-		tkn::write(span, camera_.pos);
+		tkn::write(span, camera_.position());
 		tkn::write(span, near);
 		tkn::write(span, far);
 		if(!map.coherent()) {
@@ -1868,7 +1857,7 @@ void ViewApp::updateDevice() {
 
 		auto envMap = envCameraUbo_.memoryMap();
 		auto envSpan = envMap.span();
-		tkn::write(envSpan, projectionMatrix() * fixedViewMatrix(camera_));
+		tkn::write(envSpan, camera_.fixedViewProjectionMatrix());
 		if(!envMap.coherent()) {
 			envMap.flush();
 		}
@@ -1890,7 +1879,7 @@ void ViewApp::updateDevice() {
 			l.updateDevice();
 		}
 		for(auto& l : dirLights_) {
-			l.updateDevice(cameraVP(), near, far);
+			l.updateDevice(camera_.viewProjectionMatrix(), near, far);
 		}
 		updateLights_ = false;
 	}
@@ -2039,7 +2028,7 @@ void ViewApp::resize(unsigned width, unsigned height) {
 	App::resize(width, height);
 
 	selectionPos_ = {};
-	camera_.update = true;
+	camera_.aspect({width, height});
 
 	// update time widget position
 	auto pos = nytl::Vec2ui{width, height};

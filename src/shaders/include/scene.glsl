@@ -94,21 +94,25 @@ float ztodepth(float z, float near, float far) {
 	return (far - near * far / z) / (far - near);
 }
 
+vec3 multPos(mat4 transform, vec3 pos) {
+	vec4 v = transform * vec4(pos, 1.0);
+	return vec3(v) / v.w;
+}
+
 // Reconstructs the fragment position in world space from the it's uv coord,
 // the sampled depth ([0,1]) for this fragment and the scenes inverse viewProj.
 // uv expected to have it's origin topleft, while world coord system has
 // up y axis
 vec3 reconstructWorldPos(vec2 uv, mat4 invProj, float depth) {
 	vec2 suv = 2 * uv - 1;
-	suv.y *= -1.f; // flip y, different directions in screen/world space
-	vec4 pos4 = invProj * vec4(suv, depth, 1.0);
-	return pos4.xyz / pos4.w;
+	// suv.y *= -1.f; // flip y, different directions in screen/world space
+	return multPos(invProj, vec3(suv, depth));
 }
 
 vec3 sceneMap(mat4 proj, vec4 pos) {
 	pos = proj * pos;
 	vec3 mapped = pos.xyz / pos.w;
-	mapped.y *= -1; // invert y
+	// mapped.y *= -1; // invert y
 	mapped.xy = 0.5 + 0.5 * mapped.xy; // normalize for texture access
 	return mapped;
 }
@@ -196,6 +200,12 @@ mat4 cascadeProj(DirLight light, uint index) {
 	mat4 proj = ortho(
 		light.cascadeProjMin[index].xyz,
 		light.cascadeProjMax[index].xyz);
+	// flip first row
+	proj[0][1] = -proj[0][1];
+	proj[1][1] = -proj[1][1];
+	proj[2][1] = -proj[2][1];
+	proj[3][1] = -proj[3][1];
+
 	return proj * lookAt(normalize(light.dir));
 }
 
@@ -280,11 +290,6 @@ float pointShadow(samplerCube shadowCube, vec3 lightPos,
 	return current < (closest + bias) ? 1.f : 0.f;
 }
 
-vec3 multPos(mat4 transform, vec3 pos) {
-	vec4 v = transform * vec4(pos, 1.0);
-	return vec3(v) / v.w;
-}
-
 // normal encodings
 // see http://jcgt.org/published/0003/02/01/paper.pdf
 // using r16g16Snorm, this is oct32 from the paper
@@ -307,6 +312,9 @@ vec3 decodeNormal(vec2 n) {
 }
 
 // == screen space light scatter algorithms ==
+// TODO: argh clean up this mess, so many phase functions floating around.
+// Most of them unused or only useful for special cases.
+
 // ripped from http://www.alexandre-pestana.com/volumetric-lights/
 float mieScattering(float lightDotView, float gs) {
 	float result = 1.0f - gs * gs;

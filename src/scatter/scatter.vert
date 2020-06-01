@@ -28,9 +28,10 @@ void main() {
 	float z = 2 * float((0x31e3 & mask) != 0) - 1;
 	vec3 pos = pointLight.pos + pointLight.radius * vec3(x, y, z);
 	vec4 proj = scene.vp * vec4(pos, 1.0);
+
 	// TODO: maybe don't jitter here?
 	// proj.xy += scene.jitter * proj.w; // jitter in ndc space
-	proj.y = -proj.y;
+	// proj.y = -proj.y;
 	gl_Position = proj;
 
 	uv = 0.5 + 0.5 * (proj.xy / proj.w);

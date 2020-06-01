@@ -119,9 +119,9 @@ public:
 			(-2.f / (fac * h)), 1
 		};
 
-		auto mat = tkn::translateMat({0, 2, 0});
-		mat = tkn::scaleMat({s.x, s.y, 1.f}) * mat;
-		mat = tkn::translateMat({-1, 1, 0}) * mat;
+		auto mat = tkn::translateMat(nytl::Vec2f{0, 2});
+		mat = tkn::scaleMat(nytl::Vec2f{s.x, s.y}) * mat;
+		mat = tkn::translateMat(nytl::Vec2f{-1, 1}) * mat;
 		levelTransform_.matrix(mat);
 	}
 

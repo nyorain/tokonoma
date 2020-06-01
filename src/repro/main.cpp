@@ -154,7 +154,7 @@ public:
 
 		// Load scene
 		auto s = sceneScale_;
-		auto mat = tkn::scaleMat<4, float>({s, s, s});
+		auto mat = tkn::scaleMat<4, float>(nytl::Vec3f{s, s, s});
 		auto samplerAnisotropy = 1.f;
 		if(anisotropy_) {
 			samplerAnisotropy = dev.properties().limits.maxSamplerAnisotropy;
@@ -727,7 +727,7 @@ public:
 
 	nytl::Mat4f projectionMatrix() const {
 		auto aspect = float(window().size().x) / window().size().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
+		return tkn::perspective(fov, aspect, -near, -far);
 	}
 
 	nytl::Mat4f cameraVP() const {

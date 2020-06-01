@@ -4,6 +4,7 @@
 #include <tkn/texture.hpp>
 #include <tkn/render.hpp>
 #include <tkn/transform.hpp>
+#include <tkn/levelView.hpp>
 #include <tkn/timeWidget.hpp>
 #include <tkn/util.hpp>
 #include <tkn/bits.hpp>

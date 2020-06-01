@@ -41,20 +41,25 @@ float shadowMap(vec3 worldPos) {
 }
 
 void main() {
+	/*
 	vec2 suv = 2 * uv - 1;
 	suv.y *= -1.f; // flip y
 	float ldepth = texture(depthTex, uv).r;
-	float depth = ztodepth(ldepth, scene.near, scene.far); // TODO
+	float depth = ztodepth(ldepth, scene.near, scene.far);
 	vec4 pos4 = scene.invProj * vec4(suv, depth, 1.0);
 	vec3 pos = pos4.xyz / pos4.w;
+	*/
+	float ldepth = texture(depthTex, uv).r;
+	float depth = ztodepth(ldepth, scene.near, scene.far);
+	vec3 worldPos = reconstructWorldPos(uv, scene.invProj, depth);
 
-	vec3 v = normalize(pos - scene.viewPos); // view direction
+	vec3 v = normalize(worldPos - scene.viewPos); // view direction
 	vec3 viewToLight = -light.dir; // normalized on cpu
 	float ldv = dot(viewToLight, v);
 
 	if((params.flags & flagShadow) != 0) {
 		vec2 pixel = gl_FragCoord.xy;
-		scatter = lightScatterShadow(scene.viewPos, pos, pixel);
+		scatter = lightScatterShadow(scene.viewPos, worldPos, pixel);
 	} else {
 		if(ldv < 0) {
 			scatter = 0.f;

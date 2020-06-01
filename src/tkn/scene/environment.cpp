@@ -28,6 +28,9 @@ extern "C" {
 #include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/tkn.skybox.vert.h>
 #include <shaders/tkn.skybox.frag.h>
+#include <shaders/tkn.skybox.layered.frag.h>
+#include <shaders/tkn.skybox.tonemap.frag.h>
+#include <shaders/tkn.skybox.layered.tonemap.frag.h>
 
 using nytl::constants::pi;
 
@@ -124,7 +127,7 @@ void SkyboxRenderer::create(const vpp::Device& dev, const PipeInfo& pi,
 	auto bindings = {
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &pi.linear),
+			vk::ShaderStageBits::fragment, -1, 1, &pi.sampler),
 	};
 
 	dsLayout_ = {dev, bindings};
@@ -146,8 +149,18 @@ void SkyboxRenderer::create(const vpp::Device& dev, const PipeInfo& pi,
 	spec.mapEntryCount = 1u;
 	spec.pMapEntries = &specEntry;
 
+	vpp::ShaderModule fragShader;
+	if(!pi.tonemap && !pi.layered) {
+		fragShader = {dev, tkn_skybox_frag_data};
+	} else if(!pi.tonemap && pi.layered) {
+		fragShader = {dev, tkn_skybox_layered_frag_data};
+	} else if(pi.tonemap && !pi.layered) {
+		fragShader = {dev, tkn_skybox_tonemap_frag_data};
+	} else if(pi.tonemap && pi.layered) {
+		fragShader = {dev, tkn_skybox_layered_tonemap_frag_data};
+	}
+
 	vpp::ShaderModule vertShader(dev, tkn_skybox_vert_data);
-	vpp::ShaderModule fragShader(dev, tkn_skybox_frag_data);
 	vpp::GraphicsPipelineInfo gpi {pi.renderPass, pipeLayout_, {{{
 		{vertShader, vk::ShaderStageBits::vertex, &spec},
 		{fragShader, vk::ShaderStageBits::fragment},

@@ -17,6 +17,7 @@
 #include <tkn/shader.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
+#include <tkn/levelView.hpp>
 #include <tkn/window.hpp>
 #include <tkn/types.hpp>
 #include <tkn/bits.hpp>

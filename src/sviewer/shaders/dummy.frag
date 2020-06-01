@@ -82,11 +82,15 @@ void main() {
 	vec3 rgb = vec3(1.0);
 	int counter = 0;
 	if(ubo.effect == counter++) {
-		d = valueNoise(uv);
+		d = valueNoise(100 * ubo.mpos + uv);
 	} else if(ubo.effect == counter++) {
-		d = gradientNoise(uv);
+		d = gradientNoise(100 * ubo.mpos + uv);
 	} else if(ubo.effect == counter++) {
-		d = voronoiNoise(uv);
+		d = voronoiNoise(100 * ubo.mpos + uv);
+	} else if(ubo.effect == counter++) {
+		d = 0.75 * voronoiNoise2(100 * ubo.mpos + uv);
+	} else if(ubo.effect == counter++) {
+		d = 0.5 * voronoiNoise3(100 * ubo.mpos + uv);
 	} else if(ubo.effect == counter++) {
 		d = fbm(uv);
 	} else if(ubo.effect == counter++) {

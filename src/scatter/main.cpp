@@ -2,9 +2,10 @@
 #include <tkn/taa.hpp>
 #include <tkn/render.hpp>
 #include <tkn/image.hpp>
+#include <tkn/features.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/shader.hpp>
-#include <tkn/camera2.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/types.hpp>
 #include <tkn/util.hpp>
 #include <tkn/bits.hpp>
@@ -131,9 +132,6 @@ class ScatterApp : public tkn::App {
 public:
 	// TODO: can probably make this unorm with right encoding
 	static constexpr auto velFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr float near = 0.1f;
-	static constexpr float far = 100.f;
-	static constexpr float fov = 0.5 * nytl::constants::pi;
 	static constexpr auto combineGroupDimSize = 8u;
 
 	static constexpr auto scatterDownscale = 0u;
@@ -145,8 +143,8 @@ public:
 		Vec3f camPos;
 		u32 frameCount;
 		Vec2f jitter;
-		float _near = near;
-		float _far = far;
+		float near;
+		float far;
 	};
 
 public:
@@ -742,25 +740,15 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
-		if(!arcball_) {
-			tkn::checkMovement(camera_, swaDisplay(), dt);
-		}
+		camera_.update(swaDisplay(), dt);
 		App::scheduleRedraw();
-	}
-
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
-	}
-
-	nytl::Mat4f cameraVP() const {
-		return projectionMatrix() * viewMatrix(camera_);
 	}
 
 	void updateDevice() override {
 		App::updateDevice();
 
-		if(camera_.update) {
+		// camera always needs update
+		{
 			auto map = camUbo_.memoryMap();
 			auto span = map.span();
 
@@ -773,12 +761,14 @@ public:
 			auto off = sample * pixSize;
 
 			CamUbo ubo;
-			ubo.vp = cameraVP();
+			ubo.vp = camera_.viewProjectionMatrix();
 			ubo.vpInv = nytl::Mat4f(nytl::inverse(ubo.vp));
 			ubo.vpPrev = lastVP_;
-			ubo.camPos = camera_.pos;
+			ubo.camPos = camera_.position();
 			ubo.jitter = off;
 			ubo.frameCount = ++frameCount_;
+			ubo.near = -camera_.near();
+			ubo.far = -camera_.far();
 
 			tkn::write(span, ubo);
 			map.flush();
@@ -786,7 +776,7 @@ public:
 			lastVP_ = ubo.vp;
 		}
 
-		taa_.updateDevice(near, far);
+		taa_.updateDevice(-camera_.near(), -camera_.far());
 	}
 
 	bool features(tkn::Features& enable,
@@ -814,16 +804,7 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
-
-		if(arcball_) {
-			tkn::mouseMovePersp(camera_, camcon_, swaDisplay(), {ev.dx, ev.dy},
-				windowSize(), fov);
-		} else {
-			tkn::FPCamControls controls;
-			controls.rotateButton = swa_mouse_button_none;
-			tkn::mouseMove(camera_, camconFP_, swaDisplay(), {ev.dx, ev.dy},
-				controls);
-		}
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
 	bool mouseWheel(float dx, float dy) override {
@@ -831,11 +812,13 @@ public:
 			return true;
 		}
 
-		if(arcball_) {
-			tkn::mouseWheel(camera_, camcon_, dy);
-		}
-
+		camera_.mouseWheel(dy);
 		return true;
+	}
+
+	void resize(unsigned w, unsigned h) override {
+		App::resize(w, h);
+		camera_.aspect({w, h});
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -853,19 +836,22 @@ public:
 				auto wb = tkn::WorkBatcher::createDefault(vkDevice());
 				auto& l = lights_.emplace_back(wb, shadowData_);
 				l.data.color = tkn::blackbody(td(rnd));
-				l.data.position = camera_.pos;
+				l.data.position = camera_.position();
 				l.data.radius = rd(rnd);
 				l.updateDevice();
 				App::scheduleRerecord();
 				break;
 			} case swa_key_t: {
-				arcball_ ^= true;
-				if(!arcball_) {
-					camconFP_.pitch = pitch(camera_.rot);
-					camconFP_.yaw = yaw(camera_.rot);
-				}
+				using Ctrl = tkn::ControlledCamera::ControlType;
 				swa_cursor c {};
-				c.type = arcball_ ? swa_cursor_default : swa_cursor_none;
+				if(camera_.controlType() == Ctrl::firstPerson) {
+					camera_.useControl(Ctrl::arcball);
+					c.type = swa_cursor_default;
+				} else if(camera_.controlType() == Ctrl::arcball) {
+					camera_.useControl(Ctrl::firstPerson);
+					c.type = swa_cursor_none;
+				}
+
 				swa_window_set_cursor(swaWindow(), c);
 				break;
 			} case swa_key_r: {
@@ -888,10 +874,7 @@ protected:
 	vpp::SubBuffer camUbo_;
 	vpp::Sampler sampler_;
 
-	bool arcball_ {true};
-	tkn::Camera camera_;
-	tkn::ArcballCamCon camcon_;
-	tkn::FPCamCon camconFP_;
+	tkn::ControlledCamera camera_;
 	Mat4f lastVP_;
 	unsigned frameCount_ {};
 
@@ -929,7 +912,6 @@ protected:
 		vpp::TrDs ds;
 		vpp::ViewableImage target;
 		vpp::Framebuffer fb;
-		vpp::SubBuffer ubo;
 		vpp::RenderPass rp;
 		vpp::ViewableImage noise;
 	} scatter_;

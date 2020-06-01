@@ -2,7 +2,7 @@
 #include <tkn/bits.hpp>
 #include <tkn/render.hpp>
 #include <tkn/window.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/types.hpp>
 #include <argagg.hpp>
 
@@ -339,52 +339,56 @@ public:
 		gui().draw(cb);
 	}
 
-	void mouseMove(const swa_mouse_move_event& ev) override {
-		Base::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			Base::scheduleRedraw();
-		}
-	}
-
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(Base::mouseButton(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(App::key(ev)) {
 			return true;
 		}
 
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
+		if(ev.pressed == true && ev.keycode == swa_key_c) {
+			using Ctrl = tkn::ControlledCamera::ControlType;
+			if(camera_.controlType() == Ctrl::firstPerson) {
+				camera_.useControl(Ctrl::arcball);
+			} else if(camera_.controlType() == Ctrl::arcball) {
+				camera_.useControl(Ctrl::firstPerson);
+			}
+
 			return true;
 		}
 
 		return false;
 	}
 
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
+	}
+
+	bool mouseWheel(float dx, float dy) override {
+		if(App::mouseWheel(dx, dy)) {
+			return false;
+		}
+
+		camera_.mouseWheel(dy);
+		return true;
+	}
+
 	void update(double dt) override {
 		Base::update(dt);
-		tkn::checkMovement(camera_, swaDisplay(), dt);
+		camera_.update(swaDisplay(), dt);
 		Base::scheduleRedraw(); // always redraw
-	}
-
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective3RH(fov, aspect, near, far);
-	}
-
-	nytl::Mat4f cameraVP() const {
-		return projectionMatrix() * viewMatrix(camera_);
 	}
 
 	void updateDevice() override {
 		Base::updateDevice();
 
-		if(camera_.update) {
-			camera_.update = false;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 			auto map = gfx_.ubo.memoryMap();
 			auto span = map.span();
 
 			auto scale = 2.f / gridSize_;
-			auto mat = cameraVP() * tkn::scaleMat({scale, scale, scale});
+			auto vp = camera_.viewProjectionMatrix();
+			auto mat = vp * tkn::scaleMat(nytl::Vec3f{scale, scale, scale});
 			tkn::write(span, mat);
 			map.flush();
 		}
@@ -449,7 +453,7 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	const char* name() const override { return "cloth"; }
@@ -472,12 +476,11 @@ protected:
 		vpp::PipelineLayout pipeLayout;
 	} comp_;
 
-	tkn::Camera camera_;
+	tkn::ControlledCamera camera_ {tkn::ControlledCamera::ControlType::arcball};
 	unsigned gridSize_ {64};
 	vpp::SubBuffer nodesBuf_;
 	vpp::SubBuffer tmpNodesBuf_;
 	vpp::SubBuffer indexBuf_;
-	bool rotateView_ {};
 	unsigned indexCount_ {};
 
 	float accumdt_ {};

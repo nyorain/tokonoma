@@ -643,7 +643,7 @@ int saveSkies(float turbidity, const char* outSkies, const char* outData,
 	// - Sky::faceWidth
 	// - Sky::faceHeight
 	// - Sky::sunSize
-	constexpr auto steps = 50u;
+	constexpr auto steps = 100u;
 	constexpr auto faceWidth = tkn::Sky::faceWidth;
 	constexpr auto faceHeight = tkn::Sky::faceHeight;
 	constexpr auto groundAlbedo = Vec3f{0.4, 0.8, 1.0};
@@ -695,6 +695,7 @@ int saveSkies(float turbidity, const char* outSkies, const char* outData,
 		auto& data = datas.emplace_back();
 		data.sunDir = -dir;
 		data.sunIrradiance = sky.sunIrradiance();
+		dlg_info("irrad: {}", data.sunIrradiance);
 		data.skyRadiance = sky.skyRadiance();
 	}
 

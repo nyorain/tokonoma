@@ -462,7 +462,7 @@ public:
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
 			auto V = viewMatrix(camera_);
-			auto P = tkn::perspective3RH<float>(fov, aspect, near, far);
+			auto P = tkn::perspective<float>(fov, aspect, -near, -far);
 			auto VP = P * V;
 			if(updateStep_) {
 				frozenVP_ = VP;

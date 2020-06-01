@@ -8,5 +8,4 @@ layout(set = 0, binding = 0, row_major) uniform Camera {
 
 void main() {
 	gl_Position = camera.proj * vec4(inPos, 1.0);
-	gl_Position.y = -gl_Position.y;
 }

@@ -121,6 +121,13 @@ float gradientNoiseTiled(vec3 v, uvec3 tileSize) {
 }
 
 // worley-noise
+// The search ranges used here are empirically based on what looks
+// acceptable. To get 100% correct voronoiNoise, larger search ranges
+// are needed (even for voronoiNoise1, one should already use
+// a 5x5 search box instead of 3x3 in theory. In practice it almost
+// never matters). The artifacts visible when the search range is too
+// small are usually discontinuities
+
 float voronoiNoise(vec2 v) {
 	vec2 cell = floor(v);
 	vec2 fra = fract(v);
@@ -138,6 +145,63 @@ float voronoiNoise(vec2 v) {
 	}
 
 	return sqrt(minDistSqr);
+}
+
+float voronoiNoise2(vec2 v) {
+	vec2 cell = floor(v);
+	vec2 fra = fract(v);
+
+	// we know the min distance is smaller
+	float minDistSqr = 1000.f;
+	float minDistSqr2 = 1000.f;
+	for(int x = -1; x <= 1; ++x) {
+		for(int y = -1; y <= 1; ++y) {
+			vec2 off = vec2(x, y);
+			vec2 dist = off + random2(cell + off) - fra;
+			float dsqr = dot(dist, dist);
+			if(dsqr < minDistSqr) {
+				minDistSqr2 = minDistSqr;
+				minDistSqr = dsqr;
+			} else if(dsqr < minDistSqr2) {
+				minDistSqr2 = dsqr;
+			}
+		}
+	}
+
+	return sqrt(minDistSqr2);
+}
+
+float voronoiNoise3(vec2 v) {
+	vec2 cell = floor(v);
+	vec2 fra = fract(v);
+
+	// we know the min distance is smaller
+	float minDistSqr = 1000.f; 
+	float minDistSqr2 = 1000.f;
+	float minDistSqr3 = 1000.f;
+
+	// with range 1 some discontinuities will be visible.
+	// almost non with range 2
+	int range = 2;
+	for(int x = -range; x <= range; ++x) {
+		for(int y = -range; y <= range; ++y) {
+			vec2 off = vec2(x, y);
+			vec2 dist = off + random2(cell + off) - fra;
+			float dsqr = dot(dist, dist);
+			if(dsqr < minDistSqr) {
+				minDistSqr3 = minDistSqr2;
+				minDistSqr2 = minDistSqr;
+				minDistSqr = dsqr;
+			} else if(dsqr < minDistSqr2) {
+				minDistSqr3 = minDistSqr2;
+				minDistSqr2 = dsqr;
+			} else if(dsqr < minDistSqr3) {
+				minDistSqr3 = dsqr;
+			}
+		}
+	}
+
+	return sqrt(minDistSqr3);
 }
 
 float voronoiNoise(vec3 v) {
