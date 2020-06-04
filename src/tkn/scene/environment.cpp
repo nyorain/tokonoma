@@ -2,6 +2,7 @@
 #include <tkn/scene/pbr.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/util.hpp>
 #include <tkn/color.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/image.hpp>
@@ -282,15 +283,6 @@ Sky::Baked Sky::bake(Vec3f sunDir, Vec3f ground, float turbidity) {
 	auto sG = arhosek_rgb_skymodelstate_alloc_init(turbidity, ground.y, elevation);
 	auto sB = arhosek_rgb_skymodelstate_alloc_init(turbidity, ground.z, elevation);
 
-	const auto cosSunSize = std::cos(sunSize);
-
-	auto groundSpectral = SpectralColor::fromSRGBRefl(ground);
-	std::array<ArHosekSkyModelState*, nSpectralSamples> sSpectral;
-	for(auto i = 0u; i < nSpectralSamples; ++i) {
-		sSpectral[i] = arhosekskymodelstate_alloc_init(elevation, turbidity,
-			groundSpectral.samples[i]);
-	}
-
 	// store cubemap pixels and already project onto SH9
 	float wsum = 0.f;
 	for(auto face = 0u; face < 6u; ++face) {
@@ -337,20 +329,38 @@ Sky::Baked Sky::bake(Vec3f sunDir, Vec3f ground, float turbidity) {
 	arhosekskymodelstate_free(sG);
 	arhosekskymodelstate_free(sB);
 
-	// evaluate sun irradiance
+	out.sunIrradiance = Sky::sunIrradiance(turbidity, ground, sunDir);
+	float irrad = 1.f / irradianceIntegral(sunSize);
+	out.avgSunRadiance = irrad * out.sunIrradiance;
+
+	return out;
+}
+
+Vec3f Sky::sunIrradiance(float turbidity, Vec3f ground, Vec3f toSun) {
+	auto theta = mangle(toSun, up);
+	auto elevation = 0.5f * pi - theta;
+	auto groundSpectral = SpectralColor::fromRGBRefl(ground);
+	std::array<ArHosekSkyModelState*, nSpectralSamples> sSpectral;
+	for(auto i = 0u; i < nSpectralSamples; ++i) {
+		sSpectral[i] = arhosekskymodelstate_alloc_init(elevation, turbidity,
+			groundSpectral.samples[i]);
+	}
+
+	const auto cosSunSize = std::cos(sunSize);
+
 	auto nSunSamples = 8u;
-	auto [sunBaseX, sunBaseY] = base(sunDir);
+	auto [sunBaseX, sunBaseY] = base(toSun);
 	nytl::Vec3f sunIrradiance {};
 	for(auto x = 0u; x < nSunSamples; ++x) {
 		for(auto y = 0u; y < nSunSamples; ++y) {
 			auto u = (x + 0.5f) / nSunSamples;
 			auto v = (y + 0.5f) / nSunSamples;
 			auto coneDir = sampleDirectionCone(u, v, cosSunSize);
-			auto sampleDir = coneDir.z * sunDir +
+			auto sampleDir = coneDir.z * toSun +
 				coneDir.x * sunBaseX + coneDir.y * sunBaseY;
 
 			auto theta = mangle(sampleDir, up);
-			auto gamma = mangle(sampleDir, sunDir);
+			auto gamma = mangle(sampleDir, toSun);
 
 			SpectralColor radiance;
 			for(auto i = 0u; i < nSpectralSamples; ++i) {
@@ -358,8 +368,8 @@ Sky::Baked Sky::bake(Vec3f sunDir, Vec3f ground, float turbidity) {
 					sSpectral[i], theta, gamma, radiance.wavelength(i));
 			}
 
-			auto f = std::clamp(dot(sampleDir, sunDir), 0.f, 1.f);
-			sunIrradiance += f * XYZtoSRGB(toXYZ(radiance));
+			auto f = std::clamp(dot(sampleDir, toSun), 0.f, 1.f);
+			sunIrradiance += f * XYZtoRGB(toXYZ(radiance));
 		}
 	}
 
@@ -370,18 +380,11 @@ Sky::Baked Sky::bake(Vec3f sunDir, Vec3f ground, float turbidity) {
 	auto pdf = sampleDirectionCone_PDF(cosSunSize);
 	sunIrradiance *= 1.f / (nSunSamples * nSunSamples * pdf);
 
-	out.sunIrradiance = fullLumEfficacy * sunIrradiance;
-
-	// TODO: no idea where factor comes from. We need it as well to get
-	// realistic sun irradiance values here (around 100.000 at daytime).
+	// TODO: no idea where factor 100 comes from. We need it as well to get
+	// realistic sun irradiance values here (around 100k at daytime).
 	// MJP's comment: transform to our coordinate space.
 	// But per docs, the hosek model uses the same units we use...
-	out.sunIrradiance *= 100.f;
-
-	float irrad = 1.f / irradianceIntegral(sunSize);
-	out.avgSunRadiance = irrad * out.sunIrradiance;
-
-	return out;
+	return 100.f * fullLumEfficacy * sunIrradiance;
 }
 
 Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,

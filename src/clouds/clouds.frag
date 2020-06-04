@@ -55,6 +55,8 @@ const vec3 worldMax = 2 * vec3(1.0, 1.0, 1.0);
 
 float world(vec3 pos) {
 	if(clamp(pos, worldMin, worldMax) == pos) {
+		pos += ubo.time * vec3(0.01, 0.0, 0.05);
+
 		float heps = 0.1;
 		float hf = smoothstep(worldMin.y, worldMin.y + heps, pos.y);
 		hf *= (1 - smoothstep(worldMax.y - heps, worldMax.y, pos.y));
@@ -78,6 +80,8 @@ float world(vec3 pos) {
 
 float worldRough(vec3 pos) {
 	if(clamp(pos, worldMin, worldMax) == pos) {
+		pos += ubo.time * vec3(0.01, 0.0, 0.05);
+
 		float heps = 0.1;
 		float hf = smoothstep(worldMin.y, worldMin.y + heps, pos.y);
 		hf *= (1 - smoothstep(worldMax.y - heps, worldMax.y, pos.y));
@@ -97,6 +101,8 @@ float worldRough(vec3 pos) {
 
 float worldLod(vec3 pos) {
 	if(clamp(pos, worldMin, worldMax) == pos) {
+		pos += ubo.time * vec3(0.01, 0.0, 0.05);
+
 		uint lod = 1u;
 		float heps = 0.1;
 		float hf = smoothstep(worldMin.y, worldMin.y + heps, pos.y);
@@ -251,5 +257,6 @@ void main() {
 
 	// tonemap
 	light = 1.0 - exp(-light);
-	outFragColor = vec4(vec3(light), 1.0 - transmittance);
+	// outFragColor = vec4(vec3(light), 1.0 - transmittance);
+	outFragColor = vec4(vec3(light), 1.0);
 }

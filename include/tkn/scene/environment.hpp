@@ -3,6 +3,7 @@
 #include <tkn/texture.hpp>
 #include <tkn/types.hpp>
 #include <tkn/render.hpp>
+#include <tkn/f16.hpp>
 #include <tkn/sh.hpp>
 #include <vpp/fwd.hpp>
 #include <vpp/image.hpp>
@@ -125,6 +126,9 @@ protected:
 
 // Dynamic sky environment based on an analytical sky model.
 // Produces a cubemap in rgba16fSfloat format.
+// Uses the reference HosekWilkie implementation internally.
+// See tkn/sky.hpp for a custom implementation that has several
+// advantages (and does not need cubemaps).
 class Sky {
 public:
 	static constexpr auto sunSize = nytl::radians(0.27f);
@@ -142,14 +146,20 @@ public:
 		nytl::Vec3f sunIrradiance {};
 	};
 
-	static Baked bake(Vec3f sunDir, Vec3f groundAlbeo, float turbidity);
+	static Baked bake(Vec3f toSun, Vec3f groundAlbeo, float turbidity);
+
+	// Includes sky irradiance for the sun's solids angle as well.
+	// This is not terribly cheap to compute, unfortunately.
+	// Strictly speaking, returns illuminance.
+	static Vec3f sunIrradiance(float turbidity, Vec3f groundAlbedo,
+		Vec3f toSun);
 
 public:
 	Sky() = default;
 
 	// When no dslayout is given, will not create ds.
 	Sky(const vpp::Device& dev, const vpp::TrDsLayout*,
-		Vec3f sunDir, Vec3f groundAlbedo, float turbidity);
+		Vec3f toSun, Vec3f groundAlbedo, float turbidity);
 
 	const auto& cubemap() const { return cubemap_; }
 	const auto& ds() const { return ds_; }

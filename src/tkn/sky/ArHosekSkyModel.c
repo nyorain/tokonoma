@@ -4,7 +4,7 @@ This source is published under the following 3-clause BSD license.
 Copyright (c) 2012 - 2013, Lukas Hosek and Alexander Wilkie
 All rights reserved.
 
-Redistribution and use in source and binary forms, with or without 
+Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 
     * Redistributions of source code must retain the above copyright
@@ -12,8 +12,8 @@ modification, are permitted provided that the following conditions are met:
     * Redistributions in binary form must reproduce the above copyright
       notice, this list of conditions and the following disclaimer in the
       documentation and/or other materials provided with the distribution.
-    * None of the names of the contributors may be used to endorse or promote 
-      products derived from this software without specific prior written 
+    * None of the names of the contributors may be used to endorse or promote
+      products derived from this software without specific prior written
       permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
@@ -40,24 +40,24 @@ and the 2013 IEEE CG&A paper
 
        "Adding a Solar Radiance Function to the Hosek Skylight Model"
 
-                                   both by 
+                                   both by
 
                        Lukas Hosek and Alexander Wilkie
                 Charles University in Prague, Czech Republic
 
 
                         Version: 1.4a, February 22nd, 2013
-                        
+
 Version history:
 
 1.4a  February 22nd, 2013
-      Removed unnecessary and counter-intuitive solar radius parameters 
+      Removed unnecessary and counter-intuitive solar radius parameters
       from the interface of the colourspace sky dome initialisation functions.
 
 1.4   February 11th, 2013
       Fixed a bug which caused the relative brightness of the solar disc
-      and the sky dome to be off by a factor of about 6. The sun was too 
-      bright: this affected both normal and alien sun scenarios. The 
+      and the sky dome to be off by a factor of about 6. The sun was too
+      bright: this affected both normal and alien sun scenarios. The
       coefficients of the solar radiance function were changed to fix this.
 
 1.3   January 21st, 2013 (not released to the public)
@@ -81,7 +81,7 @@ Version history:
       the result of a simple conversion from spectral data via the CIE 2 degree
       standard observer matching functions. Therefore, after multiplication
       with 683 lm / W, the Y channel now corresponds to luminance in lm.
-     
+
 1.0   May 11th, 2012
       Initial release.
 
@@ -113,7 +113,7 @@ All instructions on how to use this code are in the accompanying header file.
 #define NIL                         0
 #endif
 
-#ifndef MATH_PI 
+#ifndef MATH_PI
 #define MATH_PI                     3.141592653589793
 #endif
 
@@ -139,20 +139,20 @@ All instructions on how to use this code are in the accompanying header file.
 
 // internal definitions
 
-typedef double *ArHosekSkyModel_Dataset;
-typedef double *ArHosekSkyModel_Radiance_Dataset;
+typedef const double *ArHosekSkyModel_Dataset;
+typedef const double *ArHosekSkyModel_Radiance_Dataset;
 
 // internal functions
 
 void ArHosekSkyModel_CookConfiguration(
-        ArHosekSkyModel_Dataset       dataset, 
-        ArHosekSkyModelConfiguration  config, 
-        double                        turbidity, 
-        double                        albedo, 
+        ArHosekSkyModel_Dataset       dataset,
+        ArHosekSkyModelConfiguration  config,
+        double                        turbidity,
+        double                        albedo,
         double                        solar_elevation
         )
 {
-    double  * elev_matrix;
+    const double  * elev_matrix;
 
     int     int_turbidity = (int)turbidity;
     double  turbidity_rem = turbidity - (double)int_turbidity;
@@ -162,14 +162,14 @@ void ArHosekSkyModel_CookConfiguration(
     // alb 0 low turb
 
     elev_matrix = dataset + ( 9 * 6 * (int_turbidity-1) );
-    
-    
+
+
     for( unsigned int i = 0; i < 9; ++i )
     {
         //(1-t).^3* A1 + 3*(1-t).^2.*t * A2 + 3*(1-t) .* t .^ 2 * A3 + t.^3 * A4;
-        config[i] = 
-        (1.0-albedo) * (1.0 - turbidity_rem) 
-        * ( pow(1.0-solar_elevation, 5.0) * elev_matrix[i]  + 
+        config[i] =
+        (1.0-albedo) * (1.0 - turbidity_rem)
+        * ( pow(1.0-solar_elevation, 5.0) * elev_matrix[i]  +
            5.0  * pow(1.0-solar_elevation, 4.0) * solar_elevation * elev_matrix[i+9] +
            10.0*pow(1.0-solar_elevation, 3.0)*pow(solar_elevation, 2.0) * elev_matrix[i+18] +
            10.0*pow(1.0-solar_elevation, 2.0)*pow(solar_elevation, 3.0) * elev_matrix[i+27] +
@@ -182,9 +182,9 @@ void ArHosekSkyModel_CookConfiguration(
     for(unsigned int i = 0; i < 9; ++i)
     {
         //(1-t).^3* A1 + 3*(1-t).^2.*t * A2 + 3*(1-t) .* t .^ 2 * A3 + t.^3 * A4;
-        config[i] += 
+        config[i] +=
         (albedo) * (1.0 - turbidity_rem)
-        * ( pow(1.0-solar_elevation, 5.0) * elev_matrix[i]  + 
+        * ( pow(1.0-solar_elevation, 5.0) * elev_matrix[i]  +
            5.0  * pow(1.0-solar_elevation, 4.0) * solar_elevation * elev_matrix[i+9] +
            10.0*pow(1.0-solar_elevation, 3.0)*pow(solar_elevation, 2.0) * elev_matrix[i+18] +
            10.0*pow(1.0-solar_elevation, 2.0)*pow(solar_elevation, 3.0) * elev_matrix[i+27] +
@@ -200,9 +200,9 @@ void ArHosekSkyModel_CookConfiguration(
     for(unsigned int i = 0; i < 9; ++i)
     {
         //(1-t).^3* A1 + 3*(1-t).^2.*t * A2 + 3*(1-t) .* t .^ 2 * A3 + t.^3 * A4;
-        config[i] += 
+        config[i] +=
         (1.0-albedo) * (turbidity_rem)
-        * ( pow(1.0-solar_elevation, 5.0) * elev_matrix[i]  + 
+        * ( pow(1.0-solar_elevation, 5.0) * elev_matrix[i]  +
            5.0  * pow(1.0-solar_elevation, 4.0) * solar_elevation * elev_matrix[i+9] +
            10.0*pow(1.0-solar_elevation, 3.0)*pow(solar_elevation, 2.0) * elev_matrix[i+18] +
            10.0*pow(1.0-solar_elevation, 2.0)*pow(solar_elevation, 3.0) * elev_matrix[i+27] +
@@ -215,9 +215,9 @@ void ArHosekSkyModel_CookConfiguration(
     for(unsigned int i = 0; i < 9; ++i)
     {
         //(1-t).^3* A1 + 3*(1-t).^2.*t * A2 + 3*(1-t) .* t .^ 2 * A3 + t.^3 * A4;
-        config[i] += 
+        config[i] +=
         (albedo) * (turbidity_rem)
-        * ( pow(1.0-solar_elevation, 5.0) * elev_matrix[i]  + 
+        * ( pow(1.0-solar_elevation, 5.0) * elev_matrix[i]  +
            5.0  * pow(1.0-solar_elevation, 4.0) * solar_elevation * elev_matrix[i+9] +
            10.0*pow(1.0-solar_elevation, 3.0)*pow(solar_elevation, 2.0) * elev_matrix[i+18] +
            10.0*pow(1.0-solar_elevation, 2.0)*pow(solar_elevation, 3.0) * elev_matrix[i+27] +
@@ -227,13 +227,13 @@ void ArHosekSkyModel_CookConfiguration(
 }
 
 double ArHosekSkyModel_CookRadianceConfiguration(
-        ArHosekSkyModel_Radiance_Dataset  dataset, 
-        double                            turbidity, 
-        double                            albedo, 
+        ArHosekSkyModel_Radiance_Dataset  dataset,
+        double                            turbidity,
+        double                            albedo,
         double                            solar_elevation
         )
 {
-    double* elev_matrix;
+    const double* elev_matrix;
 
     int int_turbidity = (int)turbidity;
     double turbidity_rem = turbidity - (double)int_turbidity;
@@ -289,8 +289,8 @@ double ArHosekSkyModel_CookRadianceConfiguration(
 }
 
 double ArHosekSkyModel_GetRadianceInternal(
-        ArHosekSkyModelConfiguration  configuration, 
-        double                        theta, 
+        ArHosekSkyModelConfiguration  configuration,
+        double                        theta,
         double                        gamma
         )
 {
@@ -321,14 +321,14 @@ ArHosekSkyModelState  * arhosekskymodelstate_alloc_init(
     for( unsigned int wl = 0; wl < 11; ++wl )
     {
         ArHosekSkyModel_CookConfiguration(
-            datasets[wl], 
-            state->configs[wl], 
-            atmospheric_turbidity, 
-            ground_albedo, 
+            datasets[wl],
+            state->configs[wl],
+            atmospheric_turbidity,
+            ground_albedo,
             solar_elevation
             );
 
-        state->radiances[wl] = 
+        state->radiances[wl] =
             ArHosekSkyModel_CookRadianceConfiguration(
                 datasetsRad[wl],
                 atmospheric_turbidity,
@@ -368,7 +368,7 @@ double art_blackbody_dd_value(
     double  c1 = 3.74177 * 10E-17;
     double  c2 = 0.0143878;
     double  value;
-    
+
     value =   ( c1 / ( pow( lambda, 5.0 ) ) )
             * ( 1.0 / ( exp( c2 / ( lambda * temperature ) ) - 1.0 ) );
 
@@ -377,9 +377,9 @@ double art_blackbody_dd_value(
 
 //   'originalSolarRadianceTable[]'
 //
-//   The solar spectrum incident at the top of the atmosphere, as it was used 
-//   in the brute force path tracer that generated the reference results the 
-//   model was fitted to. We need this as the yardstick to compare any altered 
+//   The solar spectrum incident at the top of the atmosphere, as it was used
+//   in the brute force path tracer that generated the reference results the
+//   model was fitted to. We need this as the yardstick to compare any altered
 //   Blackbody emission spectra for alien world stars to.
 
 //   This is just the data from the Preetham paper, extended into the UV range.
@@ -412,40 +412,40 @@ ArHosekSkyModelState  * arhosekskymodelstate_alienworld_alloc_init(
     state->turbidity    = atmospheric_turbidity;
     state->albedo       = ground_albedo;
     state->elevation    = solar_elevation;
-    
+
     for( unsigned int wl = 0; wl < 11; ++wl )
     {
         //   Basic init as for the normal scenario
-        
+
         ArHosekSkyModel_CookConfiguration(
-            datasets[wl], 
-            state->configs[wl], 
-            atmospheric_turbidity, 
-            ground_albedo, 
+            datasets[wl],
+            state->configs[wl],
+            atmospheric_turbidity,
+            ground_albedo,
             solar_elevation
             );
 
-        state->radiances[wl] = 
+        state->radiances[wl] =
             ArHosekSkyModel_CookRadianceConfiguration(
                 datasetsRad[wl],
-                atmospheric_turbidity, 
+                atmospheric_turbidity,
                 ground_albedo,
                 solar_elevation
                 );
-        
+
         //   The wavelength of this band in nanometers
-        
+
         double  owl = ( 320.0 + 40.0 * wl ) * 10E-10;
-        
+
         //   The original intensity we just computed
-        
+
         double  osr = originalSolarRadianceTable[wl];
-        
+
         //   The intensity of a blackbody with the desired temperature
         //   The fudge factor described above is used to make sure the BB
         //   function matches the used radiance data reasonably well
         //   in magnitude.
-        
+
         double  nsr =
               art_blackbody_dd_value(solar_surface_temperature_kelvin, owl)
             * blackbody_scaling_factor;
@@ -459,53 +459,53 @@ ArHosekSkyModelState  * arhosekskymodelstate_alienworld_alloc_init(
     //   We then compute the average correction factor of all wavebands.
 
     //   Theoretically, some weighting to favour wavelengths human vision is
-    //   more sensitive to could be introduced here - think V(lambda). But 
+    //   more sensitive to could be introduced here - think V(lambda). But
     //   given that the whole effort is not *that* accurate to begin with (we
     //   are talking about the appearance of alien worlds, after all), simple
     //   averaging over the visible wavelenghts (! - this is why we start at
     //   WL #2, and only use 2-11) seems like a sane first approximation.
-    
+
     double  correctionFactor = 0.0;
-    
+
     for ( unsigned int i = 2; i < 11; i++ )
     {
         correctionFactor +=
             state->emission_correction_factor_sun[i];
     }
-    
-    //   This is the average ratio in emitted energy between our sun, and an 
+
+    //   This is the average ratio in emitted energy between our sun, and an
     //   equally large sun with the blackbody spectrum we requested.
-    
+
     //   Division by 9 because we only used 9 of the 11 wavelengths for this
     //   (see above).
-    
+
     double  ratio = correctionFactor / 9.0;
 
     //   This ratio is then used to determine the radius of the alien sun
     //   on the sky dome. The additional factor 'solar_intensity' can be used
     //   to make the alien sun brighter or dimmer compared to our sun.
-    
+
     state->solar_radius =
           ( sqrt( solar_intensity ) * TERRESTRIAL_SOLAR_RADIUS )
         / sqrt( ratio );
 
     //   Finally, we have to reduce the scaling factor of the sky by the
-    //   ratio used to scale the solar disc size. The rationale behind this is 
-    //   that the scaling factors apply to the new blackbody spectrum, which 
-    //   can be more or less bright than the one our sun emits. However, we 
-    //   just scaled the size of the alien solar disc so it is roughly as 
-    //   bright (in terms of energy emitted) as the terrestrial sun. So the sky 
-    //   dome has to be reduced in brightness appropriately - but not in an 
+    //   ratio used to scale the solar disc size. The rationale behind this is
+    //   that the scaling factors apply to the new blackbody spectrum, which
+    //   can be more or less bright than the one our sun emits. However, we
+    //   just scaled the size of the alien solar disc so it is roughly as
+    //   bright (in terms of energy emitted) as the terrestrial sun. So the sky
+    //   dome has to be reduced in brightness appropriately - but not in an
     //   uniform fashion across wavebands. If we did that, the sky colour would
     //   be wrong.
-    
+
     for ( unsigned int i = 0; i < 11; i++ )
     {
         state->emission_correction_factor_sky[i] =
               solar_intensity
             * state->emission_correction_factor_sun[i] / ratio;
     }
-    
+
     return state;
 }
 
@@ -518,8 +518,8 @@ void arhosekskymodelstate_free(
 
 double arhosekskymodel_radiance(
         ArHosekSkyModelState  * state,
-        double                  theta, 
-        double                  gamma, 
+        double                  theta,
+        double                  gamma,
         double                  wavelength
         )
 {
@@ -530,7 +530,7 @@ double arhosekskymodel_radiance(
 
     double interp = fmod((wavelength - 320.0 ) / 40.0, 1.0);
 
-    double val_low = 
+    double val_low =
           ArHosekSkyModel_GetRadianceInternal(
                 state->configs[low_wl],
                 theta,
@@ -564,8 +564,8 @@ double arhosekskymodel_radiance(
 // xyz and rgb versions
 
 ArHosekSkyModelState  * arhosek_xyz_skymodelstate_alloc_init(
-        const double  turbidity, 
-        const double  albedo, 
+        const double  turbidity,
+        const double  albedo,
         const double  elevation
         )
 {
@@ -575,38 +575,38 @@ ArHosekSkyModelState  * arhosek_xyz_skymodelstate_alloc_init(
     state->turbidity    = turbidity;
     state->albedo       = albedo;
     state->elevation    = elevation;
-    
+
     for( unsigned int channel = 0; channel < 3; ++channel )
     {
         ArHosekSkyModel_CookConfiguration(
-            datasetsXYZ[channel], 
-            state->configs[channel], 
-            turbidity, 
-            albedo, 
+            datasetsXYZ[channel],
+            state->configs[channel],
+            turbidity,
+            albedo,
             elevation
             );
-        
-        state->radiances[channel] = 
+
+        state->radiances[channel] =
         ArHosekSkyModel_CookRadianceConfiguration(
             datasetsXYZRad[channel],
-            turbidity, 
+            turbidity,
             albedo,
             elevation
             );
     }
-    
+
     return state;
 }
 
 
 ArHosekSkyModelState  * arhosek_rgb_skymodelstate_alloc_init(
-        const double  turbidity, 
-        const double  albedo, 
+        const double  turbidity,
+        const double  albedo,
         const double  elevation
         )
 {
     ArHosekSkyModelState* state = ALLOC(ArHosekSkyModelState);
-    
+
     state->solar_radius = TERRESTRIAL_SOLAR_RADIUS;
     state->turbidity    = turbidity;
     state->albedo       = albedo;
@@ -615,38 +615,38 @@ ArHosekSkyModelState  * arhosek_rgb_skymodelstate_alloc_init(
     for( unsigned int channel = 0; channel < 3; ++channel )
     {
         ArHosekSkyModel_CookConfiguration(
-            datasetsRGB[channel], 
-            state->configs[channel], 
-            turbidity, 
-            albedo, 
+            datasetsRGB[channel],
+            state->configs[channel],
+            turbidity,
+            albedo,
             elevation
             );
-        
-        state->radiances[channel] = 
+
+        state->radiances[channel] =
         ArHosekSkyModel_CookRadianceConfiguration(
             datasetsRGBRad[channel],
-            turbidity, 
+            turbidity,
             albedo,
             elevation
             );
     }
-    
+
     return state;
 }
 
 double arhosek_tristim_skymodel_radiance(
     ArHosekSkyModelState  * state,
-    double                  theta, 
-    double                  gamma, 
+    double                  theta,
+    double                  gamma,
     int                     channel
     )
 {
     return
         ArHosekSkyModel_GetRadianceInternal(
-            state->configs[channel], 
-            theta, 
-            gamma 
-            ) 
+            state->configs[channel],
+            theta,
+            gamma
+            )
         * state->radiances[channel];
 }
 
@@ -662,9 +662,9 @@ double arhosekskymodel_sr_internal(
 {
     int pos =
         (int) (pow(2.0*elevation / MATH_PI, 1.0/3.0) * pieces); // floor
-    
+
     if ( pos > 44 ) pos = 44;
-    
+
     const double break_x =
         pow(((double) pos / (double) pieces), 3.0) * (MATH_PI * 0.5);
 
@@ -697,11 +697,11 @@ double arhosekskymodel_solar_radiance_internal2(
         && state->turbidity >= 1.0
         && state->turbidity <= 10.0
         );
-            
-    
+
+
     int     turb_low  = (int) state->turbidity - 1;
     double  turb_frac = state->turbidity - (double) (turb_low + 1);
-    
+
     if ( turb_low == 9 )
     {
         turb_low  = 8;
@@ -710,7 +710,7 @@ double arhosekskymodel_solar_radiance_internal2(
 
     int    wl_low  = (int) ((wavelength - 320.0) / 40.0);
     double wl_frac = fmod(wavelength, 40.0) / 40.0;
-    
+
     if ( wl_low == 10 )
     {
         wl_low = 9;
@@ -752,12 +752,12 @@ double arhosekskymodel_solar_radiance_internal2(
           );
 
     double ldCoefficient[6];
-    
+
     for ( int i = 0; i < 6; i++ )
         ldCoefficient[i] =
               (1.0 - wl_frac) * limbDarkeningDatasets[wl_low  ][i]
             +        wl_frac  * limbDarkeningDatasets[wl_low+1][i];
-    
+
     // sun distance to diameter ratio, squared
 
     const double sol_rad_sin = sin(state->solar_radius);
@@ -766,7 +766,7 @@ double arhosekskymodel_solar_radiance_internal2(
     double sc2 = 1.0 - ar2 * singamma * singamma;
     if (sc2 < 0.0 ) sc2 = 0.0;
     double sampleCosine = sqrt (sc2);
-    
+
     //   The following will be improved in future versions of the model:
     //   here, we directly use fitted 5th order polynomials provided by the
     //   astronomical community for the limb darkening effect. Astronomers need
@@ -790,8 +790,8 @@ double arhosekskymodel_solar_radiance_internal2(
 
 double arhosekskymodel_solar_radiance(
         ArHosekSkyModelState  * state,
-        double                  theta, 
-        double                  gamma, 
+        double                  theta,
+        double                  gamma,
         double                  wavelength
         )
 {
@@ -810,7 +810,7 @@ double arhosekskymodel_solar_radiance(
             gamma,
             wavelength
             );
-    
+
     return  direct_radiance + inscattered_radiance;
 }
 

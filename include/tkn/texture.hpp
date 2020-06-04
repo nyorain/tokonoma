@@ -14,6 +14,7 @@
 //  all constructors/init/create as functions).
 //  And then maybe create a high level texture class, storing
 //  formats, size, layers, mip etc?
+//  Unify with fill api at the bottom.
 
 namespace tkn {
 
@@ -135,5 +136,33 @@ public:
 protected:
 	vpp::ViewableImage image_;
 };
+
+// new, low-level experimental api
+struct FillData {
+	vpp::Image::InitData initStageImage;
+	vpp::SubBuffer::InitData initStageBuffer;
+
+	vpp::Image stageImage;
+	vpp::SubBuffer stageBuffer;
+
+	const vpp::Image* target;
+	vk::Format dstFormat;
+	std::unique_ptr<ImageProvider> source;
+};
+
+// TODO: support cubemaps.
+// But I guess we could even do that transparently for the caller.
+// Just abolish ImageProvider::faces() and instead make the ktx
+// loader (or other loaders) provide them as layers, the way
+// that vulkan requires it. Then this already supports cubemaps.
+// TODO: support custom allocators, something like WorkBatcher. But better
+
+// FillData must remain valid until the CommandBuffer has finished execution.
+// Responsibility of the caller to make sure the image can be filled with all
+// the data the given provider provides and that the requires transfer/blit
+// usage flags in the target image are set. Will blit if needed.
+FillData createFill(const vpp::Image&, vk::Format,
+	std::unique_ptr<ImageProvider>);
+void doFill(FillData&, vk::CommandBuffer cb);
 
 } // namespace tkn

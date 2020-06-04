@@ -16,24 +16,26 @@
 
 namespace tkn {
 
-constexpr auto matXYZToSRGB = nytl::Mat3f {
-	+3.2404542, -1.5371385, -0.4985314,
-	-0.9692660, +1.8760108, +0.0415560,
-	+0.0556434, -0.2040259, +1.0572252,
+// - https://en.wikipedia.org/wiki/SRGB
+constexpr auto matXYZToRGB = nytl::Mat3f {
+	+3.24096994, -1.53738318, -0.49861076,
+	-0.96924364, +1.87596740, +0.04155506,
+	+0.05563008, -0.20397696, +1.05697151
 };
 
-constexpr auto matSRGBToXYZ = nytl::Mat3f {
-	0.4124564, 0.3575761, 0.1804375,
- 	0.2126729, 0.7151522, 0.0721750,
- 	0.0193339, 0.1191920, 0.9503041,
+constexpr auto matRGBToXYZ = nytl::Mat3f {
+	0.41239080, 0.35758434, 0.18048079,
+ 	0.21263901, 0.71516868, 0.07219232,
+ 	0.01933082, 0.11919478, 0.95053215,
 };
 
-[[nodiscard]] constexpr nytl::Vec3f XYZtoSRGB(nytl::Vec3f xyz) {
-	return matXYZToSRGB * xyz;
+// Converts from/to linear srgb.
+[[nodiscard]] constexpr nytl::Vec3f XYZtoRGB(nytl::Vec3f xyz) {
+	return matXYZToRGB * xyz;
 }
 
-[[nodiscard]] constexpr nytl::Vec3f SRGBtoXYZ(nytl::Vec3f rgb) {
-	return matSRGBToXYZ * rgb;
+[[nodiscard]] constexpr nytl::Vec3f RGBtoXYZ(nytl::Vec3f rgb) {
+	return matRGBToXYZ * rgb;
 }
 
 // SampledSpectrum
@@ -89,11 +91,11 @@ struct SpectralColor : SampledSpectrum<nSpectralSamples> {
 	static constexpr auto lambdaStart = 400u;
 	static constexpr auto lambdaEnd = 700u;
 
-	// Conversion from RGB to a spectrum cannot be solved uniquely.
+	// Conversion from RGB (linear srgb) to a spectrum cannot be solved uniquely.
 	// Just tries its best to deliver a smooth spectrum.
 	// Will clamp the result to positive values.
-	[[nodiscard]] static SpectralColor fromSRGBIllum(const nytl::Vec3f&);
-	[[nodiscard]] static SpectralColor fromSRGBRefl(const nytl::Vec3f&);
+	[[nodiscard]] static SpectralColor fromRGBIllum(const nytl::Vec3f&);
+	[[nodiscard]] static SpectralColor fromRGBRefl(const nytl::Vec3f&);
 
 	// Re-samples the given spectrum of 'n' samples given in 'vals',
 	// with the associated wavelengths 'lambda'. The sample wavelengths

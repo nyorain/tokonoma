@@ -71,7 +71,7 @@ int main(int argc, const char** argv) {
 		"shproj", {"--shproj"},
 		"Project an irradiance map onto spherical harmonics", 1});
 	parser.definitions.push_back({
-		"bakesky", {"--bakesky"},
+		"bake-sky", {"--bake-sky"},
 		"Bakes environment maps and irradiance spherical harmonics data for "
 			"hosek-wilkie skies for given turbidity", 1});
 
@@ -94,7 +94,7 @@ int main(int argc, const char** argv) {
 	}
 
 	auto args = tkn::HeadlessArgs(result);
-	if(result.has_option("bakesky")) {
+	if(result.has_option("bake-sky")) {
 		args.featureChecker = [](tkn::Features& enable, const tkn::Features& supported) {
 			if(!supported.base.features.imageCubeArray) {
 				dlg_fatal("Required feature 'imageCubeArray' not supported");

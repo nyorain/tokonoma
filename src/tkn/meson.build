@@ -45,6 +45,7 @@ tkn_src = [
 	'headeronly.cpp',
 	'timeWidget.cpp',
 	'taa.cpp',
+	'sky.cpp',
 
 	'scene/scene.cpp',
 	'scene/material.cpp',

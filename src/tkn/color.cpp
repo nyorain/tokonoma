@@ -194,7 +194,7 @@ const Spectra& staticSpectra() {
 
 } // anon namespace
 
-SpectralColor SpectralColor::fromSRGBIllum(const nytl::Vec3f& rgb) {
+SpectralColor SpectralColor::fromRGBIllum(const nytl::Vec3f& rgb) {
 	auto [r, g, b] = rgb;
 	auto& spects = staticSpectra();
 	SpectralColor out;
@@ -236,7 +236,7 @@ SpectralColor SpectralColor::fromSRGBIllum(const nytl::Vec3f& rgb) {
 	return out;
 }
 
-SpectralColor SpectralColor::fromSRGBRefl(const nytl::Vec3f& rgb) {
+SpectralColor SpectralColor::fromRGBRefl(const nytl::Vec3f& rgb) {
 	auto [r, g, b] = rgb;
 	auto& spects = staticSpectra();
 	SpectralColor out {};

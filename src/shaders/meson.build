@@ -76,6 +76,7 @@ shaders_src = {
 		['shaders/convolute.comp'],
 		['shaders/brdflut.comp'],
 		['shaders/texture.frag'],
+		['shaders/textureTonemap.frag'],
 		['shaders/simple3.vert'],
 		['shaders/simple2.vert'],
 		['shaders/color.frag'],

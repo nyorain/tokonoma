@@ -11,9 +11,6 @@
 
 namespace tkn {
 
-constexpr auto fullLumEfficacy = 683.f;
-constexpr auto f16Scale = 0.00001f;
-
 /// Creates a cubemap from an equirect environment map.
 class Cubemapper {
 public:

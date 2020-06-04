@@ -4,7 +4,7 @@ project('tokonoma', ['cpp', 'c'],
 	meson_version: '>=0.51',
 	default_options: [
 		'cpp_std=c++17',
-		'c_std=c99',
+		'c_std=c11',
   		'warning_level=3',
   		'werror=false'])
 
@@ -340,6 +340,11 @@ scatter = build_target('scatter', [
 
 clouds = build_target('clouds', [
 		'src/clouds/main.cpp',
+	], dependencies: [tkn_dep],
+	target_type: exetarget)
+
+sky = build_target('sky', [
+		'src/sky/main.cpp',
 	], dependencies: [tkn_dep],
 	target_type: exetarget)
 

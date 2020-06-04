@@ -1,7 +1,5 @@
 // Simple forward renderer mainly as reference for other rendering
 // concepts. Also serves as 3D audio for some reason.
-// TODO: severely crippled for android atm. Fix that.
-// See the fragment shader
 
 #include <tkn/config.hpp>
 #include <tkn/ccam.hpp>
@@ -12,6 +10,7 @@
 #include <tkn/transform.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/util.hpp>
 #include <tkn/gltf.hpp>
 #include <tkn/quaternion.hpp>
 #include <tkn/scene/shape.hpp>
@@ -78,6 +77,8 @@ public:
 
 	static constexpr float near = 0.1f;
 	static constexpr float far = 20.f;
+
+	static constexpr auto skyGroundAlbedo = Vec3f{0.7f, 0.8f, 1.f};
 
 	// perspective
 	static constexpr float fov = 0.5 * nytl::constants::pi;
@@ -320,7 +321,7 @@ public:
 		updateLight_ = true;
 
 		sky_ = {vkDevice(), &skyboxRenderer_.dsLayout(), -dirLight_.data.dir,
-			Vec3f{1.f, 1.f, 1.f}, turbidity_};
+			skyGroundAlbedo, turbidity_};
 		dirLight_.data.color = tkn::f16Scale * sky_.sunIrradiance();
 
 		// bring lights initially into correct layout and stuff
@@ -646,7 +647,7 @@ public:
 
 	void updateSky() {
 		newSky_ = {vkDevice(), &skyboxRenderer_.dsLayout(),
-			-dirLight_.data.dir, Vec3f{1.f, 1.f, 1.f}, turbidity_};
+			-dirLight_.data.dir, skyGroundAlbedo, turbidity_};
 		dirLight_.data.color = tkn::f16Scale * newSky_->sunIrradiance();
 		dlg_info("light color: {}", dirLight_.data.color);
 	}

@@ -153,8 +153,8 @@ Texture::Texture(InitData& data, const WorkBatcher& wb,
 		auto dataSize = layers * fmtSize * size.x * size.y;
 		for(auto i = 1u; i < data.fillLevels; ++i) {
 			auto isize = size;
-			isize.x = std::max(isize.x >> i, 1u);
-			isize.y = std::max(isize.y >> i, 1u);
+			isize.x = std::max(size.x >> i, 1u);
+			isize.y = std::max(size.y >> i, 1u);
 			dataSize += layers * fmtSize * isize.x * isize.y;
 		}
 
@@ -316,6 +316,7 @@ void Texture::init(InitData& data, const WorkBatcher& wb) {
 	}
 
 	// generate mipmaps
+	// TODO: use tkn::downscale here
 	barrier.image = image_.image();
 	barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
 	barrier.srcAccessMask = vk::AccessBits::transferWrite;
@@ -450,6 +451,199 @@ vk::Format toggleSRGB(vk::Format format) {
 
 		default: return format;
 	}
+}
+
+
+FillData createFill(const vpp::Image& img, vk::Format dstFormat,
+		std::unique_ptr<ImageProvider> provider) {
+	FillData res;
+	res.dstFormat = dstFormat;
+	res.target = &img;
+	res.source = std::move(provider);
+
+	auto size = res.source->size();
+	auto levelCount = res.source->mipLevels();
+	auto layerCount = res.source->layers();
+	auto dataFormat = res.source->format();
+
+	auto blit = res.source->format() != dstFormat;
+	if(blit) {
+		// TODO: when there are multiple pre-gen mipmaps or
+		// multiple faces/layers we might not be able to create
+		// this linear image on host visible memory. See the vulkan spec,
+		// support for linear images is limited.
+		// A solution would be to first write the data into an buffer,
+		// then copy if to an image, then blit it to the destination...
+		auto usage = vk::ImageUsageBits::transferSrc;
+		auto info = vpp::ViewableImageCreateInfo(res.source->format(),
+			vk::ImageAspectBits::color, {size.x, size.y},
+			usage, vk::ImageTiling::linear, levelCount);
+		info.img.arrayLayers = layerCount;
+		info.img.initialLayout = vk::ImageLayout::preinitialized;
+		dlg_assert(vpp::supported(img.device(), info.img));
+		res.stageImage = {res.initStageImage, img.device().devMemAllocator(),
+			info.img, img.device().hostMemoryTypes()};
+		vpp::nameHandle(res.stageImage, "Texture:stageImage");
+	} else {
+		auto fmtSize = vpp::formatSize(dataFormat);
+		auto dataSize = layerCount * fmtSize * size.x * size.y;
+		for(auto i = 1u; i < levelCount; ++i) {
+			auto isize = size;
+			isize.x = std::max(size.x >> i, 1u);
+			isize.y = std::max(size.y >> i, 1u);
+			dataSize += layerCount * fmtSize * isize.x * isize.y;
+		}
+
+		auto align = fmtSize;
+		auto usage = vk::BufferUsageBits::transferSrc;
+		res.stageBuffer = {res.initStageBuffer, img.device().bufferAllocator(),
+			dataSize, usage, img.device().hostMemoryTypes(), align};
+	}
+
+	return res;
+}
+
+void doFill(FillData& data, vk::CommandBuffer cb) {
+	dlg_assert(data.target);
+	dlg_assert(data.source);
+
+	auto levelCount = data.source->mipLevels();
+	auto layerCount = data.source->layers();
+	auto dataFormat = data.source->format();
+	auto [width, height] = data.source->size();
+
+	vk::ImageMemoryBarrier barrier;
+	barrier.image = *data.target;
+	barrier.oldLayout = vk::ImageLayout::undefined;
+	barrier.srcAccessMask = {};
+	barrier.newLayout = vk::ImageLayout::transferDstOptimal;
+	barrier.dstAccessMask = vk::AccessBits::transferWrite;
+	barrier.subresourceRange =
+		{vk::ImageAspectBits::color, 0, levelCount, 0, layerCount};
+	vk::cmdPipelineBarrier(cb,
+		vk::PipelineStageBits::topOfPipe,
+		vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
+
+	auto blit = data.dstFormat != dataFormat;
+	if(blit) {
+		dlg_assert(data.stageImage);
+		data.stageImage.init(data.initStageImage);
+
+		std::vector<vk::ImageBlit> blits;
+		blits.reserve(levelCount);
+		for(auto m = 0u; m < levelCount; ++m) {
+			auto mwidth = std::max(width >> m, 1u);
+			auto mheight = std::max(height >> m, 1u);
+			auto lsize = mwidth * mheight * vpp::formatSize(dataFormat);
+
+			for(auto l = 0u; l < layerCount; ++l) {
+				// TODO: could offer optimization in case the
+				// data is subresource layout is tightly packed:
+				// directly let provider write to map
+				auto layer = l;
+				auto face = 0u;
+				auto span = data.source->read(m, layer, face);
+				dlg_assertm(span.size() == lsize, "{} vs {}",
+					span.size(), lsize);
+
+				vk::ImageSubresource subres;
+				subres.arrayLayer = l;
+				subres.mipLevel = m;
+				subres.aspectMask = vk::ImageAspectBits::color;
+				vpp::fillMap(data.stageImage, dataFormat,
+					{mwidth, mheight, 1u}, span, subres);
+			}
+
+			vk::ImageBlit blit;
+			blit.srcSubresource.aspectMask = vk::ImageAspectBits::color;
+			blit.srcSubresource.layerCount = layerCount;
+			blit.srcSubresource.mipLevel = m;
+			blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
+			blit.dstSubresource.layerCount = layerCount;
+			blit.dstSubresource.mipLevel = m;
+			blit.srcOffsets[1].x = mwidth;
+			blit.srcOffsets[1].y = mheight;
+			blit.srcOffsets[1].z = 1;
+			blit.dstOffsets[1].x = mwidth;
+			blit.dstOffsets[1].y = mheight;
+			blit.dstOffsets[1].z = 1;
+			blits.push_back(blit);
+		}
+
+		// bring stage image into transferSrcOptimal layout for blit
+		barrier.image = data.stageImage;
+		barrier.oldLayout = vk::ImageLayout::preinitialized;
+		barrier.srcAccessMask = vk::AccessBits::hostWrite;
+		barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
+		barrier.dstAccessMask = vk::AccessBits::transferRead;
+		barrier.subresourceRange =
+			{vk::ImageAspectBits::color, 0, 1, 0, layerCount};
+		vk::cmdPipelineBarrier(cb,
+			vk::PipelineStageBits::host,
+			vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
+
+		// nearest is enough, we are not scaling in any way
+		vk::cmdBlitImage(cb, data.stageImage,
+			vk::ImageLayout::transferSrcOptimal, *data.target,
+			vk::ImageLayout::transferDstOptimal, blits,
+			vk::Filter::nearest);
+	} else {
+		data.stageBuffer.init(data.initStageBuffer);
+		dlg_assert(data.stageBuffer.size());
+
+		std::vector<vk::BufferImageCopy> copies;
+		copies.reserve(layerCount);
+
+		auto map = data.stageBuffer.memoryMap();
+		auto mapSpan = map.span();
+		auto offset = data.stageBuffer.offset();
+		for(auto m = 0u; m < levelCount; ++m) {
+			auto mwidth = std::max(width >> m, 1u);
+			auto mheight = std::max(height >> m, 1u);
+			auto lsize = mwidth * mheight * vpp::formatSize(dataFormat);
+
+			for(auto l = 0u; l < layerCount; ++l) {
+				auto layer = l;
+				auto face = 0u;
+
+				auto layerSpan = mapSpan.first(lsize);
+				if(!data.source->read(layerSpan, m, layer, face)) {
+					throw std::runtime_error("Image reading failed");
+				}
+
+				mapSpan = mapSpan.last(mapSpan.size() - lsize);
+				vk::BufferImageCopy copy {};
+				copy.bufferOffset = offset;
+				copy.imageExtent = {mwidth, mheight, 1};
+				copy.imageOffset = {};
+				copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
+				copy.imageSubresource.baseArrayLayer = l;
+				copy.imageSubresource.layerCount = 1u;
+				copy.imageSubresource.mipLevel = m;
+				copies.push_back(copy);
+				offset += lsize;
+			}
+		}
+
+		vk::cmdCopyBufferToImage(cb, data.stageBuffer.buffer(), *data.target,
+			vk::ImageLayout::transferDstOptimal, copies);
+	}
+
+	barrier.image = *data.target,
+	barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
+	barrier.srcAccessMask = vk::AccessBits::transferWrite;
+	barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+	barrier.dstAccessMask = vk::AccessBits::shaderRead;
+	barrier.subresourceRange =
+		{vk::ImageAspectBits::color, 0, levelCount, 0, layerCount};
+
+	vk::cmdPipelineBarrier(cb,
+		vk::PipelineStageBits::transfer,
+		vk::PipelineStageBits::allCommands | vk::PipelineStageBits::bottomOfPipe,
+		{}, {}, {}, {{barrier}});
+
+	// no longer needed
+	data.source = {};
 }
 
 } // namespace tkn

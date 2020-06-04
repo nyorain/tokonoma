@@ -23,10 +23,16 @@
 
 #include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/tkn.texture.frag.h>
+#include <shaders/tkn.textureTonemap.frag.h>
 #include <shaders/tkn.skybox.vert.h>
 #include <shaders/tkn.skybox.frag.h>
+#include <shaders/tkn.skybox.tonemap.frag.h>
 
-// TODO: add checkerboard pattern for visualizing alpha
+// TODO: add checkerboard pattern background for visualizing alpha
+// TODO: the whole descriptor set setup is somewhat messy
+//   due to the two separate sets in skybox.frag.
+//   This could probably be changed (simplified) by now.
+//   We might also just use SkyboxRenderer here for skyboxes.
 
 using namespace tkn::types;
 
@@ -141,6 +147,10 @@ public:
 			vpp::descriptorBinding(
 				vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+			// only needed for (!cubemap && tonemap_) atm
+			vpp::descriptorBinding(
+				vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
 		texDsLayout_ = {dev, tbindings};
@@ -149,7 +159,7 @@ public:
 			auto cbindings = {
 				vpp::descriptorBinding(
 					vk::DescriptorType::uniformBuffer,
-					vk::ShaderStageBits::vertex),
+					vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 			};
 
 			camDsLayout_ = {dev, cbindings};
@@ -159,7 +169,12 @@ public:
 
 			// pipeline
 			vpp::ShaderModule vertShader(dev, tkn_skybox_vert_data);
-			vpp::ShaderModule fragShader(dev, tkn_skybox_frag_data);
+			vpp::ShaderModule fragShader;
+			if(tonemap_) {
+				fragShader = {dev, tkn_skybox_tonemap_frag_data};
+			} else {
+				fragShader = {dev, tkn_skybox_frag_data};
+			}
 
 			vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
 				{vertShader, vk::ShaderStageBits::vertex},
@@ -173,7 +188,12 @@ public:
 
 			// pipeline
 			vpp::ShaderModule vertShader(dev, tkn_fullscreen_vert_data);
-			vpp::ShaderModule fragShader(dev, tkn_texture_frag_data);
+			vpp::ShaderModule fragShader;
+			if(tonemap_) {
+				fragShader = {dev, tkn_textureTonemap_frag_data};
+			} else {
+				fragShader = {dev, tkn_texture_frag_data};
+			}
 
 			vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
 				{vertShader, vk::ShaderStageBits::vertex},
@@ -188,8 +208,10 @@ public:
 		qs.wait(qs.add(cb));
 
 		// camera
-		auto cameraUboSize = sizeof(nytl::Mat4f);
-		cameraUbo_ = {dev.bufferAllocator(), cameraUboSize,
+		auto uboSize = std::max<vk::DeviceSize>(4u,
+			(cubemap_ ? sizeof(nytl::Mat4f) : 0) +
+			(tonemap_ ? sizeof(float) : 0));
+		ubo_ = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 		// ds
@@ -197,11 +219,12 @@ public:
 		vpp::DescriptorSetUpdate dsu(texDs_);
 		dsu.imageSampler({{{{}, view_,
 			vk::ImageLayout::shaderReadOnlyOptimal}}});
+		dsu.uniform({{{ubo_}}});
 
 		if(cubemap_) {
 			camDs_ = {dev.descriptorAllocator(), camDsLayout_};
 			vpp::DescriptorSetUpdate cdsu(camDs_);
-			cdsu.uniform({{{cameraUbo_}}});
+			cdsu.uniform({{{ubo_}}});
 		}
 
 		return true;
@@ -212,6 +235,9 @@ public:
 		parser.definitions.push_back({
 			"nocube", {"--no-cube"},
 			"Don't show a cubemap, interpret faces as layers", 0});
+		parser.definitions.push_back({
+			"tonemap", {"--tonemap"},
+			"Tonemap the image (use pageDown/Up for exposure)", 0});
 		return parser;
 	}
 
@@ -228,6 +254,7 @@ public:
 			return false;
 		}
 
+		tonemap_ = result.has_option("tonemap");
 		out.file = result.pos[0];
 		return true;
 	}
@@ -255,9 +282,15 @@ public:
 		// update scene ubo
 		if(camera_.needsUpdate) {
 			camera_.needsUpdate = false;
-			auto map = cameraUbo_.memoryMap();
+
+			auto map = ubo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, camera_.fixedViewProjectionMatrix());
+			if(cubemap_) {
+				tkn::write(span, camera_.fixedViewProjectionMatrix());
+			}
+			if(tonemap_) {
+				tkn::write(span, exposure_);
+			}
 			map.flush();
 		}
 
@@ -341,21 +374,14 @@ public:
 			}
 		} else if(ev.keycode == swa_key_f) {
 			swa_window_set_state(swaWindow(), swa_window_state_fullscreen);
-		// TODO
-		/*
-		} else if(ev.keycode == swa_key_pageup) {
-			maxLight *= 1.1;
+		} else if(tonemap_ && ev.keycode == swa_key_pageup) {
+			exposure_ *= 1.05;
+			camera_.needsUpdate = true;
 			Base::scheduleRedraw();
-		} else if(ev.keycode == swa_key_pagedown) {
-			maxLight /= 1.1;
+		} else if(tonemap_ && ev.keycode == swa_key_pagedown) {
+			exposure_ /= 1.05;
+			camera_.needsUpdate = true;
 			Base::scheduleRedraw();
-		} else if(ev.keycode == swa_key_k9) {
-			maxAvgLight *= 1.1;
-			Base::scheduleRedraw();
-		} else if(ev.keycode == swa_key_k8) {
-			maxAvgLight /= 1.1;
-			Base::scheduleRedraw();
-		*/
 		} else {
 			return false;
 		}
@@ -394,10 +420,13 @@ protected:
 	unsigned level_ {0};
 	bool recreateView_ {};
 
+	bool tonemap_ {};
+	float exposure_ {1.f};
+
 	// cubemap
 	bool cubemap_ {};
-	vpp::SubBuffer cameraUbo_;
-	tkn::ControlledCamera camera_ {tkn::ControlledCamera::ControlType::firstPerson};
+	vpp::SubBuffer ubo_;
+	tkn::ControlledCamera camera_;
 };
 
 int main(int argc, const char** argv) {
