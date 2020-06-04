@@ -44,6 +44,7 @@ tkn_src = [
 	'util.cpp',
 	'headeronly.cpp',
 	'timeWidget.cpp',
+	'stream.cpp',
 	'taa.cpp',
 	'sky.cpp',
 

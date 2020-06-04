@@ -1,6 +1,8 @@
 #include <tkn/image.hpp>
 #include <tkn/types.hpp>
 #include <tkn/gl.hpp>
+#include <tkn/bits.hpp>
+#include <tkn/stream.hpp>
 #include <vkpp/enums.hpp>
 #include <vpp/imageOps.hpp>
 #include <nytl/scope.hpp>
@@ -9,6 +11,8 @@
 // TODO: support for compressed formats and such
 
 namespace tkn {
+
+using vpp::align;
 
 constexpr struct FormatEntry {
 	GLInternalFormat glFormat;
@@ -93,16 +97,6 @@ vk::Format vulkanFromGLFormat(GLInternalFormat glFormat) {
 }
 
 // throwing io functions
-// throw for partial read/write as well
-void tfread(void* buffer, std::size_t size, std::size_t count,
-		std::FILE* stream) {
-	auto res = std::fread(buffer, size, count, stream);
-	if(res != size * count) {
-		dlg_error("fread: {} ({})", res, std::strerror(errno));
-		throw std::runtime_error("fread failed");
-	}
-}
-
 void tfwrite(void* buffer, std::size_t size, std::size_t count,
 		std::FILE* stream) {
 	auto res = std::fwrite(buffer, size, count, stream);
@@ -112,67 +106,45 @@ void tfwrite(void* buffer, std::size_t size, std::size_t count,
 	}
 }
 
-u32 tfseek(std::FILE* stream, long offset, int origin) {
-	auto res = std::fseek(stream, offset, origin);
-	if(res < 0) {
-		dlg_error("fseek: {} ({})", res, std::strerror(errno));
-		throw std::runtime_error("fseek failed");
-	}
-
-	return u32(res);
-}
-
-u32 tftell(std::FILE* stream) {
-	auto res = std::ftell(stream);
-	if(res < 0) {
-		dlg_error("ftell: {} ({})", res, std::strerror(errno));
-		throw std::runtime_error("ftell failed");
-	}
-
-	return u32(res);
-}
-
 // wip
 class KtxReader : public ImageProvider {
 public:
 	vk::Format format_;
-	nytl::Vec2ui size_;
+	nytl::Vec3ui size_;
 	u32 mipLevels_;
 	u32 faces_;
 	u32 arrayElements_; // 0 for non array textures
-	File file_;
+	std::unique_ptr<Stream> stream_;
 	u64 dataBegin_;
-	std::vector<std::byte> tmpData_;
+	mutable std::vector<std::byte> tmpData_;
 
 public:
+	// Returns the size for a single layer/face in the given mip level
 	u64 faceSize(unsigned mip) const {
 		auto w = std::max(size_.x >> mip, 1u);
 		auto h = std::max(size_.y >> mip, 1u);
-		return w * h * vpp::formatSize(format_);
+		auto d = std::max(size_.z >> mip, 1u);
+		return w * h * d * vpp::formatSize(format_);
 	}
 
-	nytl::Vec2ui size() const override { return size_; }
-	vk::Format format() const override { return format_; }
-	unsigned mipLevels() const override { return mipLevels_; }
-	unsigned faces() const override { return faces_; }
-	unsigned layers() const override {
-		return std::max(arrayElements_, 1u);
+	nytl::Vec3ui size() const noexcept override { return size_; }
+	vk::Format format() const noexcept override { return format_; }
+	unsigned mipLevels() const noexcept override { return mipLevels_; }
+	unsigned layers() const noexcept override {
+		return std::max(faces_ * arrayElements_, 1u);
+	}
+	bool cubemap() const noexcept override {
+		return faces_ == 6u;
 	}
 
-	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0,
-			unsigned face = 0) override {
+	nytl::Span<const std::byte> read(unsigned mip, unsigned layer) const override {
 		tmpData_.resize(faceSize(mip));
-		if(read(tmpData_, face, mip, layer)) {
-			return tmpData_;
-		}
-
-		return {};
+		read(tmpData_, mip, layer);
+		return tmpData_;
 	}
 
-	bool read(nytl::Span<std::byte> data, unsigned mip = 0,
-			unsigned layer = 0, unsigned face = 0) override {
+	u64 read(nytl::Span<std::byte> data, unsigned mip, unsigned layer) const override {
 		errno = {};
-		dlg_assert(face < faces());
 		dlg_assert(mip < mipLevels());
 		dlg_assert(layer < layers());
 
@@ -180,7 +152,7 @@ public:
 		u32 imageSize;
 		for(auto i = 0u; i < mip; ++i) {
 			auto faceSize = this->faceSize(i);
-			auto mipSize = layers() * faces_ * vpp::align(faceSize, 4u);
+			auto mipSize = layers() * align(faceSize, 4u);
 			auto expectedImageSize = mipSize;
 			if(arrayElements_ == 0 && faces_ == 6) {
 				// ktx special cubemap imageSize case
@@ -188,49 +160,49 @@ public:
 			}
 
 			// debug imageSize reading
-			tfseek(file_, address, SEEK_SET);
-			tfread(&imageSize, 1, sizeof(imageSize), file_);
+			stream_->seek(address);
+			stream_->read(imageSize);
 			if(imageSize != expectedImageSize) {
-				dlg_error("KtxReader: unexpected imageSize {}, expected {}",
+				auto msg = dlg::format("KtxReader: unexpected imageSize {}, expected {}",
 					imageSize, expectedImageSize);
-				return false;
+				dlg_error(msg);
+				throw std::runtime_error(msg);
 			}
 
 			// add mip padding, imageSize is without padding
-			mipSize = vpp::align(mipSize, 4u);
+			mipSize = align(mipSize, 4u);
 
 			address += 4u; // imageSize u32
 			address += mipSize;
 		}
 
 		auto byteSize = this->faceSize(mip);
-		auto faceSize = vpp::align(byteSize, 4u);
+		auto faceSize = align(byteSize, 4u);
 		dlg_assert(u64(data.size()) >= byteSize);
 
 		// debug imageSize reading
-		auto mipSize = layers() * faces_ * faceSize;
+		auto mipSize = layers() * faceSize;
 		if(arrayElements_ == 0 && faces_ == 6) {
 			// ktx special case: imageSize only size of one face
 			mipSize = byteSize;
 		}
 
-		tfseek(file_, address, SEEK_SET);
-		tfread(&imageSize, 1, sizeof(imageSize), file_);
+		stream_->seek(address);
+		stream_->read(imageSize);
 		if(imageSize != mipSize) {
-			dlg_error("KtxReader: unexpected imageSize {}, expected {}",
+			auto msg = dlg::format("KtxReader: unexpected imageSize {}, expected {}",
 				imageSize, mipSize);
-			return false;
+			dlg_error(msg);
+			throw std::runtime_error(msg);
 		}
 
 		address += 4u; // imageSize u32
-		address += layer * faces_ * faceSize; // skip prev layers
-		address += face * faceSize; // skip prev faces
+		address += layer * faceSize; // skip prev layers
 
 		// go to calculated address and read data
-		tfseek(file_, address, SEEK_SET);
-		tfread(data.data(), 1, byteSize, file_);
-
-		return true;
+		stream_->seek(address);
+		stream_->read(data.data(), byteSize);
+		return byteSize;
 	}
 };
 
@@ -276,9 +248,9 @@ std::ostream& operator<<(std::ostream& os, const KtxHeader& header) {
 	return os;
 }
 
-ReadError readKtx(File&& file, KtxReader& reader) {
+ReadError readKtx(std::unique_ptr<Stream>&& stream, KtxReader& reader) {
 	std::array<u8, 12> identifier;
-	if(std::fread(identifier.data(), 1, 12, file) < 12) {
+	if(!stream->readPartial(identifier)) {
 		dlg_debug("KTX can't read identifier");
 		return ReadError::unexpectedEnd;
 	}
@@ -294,7 +266,7 @@ ReadError readKtx(File&& file, KtxReader& reader) {
 	}
 
 	KtxHeader header;
-	if(std::fread(&header, 1u, sizeof(KtxHeader), file) < sizeof(KtxHeader)) {
+	if(!stream->readPartial(header)) {
 		dlg_debug("KTX can't read header");
 		return ReadError::unexpectedEnd;
 	}
@@ -307,8 +279,9 @@ ReadError readKtx(File&& file, KtxReader& reader) {
 		return ReadError::invalidEndianess;
 	}
 
-	if(header.pixelDepth > 1) {
-		dlg_warn("KTX pixelDepth {} > 1 unsupported", header.pixelDepth);
+	// fixup
+	if(header.pixelDepth > 1 && (header.numberFaces > 1 || header.numberArrayElements > 1)) {
+		dlg_warn("KTX 3D image with faces/layers unsupported");
 		return ReadError::ktxDepth;
 	}
 
@@ -330,9 +303,12 @@ ReadError readKtx(File&& file, KtxReader& reader) {
 	// NOTE: when numberMipmapLevels is zero, ktx specifies the loader
 	// should generate mipmaps. We could probably forward that information
 	// somehow? but in the end i guess the application knows whether or
-	// not it wants mipmaps, right?
+	// not it wants mipmaps
 	reader.mipLevels_ = std::max(header.numberMipmapLevels, 1u);
-	reader.size_ = {header.pixelWidth, std::max(header.pixelHeight, 1u)};
+	reader.size_ = {header.pixelWidth,
+		std::max(header.pixelHeight, 1u),
+		std::max(header.pixelDepth, 1u)
+	};
 
 	auto glFormat = GLInternalFormat(header.glInternalFormat);
 	reader.format_ = vulkanFromGLFormat(glFormat);
@@ -341,37 +317,58 @@ ReadError readKtx(File&& file, KtxReader& reader) {
 		return ReadError::ktxInvalidFormat;
 	}
 
-	auto curr = std::ftell(file);
-	if(curr <= 0) {
-		dlg_warn("ftell: {} ({})", std::strerror(errno), curr);
-		return ReadError::internal;
-	}
+	// just for debugging: read keys and values
+	auto keysPos = stream->address();
+	dlg_check({
+		auto bytesRead = 0u;
+		while(bytesRead < header.bytesKeyValueData) {
+			u32 byteSize;
+			if(!stream->readPartial(byteSize)) {
+				dlg_warn("KTX unexpected end in key/value pairs");
+				return ReadError::unexpectedEnd;
+			}
 
-	reader.dataBegin_ = curr + header.bytesKeyValueData;
-	reader.file_ = std::move(file);
+			bytesRead += align(byteSize, 4);
+
+			std::vector<char> keyValue(byteSize);
+			if(!stream->readPartial(keyValue)) {
+				dlg_warn("KTX unexpected end in key/value pairs");
+				return ReadError::unexpectedEnd;
+			}
+
+			auto sep = std::find(keyValue.begin(), keyValue.end(), '\0');
+			if(sep == keyValue.end()) {
+				dlg_warn("KTX keyValue pair without null separator");
+				continue;
+			}
+
+			std::string_view key(&*keyValue.begin(), sep - keyValue.begin());
+
+			++sep;
+			std::string_view value(&*sep, keyValue.end() - sep);
+			if(value.length() > 50) {
+				value = "<too long to print>";
+			}
+
+			dlg_debug("KTX key value pair: {} = {}", key, value);
+		}
+	});
+
+	reader.dataBegin_ = keysPos + header.bytesKeyValueData;
+	reader.stream_ = std::move(stream);
 
 	return ReadError::none;
 }
 
-ReadError readKtx(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
-	auto file = File(path, "rb");
-	if(!file) {
-		dlg_debug("fopen: {}", std::strerror(errno));
-		return ReadError::cantOpen;
-	}
-
-	return readKtx(std::move(file), ret);
-}
-
-ReadError readKtx(File&& file, std::unique_ptr<ImageProvider>& ret) {
-	std::rewind(file);
+ReadError readKtx(std::unique_ptr<Stream>&& stream,
+		std::unique_ptr<ImageProvider>& ret) {
 	auto reader = std::make_unique<KtxReader>();
-	auto err = readKtx(std::move(file), *reader);
-	if(err == ReadError::none) {
+	auto res = readKtx(std::move(stream), *reader);
+	if(res == ReadError::none) {
 		ret = std::move(reader);
 	}
 
-	return err;
+	return res;
 }
 
 // save
@@ -395,19 +392,24 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 	auto size = image.size();
 	auto mips = std::max(image.mipLevels(), 1u);
 	auto layers = std::max(image.layers(), 1u);
-	auto faces = std::max(image.faces(), 1u);
 	auto fmtSize = vpp::formatSize(fmt);
+	auto faces = 1u;
+	if(image.cubemap()) {
+		dlg_assert(layers % 6u == 0);
+		faces = 6u;
+		layers = layers / 6u;
+	}
 
 	KtxHeader header;
 	header.endianness = ktxEndianess;
 	header.bytesKeyValueData = 0u;
 	header.pixelWidth = size.x;
-	header.pixelHeight = size.y;
-	header.pixelDepth = 0;
-	header.numberFaces = faces;
+	header.pixelHeight = size.y > 1 ? size.y : 0;
+	header.pixelDepth = size.z > 1 ? size.z : 0;
 	header.numberMipmapLevels = mips;
-	header.numberArrayElements = layers > 1 ? layers : 0;
 	header.glTypeSize = fmtSize;
+	header.numberArrayElements = layers > 1 ? layers : 0;
+	header.numberFaces = faces;
 
 	const FormatEntry* entry {};
 	for(auto& ientry : formatMap) {
@@ -432,14 +434,15 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 
 	for(auto m = 0u; m < mips; ++m) {
 		// image size
-		nytl::Vec2ui msize;
+		nytl::Vec3ui msize;
 		msize.x = std::max(size.x >> m, 1u);
 		msize.y = std::max(size.y >> m, 1u);
-		u32 faceSize = msize.x * msize.y * fmtSize;
+		msize.z = std::max(size.z >> m, 1u);
+		u32 faceSize = msize.x * msize.y * msize.z * fmtSize;
 
 		// ktx exception: for this condition imagesize should only
 		// contain the size of *one face* instead of everything.
-		if(header.numberArrayElements == 0 && faces == 6) {
+		if(header.numberArrayElements == 0 && image.cubemap()) {
 			write(&faceSize, sizeof(faceSize));
 		} else {
 			u32 fullSize = vpp::align(faceSize, 4u) * layers * faces;
@@ -448,7 +451,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 
 		for(auto l = 0u; l < layers; ++l) {
 			for(auto f = 0u; f < faces; ++f) {
-				auto span = image.read(m, l, f);
+				auto span = image.read(m, l * faces + f);
 				if(span.size() != faceSize) {
 					dlg_debug("invalid ImageProvider read size: "
 						"got {}, expected {}", span.size(), faceSize);

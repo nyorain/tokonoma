@@ -59,4 +59,10 @@ inline bool has_suffix(std::string_view str, std::string_view suffix) {
 /// Converts kelvin color temparature (1000K - 40000K) to a rbg color.
 nytl::Vec3f blackbody(unsigned kelvin);
 
+/// Sets/Unsets the given bit in the given bitfield.
+template<typename T>
+T bit(T value, T bit, bool set) {
+	return set ? (value | bit) : (value & ~bit);
+}
+
 } // namespace tkn

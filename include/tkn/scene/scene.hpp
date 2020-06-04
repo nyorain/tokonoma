@@ -42,7 +42,7 @@ struct SceneRenderInfo {
 };
 
 struct SceneImage {
-	tkn::Texture image;
+	vpp::ViewableImage image;
 	bool srgb;
 	bool needed {};
 };
@@ -81,7 +81,7 @@ public:
 	using ModelID = u32;
 
 	struct InitData {
-		std::vector<Texture::InitData> images;
+		std::vector<TextureInitData> images;
 
 		vpp::TrDs::InitData initDs;
 		vpp::TrDs::InitData initBlendDs;

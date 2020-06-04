@@ -257,6 +257,6 @@ void main() {
 
 	// tonemap
 	light = 1.0 - exp(-light);
-	// outFragColor = vec4(vec3(light), 1.0 - transmittance);
-	outFragColor = vec4(vec3(light), 1.0);
+	outFragColor = vec4(vec3(light), 1.0 - transmittance);
+	// outFragColor = vec4(vec3(light), 1.0);
 }

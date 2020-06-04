@@ -1,5 +1,6 @@
 #include <tkn/image.hpp>
 #include <tkn/types.hpp>
+#include <tkn/stream.hpp>
 #include <tkn/util.hpp>
 #include <dlg/dlg.hpp>
 #include <nytl/scope.hpp>
@@ -35,8 +36,8 @@ void* stbiRealloc(void* old, std::size_t newSize) {
 namespace tkn {
 
 // ImageProvider api
-std::unique_ptr<ImageProvider> readStb(nytl::StringParam path, bool hdr) {
-	auto img = readImageStb(path, hdr);
+std::unique_ptr<ImageProvider> readStb(std::unique_ptr<Stream>&& stream) {
+	auto img = readImageStb(std::move(stream));
 	if(!img.data) {
 		return {};
 	}
@@ -44,84 +45,95 @@ std::unique_ptr<ImageProvider> readStb(nytl::StringParam path, bool hdr) {
 	return wrap(std::move(img));
 }
 
-std::unique_ptr<ImageProvider> readStb(File&& file, bool hdr) {
-	auto img = readImageStb(std::move(file), hdr);
-	if(!img.data) {
-		return {};
-	}
-
-	return wrap(std::move(img));
-}
-
-// TODO: the other loaders should respect hdr as well i guess...
-std::unique_ptr<ImageProvider> read(nytl::StringParam path, bool hdr) {
+std::unique_ptr<ImageProvider> read(std::unique_ptr<Stream>&& stream,
+		std::string_view ext) {
 	std::unique_ptr<ImageProvider> reader;
 	bool triedpng = false;
 	bool triedjpg = false;
 	bool triedktx = false;
+	bool triedstb = false;
 
 	// first try detecting the type based of suffix
-	if(has_suffix(path, ".png")) {
+	if(has_suffix(ext, ".png")) {
 		triedpng = true;
-		if(readPng(path, reader) == ReadError::none) {
+		if(readPng(std::move(stream), reader) == ReadError::none) {
 			return reader;
 		}
-	} else if(has_suffix(path, ".jpg") || has_suffix(path, ".jpeg")) {
+	} else if(has_suffix(ext, ".jpg") || has_suffix(ext, ".jpeg")) {
 		triedjpg = true;
-		if(readJpeg(path, reader) == ReadError::none) {
+		if(readJpeg(std::move(stream), reader) == ReadError::none) {
 			return reader;
 		}
-	} else if(has_suffix(path, ".ktx")) {
+	} else if(has_suffix(ext, ".ktx")) {
 		triedktx = true;
-		if(readKtx(path, reader) == ReadError::none) {
+		if(readKtx(std::move(stream), reader) == ReadError::none) {
+			return reader;
+		}
+	} else if(has_suffix(ext, ".hdr")) {
+		triedstb = true;
+		reader = readStb(std::move(stream));
+		if(reader) {
 			return reader;
 		}
 	}
 
 	// then just try all remaining loaders
-	if(!triedpng && readPng(path, reader) == ReadError::none) return reader;
-	if(!triedjpg && readJpeg(path, reader) == ReadError::none) return reader;
-	if(!triedktx && readKtx(path, reader) == ReadError::none) return reader;
+	stream->seek(0, Stream::SeekOrigin::set);
+	if(!triedpng && readPng(std::move(stream), reader) == ReadError::none) {
+		return reader;
+	}
 
-	// stb is our last fallback
-	return readStb(path, hdr);
+	stream->seek(0, Stream::SeekOrigin::set);
+	if(!triedjpg && readJpeg(std::move(stream), reader) == ReadError::none) {
+		return reader;
+	}
+
+	stream->seek(0, Stream::SeekOrigin::set);
+	if(!triedktx && readKtx(std::move(stream), reader) == ReadError::none) {
+		return reader;
+	}
+
+	stream->seek(0, Stream::SeekOrigin::set);
+	if(!triedstb) {
+		return readStb(std::move(stream));
+	}
+
+	return nullptr;
 }
 
-std::unique_ptr<ImageProvider> read(File&& file, bool hdr) {
-	std::unique_ptr<ImageProvider> reader;
-	dlg_assert(file);
-
-	if(readPng(std::move(file), reader) == ReadError::none) return reader;
-	if(readJpeg(std::move(file), reader) == ReadError::none) return reader;
-	if(readKtx(std::move(file), reader) == ReadError::none) return reader;
-
-	// stb is our last fallback
-	return readStb(std::move(file), hdr);
-}
-
-// Image api
-Image readImageStb(nytl::StringParam path, bool hdr) {
+std::unique_ptr<ImageProvider> read(nytl::StringParam path) {
 	auto file = File(path, "rb");
 	if(!file) {
 		dlg_debug("fopen: {}", std::strerror(errno));
 		return {};
 	}
 
-	return readImageStb(std::move(file), hdr);
+	return read(std::make_unique<FileStream>(std::move(file)), path);
 }
 
-Image readImageStb(File&& file, bool hdr) {
-	std::rewind(file);
+std::unique_ptr<ImageProvider> read(File&& file) {
+	return read(std::make_unique<FileStream>(std::move(file)));
+}
+
+std::unique_ptr<ImageProvider> read(nytl::Span<const std::byte> data) {
+	return read(std::make_unique<MemoryStream>(data));
+}
+
+// Image api
+Image readImageStb(std::unique_ptr<Stream>&& stream) {
 	constexpr auto channels = 4u; // TODO: make configurable
 	int width, height, ch;
 	std::byte* data;
 	Image ret;
+
+	auto& cb = streamStbiCallbacks();
+	bool hdr = stbi_is_hdr_from_callbacks(&cb, stream.get());
 	if(hdr) {
-		auto fd = stbi_loadf_from_file(file, &width, &height, &ch, channels);
+		auto fd = stbi_loadf_from_callbacks(&cb, stream.get(), &width, &height, &ch, channels);
 		data = reinterpret_cast<std::byte*>(fd);
 		ret.format = vk::Format::r32g32b32a32Sfloat;
 	} else {
-		auto cd = stbi_load_from_file(file, &width, &height, &ch, channels);
+		auto cd = stbi_load_from_callbacks(&cb, stream.get(), &width, &height, &ch, channels);
 		data = reinterpret_cast<std::byte*>(cd);
 		ret.format = vk::Format::r8g8b8a8Unorm;
 	}
@@ -136,32 +148,12 @@ Image readImageStb(File&& file, bool hdr) {
 	ret.data.reset(data);
 	ret.size.x = width;
 	ret.size.y = height;
-	file = {}; // no longer needed
+	ret.size.z = 1u;
+	stream = {}; // no longer needed, close it.
 	return ret;
 }
 
-
-Image readImage(nytl::StringParam path, bool hdr) {
-	auto provider = read(path, hdr);
-	if(!provider) {
-		return {};
-	}
-
-	return readImage(*provider);
-}
-
-Image readImage(File&& file, bool hdr) {
-	auto provider = read(std::move(file), hdr);
-	if(!provider) {
-		return {};
-	}
-
-	return readImage(*provider);
-}
-
-Image readImage(ImageProvider& provider) {
-	dlg_assertlm(dlg_level_debug, provider.faces() == 1,
-		"readImage: discarding {} faces", provider.faces() - 1);
+Image readImage(const ImageProvider& provider, unsigned mip, unsigned layer) {
 	dlg_assertlm(dlg_level_debug, provider.layers() == 1,
 		"readImage: discarding {} layers", provider.layers() - 1);
 	dlg_assertlm(dlg_level_debug, provider.mipLevels() == 1,
@@ -169,15 +161,24 @@ Image readImage(ImageProvider& provider) {
 
 	Image ret;
 	ret.format = provider.format();
-	ret.size = provider.size();
 
-	auto byteSize = ret.size.x * ret.size.y * vpp::formatSize(ret.format);
+	auto size = provider.size();
+	size.x = std::max(size.x >> mip, 1u);
+	size.y = std::max(size.y >> mip, 1u);
+	size.z = std::max(size.z >> mip, 1u);
+
+	ret.size = size;
+	auto byteSize = size.x * size.y * size.z * vpp::formatSize(ret.format);
 	ret.data = std::make_unique<std::byte[]>(byteSize);
-	if(!provider.read({ret.data.get(), ret.data.get() + byteSize})) {
-		return {};
-	}
+	auto res = provider.read({ret.data.get(), ret.data.get() + byteSize}, mip, layer);
+	dlg_assert(res == byteSize);
 
 	return ret;
+}
+
+Image readImage(std::unique_ptr<Stream>&& stream, unsigned mip, unsigned layer) {
+	auto provider = read(std::move(stream));
+	return provider ? readImage(*provider, mip, layer) : Image {};
 }
 
 class MemImageProvider : public ImageProvider {
@@ -188,79 +189,80 @@ public:
 	};
 
 	std::vector<MipLayerFace> data_;
+	bool cubemap_ {};
 	unsigned layers_;
-	unsigned faces_;
 	unsigned mips_;
-	nytl::Vec2ui size_;
+	nytl::Vec3ui size_;
 	vk::Format format_;
 
 public:
 	u64 faceSize(unsigned mip) const {
 		auto w = std::max(size_.x >> mip, 1u);
 		auto h = std::max(size_.y >> mip, 1u);
-		return w * h * vpp::formatSize(format_);
+		auto d = std::max(size_.z >> mip, 1u);
+		return w * h * d * vpp::formatSize(format_);
 	}
 
-	unsigned layers() const override { return layers_; }
-	unsigned faces() const override { return faces_; }
-	unsigned mipLevels() const override { return mips_; }
+	unsigned layers() const noexcept override { return layers_; }
+	unsigned mipLevels() const noexcept override { return mips_; }
+	nytl::Vec3ui size() const noexcept override { return size_; }
+	vk::Format format() const noexcept override { return format_; }
+	bool cubemap() const noexcept override { return cubemap_; }
 
-	nytl::Vec2ui size() const override { return size_; }
-	vk::Format format() const override { return format_; }
-
-	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0,
-			unsigned face = 0) override {
-		dlg_assert(face < faces() && mip < mipLevels() && layer < layers());
-		auto id = mip * (layers_ * faces_) + layer * faces_ + face;
+	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0) const override {
+		dlg_assert(mip < mipLevels() && layer < layers());
+		auto id = mip * layers_ + layer;
 		return {data_[id].ref, data_[id].ref + faceSize(mip)};
 	}
 
-	bool read(nytl::Span<std::byte> data, unsigned mip = 0,
-			unsigned layer = 0, unsigned face = 0) override {
-		dlg_assert(face < faces() && mip < mipLevels() && layer < layers());
-		auto id = mip * (layers_ * faces_) + layer * faces_ + face;
-
+	u64 read(nytl::Span<std::byte> data, unsigned mip = 0, unsigned layer = 0) const override {
+		dlg_assert(mip < mipLevels() && layer < layers());
+		auto id = mip * layers_ + layer;
 		auto byteSize = faceSize(mip);
 		dlg_assert(u64(data.size()) >= byteSize);
 		std::memcpy(data.data(), data_[id].ref, byteSize);
-		return true;
+		return byteSize;
 	}
 };
 
 std::unique_ptr<ImageProvider> wrap(Image&& image) {
 	auto ret = std::make_unique<MemImageProvider>();
-	ret->layers_ = ret->faces_ = ret->mips_ = 1u;
+	ret->layers_ = ret->mips_ = 1u;
 	ret->format_ = image.format;
 	ret->size_ = image.size;
+	ret->cubemap_ = false;
 	auto& data = ret->data_.emplace_back();
 	data.owned = std::move(image.data);
 	data.ref = data.owned.get();
 	return ret;
 }
 
-std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 		nytl::Span<const std::byte> span) {
 	dlg_assert(span.size() >= size.x * size.y * vpp::formatSize(format));
 
 	auto ret = std::make_unique<MemImageProvider>();
-	ret->layers_ = ret->faces_ = ret->mips_ = 1u;
+	ret->layers_ = ret->mips_ = 1u;
 	ret->format_ = format;
 	ret->size_ = size;
+	ret->cubemap_ = false;
 	auto& data = ret->data_.emplace_back();
 	data.ref = span.data();
 	return ret;
 }
 
-std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
-		unsigned mips, unsigned layers, unsigned faces,
-		nytl::Span<std::unique_ptr<std::byte[]>> data) {
-	dlg_assert(data.size() == mips * layers * faces);
+std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+		unsigned mips, unsigned layers,
+		nytl::Span<std::unique_ptr<std::byte[]>> data, bool cubemap) {
+	dlg_assert(data.size() == mips * layers);
+	dlg_assert(!cubemap || layers % 6 == 0u);
+
 	auto ret = std::make_unique<MemImageProvider>();
 	ret->mips_ = mips;
 	ret->layers_ = layers;
-	ret->faces_ = faces;
 	ret->format_ = format;
 	ret->size_ = size;
+	ret->cubemap_ = cubemap;
 	ret->data_.reserve(data.size());
 	for(auto& d : data) {
 		auto& rdi = ret->data_.emplace_back();
@@ -271,16 +273,18 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
 	return ret;
 }
 
-std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
-		unsigned mips, unsigned layers, unsigned faces,
-		nytl::Span<const std::byte* const> data) {
-	dlg_assert(data.size() == mips * layers * faces);
+std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+		unsigned mips, unsigned layers,
+		nytl::Span<const std::byte* const> data, bool cubemap) {
+	dlg_assert(data.size() == mips * layers);
+	dlg_assert(!cubemap || layers % 6 == 0u);
+
 	auto ret = std::make_unique<MemImageProvider>();
 	ret->mips_ = mips;
 	ret->layers_ = layers;
-	ret->faces_ = faces;
 	ret->format_ = format;
 	ret->size_ = size;
+	ret->cubemap_ = cubemap;
 	ret->data_.reserve(data.size());
 	for(auto& d : data) {
 		auto& rdi = ret->data_.emplace_back();
@@ -294,50 +298,38 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
 class MultiImageProvider : public ImageProvider {
 public:
 	std::vector<std::unique_ptr<ImageProvider>> providers_;
-	bool asFaces_ {};
-	unsigned faces_ {};
 	unsigned layers_ {};
 	unsigned mips_ {};
-	nytl::Vec2ui size_ {};
+	bool cubemap_ {};
+	nytl::Vec3ui size_ {};
 	vk::Format format_ = vk::Format::undefined;
 
 public:
-	vk::Format format() const override { return format_; }
-	unsigned faces() const override { return faces_; }
-	unsigned mipLevels() const override { return mips_; }
-	unsigned layers() const override { return layers_; }
-	nytl::Vec2ui size() const override { return size_; }
+	vk::Format format() const noexcept override { return format_; }
+	unsigned mipLevels() const noexcept override { return mips_; }
+	unsigned layers() const noexcept override { return layers_; }
+	nytl::Vec3ui size() const noexcept override { return size_; }
+	bool cubemap() const noexcept override { return cubemap_; }
 
-	bool read(nytl::Span<std::byte> data, unsigned mip = 0, unsigned layer = 0,
-			unsigned face = 0) override {
-		dlg_assert(face < faces_ && mip < mips_ && layer < layers_);
-		if(asFaces_) {
-			return providers_[face]->read(data, mip, layer, 0);
-		} else {
-			return providers_[layer]->read(data, mip, 0, face);
-		}
+	u64 read(nytl::Span<std::byte> data, unsigned mip = 0, unsigned layer = 0) const override {
+		dlg_assert(mip < mips_ && layer < layers_);
+		return providers_[layer]->read(data, mip, 0);
 	}
 
-	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0,
-			unsigned face = 0) override {
-		dlg_assert(face < faces_ && mip < mips_ && layer < layers_);
-		if(asFaces_) {
-			return providers_[face]->read(mip, layer, 0);
-		} else {
-			return providers_[layer]->read(mip, 0, face);
-		}
+	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0) const override {
+		dlg_assert(mip < mips_ && layer < layers_);
+		return providers_[layer]->read(mip, 0);
 	}
 };
 
-std::unique_ptr<ImageProvider> read(nytl::Span<const char* const> paths,
-		bool asFaces, bool hdr) {
+std::unique_ptr<ImageProvider> read(nytl::Span<const char* const> paths, bool cubemap) {
 	auto ret = std::make_unique<MultiImageProvider>();
 	auto first = true;
-	ret->asFaces_ = asFaces;
-	(asFaces ? ret->faces_ : ret->layers_) = paths.size();
+	ret->layers_ = paths.size();
+	ret->cubemap_ = cubemap;
 
 	for(auto& path : paths) {
-		auto provider = read(path, hdr);
+		auto provider = read(path);
 		if(!provider) {
 			return {};
 		}
@@ -347,75 +339,41 @@ std::unique_ptr<ImageProvider> read(nytl::Span<const char* const> paths,
 			ret->format_ = provider->format();
 			ret->size_ = provider->size();
 			ret->mips_ = provider->mipLevels();
-			if(asFaces) {
-				ret->layers_ = provider->layers();
-			} else {
-				ret->faces_ = provider->faces();
-			}
 		} else {
-			auto imgName = asFaces ? "face" : "layer";
 			// Make sure that this image has the same properties as the
 			// other images
 			auto isize = provider->size();
 			if(isize != ret->size_) {
 				auto msg = dlg::format(
-					"LayeredImageProvider: Image {} has different sizes:"
+					"LayeredImageProvider: Image layer has different size:"
 					"\n\tFirst image had size {}"
-					"\n\t'{}' has size {}", imgName, ret->size_, path, isize);
+					"\n\t'{}' has size {}", ret->size_, path, isize);
 				throw std::runtime_error(msg);
 			}
 
 			auto iformat = provider->format();
 			if(iformat != ret->format_) {
 				auto msg = dlg::format(
-					"LayeredImageProvider: Image {} has different formats:"
+					"LayeredImageProvider: Image layer has different format:"
 					"\n\tFirst image had format {}"
 					"\n\t'{}' has format {}",
-					imgName, (int) ret->format_, path, (int) iformat);
+					(int) ret->format_, path, (int) iformat);
 				throw std::runtime_error(msg);
 			}
 
 			auto imips = provider->mipLevels();
 			if(imips != ret->mips_) {
 				auto msg = dlg::format(
-					"LayeredImageProvider: Image {} has different mip counts:"
+					"LayeredImageProvider: Image layer has different mip count:"
 					"\n\tFirst image had mip count {}"
 					"\n\t'{}' has mip count {}",
-					imgName, (int) ret->mips_, path, (int) imips);
+					(int) ret->mips_, path, (int) imips);
 				throw std::runtime_error(msg);
 			}
-
-			if(asFaces) {
-				auto ilayers = provider->layers();
-				if(ilayers != ret->layers_) {
-					auto msg = dlg::format(
-						"LayeredImageProvider: Image {} has different layer count:"
-						"\n\tFirst image had layer count {}"
-						"\n\t'{}' has layer count {}",
-						imgName, (int) ret->layers_, path, (int) ilayers);
-					throw std::runtime_error(msg);
-				}
-			} else {
-				auto ifaces = provider->faces();
-				if(ifaces != ret->faces_) {
-					auto msg = dlg::format(
-						"LayeredImageProvider: Image {} has different face count:"
-						"\n\tFirst image had face count {}"
-						"\n\t'{}' has face count {}",
-						imgName, (int) ret->faces_, path, (int) ifaces);
-					throw std::runtime_error(msg);
-				}
-			}
 		}
 
-		if(asFaces) {
-			dlg_assertlm(dlg_level_warn, provider->faces() == 1u,
-				"{} faces will not be accessible", provider->faces() - 1);
-		} else {
-			dlg_assertlm(dlg_level_warn, provider->layers() == 1u,
-				"{} layers will not be accessible", provider->layers() - 1);
-		}
-
+		dlg_assertlm(dlg_level_warn, provider->layers() == 1u,
+			"{} layers will not be accessible", provider->layers() - 1);
 		ret->providers_.push_back(std::move(provider));
 	}
 

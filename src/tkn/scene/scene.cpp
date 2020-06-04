@@ -73,8 +73,7 @@ public:
 namespace tkn {
 namespace {
 
-tkn::Texture loadImage(Texture::InitData& data,
-		const WorkBatcher& wb, const gltf::Image& tex,
+TextureInitData loadImage(const WorkBatcher& wb, const gltf::Image& tex,
 		nytl::StringParam path, bool srgb) {
 	auto name = tex.name.empty() ?  tex.name : "'" + tex.name + "'";
 	dlg_info("  Loading image {}", name);
@@ -94,7 +93,7 @@ tkn::Texture loadImage(Texture::InitData& data,
 	if(tex.image.empty() && !tex.uri.empty()) {
 		auto full = std::string(path);
 		full += tex.uri;
-		return {data, wb, read(full), params};
+		return createTexture(wb, read(full), params);
 	}
 
 	// TODO: simplifying assumptions that are usually met
@@ -106,13 +105,14 @@ tkn::Texture loadImage(Texture::InitData& data,
 	Image img;
 	img.size.x = tex.width;
 	img.size.y = tex.height;
+	img.size.z = 1u;
 	img.format = srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
 
 	auto dataSize = tex.width * tex.height * 4u;
 	img.data = std::make_unique<std::byte[]>(dataSize);
 	std::memcpy(img.data.get(), tex.image.data(), dataSize);
 
-	return {data, wb, wrap(std::move(img)), params};
+	return createTexture(wb, wrap(std::move(img)), params);
 }
 
 } // anon namespace
@@ -206,10 +206,9 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	// initialize images
 	data.images.resize(model.images.size());
 	for(auto i = 0u; i < model.images.size(); ++i) {
-		auto& d = data.images[i];
 		auto& img = images_[i];
 		dlg_assertm(img.needed, "Model has unused image");
-		images_[i].image = loadImage(d, wb, model.images[i], path, img.srgb);
+		data.images[i] = loadImage(wb, model.images[i], path, img.srgb);
 	}
 
 	auto inf = std::numeric_limits<float>::infinity();
@@ -647,7 +646,7 @@ void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView)
 
 	// init images
 	for(auto i = 0u; i < data.images.size(); ++i) {
-		images_[i].image.init(data.images[i], wb);
+		images_[i].image = initTexture(data.images[i], wb);
 	}
 
 	// upload buffer data

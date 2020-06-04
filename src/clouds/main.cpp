@@ -1,6 +1,7 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/types.hpp>
 #include <tkn/ccam.hpp>
+#include <tkn/stream.hpp>
 #include <tkn/features.hpp>
 #include <tkn/glsl.hpp>
 #include <tkn/shader.hpp>
@@ -207,18 +208,18 @@ public:
 		}
 
 		std::unique_ptr<tkn::ImageProvider> cubemaps;
-		auto err = tkn::readKtx("skyEnvs.ktx", cubemaps);
+		auto stream = std::make_unique<tkn::FileStream>(tkn::File("skyEnvs.ktx", "rb"));
+		auto err = tkn::readKtx(std::move(stream), cubemaps);
 		if(err != tkn::ReadError::none) {
 			throw std::runtime_error("Couldn't read skyEnvs.ktx");
 		}
 
-		dlg_assert(cubemaps->faces() == 6u);
-		dlg_assert(cubemaps->layers() == steps);
+		dlg_assert(cubemaps->layers() == 6u * steps);
 
 		auto tp = tkn::TextureCreateParams {};
 		tp.cubemap = true;
 		tp.format = vk::Format::r16g16b16a16Sfloat;
-		sky_.cubemaps = std::move(tkn::Texture{dev, std::move(cubemaps), tp}.viewableImage());
+		sky_.cubemaps = buildTexture(dev, std::move(cubemaps), tp);
 
 		sky_.cubemapDs = {dev.descriptorAllocator(), sky_.renderer.dsLayout()};
 		sky_.uboDs = {dev.descriptorAllocator(), render_.dsLayout};

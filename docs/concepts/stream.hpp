@@ -40,7 +40,7 @@ public:
 	}
 
 	virtual void read(u64 size, std::byte* buf) {
-		auto res = readIncomplete(size, buf);
+		auto res = readPartial(size, buf);
 		if(res != i64(size)) {
 			throw std::out_of_range("Stream::read");
 		}
@@ -51,7 +51,7 @@ public:
 	// Always returns the number of bytes read, or a negative number
 	// on error. Advances the current read address by the number of
 	// read bytes.
-	virtual i64 readIncomplete(u64 size, std::byte* buf) = 0;
+	virtual i64 readPartial(u64 size, std::byte* buf) = 0;
 
 	// Changes the current read address.
 	// To be safe, the restriction from std::fseek apply.
@@ -71,7 +71,7 @@ public:
 
 int streamStbiRead(void *user, char *data, int size) {
 	auto stream = static_cast<Stream*>(user);
-	return stream->readIncomplete(size, reinterpret_cast<std::byte*>(data));
+	return stream->readPartial(size, reinterpret_cast<std::byte*>(data));
 }
 
 void streamStbiSkip(void *user, int n) {
@@ -107,7 +107,7 @@ public:
 		}
 	}
 
-	i64 readIncomplete(u64 size, std::byte* buf) override {
+	i64 readPartial(u64 size, std::byte* buf) override {
 		// TODO: use count to prevent overflow?
 		return std::fread(buf, size, 1u, file_);
 	}
@@ -143,7 +143,7 @@ public:
 	MemoryStream() = default;
 	MemoryStream(nytl::Span<const std::byte*> buf);
 
-	i64 readIncomplete(u64 size, std::byte* buf) override {
+	i64 readPartial(u64 size, std::byte* buf) override {
 		auto read = std::clamp(i64(buf_.size()) - i64(at_), i64(0), i64(size));
 		std::memcpy(buf, buf_.data() + at_, read);
 		at_ += read;

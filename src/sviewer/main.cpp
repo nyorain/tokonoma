@@ -342,7 +342,7 @@ public:
 			// - using writePng -
 			// much faster than stbi (seems around 10x to me) but
 			// obviously depends on libpng.
-			auto size = nytl::Vec2ui{screenshot_.width, screenshot_.height};
+			auto size = nytl::Vec3ui{screenshot_.width, screenshot_.height, 1u};
 			auto img = tkn::wrap(size, vk::Format::r8g8b8a8Unorm, map.span());
 			writePng(fname, *img);
 

@@ -93,6 +93,7 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 	vk::ImageMemoryBarrier barrier0;
 	barrier0.image = target.image;
 	barrier0.subresourceRange.layerCount = target.layerCount;
+	barrier0.subresourceRange.baseMipLevel = target.baseLevel;
 	barrier0.subresourceRange.levelCount = 1;
 	barrier0.subresourceRange.aspectMask = vk::ImageAspectBits::color;
 	barrier0.oldLayout = target.srcScope.layout;
@@ -102,7 +103,7 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 
 	vk::ImageMemoryBarrier barrierRest;
 	barrierRest.image = target.image;
-	barrierRest.subresourceRange.baseMipLevel = 1;
+	barrierRest.subresourceRange.baseMipLevel = target.baseLevel + 1;
 	barrierRest.subresourceRange.layerCount = target.layerCount;
 	barrierRest.subresourceRange.levelCount = genLevels;
 	barrierRest.subresourceRange.aspectMask = vk::ImageAspectBits::color;
@@ -117,7 +118,7 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 		vk::PipelineStageBits::transfer,
 		{}, {}, {}, {{barrier0, barrierRest}});
 
-	for(auto i = 1u; i < genLevels + 1; ++i) {
+	for(auto i = target.baseLevel + 1u; i < target.baseLevel + genLevels + 1; ++i) {
 		// std::max needed for end offsets when the texture is not
 		// quadratic: then we would get 0 there although the mipmap
 		// still has size 1
@@ -172,7 +173,7 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 	if(dst) {
 		vk::ImageMemoryBarrier barrier;
 		barrier.image = target.image;
-		barrier.subresourceRange.baseMipLevel = 0u;
+		barrier.subresourceRange.baseMipLevel = target.baseLevel;
 		barrier.subresourceRange.layerCount = target.layerCount;
 		barrier.subresourceRange.levelCount = genLevels + 1;
 		barrier.subresourceRange.aspectMask = vk::ImageAspectBits::color;

@@ -234,7 +234,7 @@ public:
 		auto table = generateTable(sky_);
 
 		auto fmt = vk::Format::r16g16b16a16Sfloat;
-		auto size = Vec2ui{Table::numEntries, Table::numLevels};
+		auto size = Vec3ui{Table::numEntries, Table::numLevels, 1u};
 
 		using Texel = nytl::Vec<4, tkn::f16>;
 		Texel dataF[Table::numLevels][Table::numEntries];
@@ -259,25 +259,27 @@ public:
 		vk::CommandBuffer cb = tables_.cb;
 		vk::beginCommandBuffer(cb, {});
 
-		tkn::TextureCreateParams tcp;
-		tcp.format = fmt;
+		auto wb = tkn::WorkBatcher::createDefault(dev);
+		wb.cb = cb;
 
-		std::array<tkn::FillData, 3> datas;
+		std::array<tkn::FillData, 3> fillDatas;
+		std::array<tkn::TextureInitData, 3> initDatas;
 		if(!tables_.f.image()) {
-			auto wb = tkn::WorkBatcher::createDefault(dev);
-			wb.cb = cb;
+			initDatas[0] = createTexture(wb, move(imgF));
+			initDatas[1] = createTexture(wb, move(imgG));
+			initDatas[2] = createTexture(wb, move(imgFHH));
 
-			tables_.f = move(tkn::Texture{wb, move(imgF), tcp}.viewableImage());
-			tables_.g = move(tkn::Texture{wb, move(imgG), tcp}.viewableImage());
-			tables_.fhh = move(tkn::Texture{wb, move(imgFHH), tcp}.viewableImage());
+			tables_.f = initTexture(initDatas[0], wb);
+			tables_.g = initTexture(initDatas[1], wb);
+			tables_.fhh = initTexture(initDatas[2], wb);
 		} else {
-			datas[0] = createFill(tables_.f.image(), fmt, std::move(imgF));
-			datas[1] = createFill(tables_.g.image(), fmt, std::move(imgG));
-			datas[2] = createFill(tables_.fhh.image(), fmt, std::move(imgFHH));
+			fillDatas[0] = createFill(wb, tables_.f.image(), fmt, std::move(imgF), 1u);
+			fillDatas[1] = createFill(wb, tables_.g.image(), fmt, std::move(imgG), 1u);
+			fillDatas[2] = createFill(wb, tables_.fhh.image(), fmt, std::move(imgFHH), 1u);
 
-			doFill(datas[0], cb);
-			doFill(datas[1], cb);
-			doFill(datas[2], cb);
+			doFill(fillDatas[0], cb);
+			doFill(fillDatas[1], cb);
+			doFill(fillDatas[2], cb);
 		}
 
 		vk::endCommandBuffer(cb);

@@ -106,6 +106,7 @@ struct DownscaleTarget {
 	vk::Format format {};
 	vk::Extent3D extent {};
 	unsigned layerCount {1};
+	unsigned baseLevel {};
 
 	// src synchronization scope for the whole image (i.e. should include
 	// reads from higher mip levels that the call will write to).

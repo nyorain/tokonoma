@@ -133,8 +133,10 @@ public:
 			return false;
 		}
 
-		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read(std::move(brdflutFile)));
-		brdfLut_ = initBrdfLut.init(batch);
+		// auto initBrdfLut = tkn::createTexture(batch, tkn::read(std::move(brdflutFile)));
+		// brdfLut_ = tkn::initTexture(initBrdfLut, batch);
+
+		brdfLut_ = tkn::buildTexture(dev, tkn::read(std::move(brdflutFile)));
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -150,10 +152,11 @@ public:
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
-		auto p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
-		tkn::TextureCreateParams params;
-		params.format = vk::Format::r8g8b8a8Unorm;
-		dummyTex_ = {batch, std::move(p), params};
+		auto p = tkn::wrap({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+
+		// auto initDummyTex = tkn::createTexture(batch, std::move(p), params);
+		// dummyTex_ = tkn::initTexture(initDummyTex, batch);
+		dummyTex_ = tkn::buildTexture(dev, std::move(p));
 
 		// Load scene
 		auto mat = nytl::identity<4, float>();
@@ -212,6 +215,7 @@ public:
 		cameraDsLayout_ = {dev, cameraBindings};
 		std::fflush(stdout);
 
+		/*
 		tkn::Environment::InitData initEnv;
 		auto convFile = openAsset("convolution.ktx");
 		auto irrFile = openAsset("irradiance.ktx");
@@ -224,11 +228,12 @@ public:
 			return false;
 		}
 
-		// env_.create(initEnv, batch,
-		// 	tkn::read(std::move(convFile)),
-		// 	tkn::read(std::move(irrFile)), sampler_);
-		// env_.createPipe(vkDevice(), cameraDsLayout_, renderPass(), 0u, samples());
-		// env_.init(initEnv, batch);
+		env_.create(initEnv, batch,
+			tkn::read(std::move(convFile)),
+			tkn::read(std::move(irrFile)), sampler_);
+		env_.createPipe(vkDevice(), cameraDsLayout_, renderPass(), 0u, samples());
+		env_.init(initEnv, batch);
+		*/
 
 		tkn::SkyboxRenderer::PipeInfo pi;
 		pi.renderPass = renderPass();
@@ -320,13 +325,17 @@ public:
 
 		updateLight_ = true;
 
-		sky_ = {vkDevice(), &skyboxRenderer_.dsLayout(), -dirLight_.data.dir,
-			skyGroundAlbedo, turbidity_};
-		dirLight_.data.color = tkn::f16Scale * sky_.sunIrradiance();
-
 		// bring lights initially into correct layout and stuff
 		dirLight_.render(cb, shadowData_, scene_);
 		pointLight_.render(cb, shadowData_, scene_);
+
+		vk::endCommandBuffer(cb);
+		qs.wait(qs.add(cb));
+
+		// TODO: make use batching as well
+		sky_ = {vkDevice(), &skyboxRenderer_.dsLayout(), -dirLight_.data.dir,
+			skyGroundAlbedo, turbidity_};
+		dirLight_.data.color = tkn::f16Scale * sky_.sunIrradiance();
 
 		auto aoUboSize = sizeof(tkn::SH9<Vec4f>) + 3 * 4u;
 		aoUbo_ = {dev.bufferAllocator(), aoUboSize,
@@ -353,9 +362,6 @@ public:
 		// 	vk::ImageLayout::shaderReadOnlyOptimal}});
 		adsu.uniform({{{aoUbo_}}});
 		adsu.apply();
-
-		vk::endCommandBuffer(cb);
-		qs.wait(qs.add(cb));
 
 		// PERF: do this in scene initialization to avoid additional
 		// data upload
@@ -1001,7 +1007,7 @@ protected:
 	// u32 mode_ {modeIrradiance | modeSpecularIBL};
 	u32 mode_ {modePointLight | modeDirLight | modeIrradiance};
 
-	tkn::Texture dummyTex_;
+	vpp::ViewableImage dummyTex_;
 	bool moveLight_ {false};
 
 	bool anisotropy_ {}; // whether device supports anisotropy
@@ -1046,7 +1052,7 @@ protected:
 
 	float turbidity_ = 2.f;
 
-	tkn::Texture brdfLut_;
+	vpp::ViewableImage brdfLut_;
 
 	static constexpr auto animateSkyStep = 0.05f;
 	float animateSkyDeltaAccum_ {0.f};

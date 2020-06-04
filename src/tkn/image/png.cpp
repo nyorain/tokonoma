@@ -1,5 +1,6 @@
 #include <tkn/image.hpp>
 #include <tkn/types.hpp>
+#include <tkn/stream.hpp>
 
 #include <vkpp/enums.hpp>
 #include <vpp/imageOps.hpp>
@@ -16,11 +17,11 @@ namespace tkn {
 
 class PngReader : public ImageProvider {
 public:
-	File file_ {};
+	std::unique_ptr<Stream> stream_ {};
 	nytl::Vec2ui size_;
 	png_infop pngInfo_ {};
 	png_structp png_ {};
-	std::vector<std::byte> tmpData_ {};
+	mutable std::vector<std::byte> tmpData_ {};
 
 public:
 	~PngReader() {
@@ -29,12 +30,10 @@ public:
 		}
 	}
 
-	nytl::Vec2ui size() const override { return size_; }
-	vk::Format format() const override { return vk::Format::r8g8b8a8Srgb; }
+	nytl::Vec3ui size() const noexcept override { return {size_.x, size_.y, 1u}; }
+	vk::Format format() const noexcept override { return vk::Format::r8g8b8a8Srgb; }
 
-	bool read(nytl::Span<std::byte> data, unsigned mip,
-			unsigned layer, unsigned face) override {
-		dlg_assert(face == 0);
+	u64 read(nytl::Span<std::byte> data, unsigned mip, unsigned layer) const override {
 		dlg_assert(mip == 0);
 		dlg_assert(layer == 0);
 
@@ -43,7 +42,7 @@ public:
 
 		auto rows = std::make_unique<png_bytep[]>(size_.y);
 		if(::setjmp(png_jmpbuf(png_))) {
-			return false;
+			throw std::runtime_error("setjmp(png_jmpbuf) failed");
 		}
 
 		auto rowSize = png_get_rowbytes(png_, pngInfo_);
@@ -55,29 +54,39 @@ public:
 		}
 
 		png_read_image(png_, rows.get());
-		return true;
+		return byteSize;
 	}
 
-	nytl::Span<const std::byte> read(unsigned mip, unsigned layer,
-			unsigned face) override {
-		tmpData_.resize(size_.x * size_.y * vpp::formatSize(format()));
-		if(read(tmpData_, face, mip, layer)) {
-			return tmpData_;
-		}
-
-		return {};
+	nytl::Span<const std::byte> read(unsigned mip, unsigned layer) const override {
+		auto byteSize = size_.x * size_.y * vpp::formatSize(format());
+		tmpData_.resize(byteSize);
+		auto res = read(tmpData_, mip, layer);
+		dlg_assert(res == byteSize);
+		return tmpData_;
 	}
 };
 
-ReadError readPng(File&& file, PngReader& reader) {
+void readPngDataFromStream(png_structp png_ptr, png_bytep outBytes,
+		png_size_t byteCountToRead) {
+	png_voidp io_ptr = png_get_io_ptr(png_ptr);
+	dlg_assert(io_ptr);
+
+	Stream& stream = *(Stream*) io_ptr;
+	auto res = stream.readPartial((std::byte*) outBytes, byteCountToRead);
+	dlg_assert(res == i64(byteCountToRead));
+}
+
+ReadError readPng(std::unique_ptr<Stream>&& stream, PngReader& reader) {
 	unsigned char sig[8];
-	std::fread(sig, 1, sizeof(sig), file);
+	if(!stream->readPartial(sig)) {
+		return ReadError::unexpectedEnd;
+	}
+
 	if(::png_sig_cmp(sig, 0, sizeof(sig))) {
     	return ReadError::invalidType;
   	}
 
-	reader.png_ = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr,
-		nullptr, nullptr);
+	reader.png_ = png_create_read_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
 	if(!reader.png_) {
     	return ReadError::invalidType;
 	}
@@ -91,7 +100,7 @@ ReadError readPng(File&& file, PngReader& reader) {
 		return ReadError::internal;
 	}
 
-	png_init_io(reader.png_, file);
+	png_set_read_fn(reader.png_, stream.get(), readPngDataFromStream);
 	png_set_sig_bytes(reader.png_, sizeof(sig));
 	png_read_info(reader.png_, reader.pngInfo_);
 
@@ -129,29 +138,19 @@ ReadError readPng(File&& file, PngReader& reader) {
 	}
 
 	png_read_update_info(reader.png_, reader.pngInfo_);
-	reader.file_ = std::move(file);
+	reader.stream_ = std::move(stream);
 	return ReadError::none;
 }
 
-ReadError readPng(File&& file, std::unique_ptr<ImageProvider>& ret) {
-	std::rewind(file);
+ReadError readPng(std::unique_ptr<Stream>&& stream,
+		std::unique_ptr<ImageProvider>& ret) {
 	auto reader = std::make_unique<PngReader>();
-	auto err = readPng(std::move(file), *reader);
+	auto err = readPng(std::move(stream), *reader);
 	if(err == ReadError::none) {
 		ret = std::move(reader);
 	}
 
 	return err;
-}
-
-ReadError readPng(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
-	auto file = File(path, "rb");
-	if(!file) {
-		dlg_debug("fopen: {}", std::strerror(errno));
-		return ReadError::cantOpen;
-	}
-
-	return readPng(std::move(file), ret);
 }
 
 WriteError writePng(nytl::StringParam path, ImageProvider& img) {

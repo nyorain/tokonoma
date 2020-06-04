@@ -41,8 +41,8 @@ namespace tkn {
 void Environment::create(InitData& data, const WorkBatcher& wb,
 		nytl::StringParam envMapPath, nytl::StringParam irradiancePath,
 		vk::Sampler linear) {
-	auto envMap = tkn::read(envMapPath, true);
-	auto irradiance = tkn::read(irradiancePath, true);
+	auto envMap = tkn::read(envMapPath);
+	auto irradiance = tkn::read(irradiancePath);
 	create(data, wb, std::move(envMap), std::move(irradiance), linear);
 }
 
@@ -57,8 +57,8 @@ void Environment::create(InitData& data, const WorkBatcher& wb,
 	params.cubemap = true;
 	params.format = vk::Format::r16g16b16a16Sfloat;
 	convolutionMipmaps_ = envMap->mipLevels();
-	envMap_ = {data.initEnvMap, wb, std::move(envMap), params};
-	irradiance_ = {data.initIrradiance, wb, std::move(irradiance), params};
+	data.initEnvMap = createTexture(wb, std::move(envMap), params);
+	data.initIrradiance = createTexture(wb, std::move(irradiance), params);
 
 	// pipe
 	// ds layout
@@ -75,8 +75,8 @@ void Environment::create(InitData& data, const WorkBatcher& wb,
 }
 
 void Environment::init(InitData& data, const WorkBatcher& wb) {
-	envMap_.init(data.initEnvMap, wb);
-	irradiance_.init(data.initIrradiance, wb);
+	envMap_ = initTexture(data.initEnvMap, wb);
+	irradiance_ = initTexture(data.initIrradiance, wb);
 	ds_.init(data.initDs);
 
 	vpp::DescriptorSetUpdate dsu(ds_);
@@ -400,13 +400,13 @@ Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
 	}
 
 	// create cubemap on device
-	auto img = wrap({faceWidth, faceHeight}, vk::Format::r16g16b16a16Sfloat,
-		1u, 1u, 6u, nytl::span(ptrs));
+	auto img = wrap({faceWidth, faceHeight, 1u}, vk::Format::r16g16b16a16Sfloat,
+		1u, 6u, nytl::span(ptrs), true);
 	TextureCreateParams params;
 	params.format = cubemapFormat;
 	params.cubemap = true;
-	cubemap_ = {dev, std::move(img), params};
-	vpp::nameHandle(cubemap_.viewableImage(), "Sky:cubemap");
+	cubemap_ = buildTexture(dev, std::move(img), params);
+	vpp::nameHandle(cubemap_, "Sky:cubemap");
 
 	// create ds
 	if(dsLayout) {

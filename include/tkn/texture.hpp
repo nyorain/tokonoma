@@ -2,6 +2,7 @@
 
 #include <tkn/defer.hpp>
 #include <tkn/image.hpp>
+#include <tkn/render.hpp>
 #include <vpp/image.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <nytl/stringParam.hpp>
@@ -33,21 +34,18 @@ namespace tkn {
 bool isHDR(vk::Format);
 bool isSRGB(vk::Format);
 vk::Format toggleSRGB(vk::Format);
+vk::ImageType minImageType(vk::Extent3D, unsigned minDim = 1u);
+vk::ImageViewType minImageViewType(vk::Extent3D, unsigned layers,
+	bool cubemap, unsigned minDim = 1u);
 
 // Vulkan enums declared via static to not include vulkan headers
 struct TextureCreateParams {
-	// default usage flags: sampled, storage, input attachment, transfer src/dst
+	// default usage flags: sampled, input attachment, transfer dst
 	static const vk::ImageUsageFlags defaultUsage;
-	static const vk::Format defaultFormat; // r8g8b8a8Srgb
 
 	// The format of the created image.
-	// depending on whether format is srgb the given files data will be
-	// interpreted as srgb (only for overloads that don't explicitly
-	// specify dataFormat).
-	// TODO: allow to just use the format of the image data?
-	// by making this std::optional<vk::Format>? The caller can always
-	// just query the format from the ImageProvider.
-	vk::Format format = defaultFormat;
+	// If left empty, will simply use the format of the provided image.
+	std::optional<vk::Format> format {};
 
 	// If given, will force interpret the data as srgb/non-srgb.
 	// No effect if the data is not unorm.
@@ -70,11 +68,12 @@ struct TextureCreateParams {
 	std::optional<bool> fillMipmaps {};
 
 	// Whether to create a cubemap image and view.
-	// If true, there has to be 6 faces in the provided image and
-	// layerCount in ViewRange must be 6 (or 0).
-	// If false, all additional faces in the provided image are
-	// ignored.
-	bool cubemap {};
+	// none, auto: will create a cubemap if the image provider signals
+	//   the image should be interpreted as cubemap.
+	// true: there have to be 6 faces in the provided image and
+	//   layerCount in ViewRange must be 6.
+	// false: will simply interpret all layers as layers.
+	std::optional<bool> cubemap {};
 
 	// When cubemap is true and there is more than one layer (either
 	// explicitly set or by leaving layerCount to 0), the device
@@ -85,11 +84,16 @@ struct TextureCreateParams {
 		unsigned layerCount = 0; // 0: all
 		unsigned levelCount = 0; // 0: all
 	} view;
+
+	// Minimum dimension of image and image view types.
+	// Useful to make even 1-height images 2D textures or
+	// 1-depth textured 3D textures.
+	unsigned minTypeDim {2};
 };
 
 // Basically just a ViewableImage that allows for deferred uploading.
 // Always allocated on deviceLocal memory.
-class Texture {
+class [[deprecated("Use the standalone functions")]] Texture {
 public:
 	struct InitData {
 		vpp::ViewableImage::InitData initImage {};
@@ -142,27 +146,51 @@ struct FillData {
 	vpp::Image::InitData initStageImage;
 	vpp::SubBuffer::InitData initStageBuffer;
 
+	// Total number of writable levels in the target image.
+	// If this is more than what source provides, will generate
+	// mipmaps for the rest.
+	unsigned numLevels;
+	bool copyToStageImage {};
 	vpp::Image stageImage;
 	vpp::SubBuffer stageBuffer;
 
-	const vpp::Image* target;
+	vk::Image target;
 	vk::Format dstFormat;
+	vk::Format srcFormat;
 	std::unique_ptr<ImageProvider> source;
-};
 
-// TODO: support cubemaps.
-// But I guess we could even do that transparently for the caller.
-// Just abolish ImageProvider::faces() and instead make the ktx
-// loader (or other loaders) provide them as layers, the way
-// that vulkan requires it. Then this already supports cubemaps.
-// TODO: support custom allocators, something like WorkBatcher. But better
+	SyncScope dstScope = SyncScope::fragmentSampled();
+};
 
 // FillData must remain valid until the CommandBuffer has finished execution.
 // Responsibility of the caller to make sure the image can be filled with all
 // the data the given provider provides and that the requires transfer/blit
 // usage flags in the target image are set. Will blit if needed.
-FillData createFill(const vpp::Image&, vk::Format,
-	std::unique_ptr<ImageProvider>);
+FillData createFill(const WorkBatcher& wb, const vpp::Image&, vk::Format,
+	std::unique_ptr<ImageProvider>, unsigned maxNumLevels,
+	std::optional<bool> forceSRGB = {});
 void doFill(FillData&, vk::CommandBuffer cb);
+
+struct TextureInitData {
+	vpp::ViewableImage::InitData initImage {};
+	FillData fill {};
+
+	unsigned numLevels {}; // how many levels in total, >0
+	bool cubemap {}; // whether image is cubemap (compatible)
+	vpp::Image image;
+
+	vk::ImageViewType viewType;
+	TextureCreateParams::ViewRange view {};
+};
+
+TextureInitData createTexture(const WorkBatcher&,
+	std::unique_ptr<ImageProvider> img, const TextureCreateParams& = {});
+vpp::Image initImage(TextureInitData&, const WorkBatcher&);
+vpp::ViewableImage initTexture(TextureInitData&, const WorkBatcher&);
+
+vpp::ViewableImage buildTexture(const WorkBatcher&,
+	std::unique_ptr<ImageProvider> img, const TextureCreateParams& = {});
+vpp::ViewableImage buildTexture(const vpp::Device&,
+	std::unique_ptr<ImageProvider> img, const TextureCreateParams& = {});
 
 } // namespace tkn

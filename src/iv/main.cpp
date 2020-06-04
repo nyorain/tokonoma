@@ -36,34 +36,6 @@
 
 using namespace tkn::types;
 
-/// ImageProvider wrapper that returns all faces as layers instead and
-/// only the first original layer.
-class FaceLayersProvider : public tkn::ImageProvider {
-public:
-	std::unique_ptr<tkn::ImageProvider> impl_;
-
-public:
-	unsigned mipLevels() const override { return impl_->mipLevels(); }
-	unsigned layers() const override { return impl_->faces(); }
-	unsigned faces() const override { return 1u; }
-	nytl::Vec2ui size() const override { return impl_->size(); }
-	vk::Format format() const override { return impl_->format(); }
-
-	nytl::Span<const std::byte> read(unsigned mip = 0, unsigned layer = 0,
-			unsigned face = 0) override {
-		dlg_assert(face < faces() && layer < layers() && mip < mipLevels());
-		// make sure two forward layer as face
-		return impl_->read(mip, 0u, layer);
-	}
-
-	bool read(nytl::Span<std::byte> data, unsigned mip = 0, unsigned layer = 0,
-			unsigned face = 0) override {
-		dlg_assert(face < faces() && layer < layers() && mip < mipLevels());
-		// make sure to forward layer as face
-		return impl_->read(data, mip, 0u, layer);
-	}
-};
-
 class ImageView final : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
@@ -91,41 +63,32 @@ public:
 		// load image
 		auto p = tkn::read(parsed.file);
 		if(!p) {
+			dlg_fatal("Cannot read image '{}'", parsed.file);
 			return false;
 		}
 
-		if(parsed.noCube) {
-			auto wrapper = std::make_unique<FaceLayersProvider>();
-			wrapper->impl_ = std::move(p);
-			p = std::move(wrapper);
-		}
+		cubemap_ = !parsed.noCube && p->cubemap();
 
 		tkn::TextureCreateParams params;
-		params.cubemap = cubemap_ = (p->faces() == 6);
+		params.cubemap = cubemap_;
 		params.format = p->format();
-		if(!params.cubemap) {
-			params.view.baseArrayLayer = 0;
-			params.view.layerCount = 1u;
-			params.view.baseMipLevel = 0;
-			params.view.levelCount = 1u;
-		} else {
-			params.view.layerCount = 6u;
-		}
+		params.view.levelCount = 1u;
+		params.view.layerCount = cubemap_ ? 6u : 1u;
 
 		format_ = p->format();
-		layerCount_ = p->layers();
+		layerCount_ = p->layers() / (cubemap_ ? 6u : 1u);
 		levelCount_ = p->mipLevels();
 
 		dlg_info("Image has size {}", p->size());
 		dlg_info("Image has format {}", (int) p->format());
 		dlg_info("Image has {} levels", levelCount_);
 		dlg_info("Image has {} layers", layerCount_);
-		dlg_info("Image has {} faces", p->faces());
+		dlg_info("Image {} a cubemap", p->cubemap() ? "is" : "isn't");
 
 		auto wb = tkn::WorkBatcher::createDefault(dev);
 		wb.cb = cb;
-		auto tex = tkn::Texture(wb, std::move(p), params);
-		auto [img, view] = tex.viewableImage().split();
+		auto tex = buildTexture(wb, std::move(p), params);
+		auto [img, view] = tex.split();
 		image_ = std::move(img);
 		view_ = std::move(view);
 
@@ -296,6 +259,7 @@ public:
 
 		if(recreateView_) {
 			recreateView_ = false;
+
 			vk::ImageViewCreateInfo viewInfo;
 			viewInfo.viewType = cubemap_ ?
 				vk::ImageViewType::cube :

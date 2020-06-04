@@ -1,6 +1,7 @@
 #pragma once
 
 #include <tkn/file.hpp>
+#include <tkn/types.hpp>
 #include <nytl/stringParam.hpp>
 #include <functional>
 
@@ -10,36 +11,42 @@
 #include <cstddef>
 #include <memory>
 
-// TODO: inconsistent error handling return value vs exception,
-// clean that up (in implementations as well). Document when
-// exceptions might be thrown
-// TODO: support reading from memory buffers. Needed e.g. to use
-// this with tinygltf instead of the supplied stb loader (for speed).
-
 namespace tkn {
+
+class Stream;
 
 /// Provides information and data of an image.
 /// Abstraction allows to load/save/copy images as flexibly as possible.
+/// Close to the vulkan model of an image.
+/// We separate layers and depth here since mipmaps work differently for
+/// both.
 class ImageProvider {
 public:
 	virtual ~ImageProvider() = default;
 
-	/// The size of the image.
-	virtual nytl::Vec2ui size() const = 0;
+	/// The size of the image. No component shall be zero, all >= 1.
+	/// When the image has a depth > 1, the image must not have layers.
+	virtual nytl::Vec3ui size() const noexcept = 0;
 
 	/// The format of the image.
 	/// The data from 'read' will be in this format.
-	virtual vk::Format format() const = 0;
+	/// Shall never return vk::Format::undefined.
+	virtual vk::Format format() const noexcept = 0;
 
 	/// The number of layers the image has.
-	virtual unsigned layers() const { return 1u; }
+	/// Should always return a number >= 1.
+	virtual unsigned layers() const noexcept { return 1u; }
 
 	/// The number of mipmap levels the image has.
-	virtual unsigned mipLevels() const { return 1u; }
+	/// Should always return a number >= 1.
+	virtual unsigned mipLevels() const noexcept { return 1u; }
 
-	/// The number of faces the image has.
-	/// Usually 1 or 6 (cubemap).
-	virtual unsigned faces() const { return 1u; }
+	/// Whether this image is a cubemap.
+	/// Implementations might not be able to know this, it's to the
+	/// best of their knowledge. If this is true, layers() must be
+	/// a multiple of 6, >0 and contain the layers in packs of faces
+	/// (i.e. face i, cubemap-layer j is at image layer 6j + i).
+	virtual bool cubemap() const noexcept { return false; }
 
 	/// The rationale behind providing 2 apis for getting data from the provider
 	/// is to avoid as many copies as possible.
@@ -49,44 +56,44 @@ public:
 	/// For other providers (e.g. file in ram/mapped device memory) it's more
 	/// comfortable to simply return the data span instead of allocating
 	/// data and copying it.
-	// TODO: rework const-ness. Both functions should probably be const.
-	// If implementations need an extra buffer, that should be mutable.
 
-	/// Reads one full, tighly packed 2D image from the given face, mip, layer.
+	/// Reads one full, tighly packed 2D image from the given mip, layer.
 	/// The returned span is only guaranteed to be valid until the next read
-	/// call.
+	/// call or until this object is desctructed., the data is not owned.
 	/// Face, mip, layer must be below the respectively advertised counts.
-	/// Returns empty span on error. Also allowed to throw.
+	/// Throws on error.
 	virtual nytl::Span<const std::byte> read(
-		unsigned mip = 0, unsigned layer = 0, unsigned face = 0) = 0;
+		unsigned mip = 0, unsigned layer = 0) const = 0;
 
-	/// Copies one full, tightly packed 2D image from the given face, mip, layer
-	/// into the provided data buffer. The provided data buffer must be
+	/// Copies one full, tightly packed 2D image from the given mip, layer
+	/// into the provided data buffer. The provided data buffer must have
 	/// large enough to fit the data, partial reading not supported.
 	/// Face, mip, layer must be below the respectively advertised counts.
-	/// Return false on error. Also allowed to throw.
-	virtual bool read(nytl::Span<std::byte> data,
-		unsigned mip = 0, unsigned layer = 0, unsigned face = 0) = 0;
+	/// Throws on error. Returns the number of written bytes.
+	virtual u64 read(nytl::Span<std::byte> data,
+		unsigned mip = 0, unsigned layer = 0) const = 0;
 };
 
 /// Transforms the given image information into an image provider
 /// implementation. The provider will only reference the given data, it
 /// must stay valid until the provider is destroyed.
-std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 	nytl::Span<const std::byte> data);
 
-/// Expects: data.size() == mips * layers * faces, with
-/// data for mip m, layer l, face f at data[m * layer * faces + l * faces + f].
+/// Expects: data.size() == mips * layers, with data for mip m, layer
+/// l at data[m * layer + l].
 /// Will move the given data into the provider.
-std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
-	unsigned mips, unsigned layers, unsigned faces,
-	nytl::Span<std::unique_ptr<std::byte[]>> data);
+std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+	unsigned mips, unsigned layers, nytl::Span<std::unique_ptr<std::byte[]>> data,
+	bool cubemap = false);
 
+/// Expects: data.size() == mips * layers, with data for mip m, layer
+/// l at data[m * layer + l].
 /// Alternative to function above, there the provider will only reference the
 /// given data, it must stay valid until the provider is destroyed.
-std::unique_ptr<ImageProvider> wrap(nytl::Vec2ui size, vk::Format format,
-	unsigned mips, unsigned layers, unsigned faces,
-	nytl::Span<const std::byte* const> data);
+std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+	unsigned mips, unsigned layers, nytl::Span<const std::byte* const> data,
+	bool cubemap = false);
 
 enum class ReadError {
 	none,
@@ -102,33 +109,31 @@ enum class ReadError {
 };
 
 /// Backend/Format-specific functions. Create image provider implementations
-/// into the given unique ptr on success.
-ReadError readKtx(nytl::StringParam path, std::unique_ptr<ImageProvider>&);
-ReadError readJpeg(nytl::StringParam path, std::unique_ptr<ImageProvider>&);
-ReadError readPng(nytl::StringParam path, std::unique_ptr<ImageProvider>&);
-
-/// Transfers ownership of the file to the loader on success.
-ReadError readKtx(File&& file, std::unique_ptr<ImageProvider>&);
-ReadError readJpeg(File&& file, std::unique_ptr<ImageProvider>&);
-ReadError readPng(File&& file, std::unique_ptr<ImageProvider>&);
+/// into the given unique ptr on success. They expect binary streams.
+ReadError readKtx(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
+ReadError readJpeg(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
+ReadError readPng(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
 
 /// STB babckend is a fallback since it supports additional formats.
-/// For !hdr, will always return r8g8b8a8Unorm as image format, the caller must
-/// know whether the image holds srgb data. For hdr, always returns
-/// vk::Format::r32g32b32a32Sfloat format.
-std::unique_ptr<ImageProvider> readStb(nytl::StringParam path, bool hdr = false);
-std::unique_ptr<ImageProvider> readStb(File&& file, bool hdr = false);
+std::unique_ptr<ImageProvider> readStb(std::unique_ptr<Stream>&&);
 
 /// Tries to find the matching backend/loader for the image file at the
 /// given path. If no format/backend succeeds, the returned unique ptr will be
-/// empty. The hdr parameter is just for stb fallback.
-std::unique_ptr<ImageProvider> read(nytl::StringParam path, bool hdr = false);
-std::unique_ptr<ImageProvider> read(File&& file, bool hdr = false);
+/// empty.
+/// 'ext' can contain a file extension (e.g. the full filename or just
+/// something like ".png") to give a hint about the file type. The loader
+/// will always try all image formats if the preferred one fails.
+std::unique_ptr<ImageProvider> read(std::unique_ptr<Stream>&&,
+	std::string_view ext = "");
+std::unique_ptr<ImageProvider> read(nytl::StringParam filename);
+std::unique_ptr<ImageProvider> read(File&& file);
+std::unique_ptr<ImageProvider> read(nytl::Span<const std::byte> data);
 
-/// Reads multiple images from the given paths.
-/// If asFaces is true, will load them as faces, otherwise as layers.
-std::unique_ptr<ImageProvider> read(nytl::Span<const char* const> paths,
-	bool asFaces = false, bool hdr = false);
+/// Reads multiple images from the given paths and loads them as layers.
+/// All images must have the same number of mip levels, same sizes
+/// and same formats. Will always just consider the first layer from
+/// each image.
+std::unique_ptr<ImageProvider> read(nytl::Span<const char* const> paths, bool cubemap);
 
 enum class WriteError {
 	none,
@@ -141,35 +146,24 @@ enum class WriteError {
 
 WriteError writeKtx(nytl::StringParam path, ImageProvider&);
 
-/// Will only write the first face, layer and mipmap.
-/// Can only write rgb or rgba images.
+/// Can only write 2D rgb or rgba images.
+/// Will only write the first layer and mipmap.
 WriteError writePng(nytl::StringParam path, ImageProvider&);
 
 
 /// More limited in-memory representation of an image.
 struct Image {
-	nytl::Vec2ui size {};
+	nytl::Vec3ui size {};
 	vk::Format format {};
 	std::unique_ptr<std::byte[]> data;
 };
 
-/// Reads the first layer, mip, face of the given image provider
-/// and stores them in memory as Image. On error, an empty image
-/// is returned (e.g. the image provider has unsupported format).
-Image readImage(ImageProvider&);
-
-/// Uses stb to read the image at the given path.
-/// For !hdr, will always return r8g8b8a8Unorm as image format, the caller must
-/// know whether the image holds srgb data. For hdr, always returns
-/// vk::Format::r32g32b32a32Sfloat format.
-Image readImageStb(nytl::StringParam path, bool hdr = false);
-Image readImageStb(File&& file, bool hdr = false);
-
-/// Fully reads the image at the given path into memory and returns
-/// the image. Returns an empty image on error.
-/// The hdr parameter is just for stb fallback.
-Image readImage(nytl::StringParam path, bool hdr = false);
-Image readImage(File&& file, bool hdr = false);
+/// Reads a specific layer, mip of the given image provider
+/// and stores them in memory as Image. Does not catch exceptions
+/// from the ImageProvider.
+Image readImage(const ImageProvider&, unsigned mip = 0, unsigned layer = 0);
+Image readImage(std::unique_ptr<Stream>&& stream, unsigned mip = 0, unsigned layer = 0);
+Image readImageStb(std::unique_ptr<Stream>&& stream);
 
 /// Transforms the given image into an image provider implementation.
 /// The provider will take ownership of the image.

@@ -9,7 +9,8 @@
 namespace tkn {
 
 template<typename T>
-T read(const std::byte*& data) {
+std::enable_if_t<std::is_standard_layout_v<T>, T>
+read(const std::byte*& data) {
 	T ret;
 	std::memcpy(&ret, data, sizeof(ret));
 	data += sizeof(ret);
@@ -17,7 +18,8 @@ T read(const std::byte*& data) {
 }
 
 template<typename T>
-T read(nytl::Span<std::byte>& span) {
+std::enable_if_t<std::is_standard_layout_v<T>, T>
+read(nytl::Span<std::byte>& span) {
 	T ret;
 	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
 	std::memcpy(&ret, span.data(), sizeof(ret));
@@ -26,7 +28,8 @@ T read(nytl::Span<std::byte>& span) {
 }
 
 template<typename T>
-T read(nytl::Span<const std::byte>& span) {
+std::enable_if_t<std::is_standard_layout_v<T>, T>
+read(nytl::Span<const std::byte>& span) {
 	T ret;
 	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
 	std::memcpy(&ret, span.data(), sizeof(ret));
@@ -35,7 +38,8 @@ T read(nytl::Span<const std::byte>& span) {
 }
 
 template<typename T>
-T& refRead(nytl::Span<std::byte>& span) {
+std::enable_if_t<std::is_standard_layout_v<T>, T&>
+refRead(nytl::Span<std::byte>& span) {
 	T ret;
 	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
 	auto data = span.data();
@@ -60,7 +64,8 @@ inline std::size_t write(nytl::Span<std::byte>& dst,
 }
 
 template<typename T>
-std::size_t write(nytl::Span<std::byte>& span, T&& data) {
+std::enable_if_t<std::is_standard_layout_v<T>, std::size_t>
+write(nytl::Span<std::byte>& span, const T& data) {
 	return write(span, reinterpret_cast<const std::byte*>(&data), sizeof(data));
 }
 
@@ -70,7 +75,8 @@ inline void skip(nytl::Span<std::byte>& span, std::size_t bytes) {
 }
 
 template<typename T>
-void write(std::byte*& data, T&& obj) {
+std::enable_if_t<std::is_standard_layout_v<T>>
+write(std::byte*& data, const T& obj) {
 	std::memcpy(data, &obj, sizeof(obj));
 	data += sizeof(obj);
 }
@@ -80,16 +86,11 @@ struct WriteBuffer {
 };
 
 template<typename T>
-void write(WriteBuffer& buffer, T&& obj) {
+std::enable_if_t<std::is_standard_layout_v<T>>
+write(WriteBuffer& buffer, const T& obj) {
 	buffer.buffer.resize(buffer.buffer.size() + sizeof(obj));
 	auto data = buffer.buffer.data() + buffer.buffer.size() - sizeof(obj);
 	std::memcpy(data, &obj, sizeof(obj));
-}
-
-// TODO: doesn't really fit in here...
-template<typename T>
-T bit(T value, T bit, bool set) {
-	return set ? (value | bit) : (value & ~bit);
 }
 
 template<typename T>
@@ -99,11 +100,25 @@ bytes(const T& val) {
 }
 
 template<typename T>
+std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<std::byte>>
+bytes(T& val) {
+	return {reinterpret_cast<std::byte*>(&val), sizeof(val)};
+}
+
+template<typename T>
 std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<const std::byte>>
 bytes(const std::vector<T>& val) {
 	return nytl::as_bytes(nytl::span(val));
 }
 
+template<typename T>
+std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<std::byte>>
+bytes(std::vector<T>& val) {
+	return nytl::as_writeable_bytes(nytl::span(val));
+}
+
+// There is no non-const overload for initializer list since we can't
+// ever modify data in it.
 template<typename T>
 std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<const std::byte>>
 bytes(const std::initializer_list<T>& val) {

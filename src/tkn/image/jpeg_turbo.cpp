@@ -2,6 +2,7 @@
 
 #include <tkn/config.hpp>
 #include <tkn/image.hpp>
+#include <tkn/stream.hpp>
 #include <tkn/types.hpp>
 
 #include <vkpp/enums.hpp>
@@ -29,9 +30,9 @@ public:
 	unsigned char* data_ {};
 	nytl::Vec2ui size_;
 	tjhandle jpeg_ {};
-	std::vector<std::byte> tmpData_;
-	File file_;
+	std::unique_ptr<Stream> stream_;
 	bool mapped_ {}; // whether data_ was mapped
+	mutable std::vector<std::byte> tmpData_;
 
 public:
 	~JpegReader() {
@@ -50,12 +51,11 @@ public:
 		}
 	}
 
-	vk::Format format() const override { return vk::Format::r8g8b8a8Srgb; }
-	nytl::Vec2ui size() const override { return size_; }
+	vk::Format format() const noexcept override { return vk::Format::r8g8b8a8Srgb; }
+	nytl::Vec3ui size() const noexcept override { return {size_.x, size_.y, 1u}; }
 
-	bool read(nytl::Span<std::byte> data, unsigned mip,
-			unsigned layer, unsigned face) override {
-		dlg_assert(face == 0);
+	u64 read(nytl::Span<std::byte> data, unsigned mip,
+			unsigned layer) const override {
 		dlg_assert(mip == 0);
 		dlg_assert(layer == 0);
 
@@ -65,67 +65,74 @@ public:
 		auto ptr = reinterpret_cast<unsigned char*>(data.data());
 		auto res = ::tjDecompress2(jpeg_, data_, fileLength_,
 			ptr, size_.x, 0, size_.y, TJPF_RGBA, TJFLAG_FASTDCT);
-		return res == 0;
-	}
-
-	nytl::Span<const std::byte> read(unsigned mip, unsigned layer,
-			unsigned face) override {
-		tmpData_.resize(size_.x * size_.y * vpp::formatSize(format()));
-		if(read(tmpData_, face, mip, layer)) {
-			return tmpData_;
+		if(res != 0u) {
+			auto msg = dlg::format("tjDecompress2: {}", res);
+			dlg_warn(msg);
+			throw std::runtime_error(msg);
 		}
 
-		return {};
+		return byteSize;
+	}
+
+	nytl::Span<const std::byte> read(unsigned mip, unsigned layer) const override {
+		tmpData_.resize(size_.x * size_.y * vpp::formatSize(format()));
+		auto res = read(tmpData_, mip, layer);
+		dlg_assert(res == tmpData_.size());
+		return tmpData_;
 	}
 };
 
-ReadError readJpeg(File&& file, JpegReader& reader) {
+ReadError readJpeg(std::unique_ptr<Stream>&& stream, JpegReader& reader) {
 	int fd = -1;
 #ifdef TKN_LINUX
-	fd = fileno(file);
-	if(fd < 0) {
-		// this may happen for custom FILE objects.
-		// It's not an error, we just fall back to the default non-mmap
-		// implementation
-		dlg_debug("fileno: {} ", std::strerror(errno));
-	} else {
-		auto length = ::lseek(fd, 0, SEEK_END);
-		if(length < 0) {
-			return ReadError::internal;
-		}
-		reader.fileLength_ = length;
+	if(auto fstream = dynamic_cast<tkn::FileStream*>(stream.get()); fstream) {
+		fd = fileno(fstream->file());
+		if(fd < 0) {
+			// this may happen for custom FILE objects.
+			// It's not an error, we just fall back to the default non-mmap
+			// implementation
+			dlg_debug("fileno: {} ", std::strerror(errno));
+		} else {
+			auto length = ::lseek(fd, 0, SEEK_END);
+			if(length < 0) {
+				return ReadError::internal;
+			}
+			reader.fileLength_ = length;
 
-		auto data = ::mmap(NULL, reader.fileLength_, PROT_READ, MAP_PRIVATE,
-			fd, 0);
-		if(data == MAP_FAILED || !data) {
-			dlg_error("mmap failed: {}", std::strerror(errno));
-			return ReadError::internal;
+			auto data = ::mmap(NULL, reader.fileLength_, PROT_READ, MAP_PRIVATE,
+				fd, 0);
+			if(data == MAP_FAILED || !data) {
+				dlg_error("mmap failed: {}", std::strerror(errno));
+				return ReadError::internal;
+			}
+			reader.mapped_ = true;
+			reader.data_ = static_cast<unsigned char*>(data); // const
 		}
-		reader.mapped_ = true;
-		reader.data_ = static_cast<unsigned char*>(data); // const
 	}
 #endif // TKN_LINUX
 
 	if(fd < 0) {
-		auto length = std::fseek(file, 0, SEEK_END);
-		if(length < 0) {
-			dlg_error("fseek: {}", std::strerror(errno));
-			return ReadError::internal;
-		}
-		reader.fileLength_ = length;
+		stream->seek(0, Stream::SeekOrigin::end);
+		reader.fileLength_ = stream->address();
+
+		// will be freed when reader is destroyed.
 		reader.data_ = (unsigned char*) std::malloc(reader.fileLength_);
 		if(!reader.data_) {
 			dlg_error("malloc: {}", std::strerror(errno));
 			return ReadError::internal;
 		}
 
-		std::rewind(file);
+		stream->seek(0, Stream::SeekOrigin::set);
 
 		errno = 0;
-		auto ret = std::fread(reader.data_, 1, reader.fileLength_, file);
-		if(ret != reader.fileLength_) {
-			dlg_warn("fread failed: {} ({})", ret, std::strerror(errno));
+		auto ptr = reinterpret_cast<std::byte*>(reader.data_);
+		auto res = stream->readPartial(ptr, reader.fileLength_);
+		if(res < 0) {
+			dlg_warn("stream read failed: errno: {} ({})", res, std::strerror(errno));
 			return ReadError::internal;
+		} else if(res < i64(reader.fileLength_)) {
+			dlg_warn("Could not read complete jpeg file");
+			return ReadError::unexpectedEnd;
 		}
 	}
 
@@ -145,29 +152,18 @@ ReadError readJpeg(File&& file, JpegReader& reader) {
 
 	reader.size_.x = width;
 	reader.size_.y = height;
-	reader.file_ = std::move(file);
+	reader.stream_ = std::move(stream);
 	return ReadError::none;
 }
 
-ReadError readJpeg(File&& file, std::unique_ptr<ImageProvider>& ret) {
-	std::rewind(file);
+ReadError readJpeg(std::unique_ptr<Stream>&& stream, std::unique_ptr<ImageProvider>& ret) {
 	auto reader = std::make_unique<JpegReader>();
-	auto err = readJpeg(std::move(file), *reader);
+	auto err = readJpeg(std::move(stream), *reader);
 	if(err == ReadError::none) {
 		ret = std::move(reader);
 	}
 
 	return err;
-}
-
-ReadError readJpeg(nytl::StringParam path, std::unique_ptr<ImageProvider>& ret) {
-	auto file = File(path, "rb");
-	if(!file) {
-		dlg_debug("fopen: {}", std::strerror(errno));
-		return ReadError::cantOpen;
-	}
-
-	return readJpeg(std::move(file), ret);
 }
 
 } // namespace tkn

@@ -507,7 +507,7 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	devInfo.pNext = &f.base;
 
 	impl_->dev.emplace(vkInstance(), phdev, devInfo);
-	impl_->dev->hasDebugUtils = true;
+	impl_->dev->hasDebugUtils = argsOut.layers;
 	impl_->presentq = vkDevice().queue(queueFam);
 
 	// we query the surface information needed for swapchain creation

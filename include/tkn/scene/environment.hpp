@@ -28,8 +28,8 @@ class f16;
 class Environment {
 public:
 	struct InitData {
-		tkn::Texture::InitData initEnvMap;
-		tkn::Texture::InitData initIrradiance;
+		TextureInitData initEnvMap;
+		TextureInitData initIrradiance;
 		vpp::TrDs::InitData initDs;
 	};
 
@@ -61,8 +61,8 @@ public:
 	auto convolutionMipmaps() const { return convolutionMipmaps_; }
 
 protected:
-	tkn::Texture envMap_; // contains specular ibl mip maps
-	tkn::Texture irradiance_;
+	vpp::ViewableImage envMap_; // contains specular ibl mip maps
+	vpp::ViewableImage irradiance_;
 
 	vpp::TrDsLayout dsLayout_;
 	vpp::TrDs ds_;
@@ -169,7 +169,7 @@ public:
 	const auto& sunIrradiance() const { return sunIrradiance_; }
 
 private:
-	Texture cubemap_;
+	vpp::ViewableImage cubemap_;
 	vpp::TrDs ds_;
 	SH9<Vec4f> skyRadiance_ {};
 
