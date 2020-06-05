@@ -153,11 +153,23 @@ ReadError readPng(std::unique_ptr<Stream>&& stream,
 	return err;
 }
 
-WriteError writePng(nytl::StringParam path, ImageProvider& img) {
+WriteError writePng(nytl::StringParam path, const ImageProvider& img) {
 	auto file = File(path, "wb");
 	if(!file) {
 		dlg_debug("fopen: {}", std::strerror(errno));
 		return WriteError::cantOpen;
+	}
+
+	if(img.size().z > 1) {
+		dlg_warn("writeExr: discarding {} slices", img.size().z - 1);
+	}
+
+	if(img.mipLevels() > 1) {
+		dlg_warn("writeExr: discarding {} mips", img.mipLevels() - 1);
+	}
+
+	if(img.layers() > 1) {
+		dlg_warn("writeExr: discarding {} layers", img.layers() - 1);
 	}
 
 	auto png = png_create_write_struct(PNG_LIBPNG_VER_STRING,
@@ -189,7 +201,7 @@ WriteError writePng(nytl::StringParam path, ImageProvider& img) {
 		comps = 4;
 	} else {
 		dlg_error("Can only write rgb or rgba images as png");
-		return WriteError::invalidFormat;
+		return WriteError::unsupportedFormat;
 	}
 
 	png_set_IHDR(png, info, img.size().x, img.size().y,

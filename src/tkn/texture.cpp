@@ -2,6 +2,7 @@
 #include <tkn/bits.hpp>
 #include <tkn/types.hpp>
 #include <tkn/image.hpp>
+#include <tkn/formats.hpp>
 
 #include <vpp/formats.hpp>
 #include <vpp/imageOps.hpp>
@@ -540,26 +541,32 @@ FillData createFill(const WorkBatcher& wb, const vpp::Image& img, vk::Format dst
 			memAlloc = &wb.alloc.memDevice;
 			memBits = devBits;
 
-			dlg_debug("createFill: need stageBuffer -> stageImage -> image chain");
 			ici.initialLayout = vk::ImageLayout::undefined;
 			ici.tiling = vk::ImageTiling::optimal;
 			ici.usage |= vk::ImageUsageBits::transferDst;
-			res.copyToStageImage = true;
 
 			// this might happen indeed, e.g. if the format just
 			// isn't supported, or at least not supported for blitting.
+			// We have no other choice but to do the conversion on the cpu
+			// in that case.
 			if(!vpp::supported(dev, ici, features)) {
-				throw std::runtime_error("Blitting the given texture data "
-					"is not supported by the device");
+				blit = false;
+				res.cpuConversion = true;
+				dlg_debug("createFill: need to perform cpu format conversion");
+			} else {
+				dlg_debug("createFill: need stageBuffer -> stageImage -> image chain");
+				res.copyToStageImage = true;
 			}
 		}
 
-		res.stageImage = {res.initStageImage, *memAlloc, ici, memBits};
-		vpp::nameHandle(res.stageImage, "Texture:stageImage");
+		if(blit) {
+			res.stageImage = {res.initStageImage, *memAlloc, ici, memBits};
+			vpp::nameHandle(res.stageImage, "Texture:stageImage");
+		}
 	}
 
 	if(!blit || res.copyToStageImage) {
-		auto fmtSize = vpp::formatSize(dataFormat);
+		auto fmtSize = vpp::formatSize(res.cpuConversion ? dstFormat : dataFormat);
 		auto dataSize = layerCount * fmtSize * size.x * size.y * size.z;
 		for(auto i = 1u; i < fillLevelCount; ++i) {
 			auto isize = size;
@@ -569,9 +576,8 @@ FillData createFill(const WorkBatcher& wb, const vpp::Image& img, vk::Format dst
 			dataSize += layerCount * fmtSize * isize.x * isize.y * isize.z;
 		}
 
-		// auto align = std::max<vk::DeviceSize>(fmtSize,
-		// 	dev.properties().limits.optimalBufferCopyOffsetAlignment);
-		auto align = fmtSize;
+		auto align = std::max<vk::DeviceSize>(fmtSize,
+			dev.properties().limits.optimalBufferCopyOffsetAlignment);
 		auto usage = vk::BufferUsageBits::transferSrc;
 		res.stageBuffer = {res.initStageBuffer, wb.alloc.bufHost,
 			dataSize, usage, hostBits, align};
@@ -611,13 +617,13 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 		vk::PipelineStageBits::topOfPipe,
 		vk::PipelineStageBits::transfer, {}, {}, {}, {barriers, bcount});
 
-	auto blit = data.dstFormat != data.srcFormat;
+	auto blit = (data.dstFormat != data.srcFormat) && !data.cpuConversion;
 	if(!blit || data.copyToStageImage) {
 		data.stageBuffer.init(data.initStageBuffer);
 		dlg_assert(data.stageBuffer.size());
 
 		std::vector<vk::BufferImageCopy> copies;
-		copies.reserve(layerCount);
+		copies.reserve(numFillLevels);
 
 		auto map = data.stageBuffer.memoryMap();
 		auto mapSpan = map.span();
@@ -626,27 +632,53 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 			auto mwidth = std::max(width >> m, 1u);
 			auto mheight = std::max(height >> m, 1u);
 			auto mdepth = std::max(depth >> m, 1u);
-			auto lsize = mwidth * mheight * mdepth * vpp::formatSize(data.srcFormat);
+			auto lsize = mwidth * mheight * mdepth *
+				vpp::formatSize(data.cpuConversion ? data.dstFormat : data.srcFormat);
 
-			// TODO(PERF): could combine all layers into one copy call
 			for(auto l = 0u; l < layerCount; ++l) {
 				auto layerSpan = mapSpan.first(lsize);
-				if(data.source->read(layerSpan, m, l) != lsize) {
-					throw std::runtime_error("Image reading failed");
+
+				if(data.cpuConversion) {
+					auto img = data.source->read(m, l);
+					auto expected = mwidth * mheight * mdepth * vpp::formatSize(data.srcFormat);
+					if(img.size() != expected) {
+						dlg_error("Unexpected image read size: {}, expected {}",
+							img.size(), expected);
+						throw std::runtime_error("Image reading failed");
+					}
+
+					// cpu conversion loop
+					for(auto d = 0u; d < mdepth; ++d) {
+						for(auto y = 0u; y < mheight; ++y) {
+							for(auto x = 0u; x < mwidth; ++x) {
+								convert(data.dstFormat, layerSpan, data.srcFormat, img);
+							}
+						}
+					}
+
+					dlg_assert(img.empty());
+					dlg_assert(layerSpan.empty());
+				} else {
+					auto res = data.source->read(layerSpan, m, l);
+					if(res != lsize) {
+						dlg_error("Unexpected image read size: {}, expected {}", res, lsize);
+						throw std::runtime_error("Image reading failed");
+					}
 				}
 
 				mapSpan = mapSpan.last(mapSpan.size() - lsize);
-				vk::BufferImageCopy copy {};
-				copy.bufferOffset = offset;
-				copy.imageExtent = {mwidth, mheight, mdepth};
-				copy.imageOffset = {};
-				copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
-				copy.imageSubresource.baseArrayLayer = l;
-				copy.imageSubresource.layerCount = 1u;
-				copy.imageSubresource.mipLevel = m;
-				copies.push_back(copy);
-				offset += lsize;
 			}
+
+			vk::BufferImageCopy copy {};
+			copy.bufferOffset = offset;
+			copy.imageExtent = {mwidth, mheight, mdepth};
+			copy.imageOffset = {};
+			copy.imageSubresource.aspectMask = vk::ImageAspectBits::color;
+			copy.imageSubresource.baseArrayLayer = 0u;
+			copy.imageSubresource.layerCount = layerCount;
+			copy.imageSubresource.mipLevel = m;
+			copies.push_back(copy);
+			offset += lsize * layerCount;
 		}
 
 		auto target0 = data.copyToStageImage ?
@@ -657,6 +689,7 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 
 	if(blit) {
 		dlg_assert(data.stageImage);
+		dlg_assert(!data.cpuConversion);
 		data.stageImage.init(data.initStageImage);
 
 		// TODO(PERF, low): keep memory map view active over this whole time

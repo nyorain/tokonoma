@@ -47,6 +47,7 @@ tkn_src = [
 	'stream.cpp',
 	'taa.cpp',
 	'sky.cpp',
+	'formats.cpp',
 
 	'scene/scene.cpp',
 	'scene/material.cpp',
@@ -60,6 +61,7 @@ tkn_src = [
 	'image.cpp',
 	'image/png.cpp',
 	'image/ktx.cpp',
+	'image/exr.cpp',
 
 	'kissfft/kiss_fft.c',
 

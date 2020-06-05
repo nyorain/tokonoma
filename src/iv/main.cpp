@@ -74,6 +74,7 @@ public:
 		params.format = p->format();
 		params.view.levelCount = 1u;
 		params.view.layerCount = cubemap_ ? 6u : 1u;
+		params.format = displayFormat(p->format());
 
 		format_ = p->format();
 		layerCount_ = p->layers() / (cubemap_ ? 6u : 1u);
@@ -356,6 +357,18 @@ public:
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
 		camera_.aspect({w, h});
+	}
+
+	vk::Format displayFormat(vk::Format source) {
+		// TODO: extend this list of format conversions to perform.
+		// Should probably be based dynamically upon the capabilities
+		// of the device.
+		switch(source) {
+			case vk::Format::r16g16b16Sfloat:
+				return vk::Format::r16g16b16a16Sfloat;
+			default:
+				return source;
+		}
 	}
 
 	bool needsDepth() const override { return false; }

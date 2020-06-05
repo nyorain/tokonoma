@@ -52,6 +52,7 @@ std::unique_ptr<ImageProvider> read(std::unique_ptr<Stream>&& stream,
 	bool triedjpg = false;
 	bool triedktx = false;
 	bool triedstb = false;
+	bool triedexr = false;
 
 	// first try detecting the type based of suffix
 	if(has_suffix(ext, ".png")) {
@@ -75,6 +76,11 @@ std::unique_ptr<ImageProvider> read(std::unique_ptr<Stream>&& stream,
 		if(reader) {
 			return reader;
 		}
+	} else if(has_suffix(ext, ".exr")) {
+		triedexr = true;
+		if(readExr(std::move(stream), reader) == ReadError::none) {
+			return reader;
+		}
 	}
 
 	// then just try all remaining loaders
@@ -90,6 +96,11 @@ std::unique_ptr<ImageProvider> read(std::unique_ptr<Stream>&& stream,
 
 	stream->seek(0, Stream::SeekOrigin::set);
 	if(!triedktx && readKtx(std::move(stream), reader) == ReadError::none) {
+		return reader;
+	}
+
+	stream->seek(0, Stream::SeekOrigin::set);
+	if(!triedexr && readExr(std::move(stream), reader) == ReadError::none) {
 		return reader;
 	}
 
@@ -226,6 +237,8 @@ public:
 };
 
 std::unique_ptr<ImageProvider> wrap(Image&& image) {
+	dlg_assert(image.size.x >= 1 && image.size.y >= 1 && image.size.z >= 1);
+
 	auto ret = std::make_unique<MemImageProvider>();
 	ret->layers_ = ret->mips_ = 1u;
 	ret->format_ = image.format;
@@ -239,6 +252,7 @@ std::unique_ptr<ImageProvider> wrap(Image&& image) {
 
 std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 		nytl::Span<const std::byte> span) {
+	dlg_assert(size.x >= 1 && size.y >= 1 && size.z >= 1);
 	dlg_assert(span.size() >= size.x * size.y * vpp::formatSize(format));
 
 	auto ret = std::make_unique<MemImageProvider>();
@@ -254,6 +268,9 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 		unsigned mips, unsigned layers,
 		nytl::Span<std::unique_ptr<std::byte[]>> data, bool cubemap) {
+	dlg_assert(size.x >= 1 && size.y >= 1 && size.z >= 1);
+	dlg_assert(mips >= 1);
+	dlg_assert(layers >= 1);
 	dlg_assert(data.size() == mips * layers);
 	dlg_assert(!cubemap || layers % 6 == 0u);
 
@@ -270,6 +287,36 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 		rdi.ref = rdi.owned.get();
 	}
 
+	return ret;
+}
+
+std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+		unsigned mips, unsigned layers, std::unique_ptr<std::byte[]> data,
+		bool cubemap) {
+	dlg_assert(size.x >= 1 && size.y >= 1 && size.z >= 1);
+	dlg_assert(mips >= 1);
+	dlg_assert(layers >= 1);
+	dlg_assert(!cubemap || layers % 6 == 0u);
+
+	auto ret = std::make_unique<MemImageProvider>();
+	ret->mips_ = mips;
+	ret->layers_ = layers;
+	ret->format_ = format;
+	ret->size_ = size;
+	ret->cubemap_ = cubemap;
+	ret->data_.reserve(mips * layers);
+
+	auto fmtSize = vpp::formatSize(format);
+	for(auto m = 0u; m < mips; ++m) {
+		for(auto l = 0u; l < layers; ++l) {
+			auto& rdi = ret->data_.emplace_back();
+			auto off = vpp::imageBufferOffset(fmtSize,
+				{size.x, size.y, size.z}, layers, m, l);
+			rdi.ref = data.get() + off;
+		}
+	}
+
+	ret->data_[0].owned = std::move(data);
 	return ret;
 }
 

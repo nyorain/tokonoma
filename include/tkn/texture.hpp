@@ -151,6 +151,7 @@ struct FillData {
 	// mipmaps for the rest.
 	unsigned numLevels;
 	bool copyToStageImage {};
+	bool cpuConversion {};
 	vpp::Image stageImage;
 	vpp::SubBuffer stageBuffer;
 

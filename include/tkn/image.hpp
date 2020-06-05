@@ -87,6 +87,12 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 	unsigned mips, unsigned layers, nytl::Span<std::unique_ptr<std::byte[]>> data,
 	bool cubemap = false);
 
+/// Expects all mips and layers to be linearly lay out in data, i.e.
+/// like done by vpp's imageOps, see vpp::imageBufferOffset.
+std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+	unsigned mips, unsigned layers, std::unique_ptr<std::byte[]> data,
+	bool cubemap = false);
+
 /// Expects: data.size() == mips * layers, with data for mip m, layer
 /// l at data[m * layer + l].
 /// Alternative to function above, there the provider will only reference the
@@ -102,17 +108,19 @@ enum class ReadError {
 	internal,
 	unexpectedEnd,
 	invalidEndianess,
+	unsupportedFormat, // unsupported/unknown data format/feature
+	cantRepresent, // can't represent the image via ImageProvider
 	empty,
-
-	ktxInvalidFormat, // ktx: unsupported/unknown format
-	ktxDepth, // ktx: format has depth
 };
 
 /// Backend/Format-specific functions. Create image provider implementations
 /// into the given unique ptr on success. They expect binary streams.
+/// They will move from the given stream only on success.
 ReadError readKtx(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
 ReadError readJpeg(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
 ReadError readPng(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
+ReadError readExr(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&,
+	bool forceRGBA = true);
 
 /// STB babckend is a fallback since it supports additional formats.
 std::unique_ptr<ImageProvider> readStb(std::unique_ptr<Stream>&&);
@@ -123,8 +131,7 @@ std::unique_ptr<ImageProvider> readStb(std::unique_ptr<Stream>&&);
 /// 'ext' can contain a file extension (e.g. the full filename or just
 /// something like ".png") to give a hint about the file type. The loader
 /// will always try all image formats if the preferred one fails.
-std::unique_ptr<ImageProvider> read(std::unique_ptr<Stream>&&,
-	std::string_view ext = "");
+std::unique_ptr<ImageProvider> read(std::unique_ptr<Stream>&&, std::string_view ext = "");
 std::unique_ptr<ImageProvider> read(nytl::StringParam filename);
 std::unique_ptr<ImageProvider> read(File&& file);
 std::unique_ptr<ImageProvider> read(nytl::Span<const std::byte> data);
@@ -140,15 +147,19 @@ enum class WriteError {
 	cantOpen,
 	cantWrite,
 	readError, // image provider failed reading/returned unexpected size
-	invalidFormat, // unexpected/unsupported format
+	unsupportedFormat, // unexpected/unsupported format
 	internal,
 };
 
-WriteError writeKtx(nytl::StringParam path, ImageProvider&);
+WriteError writeKtx(nytl::StringParam path, const ImageProvider&);
 
 /// Can only write 2D rgb or rgba images.
 /// Will only write the first layer and mipmap.
-WriteError writePng(nytl::StringParam path, ImageProvider&);
+WriteError writePng(nytl::StringParam path, const ImageProvider&);
+
+// TODO: untested
+/// Can write 2D hdr images.
+WriteError writeExr(nytl::StringParam path, const ImageProvider&);
 
 
 /// More limited in-memory representation of an image.

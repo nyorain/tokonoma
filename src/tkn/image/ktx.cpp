@@ -282,7 +282,7 @@ ReadError readKtx(std::unique_ptr<Stream>&& stream, KtxReader& reader) {
 	// fixup
 	if(header.pixelDepth > 1 && (header.numberFaces > 1 || header.numberArrayElements > 1)) {
 		dlg_warn("KTX 3D image with faces/layers unsupported");
-		return ReadError::ktxDepth;
+		return ReadError::cantRepresent;
 	}
 
 	if(header.pixelWidth == 0) {
@@ -292,7 +292,7 @@ ReadError readKtx(std::unique_ptr<Stream>&& stream, KtxReader& reader) {
 
 	if(header.glFormat == 0) {
 		dlg_warn("KTX compressed format, not supported yet");
-		return ReadError::ktxInvalidFormat;
+		return ReadError::unsupportedFormat;
 	}
 
 	// numberArrayElements == 0 has a special meaning for the imageSize
@@ -314,7 +314,7 @@ ReadError readKtx(std::unique_ptr<Stream>&& stream, KtxReader& reader) {
 	reader.format_ = vulkanFromGLFormat(glFormat);
 	if(reader.format_ == vk::Format::undefined) {
 		dlg_warn("unsupported ktx format: {}", glFormat);
-		return ReadError::ktxInvalidFormat;
+		return ReadError::unsupportedFormat;
 	}
 
 	// just for debugging: read keys and values
@@ -372,7 +372,7 @@ ReadError readKtx(std::unique_ptr<Stream>&& stream,
 }
 
 // save
-WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
+WriteError writeKtx(nytl::StringParam path, const ImageProvider& image) {
 	auto file = std::fopen(path.c_str(), "wb");
 	if(!file) {
 		dlg_debug("fopen: {}", std::strerror(errno));
@@ -420,7 +420,7 @@ WriteError writeKtx(nytl::StringParam path, ImageProvider& image) {
 	}
 
 	if(!entry) {
-		return WriteError::invalidFormat;
+		return WriteError::unsupportedFormat;
 	}
 
 	// the same since uncompressed

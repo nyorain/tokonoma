@@ -3,6 +3,7 @@
 #include <nytl/stringParam.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/math.hpp>
+#include <dlg/dlg.hpp>
 #include <cstdlib>
 #include <string>
 #include <algorithm>
@@ -53,6 +54,18 @@ T bilerp(float s, float t, unsigned width, unsigned height, T* vals) {
 inline bool has_suffix(std::string_view str, std::string_view suffix) {
     return str.size() >= suffix.size() &&
         str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// Splits the given string view at the given position.
+// None of the returned strings will have the seperator.
+inline std::pair<std::string_view, std::string_view> split(
+		std::string_view src, std::string_view::size_type pos) {
+	dlg_assert(pos != src.npos && pos < src.size());
+	auto first = src;
+	auto second = src;
+	second.remove_prefix(pos + 1);
+	first.remove_suffix(src.size() - pos);
+	return {first, second};
 }
 
 /// Simple blackbody approxmiation.
