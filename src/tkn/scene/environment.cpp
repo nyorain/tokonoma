@@ -51,6 +51,8 @@ void Environment::create(InitData& data, const WorkBatcher& wb,
 		std::unique_ptr<ImageProvider> irradiance,
 		vk::Sampler linear) {
 	auto& dev = wb.dev;
+	dlg_assert(envMap->cubemap());
+	dlg_assert(irradiance->cubemap());
 
 	// textures
 	tkn::TextureCreateParams params;

@@ -1,6 +1,8 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/formats.hpp>
+#include <tkn/render.hpp>
 #include <tkn/camera2.hpp>
 #include <tkn/types.hpp>
 #include <tkn/shader.hpp>
@@ -49,6 +51,13 @@ public:
 		float fov {0.5 * nytl::constants::pi};
 	};
 
+	struct ShaderPCR {
+		u32 tonemap {1u};
+	};
+
+	static constexpr auto screenshotFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto screenshotSize = vk::Extent2D {2048, 2048};
+
 public:
 	using Base = tkn::SinglePassApp;
 	static constexpr auto cacheFile = "sviewer.cache";
@@ -75,12 +84,12 @@ public:
 		};
 
 		dsLayout_ = {dev, renderBindings};
-		auto pipeSets = {dsLayout_.vkHandle()};
 
-		vk::PipelineLayoutCreateInfo plInfo;
-		plInfo.setLayoutCount = 1;
-		plInfo.pSetLayouts = pipeSets.begin();
-		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
+		vk::PushConstantRange pcr;
+		pcr.offset = 0u;
+		pcr.size = sizeof(ShaderPCR);
+		pcr.stageFlags = vk::ShaderStageBits::fragment;
+		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {{pcr}}};
 		vertShader_ = {dev, tkn_fullscreen_vert_data};
 
 		cache_ = {dev, cacheFile};
@@ -94,8 +103,6 @@ public:
 			return false;
 		}
 
-		// TODO: only init when needed, lazily
-		initScreenshot();
 		return true;
 	}
 
@@ -162,11 +169,19 @@ public:
 		}
 	}
 
-	void render(vk::CommandBuffer cb) override {
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipeline_);
+	void render(vk::CommandBuffer cb, vk::Pipeline pipe, const ShaderPCR& pcr) {
+		vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::fragment,
+			0, sizeof(pcr), &pcr);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {{ds_.vkHandle()}}, {});
 		vk::cmdDraw(cb, 6, 1, 0, 0);
+	}
+
+	void render(vk::CommandBuffer cb) override {
+		ShaderPCR pcr;
+		pcr.tonemap = false; // TODO: support hdr swapchain formats and color spaces
+		render(cb, pipeline_, pcr);
 	}
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
@@ -250,63 +265,74 @@ public:
 
 	// TODO: refactor this out to general screenshot functionality
 	// (in app class?). allow to just use the swapchain image if it supports
-	// the needed usages and size is ok/irrelevant.
+	// the needed usages, the format is okay and size is ok/irrelevant.
+	// If format of swapchain is weird, we could just blit it (if supported).
 	void initScreenshot() {
-		auto size = vk::Extent2D {2048, 2048};
 		auto& dev = vkDevice();
 
-		auto format = swapchainInfo().imageFormat;
+		auto pass = {0u};
+		auto rpi = tkn::renderPassInfo({{screenshotFormat}}, {{pass}});
+		rpi.attachments[0].finalLayout = vk::ImageLayout::transferSrcOptimal;
+		auto& dep = rpi.dependencies.emplace_back();
+		dep.srcSubpass = 0;
+		dep.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+		dep.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+		dep.dstSubpass = vk::subpassExternal;
+		dep.dstAccessMask = vk::AccessBits::transferRead;
+		dep.dstStageMask = vk::PipelineStageBits::transfer;
+		screenshot_.rp = {dev, rpi.info()};
+
+		auto format = screenshotFormat;
 		auto info = vpp::ViewableImageCreateInfo(format,
-			vk::ImageAspectBits::color, size,
+			vk::ImageAspectBits::color, screenshotSize,
 			vk::ImageUsageBits::colorAttachment | vk::ImageUsageBits::transferSrc);
 
 		screenshot_.image = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
-		screenshot_.width = size.width;
-		screenshot_.height = size.height;
+		screenshot_.width = screenshotSize.width;
+		screenshot_.height = screenshotSize.height;
 
 		vk::FramebufferCreateInfo fbi;
 		fbi.attachmentCount = 1;
 		fbi.pAttachments = &screenshot_.image.vkImageView();
-		fbi.renderPass = renderPass();
-		fbi.width = size.width;
-		fbi.height = size.height;
+		fbi.renderPass = screenshot_.rp;
+		fbi.width = screenshotSize.width;
+		fbi.height = screenshotSize.height;
 		fbi.layers = 1;
 
 		screenshot_.fb = {dev, fbi};
 
 		auto qf = dev.queueSubmitter().queue().family();
-		screenshot_.cb = dev.commandAllocator().get(qf);
+		screenshot_.cb = dev.commandAllocator().get(qf,
+			vk::CommandPoolCreateBits::resetCommandBuffer);
+		screenshot_.initialized = true;
+	}
 
+	void recordScreenshot() {
 		auto& cb = screenshot_.cb;
+		auto size = screenshotSize;
 		vk::beginCommandBuffer(cb, {});
 
-		auto cv = clearValues();
+		auto cv = vk::ClearValue{{0.f, 0.f, 0.f, 0.f}};
 		vk::cmdBeginRenderPass(cb, {
-			renderPass(),
+			screenshot_.rp,
 			screenshot_.fb,
 			{0u, 0u, size.width, size.height},
-			std::uint32_t(cv.size()), cv.data()
+			u32(1), &cv,
 		}, {});
 
 		vk::Viewport vp {0.f, 0.f, (float) size.width, (float) size.height, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, size.width, size.height});
 
-		render(cb);
+		ShaderPCR pcr;
+		pcr.tonemap = tkn::isHDR(screenshotFormat);
+		render(cb, screenshot_.pipe, pcr);
 		vk::cmdEndRenderPass(cb);
 
-		vk::ImageMemoryBarrier barrier;
-		barrier.image = screenshot_.image.image();
-		barrier.oldLayout = vk::ImageLayout::presentSrcKHR;
-		barrier.newLayout = vk::ImageLayout::transferSrcOptimal;
-		barrier.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
-		barrier.dstAccessMask = vk::AccessBits::transferRead;
-		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::colorAttachmentOutput,
-			vk::PipelineStageBits::transfer, {}, {}, {}, {{barrier}});
-
+		// our render pass has a dependency making sure we can directly
+		// copy the contents here
 		screenshot_.retrieve = vpp::retrieveStaging(cb, screenshot_.image.image(),
-			swapchainInfo().imageFormat,
+			screenshotFormat,
 			vk::ImageLayout::transferSrcOptimal,
 			{size.width, size.height, 1},
 			{vk::ImageAspectBits::color, 0, 0});
@@ -318,6 +344,18 @@ public:
 		if(screenshot_.writing.load()) {
 			dlg_warn("Still writing screenshot");
 			return;
+		}
+
+		if(!screenshot_.initialized) {
+			initScreenshot();
+		}
+
+		if(screenshot_.reloadPipe) {
+			if(!initPipe(shaderFile_, screenshot_.rp, screenshot_.pipe)) {
+				return;
+			}
+
+			recordScreenshot();
 		}
 
 		auto& dev = vkDevice();
@@ -333,18 +371,28 @@ public:
 		dlg_info("start writing screenshot...");
 		screenshot_.writer = std::thread([this]{
 			auto map = screenshot_.retrieve.memoryMap();
-			auto fname = "sviewer.png";
 
-			// - using stbi -
-			// stbi_write_png(fname, screenshot_.width, screenshot_.height, 4,
-			// 	(char*) map.ptr(), screenshot_.width * 4);
-
-			// - using writePng -
-			// much faster than stbi (seems around 10x to me) but
-			// obviously depends on libpng.
 			auto size = nytl::Vec3ui{screenshot_.width, screenshot_.height, 1u};
-			auto img = tkn::wrap(size, vk::Format::r8g8b8a8Unorm, map.span());
-			writePng(fname, *img);
+			auto img = tkn::wrap(size, screenshotFormat, map.span());
+			if(screenshotFormat == vk::Format::r8g8b8a8Unorm) {
+				auto fname = "sviewer.png";
+				// - using stbi -
+				// stbi_write_png(fname, screenshot_.width, screenshot_.height, 4,
+				// 	(char*) map.ptr(), screenshot_.width * 4);
+
+				// - using writePng -
+				// much faster than stbi (seems around 10x to me) but
+				// obviously depends on libpng.
+				writePng(fname, *img);
+			} else if(screenshotFormat == vk::Format::r16g16b16a16Sfloat) {
+				// - using writeEXR, only for hdr formats -
+				auto fname = "sviewer.exr";
+				writeExr(fname, *img);
+			} else {
+				// - ktx(1) can handle pretty much anything we can do -
+				auto fname = "sviewer.ktx";
+				writeKtx(fname, *img);
+			}
 
 			screenshot_.writing.store(false);
 			dlg_info("done writing screenshot");
@@ -376,12 +424,9 @@ protected:
 	tkn::FPCamCon camCon_;
 
 	struct {
-		// TODO: use this! own rp and pipe for it to make sure we
-		// use r8g8b8a8a format. Also allows us to get rid of
-		// extra barrier
-		bool reloadPipe;
+		bool reloadPipe {true};
 		vpp::RenderPass rp;
-		vpp::RenderPass pipe;
+		vpp::Pipeline pipe;
 
 		vpp::CommandBuffer cb;
 		vpp::Framebuffer fb;
@@ -389,6 +434,7 @@ protected:
 		vpp::SubBuffer retrieve;
 		unsigned width, height;
 
+		bool initialized {false};
 		std::atomic<bool> writing {};
 		std::thread writer;
 	} screenshot_;

@@ -15,28 +15,8 @@
 //  all constructors/init/create as functions).
 //  And then maybe create a high level texture class, storing
 //  formats, size, layers, mip etc?
-//  Unify with fill api at the bottom.
 
 namespace tkn {
-
-// NOTE: stb offers a function to autodetect whether the image is hdr.
-// We don't use this here (e.g. use a optional<bool> hdr parameter)
-// since the caller knows what it wants the texture for and has to adapt
-// it's pipelines (so getting images that return sampled values >1 would
-// be unexpected).
-// If a pipeline supports and expects both hdr and ldr images properly,
-// the caller can still use stbi_is_hdr(filename) manually before calling this.
-// The default format used when 'hdr = true' is passed is rgba16f, otherwise
-// will use rgba8.
-
-// returns whether the given format an hold high dynamic range data, i.e.
-// has a float format and can store values >1.0.
-bool isHDR(vk::Format);
-bool isSRGB(vk::Format);
-vk::Format toggleSRGB(vk::Format);
-vk::ImageType minImageType(vk::Extent3D, unsigned minDim = 1u);
-vk::ImageViewType minImageViewType(vk::Extent3D, unsigned layers,
-	bool cubemap, unsigned minDim = 1u);
 
 // Vulkan enums declared via static to not include vulkan headers
 struct TextureCreateParams {

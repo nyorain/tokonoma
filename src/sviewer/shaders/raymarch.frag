@@ -22,6 +22,10 @@ layout(set = 0, binding = 0) uniform UBO {
 	float fov;
 } ubo;
 
+layout(push_constant) uniform PCR {
+	bool tonemap;
+} pcr;
+
 struct Ray {
 	vec3 origin;
 	vec3 dir;
@@ -245,7 +249,9 @@ void main() {
 
 	// tonemap
 	float exposure = 1.0;
-	color = 1.0 - exp(-exposure * color);
+	if(pcr.tonemap) {
+		color = 1.0 - exp(-exposure * color);
+	}
 
 	// col = pow(col, vec3(1.0 / 2.2));
 	outcol = vec4(color, 1.f);

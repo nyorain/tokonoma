@@ -157,7 +157,7 @@ void main() {
 		uv -= 3 * ubo.mpos;
 
 		float b = pow(fbm(uv), 3);
-		outcol.rgb += 0.1 * fbm(vec2(uv.y * b, uv.x)) * vec3(b, 1-b, 1-b);
+		outcol.rgb += 0.1 * fbm(vec2(uv.y * b, uv.x)) * vec3(b, 1 - b, 1 - b);
 		outcol.rgb += 0.1 * fbm(vec2(uv.y, b * uv.x)) * vec3(1 - b * b, b * b, b * b);
 
 		float h = 10 * pow(fbm(0.1 * uv), 6);

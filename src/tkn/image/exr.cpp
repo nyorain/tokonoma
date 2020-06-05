@@ -52,8 +52,8 @@ ReadError toReadError(int res) {
 
 constexpr auto noChannel = u32(0xFFFFFFFF);
 vk::Format parseFormat(const std::array<u32, 4>& mapping, int exrPixelType,
-		bool forceRGBA, unsigned& maxChan) {
-	maxChan = forceRGBA ? 3 :
+		bool forceRGBA) {
+	auto maxChan = forceRGBA ? 3 :
 		mapping[3] != noChannel ? 3 :
 		mapping[2] != noChannel ? 2 :
 		mapping[1] != noChannel ? 1 : 0;
@@ -204,10 +204,8 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 	auto pixelType = *oPixelType;
 
 	std::optional<vk::Format> oFormat;
-	unsigned maxChan;
 	for(auto it = layers.begin(); it != layers.end();) {
-		unsigned iMaxChan;
-		auto iformat = parseFormat(it->mapping, pixelType, forceRGBA, iMaxChan);
+		auto iformat = parseFormat(it->mapping, pixelType, forceRGBA);
 		if((oFormat && *oFormat != iformat) || iformat == vk::Format::undefined) {
 			dlg_warn("EXR image layer {} has {} format, ignoring it",
 				oFormat ? "different" : "invalid", it - layers.begin());
@@ -215,7 +213,6 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 			continue;
 		}
 
-		maxChan = iMaxChan;
 		oFormat = iformat;
 		++it;
 	}
@@ -256,13 +253,13 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 	std::byte src1[4];
 	if(pixelType == TINYEXR_PIXELTYPE_HALF) {
 		auto src = f16(1.f);
-		std::memcpy(&src1, &src, sizeof(src));
+		std::memcpy(src1, &src, sizeof(src));
 	} else if(pixelType == TINYEXR_PIXELTYPE_UINT) {
 		auto src = u32(1);
-		std::memcpy(&src1, &src, sizeof(src));
+		std::memcpy(src1, &src, sizeof(src));
 	} else if(pixelType == TINYEXR_PIXELTYPE_FLOAT) {
 		auto src = float(1.f);
-		std::memcpy(&src1, &src, sizeof(src));
+		std::memcpy(src1, &src, sizeof(src));
 	}
 
 	// NOTE: instead of just forceRGBA, we could already perform
@@ -281,7 +278,7 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 				for(auto c = 0u; c < 4u; ++c) {
 					auto id = layer.mapping[c];
 					if(id == noChannel) {
-						std::memcpy(dst + c * chanSize, &src1, chanSize);
+						std::memcpy(dst + c * chanSize, src1, chanSize);
 					} else {
 						auto src = image.images[id] + chanSize * address;
 						std::memcpy(dst + c * chanSize, src, chanSize);
@@ -383,20 +380,20 @@ WriteError writeExr(nytl::StringParam path, const ImageProvider& provider) {
 	unsigned char* chanptrs[4];
 
 	auto planeSize = width * height * chanSize;
-	for(auto i = 0u; i < nc; ++i) {
-		auto base = deint.get() + planeSize;
+	for(auto c = 0u; c < nc; ++c) {
+		auto base = deint.get() + c * planeSize;
 		for(auto y = 0u; y < height; ++y) {
 			for(auto x = 0u; x < width; ++x) {
 				auto address = y * width + x;
-				auto src = data.data() + address * pixelSize;
+				auto src = data.data() + address * pixelSize + c * chanSize;
 				auto dst = base + address * chanSize;
 				std::memcpy(dst, src, chanSize);
 			}
 		}
 
-		chanptrs[i] = reinterpret_cast<unsigned char*>(base);
+		// channel order is reversed, see the switch above
+		chanptrs[nc - c - 1] = reinterpret_cast<unsigned char*>(base);
 	}
-
 
 	EXRImage img {};
 	img.width = width;

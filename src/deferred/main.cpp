@@ -18,6 +18,7 @@
 #include <tkn/types.hpp>
 #include <tkn/window.hpp>
 #include <tkn/transform.hpp>
+#include <tkn/util.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/gltf.hpp>
@@ -161,8 +162,8 @@ protected:
 	vpp::Sampler linearSampler_;
 	vpp::Sampler nearestSampler_;
 
-	tkn::Texture dummyTex_;
-	tkn::Texture dummyCube_;
+	vpp::ViewableImage dummyTex_;
+	vpp::ViewableImage dummyCube_;
 	tkn::Scene scene_;
 	// std::optional<tkn::Material> lightMaterial_;
 
@@ -179,7 +180,7 @@ protected:
 	vk::Format depthFormat_ {};
 	bool recreateStaticBufs_ {true};
 
-	tkn::Texture brdfLut_;
+	vpp::ViewableImage brdfLut_;
 	tkn::Environment env_;
 
 	u32 debugMode_ {0};
@@ -232,7 +233,7 @@ protected:
 	LensFlare lens_;
 
 	bool useLensDirt_ {true};
-	tkn::Texture lensDirt_;
+	vpp::ViewableImage lensDirt_;
 
 	bool recreatePasses_ {false};
 	vpp::ShaderModule fullVertShader_;
@@ -307,8 +308,8 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	auto cb = dev.commandAllocator().get(qfam);
 	vk::beginCommandBuffer(cb, {});
 
-	// create batch
-	tkn::WorkBatcher batch{dev, cb, {
+	// create wb
+	tkn::WorkBatcher wb{dev, cb, {
 			alloc.memDevice, alloc.memHost, memStage,
 			alloc.bufDevice, alloc.bufHost, bufStage,
 			dev.descriptorAllocator(),
@@ -359,10 +360,11 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	//   materials, both should be fixable).
 	auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 	auto span = nytl::as_bytes(nytl::span(idata));
-	auto p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+	auto p = tkn::wrap({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
 	tkn::TextureCreateParams params;
 	params.format = vk::Format::r8g8b8a8Unorm;
-	dummyTex_ = {batch, std::move(p), params};
+	auto initDummyTex = createTexture(wb, std::move(p), params);
+	dummyTex_ = initTexture(initDummyTex, wb);
 
 	vpp::nameHandle(dummyTex_.image(), "dummyTex.image");
 	vpp::nameHandle(dummyTex_.imageView(), "dummyTex.view");
@@ -370,8 +372,9 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	auto dptr = reinterpret_cast<const std::byte*>(idata.data());
 	auto faces = {dptr, dptr, dptr, dptr, dptr, dptr};
 	params.cubemap = true;
-	p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, 1, 1, 6u, faces);
-	dummyCube_ = {batch, std::move(p), params};
+	p = tkn::wrap({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, 1, 6u, faces, true);
+	auto initDummyCube = createTexture(wb, std::move(p), params);
+	dummyCube_ = initTexture(initDummyCube, wb);
 
 	vpp::nameHandle(dummyCube_.image(), "dummyCube.image");
 	vpp::nameHandle(dummyCube_.imageView(), "dummyCube.view");
@@ -382,15 +385,15 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 		+ sizeof(nytl::Mat4f) // inv proj
 		+ sizeof(nytl::Vec3f) // viewPos
 		+ 2 * sizeof(float); // near, far plane
-	vpp::Init<vpp::TrDs> initCameraDs(batch.alloc.ds, cameraDsLayout_);
-	vpp::Init<vpp::SubBuffer> initCameraUbo(batch.alloc.bufHost, camUboSize,
+	vpp::Init<vpp::TrDs> initCameraDs(wb.alloc.ds, cameraDsLayout_);
+	vpp::Init<vpp::SubBuffer> initCameraUbo(wb.alloc.bufHost, camUboSize,
 		vk::BufferUsageBits::uniformBuffer, hostMem);
 
-	vpp::Init<vpp::TrDs> initEnvCameraDs(batch.alloc.ds, cameraDsLayout_);
-	vpp::Init<vpp::SubBuffer> initEnvCameraUbo(batch.alloc.bufHost,
+	vpp::Init<vpp::TrDs> initEnvCameraDs(wb.alloc.ds, cameraDsLayout_);
+	vpp::Init<vpp::SubBuffer> initEnvCameraUbo(wb.alloc.bufHost,
 		sizeof(nytl::Mat4f), vk::BufferUsageBits::uniformBuffer, hostMem);
 
-	vpp::Init<vpp::SubBuffer> initRenderStage(batch.alloc.bufHost,
+	vpp::Init<vpp::SubBuffer> initRenderStage(wb.alloc.bufHost,
 		5 * sizeof(f16), vk::BufferUsageBits::transferDst, hostMem, 16u);
 
 	// selection data
@@ -403,7 +406,7 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	imgi.tiling = vk::ImageTiling::linear;
 	imgi.usage = vk::ImageUsageBits::transferDst;
 	imgi.samples = vk::SampleCountBits::e1;
-	vpp::Init<vpp::Image> initSelectionStage(batch.alloc.memHost, imgi,
+	vpp::Init<vpp::Image> initSelectionStage(wb.alloc.memHost, imgi,
 		dev.hostMemoryTypes());
 
 	selectionCb_ = dev.commandAllocator().get(qfam,
@@ -412,9 +415,8 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 
 	// environment
 	tkn::Environment::InitData envData;
-	env_.create(envData, batch, "convolution.ktx",
-		"irradiance.ktx", linearSampler_);
-	vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
+	env_.create(envData, wb, "convolution.ktx", "irradiance.ktx", linearSampler_);
+	auto initBrdfLut = createTexture(wb, tkn::read("brdflut.ktx"));
 
 	// Load Model
 	auto mat = nytl::identity<4, float>();
@@ -443,30 +445,29 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	auto& sc = model.scenes[scene];
 
 	tkn::Scene::InitData initScene;
-	scene_.create(initScene, batch, path, *omodel, sc, mat, ri);
+	scene_.create(initScene, wb, path, *omodel, sc, mat, ri);
 	scene_.rescale(4 * args.scale);
 
 	shadowData_ = tkn::initShadowData(dev, depthFormat_,
 		scene_.dsLayout(), multiview_, depthClamp_);
 
-	tkn::Texture::InitData initDirt;
-	lensDirt_ = {initDirt, batch, tkn::read("dirt.jpg")};
+	auto initDirt = createTexture(wb, tkn::read("dirt.jpg"));
 
-	initPasses(batch);
+	initPasses(wb);
 
 	rvgInit(pp_.renderPass(), 0, vk::SampleCountBits::e1);
 
 	// allocate
-	scene_.init(initScene, batch, dummyTex_.imageView());
+	scene_.init(initScene, wb, dummyTex_.imageView());
 	selectionStage_ = initSelectionStage.init();
 	cameraDs_ = initCameraDs.init();
 	cameraUbo_ = initCameraUbo.init();
 	envCameraDs_ = initEnvCameraDs.init();
 	envCameraUbo_ = initEnvCameraUbo.init();
-	env_.init(envData, batch);
-	brdfLut_ = initBrdfLut.init(batch);
+	env_.init(envData, wb);
+	brdfLut_ = initTexture(initBrdfLut, wb);
 	renderStage_ = initRenderStage.init();
-	lensDirt_.init(initDirt, batch);
+	lensDirt_ = initTexture(initDirt, wb);
 
 	// cb
 	vk::ImageMemoryBarrier barrier;
@@ -486,7 +487,7 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	if(pointLight) {
 		addPointLight({-1.8f, 6.0f, -2.f}, {4.f, 3.f, 2.f}, 9.f, true);
 	} else {
-		auto& l = dirLights_.emplace_back(batch, shadowData_);
+		auto& l = dirLights_.emplace_back(wb, shadowData_);
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
@@ -2010,8 +2011,8 @@ void ViewApp::updateDevice() {
 		};
 
 		auto format = GeomLightPass::lightFormat;
-		auto provider = tkn::wrap({probeSize.width, probeSize.height},
-			format, 1, 1, 6, {ptrs});
+		auto provider = tkn::wrap({probeSize.width, probeSize.height, 1u},
+			format, 1, 1, {ptrs}, true);
 		auto res = tkn::writeKtx("probe.ktx", *provider);
 		dlg_assertm(res == tkn::WriteError::none, (int) res);
 		dlg_info("written");

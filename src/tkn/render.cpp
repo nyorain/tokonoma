@@ -323,4 +323,47 @@ vk::SamplerCreateInfo linearSamplerInfo() {
 	return sci;
 }
 
+RenderPassInfo renderPassInfo(nytl::Span<const vk::Format> formats,
+		nytl::Span<const nytl::Span<const unsigned>> passes) {
+	RenderPassInfo rpi;
+	for(auto f : formats) {
+		auto& a = rpi.attachments.emplace_back();
+		a.format = f;
+		a.initialLayout = vk::ImageLayout::undefined;
+		a.finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		a.loadOp = vk::AttachmentLoadOp::clear;
+		a.storeOp = vk::AttachmentStoreOp::store;
+		a.samples = vk::SampleCountBits::e1;
+	}
+
+	for(auto pass : passes) {
+		auto& subpass = rpi.subpasses.emplace_back();
+		auto& colorRefs = rpi.colorRefs.emplace_back();
+		subpass.pipelineBindPoint = vk::PipelineBindPoint::graphics;
+
+		bool depth = false;
+		for(auto id : pass) {
+			dlg_assert(id < rpi.attachments.size());
+			auto format = formats[id];
+			if(tkn::isDepthFormat(format)) {
+				dlg_assertm(!depth, "More than one depth attachment");
+				depth = true;
+				auto& ref = rpi.depthRefs.emplace_back();
+				ref.attachment = id;
+				ref.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
+				subpass.pDepthStencilAttachment = &ref;
+			} else {
+				auto& ref = colorRefs.emplace_back();
+				ref.attachment = id;
+				ref.layout = vk::ImageLayout::colorAttachmentOptimal;
+			}
+		}
+
+		subpass.pColorAttachments = colorRefs.data();
+		subpass.colorAttachmentCount = colorRefs.size();
+	}
+
+	return rpi;
+}
+
 } // namespace tkn

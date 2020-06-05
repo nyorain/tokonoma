@@ -890,6 +890,7 @@ void App::updateDevice() {
 vpp::SwapchainPreferences App::swapchainPrefs(const Args& args) const {
 	vpp::SwapchainPreferences prefs {};
 	// prefs.format = vk::Format::r16g16b16a16Sfloat;
+	prefs.alpha = vk::CompositeAlphaBitsKHR::preMultiplied;
 	prefs.errorAction = vpp::SwapchainPreferences::ErrorAction::output;
 	if(args.vsync) {
 		prefs.presentMode = vk::PresentModeKHR::fifo; // vsync

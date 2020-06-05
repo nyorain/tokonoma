@@ -3,10 +3,22 @@
 #include <tkn/types.hpp>
 #include <vkpp/fwd.hpp>
 
-namespace tkn {
-
 // NOTE: at the moment, these functions support only a small number
 // of formats. Just extend them with whatever is needed.
+
+namespace tkn {
+
+// Returns whether the given format an hold high dynamic range data, i.e.
+// has a float format and can store values >1.0.
+bool isHDR(vk::Format);
+bool isSRGB(vk::Format);
+vk::Format toggleSRGB(vk::Format);
+vk::ImageType minImageType(vk::Extent3D, unsigned minDim = 1u);
+vk::ImageViewType minImageViewType(vk::Extent3D, unsigned layers,
+	bool cubemap, unsigned minDim = 1u);
+
+// CPU format conversion. This is needed to support reading and writing of
+// data in formats that the GPU does not support.
 
 nytl::Vec4d read(vk::Format srcFormat, nytl::Span<const std::byte>& src);
 void write(vk::Format dstFormat, nytl::Span<std::byte>& dst, nytl::Vec4d color);

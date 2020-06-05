@@ -15,3 +15,10 @@ layout(set = 0, binding = 0) uniform UBO {
 	vec3 camDir;
 	float fov;
 } ubo;
+
+layout(push_constant) uniform PCR {
+	// Whether the information should be tonemapped.
+	// When this is false, the shader can output floating data > 1.0.
+	// The shader should output linear rgb in any case.
+	bool tonemap;
+} pcr;

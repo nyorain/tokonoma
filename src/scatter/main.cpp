@@ -42,90 +42,12 @@
 #include <random>
 
 // TODO:
-// - add TAAPass. This allows us to sample longer rays
-//   and go down with the steps. Investigate if this maybe
-//   even means we can get rid of the dithering?
 // - correctly resolve the dithering (4x4 blurs? maybe just use
 //   a really small gaussian pass?) instead of the current
 //   hack-mess in pp.frag
-//   - 4x4 dithering is kinda bad. Rather use 3x3 and then
-//     just blur in 3x3 neighborhood.
-// - optimization: start and end ray at outer light radius,
-//   instead of starting at camera and going to infinity.
-//   Should *greatly* increase what we get for our samples
 
 using namespace tkn::types;
 
-struct RenderPassInfo {
-	vk::RenderPassCreateInfo renderPass;
-	std::vector<vk::AttachmentDescription> attachments;
-	std::vector<vk::SubpassDescription> subpasses;
-	std::vector<vk::SubpassDependency> dependencies;
-
-	std::deque<std::vector<vk::AttachmentReference>> colorRefs;
-	std::deque<vk::AttachmentReference> depthRefs;
-
-	vk::RenderPassCreateInfo info() {
-		renderPass.pAttachments = attachments.data();
-		renderPass.attachmentCount = attachments.size();
-		renderPass.pSubpasses = subpasses.data();
-		renderPass.subpassCount = subpasses.size();
-		renderPass.dependencyCount = dependencies.size();
-		renderPass.pDependencies = dependencies.data();
-		return renderPass;
-	}
-};
-
-// - no dependencies or flags or something
-// - initialLayout always 'undefined'
-// - finalLayout always 'shaderReadOnlyOptimal'
-// - clearOp clear, storeOp store
-// Passes contains the ids of the attachments used by the passes.
-// Depending on the format they will be attached as color or depth
-// attachment. Input, preserve attachments or multisampling not
-// supported here.
-RenderPassInfo renderPassInfo(nytl::Span<const vk::Format> formats,
-		nytl::Span<const nytl::Span<const unsigned>> passes) {
-	RenderPassInfo rpi;
-	for(auto f : formats) {
-		auto& a = rpi.attachments.emplace_back();
-		a.format = f;
-		a.initialLayout = vk::ImageLayout::undefined;
-		a.finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		a.loadOp = vk::AttachmentLoadOp::clear;
-		a.storeOp = vk::AttachmentStoreOp::store;
-		a.samples = vk::SampleCountBits::e1;
-	}
-
-	for(auto pass : passes) {
-		auto& subpass = rpi.subpasses.emplace_back();
-		auto& colorRefs = rpi.colorRefs.emplace_back();
-		subpass.pipelineBindPoint = vk::PipelineBindPoint::graphics;
-
-		bool depth = false;
-		for(auto id : pass) {
-			dlg_assert(id < rpi.attachments.size());
-			auto format = formats[id];
-			if(tkn::isDepthFormat(format)) {
-				dlg_assertm(!depth, "More than one depth attachment");
-				depth = true;
-				auto& ref = rpi.depthRefs.emplace_back();
-				ref.attachment = id;
-				ref.layout = vk::ImageLayout::depthStencilAttachmentOptimal;
-				subpass.pDepthStencilAttachment = &ref;
-			} else {
-				auto& ref = colorRefs.emplace_back();
-				ref.attachment = id;
-				ref.layout = vk::ImageLayout::colorAttachmentOptimal;
-			}
-		}
-
-		subpass.pColorAttachments = colorRefs.data();
-		subpass.colorAttachmentCount = colorRefs.size();
-	}
-
-	return rpi;
-}
 
 
 class ScatterApp : public tkn::App {
@@ -253,7 +175,7 @@ public:
 
 		// create render pass
 		auto pass0 = {0u, 1u, 2u};
-		auto rpi = renderPassInfo(
+		auto rpi = tkn::renderPassInfo(
 			{{vk::Format::r16g16b16a16Sfloat, velFormat, depthFormat_}},
 			{{{pass0}}});
 		vk::SubpassDependency dep;
@@ -355,7 +277,7 @@ public:
 
 		// rp
 		auto pass0 = {0u};
-		auto rpi = renderPassInfo(
+		auto rpi = tkn::renderPassInfo(
 			{{vk::Format::r16g16b16a16Sfloat}},
 			{{{pass0}}});
 		vk::SubpassDependency dep;
@@ -473,7 +395,7 @@ public:
 
 		// rp
 		auto pass0 = {0u};
-		auto rpi = renderPassInfo(
+		auto rpi = tkn::renderPassInfo(
 			{{swapchainInfo().imageFormat}},
 			{{{pass0}}});
 		rpi.attachments[0].finalLayout = vk::ImageLayout::presentSrcKHR;

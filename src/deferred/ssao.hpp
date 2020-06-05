@@ -22,7 +22,7 @@ public:
 		vpp::TrDs::InitData initDs;
 		vpp::TrDs::InitData initBlurHDs;
 		vpp::TrDs::InitData initBlurVDs;
-		tkn::Texture::InitData initNoise;
+		tkn::TextureInitData initNoise;
 	};
 
 	struct InitBufferData {
@@ -67,7 +67,7 @@ protected:
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
 	vpp::ViewableImage target_;
-	tkn::Texture noise_;
+	vpp::ViewableImage noise_;
 	vpp::SubBuffer samples_;
 
 	struct {

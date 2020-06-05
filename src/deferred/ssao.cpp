@@ -266,10 +266,10 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 
 	auto noiseFormat = vk::Format::r32g32b32a32Sfloat;
 	auto span = nytl::as_bytes(nytl::span(data.samples));
-	auto p = tkn::wrap({noiseDim, noiseDim}, noiseFormat, span);
+	auto p = tkn::wrap({noiseDim, noiseDim, 1u}, noiseFormat, span);
 	auto params = tkn::TextureCreateParams{};
 	params.format = noiseFormat;
-	noise_ = {data.initNoise, wb, std::move(p), params};
+	data.initNoise = createTexture(wb, std::move(p), params);
 
 	ds_ = {data.initDs, wb.alloc.ds, dsLayout_};
 	blur_.dsHorz = {data.initBlurHDs, wb.alloc.ds, blur_.dsLayout};
@@ -282,7 +282,7 @@ void SSAOPass::init(InitData& data, const PassCreateInfo& info) {
 	ds_.init(data.initDs);
 	blur_.dsHorz.init(data.initBlurHDs);
 	blur_.dsVert.init(data.initBlurVDs);
-	noise_.init(data.initNoise, wb);
+	noise_ = initTexture(data.initNoise, wb);
 	samples_.init(data.initSamples);
 
 	vpp::nameHandle(ds_, "SSAOPass:ds_");

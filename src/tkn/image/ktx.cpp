@@ -131,7 +131,7 @@ public:
 	vk::Format format() const noexcept override { return format_; }
 	unsigned mipLevels() const noexcept override { return mipLevels_; }
 	unsigned layers() const noexcept override {
-		return std::max(faces_ * arrayElements_, 1u);
+		return std::max(faces_ * std::max(arrayElements_, 1u), 1u);
 	}
 	bool cubemap() const noexcept override {
 		return faces_ == 6u;

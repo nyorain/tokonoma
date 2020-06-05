@@ -6,10 +6,12 @@
 #include <vpp/fwd.hpp>
 #include <vkpp/structs.hpp>
 #include <vkpp/enums.hpp>
+#include <nytl/span.hpp>
 
 #include <initializer_list>
 #include <array>
 #include <numeric>
+#include <deque>
 
 namespace tkn {
 
@@ -187,5 +189,38 @@ struct ComputeGroupSizeSpec {
 
 template<typename... Args> ComputeGroupSizeSpec(Args&&...)
 	-> ComputeGroupSizeSpec<sizeof...(Args)>;
+
+struct RenderPassInfo {
+	vk::RenderPassCreateInfo renderPass;
+	std::vector<vk::AttachmentDescription> attachments;
+	std::vector<vk::SubpassDescription> subpasses;
+	std::vector<vk::SubpassDependency> dependencies;
+
+	std::deque<std::vector<vk::AttachmentReference>> colorRefs;
+	std::deque<vk::AttachmentReference> depthRefs;
+
+	vk::RenderPassCreateInfo info() {
+		renderPass.pAttachments = attachments.data();
+		renderPass.attachmentCount = attachments.size();
+		renderPass.pSubpasses = subpasses.data();
+		renderPass.subpassCount = subpasses.size();
+		renderPass.dependencyCount = dependencies.size();
+		renderPass.pDependencies = dependencies.data();
+		return renderPass;
+	}
+};
+
+// Creates a simple RenderPassCreate info (+ everything what is needed)
+// from a simple meta-description.
+// - no dependencies or flags or something
+// - initialLayout always 'undefined'
+// - finalLayout always 'shaderReadOnlyOptimal'
+// - clearOp clear, storeOp store
+// Passes contains the ids of the attachments used by the passes.
+// Depending on the format they will be attached as color or depth
+// attachment. Input, preserve attachments or multisampling not
+// supported here.
+RenderPassInfo renderPassInfo(nytl::Span<const vk::Format> formats,
+		nytl::Span<const nytl::Span<const unsigned>> passes);
 
 } // namespace tkn
