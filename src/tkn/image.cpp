@@ -8,6 +8,7 @@
 #include <nytl/span.hpp>
 #include <vkpp/enums.hpp>
 #include <vpp/imageOps.hpp>
+#include <vpp/formats.hpp>
 #include <dlg/dlg.hpp>
 #include <cstdio>
 
@@ -310,7 +311,7 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 	for(auto m = 0u; m < mips; ++m) {
 		for(auto l = 0u; l < layers; ++l) {
 			auto& rdi = ret->data_.emplace_back();
-			auto off = vpp::imageBufferOffset(fmtSize,
+			auto off = fmtSize * vpp::tightTexelNumber(
 				{size.x, size.y, size.z}, layers, m, l);
 			rdi.ref = data.get() + off;
 		}

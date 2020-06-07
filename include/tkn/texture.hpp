@@ -147,7 +147,7 @@ struct FillData {
 // Responsibility of the caller to make sure the image can be filled with all
 // the data the given provider provides and that the requires transfer/blit
 // usage flags in the target image are set. Will blit if needed.
-FillData createFill(const WorkBatcher& wb, const vpp::Image&, vk::Format,
+FillData createFill(WorkBatcher& wb, const vpp::Image&, vk::Format,
 	std::unique_ptr<ImageProvider>, unsigned maxNumLevels,
 	std::optional<bool> forceSRGB = {});
 void doFill(FillData&, vk::CommandBuffer cb);
@@ -164,12 +164,12 @@ struct TextureInitData {
 	TextureCreateParams::ViewRange view {};
 };
 
-TextureInitData createTexture(const WorkBatcher&,
+TextureInitData createTexture(WorkBatcher&,
 	std::unique_ptr<ImageProvider> img, const TextureCreateParams& = {});
-vpp::Image initImage(TextureInitData&, const WorkBatcher&);
-vpp::ViewableImage initTexture(TextureInitData&, const WorkBatcher&);
+vpp::Image initImage(TextureInitData&, WorkBatcher&);
+vpp::ViewableImage initTexture(TextureInitData&, WorkBatcher&);
 
-vpp::ViewableImage buildTexture(const WorkBatcher&,
+vpp::ViewableImage buildTexture(WorkBatcher&,
 	std::unique_ptr<ImageProvider> img, const TextureCreateParams& = {});
 vpp::ViewableImage buildTexture(const vpp::Device&,
 	std::unique_ptr<ImageProvider> img, const TextureCreateParams& = {});

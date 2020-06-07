@@ -3,7 +3,7 @@
 #include <tkn/stream.hpp>
 
 #include <vkpp/enums.hpp>
-#include <vpp/imageOps.hpp>
+#include <vpp/formats.hpp>
 #include <nytl/span.hpp>
 #include <dlg/dlg.hpp>
 #include <dlg/dlg.hpp>

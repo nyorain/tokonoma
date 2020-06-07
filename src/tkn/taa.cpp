@@ -16,23 +16,23 @@
 namespace tkn {
 
 void TAAPass::init(vpp::Device& dev, vk::Sampler linearSampler) {
-	auto taaBindings = {
+	auto taaBindings = std::array {
 		// linear sampler for history access important
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linearSampler),
+			vk::ShaderStageBits::compute, &linearSampler),
 		vpp::descriptorBinding(vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linearSampler),
+			vk::ShaderStageBits::compute, &linearSampler),
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linearSampler),
+			vk::ShaderStageBits::compute, &linearSampler),
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linearSampler),
+			vk::ShaderStageBits::compute, &linearSampler),
 		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::compute),
 	};
 
-	dsLayout_ = {dev, taaBindings};
+	dsLayout_.init(dev, taaBindings);
 	vpp::nameHandle(dsLayout_, "TAAPass:dsLayout");
 
 	ds_ = {dev.descriptorAllocator(), dsLayout_};

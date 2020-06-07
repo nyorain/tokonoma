@@ -13,7 +13,8 @@
 namespace tkn {
 
 // Represents the main rendering window.
-class MainWindow : public ny::WindowListener {
+class [[deprecated("will be removed, use swa instead")]]
+MainWindow : public ny::WindowListener {
 public:
 	std::function<void(const ny::KeyEvent&)> onKey;
 	std::function<void(const ny::FocusEvent&)> onFocus;

@@ -136,7 +136,7 @@ public:
 
 public:
 	Scene() = default;
-	void create(InitData&, const WorkBatcher&, nytl::StringParam path,
+	void create(InitData&, WorkBatcher&, nytl::StringParam path,
 		const gltf::Model&, const gltf::Scene&, nytl::Mat4f matrix,
 		const SceneRenderInfo&, float samplerLodBias = 0.f);
 
@@ -144,7 +144,7 @@ public:
 	// Makes sure the scene is in bounds [-s, s] but will scale
 	// uniformly on all axis.
 	void rescale(float s = 1.f);
-	void init(InitData&, const WorkBatcher&, vk::ImageView dummyTex);
+	void init(InitData&, WorkBatcher&, vk::ImageView dummyTex);
 	void createImage(unsigned id, bool srgb);
 
 	// optionally returns semaphore that should be waited upon before
@@ -183,11 +183,11 @@ public:
 	const vpp::Device& device() const { return defaultSampler_.device(); }
 
 protected:
-	void loadNode(InitData&, const WorkBatcher&, const gltf::Model&,
+	void loadNode(InitData&, WorkBatcher&, const gltf::Model&,
 		const gltf::Node&, const SceneRenderInfo&, nytl::Mat4f matrix);
-	void loadMaterial(InitData&, const WorkBatcher&, const gltf::Model&,
+	void loadMaterial(InitData&, WorkBatcher&, const gltf::Model&,
 		const gltf::Material&, const SceneRenderInfo&);
-	void loadPrimitive(InitData&, const WorkBatcher&, const gltf::Model&,
+	void loadPrimitive(InitData&, WorkBatcher&, const gltf::Model&,
 		const gltf::Primitive&, nytl::Mat4f matrix);
 	void writeInstance(const Instance& ini, nytl::Span<std::byte>& ids,
 		nytl::Span<std::byte>& cmds);

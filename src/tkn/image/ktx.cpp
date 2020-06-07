@@ -4,7 +4,8 @@
 #include <tkn/bits.hpp>
 #include <tkn/stream.hpp>
 #include <vkpp/enums.hpp>
-#include <vpp/imageOps.hpp>
+#include <vpp/formats.hpp>
+#include <vpp/util/allocation.hpp>
 #include <nytl/scope.hpp>
 #include <dlg/dlg.hpp>
 

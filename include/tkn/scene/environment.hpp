@@ -38,14 +38,14 @@ public:
 	Environment(Environment&&) = delete;
 	Environment& operator=(Environment&&) = delete;
 
-	void create(InitData&, const WorkBatcher& wb, nytl::StringParam envMapPath,
+	void create(InitData&, WorkBatcher& wb, nytl::StringParam envMapPath,
 		nytl::StringParam irradiancePath, vk::Sampler linear);
-	void create(InitData&, const WorkBatcher& wb,
+	void create(InitData&, WorkBatcher& wb,
 		std::unique_ptr<ImageProvider> envMap,
 		std::unique_ptr<ImageProvider> irradiance,
 		vk::Sampler linear);
 
-	void init(InitData&, const WorkBatcher&);
+	void init(InitData&, WorkBatcher&);
 	void createPipe(const vpp::Device&, vk::DescriptorSetLayout camDsLayout,
 		vk::RenderPass rp, unsigned subpass, vk::SampleCountBits samples,
 		nytl::Span<const vk::PipelineColorBlendAttachmentState>

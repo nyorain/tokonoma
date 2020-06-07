@@ -28,15 +28,11 @@ namespace tkn {
 // fwd
 class MainWindow;
 class Renderer;
-
-struct Features {
-	vk::PhysicalDeviceFeatures2 base;
-	vk::PhysicalDeviceMultiviewFeatures multiview;
-	Features();
-};
+struct Features;
 
 /// Implements basic setup and main loop.
-class App : public nytl::NonMovable {
+class [[deprecated("will be removed, use tkn/app2 instead")]] App
+	: public nytl::NonMovable {
 public:
 	using RenderBuffer = vpp::Renderer::RenderBuffer;
 

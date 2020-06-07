@@ -72,7 +72,8 @@ Audio3D::Audio3D(unsigned frameRate) {
 	IPLMaterial material {0.1f,0.2f,0.3f,0.05f,0.100f,0.050f,0.030f};
 
 	// brick
-	material = {0.03f,0.04f,0.07f,0.05f,0.015f,0.015f,0.015f};
+	// material = {0.03f,0.04f,0.07f,0.05f,0.015f,0.015f,0.015f};
+	material = {0.9f,0.9f,0.9f,0.2f,0.15f,0.15f,0.15f};
 
 	dlg_info("creating scene");
 	auto ir = iplCreateScene(context_, nullptr, ssettings, 1, &material,

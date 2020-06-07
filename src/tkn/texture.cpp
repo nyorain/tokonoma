@@ -12,6 +12,7 @@
 #include <vpp/queue.hpp>
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
+#include <nytl/scope.hpp>
 
 // TODO: support for compressed formats, low priority for now
 // TODO: check if blit is supported in format flags
@@ -24,6 +25,7 @@ const vk::ImageUsageFlags TextureCreateParams::defaultUsage =
 	vk::ImageUsageBits::transferDst |
 	vk::ImageUsageBits::inputAttachment;
 
+/*
 Texture::Texture(const vpp::Device& dev, std::unique_ptr<ImageProvider> img,
 		const TextureCreateParams& params) {
 	*this = {WorkBatcher::createDefault(dev), std::move(img), params};
@@ -389,8 +391,9 @@ void Texture::init(InitData& data, const WorkBatcher& wb) {
 		vk::PipelineStageBits::allCommands | vk::PipelineStageBits::bottomOfPipe,
 		{}, {}, {}, {{barrier}});
 }
+*/
 
-FillData createFill(const WorkBatcher& wb, const vpp::Image& img, vk::Format dstFormat,
+FillData createFill(WorkBatcher& wb, const vpp::Image& img, vk::Format dstFormat,
 		std::unique_ptr<ImageProvider> provider, unsigned maxNumLevels,
 		std::optional<bool> forceSRGB) {
 
@@ -697,7 +700,7 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 	data.source = {};
 }
 
-TextureInitData createTexture(const WorkBatcher& wb,
+TextureInitData createTexture(WorkBatcher& wb,
 		std::unique_ptr<ImageProvider> img,
 		const TextureCreateParams& params) {
 
@@ -777,13 +780,13 @@ TextureInitData createTexture(const WorkBatcher& wb,
 	return data;
 }
 
-vpp::Image initImage(TextureInitData& data, const WorkBatcher& wb) {
+vpp::Image initImage(TextureInitData& data, WorkBatcher& wb) {
 	data.image.init(data.initImage);
 	doFill(data.fill, wb.cb);
 	return std::move(data.image);
 }
 
-vpp::ViewableImage initTexture(TextureInitData& data, const WorkBatcher& wb) {
+vpp::ViewableImage initTexture(TextureInitData& data, WorkBatcher& wb) {
 	vk::ImageViewCreateInfo ivi;
 	ivi.subresourceRange.aspectMask = vk::ImageAspectBits::color;
 	ivi.subresourceRange.layerCount = data.view.layerCount;
@@ -800,7 +803,7 @@ vpp::ViewableImage initTexture(TextureInitData& data, const WorkBatcher& wb) {
 	return {std::move(img), {dev, ivi}};
 }
 
-vpp::ViewableImage buildTexture(const WorkBatcher& wb,
+vpp::ViewableImage buildTexture(WorkBatcher& wb,
 		std::unique_ptr<ImageProvider> img, const TextureCreateParams& params) {
 	auto& dev = wb.dev;
 	auto& qs = dev.queueSubmitter();
@@ -808,11 +811,12 @@ vpp::ViewableImage buildTexture(const WorkBatcher& wb,
 		vk::CommandPoolCreateBits::transient);
 	vk::beginCommandBuffer(cb, {});
 
-	auto cwb = wb;
-	cwb.cb = cb;
+	auto ocb = wb.cb;
+	nytl::ScopeGuard cbGuard = [&]{ wb.cb = ocb; };
+	wb.cb = cb;
 
-	auto data = createTexture(cwb, std::move(img), params);
-	auto ret = initTexture(data, cwb);
+	auto data = createTexture(wb, std::move(img), params);
+	auto ret = initTexture(data, wb);
 
 	vk::endCommandBuffer(cb);
 	qs.wait(qs.add(cb));
@@ -822,7 +826,8 @@ vpp::ViewableImage buildTexture(const WorkBatcher& wb,
 
 vpp::ViewableImage buildTexture(const vpp::Device& dev,
 		std::unique_ptr<ImageProvider> img, const TextureCreateParams& params) {
-	return buildTexture(WorkBatcher::createDefault(dev), std::move(img), params);
+	auto wb = WorkBatcher(dev);
+	return buildTexture(wb, std::move(img), params);
 }
 
 } // namespace tkn

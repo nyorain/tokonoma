@@ -38,7 +38,7 @@ using nytl::constants::pi;
 namespace tkn {
 
 // Environment
-void Environment::create(InitData& data, const WorkBatcher& wb,
+void Environment::create(InitData& data, WorkBatcher& wb,
 		nytl::StringParam envMapPath, nytl::StringParam irradiancePath,
 		vk::Sampler linear) {
 	auto envMap = tkn::read(envMapPath);
@@ -46,7 +46,7 @@ void Environment::create(InitData& data, const WorkBatcher& wb,
 	create(data, wb, std::move(envMap), std::move(irradiance), linear);
 }
 
-void Environment::create(InitData& data, const WorkBatcher& wb,
+void Environment::create(InitData& data, WorkBatcher& wb,
 		std::unique_ptr<ImageProvider> envMap,
 		std::unique_ptr<ImageProvider> irradiance,
 		vk::Sampler linear) {
@@ -64,19 +64,19 @@ void Environment::create(InitData& data, const WorkBatcher& wb,
 
 	// pipe
 	// ds layout
-	auto bindings = {
+	auto bindings = std::array {
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &linear),
+			vk::ShaderStageBits::fragment, &linear),
 	};
 
-	dsLayout_ = {dev, bindings};
+	dsLayout_.init(dev, bindings);
 
 	// ubo
 	ds_ = {data.initDs, dev.descriptorAllocator(), dsLayout_};
 }
 
-void Environment::init(InitData& data, const WorkBatcher& wb) {
+void Environment::init(InitData& data, WorkBatcher& wb) {
 	envMap_ = initTexture(data.initEnvMap, wb);
 	irradiance_ = initTexture(data.initIrradiance, wb);
 	ds_.init(data.initDs);
@@ -127,13 +127,13 @@ void Environment::render(vk::CommandBuffer cb) const {
 // SkyboxRenderer
 void SkyboxRenderer::create(const vpp::Device& dev, const PipeInfo& pi,
 		nytl::Span<const vk::PipelineColorBlendAttachmentState> battachments) {
-	auto bindings = {
+	auto bindings = std::array {
 		vpp::descriptorBinding(
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &pi.sampler),
+			vk::ShaderStageBits::fragment, &pi.sampler),
 	};
 
-	dsLayout_ = {dev, bindings};
+	dsLayout_.init(dev, bindings);
 	vpp::nameHandle(dsLayout_, "SkyboxRenderer:dsLayout");
 
 	pipeLayout_ = {dev, {{pi.camDsLayout, dsLayout_.vkHandle()}}, {}};

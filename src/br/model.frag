@@ -47,11 +47,11 @@ layout(set = 3, binding = 1) uniform samplerCubeShadow shadowCube;
 // environment/AO
 layout(set = 4, binding = 0) uniform samplerCube envMap;
 layout(set = 4, binding = 1) uniform sampler2D brdfLut;
-// layout(set = 4, binding = 2) uniform samplerCube irradianceMap;
+layout(set = 4, binding = 2) uniform samplerCube irradianceMap;
 
-// layout(set = 4, binding = 3) uniform Params {
-layout(set = 4, binding = 2) uniform Params {
-	vec3 radianceCoeffs[9]; // stored as vec4 on cpu due to padding
+layout(set = 4, binding = 3) uniform Params {
+// layout(set = 4, binding = 2) uniform Params {
+	// vec3 radianceCoeffs[9]; // stored as vec4 on cpu due to padding
 	uint mode;
 	float aoFac;
 	uint envLods;
@@ -63,26 +63,11 @@ const uint modeSpecularIBL = (1u << 2);
 const uint modeIrradiance = (1u << 3);
 
 vec4 readTex(MaterialTex tex) {
-	// vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
-	vec2 tuv = inTexCoord0;
+	vec2 tuv = (tex.coords == 0u) ? inTexCoord0 : inTexCoord1;
 	return texture(sampler2D(textures[tex.id], samplers[tex.samplerID]), tuv);	
 }
 
-// TODO: WIP
-// vec3 toneMapFilmicALU(in vec3 color) {
-//     color = max(vec3(0.0), color - 0.004f);
-//     color = (color * (6.2f * color + 0.5f)) / (color * (6.2f * color + 1.7f)+ 0.06f);
-//     return color;
-// }
-
 void main() {
-	// uint inMatID = 0u;
-	// uint inModelID = 0u;
-	
-	// debug
-	// outCol = vec4(1.0, 1.0, 1.0, 1.0);
-	// return;
-
 	Material material = materials[inMatID];
 
 	if(!gl_FrontFacing && (material.flags & doubleSided) == 0) {
@@ -189,8 +174,8 @@ void main() {
 	}
 
 	if(bool(params.mode & modeIrradiance)) {
-		// vec3 irradiance = texture(irradianceMap, normal).rgb;
-		vec3 irradiance = evalIrradianceSH(normal, params.radianceCoeffs).rgb;
+		vec3 irradiance = texture(irradianceMap, normal).rgb;
+		// vec3 irradiance = evalIrradianceSH(normal, params.radianceCoeffs).rgb;
 		vec3 diffuse = kD * irradiance * albedo.rgb;
 		color.rgb += ambientFac * diffuse;
 	}
@@ -207,5 +192,5 @@ void main() {
 	exposure /= 0.00001; // fp16 scale
 	outCol.rgb *= exposure;
 
-	// outCol.rgb = 1.0 - exp(-outCol.rgb);
+	outCol.rgb = 1.0 - exp(-outCol.rgb);
 }

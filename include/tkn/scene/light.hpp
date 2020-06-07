@@ -47,7 +47,7 @@ using SceneRenderFunc = std::function<void(vk::CommandBuffer, vk::PipelineLayout
 
 class DirLight {
 public:
-	static constexpr u32 cascadeCount = 4u;
+	static constexpr u32 cascadeCount = 2u;
 
 	struct {
 		nytl::Vec3f color {1.f, 1.f, 1.f}; // unit: illuminance
@@ -58,7 +58,7 @@ public:
 
 public:
 	DirLight() = default;
-	DirLight(const WorkBatcher&, const ShadowData& data);
+	DirLight(WorkBatcher&, const ShadowData& data);
 
 	// renders shadow map
 	void render(vk::CommandBuffer cb, const ShadowData&, const Scene&);
@@ -70,7 +70,7 @@ public:
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
 
 protected:
-	nytl::Vec2ui size_ {1024, 1024};
+	nytl::Vec2ui size_ {2 * 1024, 2 * 1024};
 	vpp::ViewableImage target_; // depth
 	vpp::Framebuffer fb_;
 	vpp::SubBuffer ubo_;
@@ -100,7 +100,7 @@ public:
 
 public:
 	PointLight() = default;
-	PointLight(const WorkBatcher&, const ShadowData& data,
+	PointLight(WorkBatcher&, const ShadowData& data,
 		vk::ImageView noShadowMap = {});
 
 	// renders shadow map
@@ -129,7 +129,7 @@ protected:
 };
 
 // Inits the shadow map renderer for a standard tkn::Scene geometry pipeline.
-ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,
+void initShadowData(ShadowData&, const vpp::Device&, vk::Format depthFormat,
 	vk::DescriptorSetLayout sceneDsLayout, bool multiview, bool depthClamp);
 
 // More detailed shadowmap api that allows using custom shaders, mainly
@@ -147,7 +147,7 @@ struct ShadowPipelineInfo {
 	vk::PipelineVertexInputStateCreateInfo vertex;
 };
 
-ShadowData initShadowData(const vpp::Device&, vk::Format depthFormat,
+void initShadowData(ShadowData&, const vpp::Device&, vk::Format depthFormat,
 	bool multiview, bool depthClamp,
 	const ShadowPipelineInfo& info,
 	nytl::Span<const vk::DescriptorSetLayout> dss);

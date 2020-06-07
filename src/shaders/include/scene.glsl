@@ -16,7 +16,7 @@ const uint samplerCount = 6u;
 
 // TODO: don't hardcode.
 // Instead pass per spec constant
-const uint dirLightCascades = 4;
+const uint dirLightCascades = 2u;
 
 struct DirLight {
 	vec3 color;

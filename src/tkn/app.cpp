@@ -1,6 +1,7 @@
 #include <tkn/config.hpp>
 #include <tkn/app.hpp>
 #include <tkn/window.hpp>
+#include <tkn/features.hpp>
 
 #include <rvg/context.hpp>
 #include <rvg/state.hpp>

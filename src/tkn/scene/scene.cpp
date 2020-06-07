@@ -73,7 +73,7 @@ public:
 namespace tkn {
 namespace {
 
-TextureInitData loadImage(const WorkBatcher& wb, const gltf::Image& tex,
+TextureInitData loadImage(WorkBatcher& wb, const gltf::Image& tex,
 		nytl::StringParam path, bool srgb) {
 	auto name = tex.name.empty() ?  tex.name : "'" + tex.name + "'";
 	dlg_info("  Loading image {}", name);
@@ -117,7 +117,7 @@ TextureInitData loadImage(const WorkBatcher& wb, const gltf::Image& tex,
 
 } // anon namespace
 
-void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path,
+void Scene::create(InitData& data, WorkBatcher& wb, nytl::StringParam path,
 		const tinygltf::Model& model, const tinygltf::Scene& scene,
 		nytl::Mat4f matrix, const SceneRenderInfo& ri, float samplerLodBias) {
 	auto& dev = wb.dev;
@@ -137,7 +137,7 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 	}
 
 	// layout
-	auto bindings = {
+	auto bindings = std::array {
 		// model ids
 		vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
 			vk::ShaderStageBits::vertex),
@@ -149,13 +149,13 @@ void Scene::create(InitData& data, const WorkBatcher& wb, nytl::StringParam path
 			vk::ShaderStageBits::fragment),
 		// textures[imageCount]
 		vpp::descriptorBinding(vk::DescriptorType::sampledImage,
-			vk::ShaderStageBits::fragment, -1, imageCount),
+			vk::ShaderStageBits::fragment, nullptr, imageCount),
 		// samplers[samplerCount]
 		vpp::descriptorBinding(vk::DescriptorType::sampler,
-			vk::ShaderStageBits::fragment, -1, samplerCount),
+			vk::ShaderStageBits::fragment, nullptr, samplerCount),
 	};
 
-	dsLayout_ = {dev, bindings};
+	dsLayout_.init(dev, bindings);
 	vpp::nameHandle(dsLayout_, "Scene:dsLayout");
 	ds_ = {data.initDs, wb.alloc.ds, dsLayout_};
 	blendDs_ = {data.initBlendDs, wb.alloc.ds, dsLayout_};
@@ -317,7 +317,7 @@ void Scene::rescale(float s) {
 	}
 }
 
-void Scene::loadMaterial(InitData&, const WorkBatcher&,
+void Scene::loadMaterial(InitData&, WorkBatcher&,
 		const gltf::Model& model, const gltf::Material& material,
 		const SceneRenderInfo&) {
 	auto& m = materials_.emplace_back();
@@ -423,7 +423,7 @@ void Scene::loadMaterial(InitData&, const WorkBatcher&,
 	}
 }
 
-void Scene::loadNode(InitData& data, const WorkBatcher& wb,
+void Scene::loadNode(InitData& data, WorkBatcher& wb,
 		const tinygltf::Model& model, const tinygltf::Node& node,
 		const SceneRenderInfo& ri, nytl::Mat4f matrix) {
 	if(!node.matrix.empty()) {
@@ -488,7 +488,7 @@ void Scene::loadNode(InitData& data, const WorkBatcher& wb,
 	}
 }
 
-void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
+void Scene::loadPrimitive(InitData& data, WorkBatcher&,
 		const gltf::Model& model, const gltf::Primitive& primitive,
 		nytl::Mat4f matrix) {
 	auto& p = primitives_.emplace_back();
@@ -626,7 +626,7 @@ void Scene::loadPrimitive(InitData& data, const WorkBatcher&,
 	instances_.push_back(ini);
 }
 
-void Scene::init(InitData& data, const WorkBatcher& wb, vk::ImageView dummyView) {
+void Scene::init(InitData& data, WorkBatcher& wb, vk::ImageView dummyView) {
 	dlg_assert(images_.size() == data.images.size());
 
 	data.stage.init(data.initStage);

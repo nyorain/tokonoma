@@ -4,6 +4,7 @@
 #include <tkn/f16.hpp>
 #include <vkpp/enums.hpp>
 #include <vpp/imageOps.hpp>
+#include <vpp/formats.hpp>
 #include <nytl/scope.hpp>
 #include <vector>
 
@@ -12,8 +13,10 @@
 #include "tinyexr.hpp"
 
 // TODO: extend support, evaluate what is needed/useful:
-// - support for tiled/multipart images?
-//   could be useful for cubemaps/mip levels
+// - support for actually tiled images?
+//   also, support for mip level is not tested yet, since I didn't
+//   found an example file that wasn't *really* tiled.
+// - support for multipart images
 // - support for deep images?
 // TODO: remove unneeded high-level functions from tinyexr.
 //   should reduce it by quite some size.
@@ -92,6 +95,7 @@ vk::Format parseFormat(const std::array<u32, 4>& mapping, int exrPixelType,
 
 ReadError readExr(std::unique_ptr<Stream>&& stream,
 		std::unique_ptr<ImageProvider>& provider, bool forceRGBA) {
+	dlg_debug("== Loading EXR image ==");
 
 	// TODO: could optimize this significantly.
 	// When it's a memory stream, just use the memory.
@@ -111,14 +115,20 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 		return toReadError(res);
 	}
 
-	dlg_info("EXR image information:");
-	dlg_info("  version: {}", version.version);
-	dlg_info("  tiled: {}", version.tiled);
-	dlg_info("  long_name: {}", version.long_name);
-	dlg_info("  non_image: {}", version.non_image);
-	dlg_info("  multipart: {}", version.multipart);
+	dlg_debug("EXR image information:");
+	dlg_debug("  version: {}", version.version);
+	dlg_debug("  tiled: {}", version.tiled);
+	dlg_debug("  long_name: {}", version.long_name);
+	dlg_debug("  non_image: {}", version.non_image);
+	dlg_debug("  multipart: {}", version.multipart);
 
-	if(version.multipart || version.tiled || version.non_image) {
+	if(version.non_image) {
+		dlg_warn("EXR deep images not supported");
+		return ReadError::cantRepresent;
+	}
+
+	if(version.multipart) {
+		dlg_warn("EXR multipart images not supported");
 		return ReadError::cantRepresent;
 	}
 
@@ -132,6 +142,27 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 	}
 
 	auto headerGuard = nytl::ScopeGuard([&]{ FreeEXRHeader(&header); });
+	dlg_assert(header.tiled == version.tiled);
+	dlg_assert(header.multipart == version.multipart);
+	dlg_assert(header.non_image == version.non_image);
+	if(header.tiled) {
+		// ripmap basically means mipmaps in both dimensions independently.
+		// We can't represent that via ImageProvider (and it's not
+		// really needed in gpu rendering I guess).
+		if(header.tile_level_mode == TINYEXR_TILE_RIPMAP_LEVELS) {
+			dlg_warn("EXR discarding non-mipmap ripmap levels");
+		}
+
+		// sadly this is the default for vulkan. atm there is only
+		// an nvidia extension for up-rounding mip map sizes
+		// NOTE: we could choose to just ignore the mipmaps here
+		// instead of completely failing the load process.
+		if(header.tile_rounding_mode != TINYEXR_TILE_ROUND_DOWN) {
+			dlg_warn("EXR invalid mip rounding mode {}", header.tile_rounding_mode);
+			return ReadError::cantRepresent;
+		}
+	}
+
 	for(auto i = 0u; i < unsigned(header.num_custom_attributes); ++i) {
 		auto& att = header.custom_attributes[i];
 		dlg_debug("attribute {} (type {}, size {})", att.name, att.type, att.size);
@@ -167,7 +198,7 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 		else if(channelName == "B") id = 2;
 		else if(channelName == "A") id = 3;
 		else {
-			dlg_info(" >> Ignoring unknown channel {}", channelName);
+			dlg_info(" Ignoring unknown channel {}", channelName);
 			continue;
 		}
 
@@ -233,22 +264,89 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 	}
 
 	auto imageGuard = nytl::ScopeGuard([&]{ FreeEXRImage(&image); });
-	if(!image.images) { // we already checked it's not in tiled format?!
-		dlg_warn("Reading EXRImage returned no data");
-		return ReadError::internal;
-	}
 
 	unsigned width = image.width;
 	unsigned height = image.height;
 	dlg_assert(image.num_channels == header.num_channels);
+	std::vector<unsigned char**> mips;
+
+	dlg_debug("EXR width: {}, height {}", width, height);
+	if(header.tiled) {
+		if(!image.tiles) {
+			dlg_warn("Reading EXRImage returned no data");
+			return ReadError::internal;
+		}
+
+		// TODO: we could support cubemaps, image.height == 6 * header.tile_size.y
+		// They additional have the 'envmap' tag set (to 1) to signal that
+		// this exr represents a cubemap.
+		if(header.tile_size_x != image.width || header.tile_size_y != image.height) {
+			dlg_warn("EXR actually tiled images not supported");
+			return ReadError::cantRepresent;
+		}
+
+		auto numLevels = vpp::mipmapLevels({width, height, 1u});
+		mips.reserve(numLevels);
+		for(auto i = 0u; i < u32(image.num_tiles); ++i) {
+			auto& tile = image.tiles[i];
+			dlg_debug("tile {}: lvl: {}, {} offset: {}, {} size: {}, {}", i,
+				tile.level_x, tile.level_y, tile.offset_x, tile.offset_y,
+				tile.width, tile.height);
+			continue;
+
+			if(tile.offset_x != 0 || tile.offset_y != 0) {
+				// NOTE: we could support it but it's probably not
+				// worth the effort, I don't see the point of storing
+				// images as actual tiles.
+				dlg_warn("EXR actually tiled images not supported. Offset {} {}",
+					tile.offset_x, tile.offset_y);
+				return ReadError::cantRepresent;
+			}
+
+			// we discard ripmap levels
+			if(tile.level_x != tile.level_y) {
+				continue;
+			}
+
+			auto lvl = tile.level_x;
+			if(lvl >= i32(numLevels) || lvl < 0) {
+				dlg_warn("EXR invalid number of levels");
+				return ReadError::cantRepresent;
+			}
+
+			auto ewidth = i32(std::max(width >> lvl, 1u));
+			auto eheight = i32(std::max(height >> lvl, 1u));
+			dlg_assertm(tile.width == ewidth, "{} vs {}", tile.width, ewidth);
+			dlg_assertm(tile.height == eheight, "{} vs {}", tile.height, eheight);
+
+			mips.resize(std::max<u32>(mips.size(), lvl));
+			dlg_assertm(!mips[lvl], "EXR image has duplicate mip level {}", lvl);
+			mips[lvl] = tile.images;
+		}
+
+		// EXR specifies there must be a full mip chain.
+		// We can't trust the data if there is not
+		if(mips.size() != numLevels) {
+			dlg_warn("EXR image has invalid number of levels");
+			return ReadError::cantRepresent;
+		}
+	} else {
+		if(!image.images) {
+			dlg_warn("Reading EXRImage returned no data");
+			return ReadError::internal;
+		}
+
+		mips.push_back(image.images);
+	}
+
 
 	// interlace channels
-	auto layerSize = width * height * vpp::formatSize(format);
-	auto totalSize = layers.size() * layerSize;
+	auto fmtSize = vpp::formatSize(format);
+	auto totalSize = fmtSize * vpp::tightTexelNumber(
+		{width, height, 1u}, layers.size() + 1, mips.size() + 1, 0u);
 	auto interlaced = std::make_unique<std::byte[]>(totalSize);
 
 	auto chanSize = pixelType == TINYEXR_PIXELTYPE_HALF ?  2 : 4;
-	auto pixelSize = vpp::formatSize(format);
 
 	std::byte src1[4];
 	if(pixelType == TINYEXR_PIXELTYPE_HALF) {
@@ -266,30 +364,37 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 	// cpu format conversion here if this is desired (i.e. the required
 	// format different than what we desire). Could extent the api
 	// to allow this.
-	for(auto l = 0u; l < layers.size(); ++l) {
-		auto& layer = layers[l];
+	for(auto m = 0u; m < mips.size(); ++m) {
+		auto iwidth = std::max(width >> m, 1u);
+		auto iheight = std::max(height >> m, 1u);
+		auto srcData = mips[m];
 
-		for(auto y = 0u; y < height; ++y) {
-			for(auto x = 0u; x < width; ++x) {
-				auto address = y * width + x;
-				auto laddress = l * width * height + address;
-				auto dst = interlaced.get() + pixelSize * laddress;
+		for(auto l = 0u; l < layers.size(); ++l) {
+			auto& layer = layers[l];
+			auto dstOff = fmtSize * vpp::tightTexelNumber(
+				{width, height, 1u}, layers.size(), m, l);
 
-				for(auto c = 0u; c < 4u; ++c) {
-					auto id = layer.mapping[c];
-					if(id == noChannel) {
-						std::memcpy(dst + c * chanSize, src1, chanSize);
-					} else {
-						auto src = image.images[id] + chanSize * address;
-						std::memcpy(dst + c * chanSize, src, chanSize);
+			for(auto y = 0u; y < iheight; ++y) {
+				for(auto x = 0u; x < iwidth; ++x) {
+					auto address = y * iwidth + x;
+					auto dst = interlaced.get() + dstOff + (address * fmtSize);
+
+					for(auto c = 0u; c < 4u; ++c) {
+						auto id = layer.mapping[c];
+						if(id == noChannel) {
+							std::memcpy(dst + c * chanSize, src1, chanSize);
+						} else {
+							auto src = srcData[id] + chanSize * address;
+							std::memcpy(dst + c * chanSize, src, chanSize);
+						}
 					}
 				}
 			}
 		}
 	}
 
-
-	provider = wrap({width, height, 1u}, format, 1, layers.size(), std::move(interlaced));
+	dlg_debug("== EXR image loading success ==");
+	provider = wrap({width, height, 1u}, format, mips.size(), layers.size(), std::move(interlaced));
 	return provider ? ReadError::none : ReadError::internal;
 }
 

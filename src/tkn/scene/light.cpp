@@ -30,7 +30,7 @@ constexpr u32 nlastbits(u32 count) {
 	return ret;
 }
 
-ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
+void initShadowData(ShadowData& data, const vpp::Device& dev, vk::Format depthFormat,
 		vk::DescriptorSetLayout sceneDsLayout, bool multiview, bool depthClamp) {
 	ShadowPipelineInfo spi;
 	spi.dir = {
@@ -44,15 +44,15 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 		tkn_shadowPoint_s_frag_data
 	};
 	spi.vertex = Scene::vertexInfo();
-	return initShadowData(dev, depthFormat, multiview, depthClamp,
+	initShadowData(data, dev, depthFormat, multiview, depthClamp,
 		spi, {{sceneDsLayout}});
 }
 
-ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
+void initShadowData(ShadowData& data, const vpp::Device& dev, vk::Format depthFormat,
 		bool multiview, bool depthClamp,
 		const ShadowPipelineInfo& shaders,
 		nytl::Span<const vk::DescriptorSetLayout> dss) {
-	ShadowData data;
+
 	data.depthFormat = depthFormat;
 	data.multiview = multiview;
 
@@ -134,16 +134,16 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	// sci.minFilter = vk::Filter::nearest;
 	data.sampler = {dev, sci};
 
-	auto lightBindings = {
+	auto lightBindings = std::array {
 		vpp::descriptorBinding( // ubo
 			vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		vpp::descriptorBinding( // shadowmap
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &data.sampler.vkHandle()),
+			vk::ShaderStageBits::fragment, &data.sampler.vkHandle()),
 	};
 
-	data.dsLayout = {dev, lightBindings};
+	data.dsLayout.init(dev, lightBindings);
 
 	// pipeline
 	std::vector<vk::DescriptorSetLayout> dsLayouts;
@@ -221,12 +221,10 @@ ShadowData initShadowData(const vpp::Device& dev, vk::Format depthFormat,
 	cgpi.rasterization.depthBiasEnable = true;
 	cgpi.rasterization.depthClampEnable = depthClamp;
 	data.pipeCube = {dev, cgpi.info()};
-
-	return data;
 }
 
 // DirLight
-DirLight::DirLight(const WorkBatcher& wb, const ShadowData& data) {
+DirLight::DirLight(WorkBatcher& wb, const ShadowData& data) {
 	auto& dev = wb.dev;
 
 	// target
@@ -429,7 +427,7 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 }
 
 // PointLight
-PointLight::PointLight(const WorkBatcher& wb, const ShadowData& data,
+PointLight::PointLight(WorkBatcher& wb, const ShadowData& data,
 		vk::ImageView noShadowMap) {
 	auto& dev = wb.dev;
 	if(!noShadowMap) {

@@ -74,16 +74,16 @@ void Cubemapper::init(vpp::DeviceMemoryAllocator& alloc,
 	vpp::nameHandle(cubemap_.image(), "Cubemapper:cubemap");
 
 	// layouts
-	auto bindings = {
+	auto bindings = std::array {
 		vpp::descriptorBinding( // output image, irradiance
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding( // environment map
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linear),
+			vk::ShaderStageBits::compute, &linear),
 	};
 
-	dsLayout_ = {dev, bindings};
+	dsLayout_.init(dev, bindings);
 
 	vk::PushConstantRange pcr{vk::ShaderStageBits::compute, 0, sizeof(CubeFace)};
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {{pcr}}};
@@ -173,17 +173,16 @@ void Irradiancer::init(vpp::DeviceMemoryAllocator& alloc,
 	vpp::nameHandle(irradiance_.image(), "Irradiancer:irradiance");
 
 	// init pipeline
-	auto bindings = {
+	auto bindings = std::array {
 		vpp::descriptorBinding( // output image, irradiance
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding( // environment cube map
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linear),
+			vk::ShaderStageBits::compute, &linear),
 	};
 
-	dsLayout_ = {dev, bindings};
-
+	dsLayout_.init(dev, bindings);
 	vk::PushConstantRange pcr{vk::ShaderStageBits::compute, 0, sizeof(CubeFace)};
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {{pcr}}};
 
@@ -263,17 +262,16 @@ vpp::ViewableImage Irradiancer::finish() {
 // EnvironmentMapFilter
 void EnvironmentMapFilter::create(const vpp::Device& dev, vk::Sampler linear,
 		unsigned sampleCount) {
-	auto bindings = {
+	auto bindings = std::array {
 		vpp::descriptorBinding( // output image, convolution
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding( // environment cube map
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linear),
+			vk::ShaderStageBits::compute, &linear),
 	};
 
-	dsLayout_ = {dev, bindings};
-
+	dsLayout_.init(dev, bindings);
 	vk::PushConstantRange pcr{vk::ShaderStageBits::compute, 0, sizeof(CubeFace)};
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {{pcr}}};
 
@@ -366,13 +364,13 @@ void SHProjector::create(const vpp::Device& dev, vk::Sampler linear) {
 	auto bindings = {
 		vpp::descriptorBinding( // sampled input irradiance cube
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linear),
+			vk::ShaderStageBits::compute, &linear),
 		vpp::descriptorBinding( // coeffs storage buffer
 			vk::DescriptorType::storageBuffer,
 			vk::ShaderStageBits::compute)
 	};
 
-	dsLayout_ = {dev, bindings};
+	dsLayout_.init(dev, bindings);
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 	vpp::nameHandle(dsLayout_, "SHProjector:dsLayout");
 	vpp::nameHandle(pipeLayout_, "SHProjector:pipeLayout");
