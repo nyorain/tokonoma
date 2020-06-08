@@ -97,7 +97,7 @@ public:
 
 	bool init(const nytl::Span<const char*> args) override;
 	void initTimings();
-	void initPasses(const tkn::WorkBatcher&);
+	void initPasses(tkn::WorkBatcher&);
 	void screenshot();
 	void addPointLight(nytl::Vec3f pos, nytl::Vec3f color, float radius,
 		bool shadowMap);
@@ -117,24 +117,7 @@ public:
 	const char* name() const override { return "Deferred Renderer"; }
 
 protected:
-	// TODO: add vpp methods to merge them to one (or into the default
-	// one) after initialization
-	struct Alloc {
-		vpp::DeviceMemoryAllocator memHost;
-		vpp::DeviceMemoryAllocator memDevice;
-
-		vpp::BufferAllocator bufHost;
-		vpp::BufferAllocator bufDevice;
-
-		Alloc(const vpp::Device& dev) :
-			memHost(dev), memDevice(dev),
-			bufHost(memHost), bufDevice(memDevice) {}
-	};
-
-	std::optional<Alloc> alloc;
 	vpp::TrDsLayout cameraDsLayout_;
-
-	// light and shadow
 	tkn::ShadowData shadowData_;
 
 	struct DirLight : public tkn::DirLight {
@@ -294,10 +277,6 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	}
 
 	// initialization setup
-	// allocator
-	alloc.emplace(dev);
-	auto& alloc = *this->alloc;
-
 	// stage allocators only valid during this function
 	vpp::DeviceMemoryAllocator memStage(dev);
 	vpp::BufferAllocator bufStage(memStage);
@@ -309,12 +288,8 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	vk::beginCommandBuffer(cb, {});
 
 	// create wb
-	tkn::WorkBatcher wb{dev, cb, {
-			alloc.memDevice, alloc.memHost, memStage,
-			alloc.bufDevice, alloc.bufHost, bufStage,
-			dev.descriptorAllocator(),
-		}
-	};
+	tkn::WorkBatcher wb(dev);
+	wb.cb = cb;
 
 	// sampler
 	vk::SamplerCreateInfo sci;
@@ -348,10 +323,10 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	auto stages =  vk::ShaderStageBits::vertex |
 		vk::ShaderStageBits::fragment |
 		vk::ShaderStageBits::compute;
-	auto sceneBindings = {
+	auto sceneBindings = std::array {
 		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer, stages)
 	};
-	cameraDsLayout_ = {dev, sceneBindings};
+	cameraDsLayout_.init(dev, sceneBindings);
 
 	// dummy texture for materials that don't have a texture
 	// TODO: we could just create the dummy cube and make the dummy
@@ -360,7 +335,7 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	//   materials, both should be fixable).
 	auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 	auto span = nytl::as_bytes(nytl::span(idata));
-	auto p = tkn::wrap({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+	auto p = tkn::wrapImage({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
 	tkn::TextureCreateParams params;
 	params.format = vk::Format::r8g8b8a8Unorm;
 	auto initDummyTex = createTexture(wb, std::move(p), params);
@@ -372,7 +347,7 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	auto dptr = reinterpret_cast<const std::byte*>(idata.data());
 	auto faces = {dptr, dptr, dptr, dptr, dptr, dptr};
 	params.cubemap = true;
-	p = tkn::wrap({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, 1, 6u, faces, true);
+	p = tkn::wrapImage({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, 1, 6u, faces, true);
 	auto initDummyCube = createTexture(wb, std::move(p), params);
 	dummyCube_ = initTexture(initDummyCube, wb);
 
@@ -416,7 +391,7 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	// environment
 	tkn::Environment::InitData envData;
 	env_.create(envData, wb, "convolution.ktx", "irradiance.ktx", linearSampler_);
-	auto initBrdfLut = createTexture(wb, tkn::read("brdflut.ktx"));
+	auto initBrdfLut = createTexture(wb, tkn::loadImage("brdflut.ktx"));
 
 	// Load Model
 	auto mat = nytl::identity<4, float>();
@@ -448,10 +423,9 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	scene_.create(initScene, wb, path, *omodel, sc, mat, ri);
 	scene_.rescale(4 * args.scale);
 
-	shadowData_ = tkn::initShadowData(dev, depthFormat_,
+	tkn::initShadowData(shadowData_, dev, depthFormat_,
 		scene_.dsLayout(), multiview_, depthClamp_);
-
-	auto initDirt = createTexture(wb, tkn::read("dirt.jpg"));
+	auto initDirt = createTexture(wb, tkn::loadImage("dirt.jpg"));
 
 	initPasses(wb);
 
@@ -794,7 +768,7 @@ void ViewApp::initTimings() {
 	timeWidget_.complete();
 }
 
-void ViewApp::initPasses(const tkn::WorkBatcher& wb) {
+void ViewApp::initPasses(tkn::WorkBatcher& wb) {
 	// first reset all passes, frees memory and destroys useless objects
 	// geomLight_ = {};
 	// pp_ = {};
@@ -1178,16 +1152,10 @@ void ViewApp::initStaticBuffers(const vk::Extent2D& size) {
 
 	vpp::DeviceMemoryAllocator memStage(dev);
 	vpp::BufferAllocator bufStage(memStage);
-	auto& alloc = *this->alloc;
 
 	// TODO: no cb needed here for now, future passes might use
 	// it though so it should be supported
-	tkn::WorkBatcher wb{dev, {}, {
-			alloc.memDevice, alloc.memHost, memStage,
-			alloc.bufDevice, alloc.bufHost, bufStage,
-			dev.descriptorAllocator(),
-		}
-	};
+	tkn::WorkBatcher wb(dev);
 
 	GeomLightPass::InitBufferData geomLightData;
 	geomLight_.createBuffers(geomLightData, wb, size, depthFormat_);
@@ -1467,7 +1435,7 @@ void ViewApp::update(double dt) {
 
 void ViewApp::addPointLight(nytl::Vec3f pos, nytl::Vec3f color, float radius,
 		bool shadowMap) {
-	auto wb = tkn::WorkBatcher::createDefault(vkDevice());
+	auto wb = tkn::WorkBatcher(vkDevice());
 	auto& l = pointLights_.emplace_back(wb, shadowData_,
 		shadowMap ? vk::ImageView{} : dummyCube_.vkImageView());
 	// std::uniform_real_distribution<float> dist(0.0f, 1.0f);
@@ -1541,7 +1509,7 @@ void ViewApp::screenshot() {
 
 		// passes
 		// no cb needed in wb
-		auto wb = tkn::WorkBatcher::createDefault(vkDevice());
+		auto wb = tkn::WorkBatcher(vkDevice());
 		PassCreateInfo passInfo {
 			wb,
 			depthFormat_, {
@@ -1756,7 +1724,7 @@ bool ViewApp::mouseButton(const swa_mouse_button_event& ev) {
 void ViewApp::updateDevice() {
 	if(recreatePasses_) {
 		recreatePasses_ = false;
-		auto wb = tkn::WorkBatcher::createDefault(vkDevice());
+		auto wb = tkn::WorkBatcher(vkDevice());
 		auto& qs = vkDevice().queueSubmitter();
 		auto qfam = qs.queue().family();
 		auto cb = vkDevice().commandAllocator().get(qfam);
@@ -2011,7 +1979,7 @@ void ViewApp::updateDevice() {
 		};
 
 		auto format = GeomLightPass::lightFormat;
-		auto provider = tkn::wrap({probeSize.width, probeSize.height, 1u},
+		auto provider = tkn::wrapImage({probeSize.width, probeSize.height, 1u},
 			format, 1, 1, {ptrs}, true);
 		auto res = tkn::writeKtx("probe.ktx", *provider);
 		dlg_assertm(res == tkn::WriteError::none, (int) res);

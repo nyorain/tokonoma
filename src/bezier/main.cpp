@@ -19,6 +19,7 @@
 #include <shaders/bezier.point.frag.h>
 #include <shaders/bezier.line.frag.h>
 #include <shaders/tkn.simple3.vert.h>
+#include <array>
 
 // TODO
 // - use indirect drawing (see update)
@@ -67,13 +68,13 @@ public:
 		}
 
 		auto& dev = vkDevice();
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex),
 		};
 
-		dsLayout_ = {dev, bindings};
+		dsLayout_.init(dev, bindings);
 
 		vk::PushConstantRange pcr;
 		pcr.stageFlags = vk::ShaderStageBits::fragment;

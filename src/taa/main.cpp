@@ -16,10 +16,7 @@
 #include <tkn/scene/environment.hpp>
 #include <argagg.hpp>
 
-#include <ny/key.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
-#include <ny/mouseButton.hpp>
+#include <swa/swa.h>
 
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/init.hpp>
@@ -46,14 +43,16 @@
 #include <shaders/taa.model.vert.h>
 #include <shaders/taa.model.frag.h>
 #include <shaders/taa.pp.frag.h>
-#include <shaders/taa.taa.comp.h>
+// #include <shaders/taa.taa.comp.h>
 
 #include <optional>
 #include <vector>
 #include <string>
+#include <array>
 
 // NOTE: this used to implement a temporal super sampling pass but that was
 // moved to tkn (see tkn/taa.hpp) since other projects use it now as well.
+// It still showcases that pass.
 
 using namespace tkn::types;
 
@@ -96,17 +95,11 @@ public:
 		auto cb = dev.commandAllocator().get(qfam);
 		vk::beginCommandBuffer(cb, {});
 
-		alloc_.emplace(dev);
-		auto& alloc = *this->alloc_;
-		tkn::WorkBatcher batch{dev, cb, {
-				alloc.memDevice, alloc.memHost, memStage,
-				alloc.bufDevice, alloc.bufHost, bufStage,
-				dev.descriptorAllocator(),
-			}
-		};
+		auto wb = tkn::WorkBatcher(dev);
+		wb.cb = cb;
 
-		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
-		brdfLut_ = initBrdfLut.init(batch);
+		auto initBrdfLut = tkn::createTexture(wb, tkn::loadImage("brdflut.ktx"));
+		brdfLut_ = tkn::initTexture(initBrdfLut, wb);
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -127,10 +120,12 @@ public:
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
-		auto p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+		auto p = tkn::wrapImage({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
 		tkn::TextureCreateParams params;
 		params.format = vk::Format::r8g8b8a8Unorm;
-		dummyTex_ = {batch, std::move(p), params};
+
+		auto initDummyTex = tkn::createTexture(wb, std::move(p), params);
+		dummyTex_ = tkn::initTexture(initDummyTex, wb);
 
 		// Load scene
 		auto mat = tkn::scaleMat<4, float>(nytl::Vec3f{args.scale, args.scale, args.scale});
@@ -155,36 +150,36 @@ public:
 		// a higher miplevel than the one that would usually be selected.
 		// Increases sharpness, we anti-aliase it anyways via jittering.
 		static constexpr auto mipLodBias = -1.f;
-		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
+		auto initScene = vpp::InitObject<tkn::Scene>(scene_, wb, path,
 			model, sc, mat, ri, mipLodBias);
-		initScene.init(batch, dummyTex_.vkImageView());
+		initScene.init(wb, dummyTex_.vkImageView());
 
-		shadowData_ = tkn::initShadowData(dev, depthFormat_,
+		tkn::initShadowData(shadowData_, dev, depthFormat_,
 			scene_.dsLayout(), multiview_, depthClamp_);
 
 		// view + projection matrix
-		auto cameraBindings = {
+		auto cameraBindings = std::array {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		cameraDsLayout_ = {dev, cameraBindings};
+		cameraDsLayout_.init(dev, cameraBindings);
 
 		// ao
 		auto sampler = &linearSampler_.vkHandle();
-		auto aoBindings = {
+		auto aoBindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, sampler),
+				vk::ShaderStageBits::fragment, sampler),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, sampler),
+				vk::ShaderStageBits::fragment, sampler),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, sampler),
+				vk::ShaderStageBits::fragment, sampler),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 		};
 
-		aoDsLayout_ = {dev, aoBindings};
+		aoDsLayout_.init(dev, aoBindings);
 
 		// pipeline layout consisting of all ds layouts and pcrs
 		pipeLayout_ = {dev, {{
@@ -301,10 +296,10 @@ public:
 		};
 
 		tkn::Environment::InitData initEnv;
-		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", linearSampler_);
+		env_.create(initEnv, wb, "convolution.ktx", "irradiance.ktx", linearSampler_);
 		env_.createPipe(dev, cameraDsLayout_, offscreen_.rp, 0u,
 			vk::SampleCountBits::e1, batts);
-		env_.init(initEnv, batch);
+		env_.init(initEnv, wb);
 
 		// camera
 		auto cameraUboSize = sizeof(nytl::Mat4f) * 2 // proj matrix (+last)
@@ -319,11 +314,11 @@ public:
 		envCameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
 
 		// example light
-		dirLight_ = {batch, shadowData_};
+		dirLight_ = {wb, shadowData_};
 		dirLight_.data.dir = {5.8f, -12.0f, 4.f};
 		dirLight_.data.color = {5.f, 5.f, 5.f};
 
-		pointLight_ = {batch, shadowData_};
+		pointLight_ = {wb, shadowData_};
 		pointLight_.data.position = {0.f, 5.0f, 0.f};
 		pointLight_.data.radius = 2.f;
 		pointLight_.data.attenuation = {1.f, 0.1f, 0.05f};
@@ -509,14 +504,14 @@ public:
 		rpi.pAttachments = &attachment;
 		pp_.rp = {dev, rpi};
 
-		auto ppBindings = {
+		auto ppBindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &nearestSampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &nearestSampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment)
 		};
 
-		pp_.dsLayout = {dev, ppBindings};
+		pp_.dsLayout.init(dev, ppBindings);
 		pp_.pipeLayout = {dev, {{pp_.dsLayout.vkHandle()}}, {}};
 		pp_.ds = {dev.descriptorAllocator(), pp_.dsLayout};
 
@@ -730,22 +725,6 @@ public:
 
 		// movement
 		camera_.update(swaDisplay(), dt);
-		if(moveLight_) {
-			if(mode_ & modePointLight) {
-				pointLight_.data.position.x = 7.0 * std::cos(0.2 * time_);
-				pointLight_.data.position.z = 7.0 * std::sin(0.2 * time_);
-				auto& ini = scene_.instances()[pointLight_.instanceID];
-				ini.lastMatrix = ini.matrix = pointLightObjMatrix();
-				scene_.updatedInstance(pointLight_.instanceID);
-			} else if(mode_ & modeDirLight) {
-				dirLight_.data.dir.x = 7.0 * std::cos(0.2 * time_);
-				dirLight_.data.dir.z = 7.0 * std::sin(0.2 * time_);
-				auto& ini = scene_.instances()[dirLight_.instanceID];
-				ini.lastMatrix = ini.matrix = dirLightObjMatrix();
-				scene_.updatedInstance(dirLight_.instanceID);
-			}
-			updateLight_ = true;
-		}
 
 		// animate instance (simple moving in x dir)
 		// movingVel_ *= std::pow(0.99, dt);
@@ -758,10 +737,6 @@ public:
 		scene_.updatedInstance(movingInstance_);
 
 		// we currently always redraw to see consistent fps
-		// if(moveLight_ || camera_.update || updateLight_ || updateAOParams_) {
-		// 	App::scheduleRedraw();
-		// }
-
 		App::scheduleRedraw();
 	}
 
@@ -776,7 +751,6 @@ public:
 
 		switch(ev.keycode) {
 			case swa_key_m: { // move light here
-				moveLight_ = false;
 				dirLight_.data.dir = -camera_.position();
 				auto& ini = scene_.instances()[dirLight_.instanceID];
 				ini.lastMatrix = ini.matrix = dirLightObjMatrix();
@@ -784,17 +758,13 @@ public:
 				updateLight_ = true;
 				return true;
 			} case swa_key_n: { // move light here
-				moveLight_ = false;
 				updateLight_ = true;
 				pointLight_.data.position = camera_.position();
 				auto& ini = scene_.instances()[pointLight_.instanceID];
 				ini.lastMatrix = ini.matrix = pointLightObjMatrix();
 				scene_.updatedInstance(pointLight_.instanceID);
 				return true;
-			} case swa_key_l:
-				moveLight_ ^= true;
-				return true;
-			case swa_key_p:
+			} case swa_key_p:
 				dirLight_.data.flags ^= tkn::lightFlagPcf;
 				pointLight_.data.flags ^= tkn::lightFlagPcf;
 				updateLight_ = true;
@@ -949,20 +919,6 @@ public:
 	const char* name() const override { return "Temporal Anti aliasing"; }
 
 protected:
-	struct Alloc {
-		vpp::DeviceMemoryAllocator memHost;
-		vpp::DeviceMemoryAllocator memDevice;
-
-		vpp::BufferAllocator bufHost;
-		vpp::BufferAllocator bufDevice;
-
-		Alloc(const vpp::Device& dev) :
-			memHost(dev), memDevice(dev),
-			bufHost(memHost), bufDevice(memDevice) {}
-	};
-
-	std::optional<Alloc> alloc_;
-
 	vk::Format depthFormat_;
 	vpp::Sampler linearSampler_;
 	vpp::Sampler nearestSampler_;
@@ -984,8 +940,7 @@ protected:
 
 	u32 mode_ {modePointLight | modeIrradiance | modeSpecularIBL};
 
-	tkn::Texture dummyTex_;
-	bool moveLight_ {false};
+	vpp::ViewableImage dummyTex_;
 
 	struct {
 		vpp::RenderPass rp;
@@ -1050,7 +1005,7 @@ protected:
 	bool updateLight_ {true};
 
 	tkn::Environment env_;
-	tkn::Texture brdfLut_;
+	vpp::ViewableImage brdfLut_;
 };
 
 int main(int argc, const char** argv) {

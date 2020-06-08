@@ -144,4 +144,44 @@ protected:
 	u64 at_ {0};
 };
 
+// Completely maps the data of a stream into memory.
+// This is done as efficiently as possible: if the stream is a memory
+// stream, simply returns the arleady in-memory buffer. Otherwise,
+// if the stream comes a file, tries to memory map it.
+class StreamMemoryMap {
+public:
+	StreamMemoryMap() = default;
+
+	// The MemoryMap takes ownership of the stream only if no
+	// exception is thrown.
+	// It can be released later on using 'release'
+	explicit StreamMemoryMap(std::unique_ptr<Stream>&& stream);
+	~StreamMemoryMap();
+
+	StreamMemoryMap(StreamMemoryMap&& rhs) { swap(*this, rhs); }
+	StreamMemoryMap& operator=(StreamMemoryMap rhs) {
+		swap(*this, rhs);
+		return *this;
+	}
+
+	const std::byte* data() const { return data_; }
+	std::size_t size() const { return size_; }
+	nytl::Span<const std::byte> span() const { return {data_, size_}; }
+
+	const std::byte* begin() const { return data(); }
+	const std::byte* end() const { return data() + size(); }
+
+	// Destroys the memory map and returns the stream.
+	std::unique_ptr<Stream> release();
+
+	friend void swap(StreamMemoryMap& a, StreamMemoryMap& b);
+
+private:
+	bool mmapped_ {};
+	const std::byte* data_ {};
+	std::size_t size_ {};
+	std::unique_ptr<std::byte[]> owned_;
+	std::unique_ptr<Stream> stream_;
+};
+
 } // namespace tkn

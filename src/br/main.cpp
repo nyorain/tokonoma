@@ -88,7 +88,7 @@ public:
 			return false;
 		}
 
-		auto initBrdfLut = tkn::createTexture(wb, tkn::read(std::move(brdflutFile)));
+		auto initBrdfLut = tkn::createTexture(wb, tkn::loadImage(std::move(brdflutFile)));
 		brdfLut_ = tkn::initTexture(initBrdfLut, wb);
 
 		// tex sampler
@@ -105,7 +105,7 @@ public:
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
-		auto p = tkn::wrap({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+		auto p = tkn::wrapImage({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
 
 		auto initDummyTex = tkn::createTexture(wb, std::move(p));
 		dummyTex_ = tkn::initTexture(initDummyTex, wb);
@@ -160,8 +160,8 @@ public:
 		}
 
 		env_.create(initEnv, wb,
-			tkn::read(std::move(convFile)),
-			tkn::read(std::move(irrFile)), sampler_);
+			tkn::loadImage(std::move(convFile)),
+			tkn::loadImage(std::move(irrFile)), sampler_);
 		env_.createPipe(vkDevice(), cameraDsLayout_, renderPass(), 0u, samples());
 		env_.init(initEnv, wb);
 

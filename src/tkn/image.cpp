@@ -22,6 +22,12 @@ void* stbiRealloc(void* old, std::size_t newSize) {
 }
 } // anon namespace
 
+// We do this so that we can use buffers returned by stbi
+// in std::unique_ptr<std::byte> (since that uses delete on objects,
+// and using delete on stuff allocated with std::malloc is clearly UB
+// and in fact risky). There are certain guarantees C++
+// gives for new (alignment-wise) and casting of std::byte buffers
+// that should make this well-defined behavior.
 #define STBI_FREE(p) (delete[] (std::byte*) p)
 #define STBI_MALLOC(size) ((void*) new std::byte[size])
 #define STBI_REALLOC(p, size) (stbiRealloc((void*) p, size))
@@ -37,98 +43,97 @@ void* stbiRealloc(void* old, std::size_t newSize) {
 namespace tkn {
 
 // ImageProvider api
-std::unique_ptr<ImageProvider> readStb(std::unique_ptr<Stream>&& stream) {
+ReadError loadStb(std::unique_ptr<Stream>&& stream,
+		std::unique_ptr<ImageProvider>& provider) {
 	auto img = readImageStb(std::move(stream));
 	if(!img.data) {
-		return {};
+		return ReadError::internal;
 	}
 
-	return wrap(std::move(img));
+	provider = wrap(std::move(img));
+	return ReadError::none;
 }
 
-std::unique_ptr<ImageProvider> read(std::unique_ptr<Stream>&& stream,
+std::unique_ptr<ImageProvider> loadImage(std::unique_ptr<Stream>&& stream,
 		std::string_view ext) {
+	using ImageLoader = ReadError(*)(std::unique_ptr<Stream>&& stream,
+		std::unique_ptr<ImageProvider>&);
+
+	struct {
+		std::array<std::string_view, 5> exts {};
+		ImageLoader loader;
+		bool tried {false};
+	} loaders[] = {
+		{{".png"}, &loadPng},
+		{{".jpg", ".jpeg"}, &loadJpeg},
+		{{".ktx"}, &loadKtx},
+		{{".exr"}, [](auto&& stream, auto& provider) {
+			return loadExr(std::move(stream), provider);
+		}}, {{".hdr", ".tga", ".bmp", ".psd", ".gif"}, &loadStb},
+	};
+
+	// Try the one with matching extension
 	std::unique_ptr<ImageProvider> reader;
-	bool triedpng = false;
-	bool triedjpg = false;
-	bool triedktx = false;
-	bool triedstb = false;
-	bool triedexr = false;
+	if(!ext.empty()) {
+		for(auto& loader : loaders) {
+			bool found = false;
+			for(auto& lext : loader.exts) {
+				if(lext.empty()) {
+					break;
+				}
 
-	// first try detecting the type based of suffix
-	if(has_suffix(ext, ".png")) {
-		triedpng = true;
-		if(readPng(std::move(stream), reader) == ReadError::none) {
-			return reader;
-		}
-	} else if(has_suffix(ext, ".jpg") || has_suffix(ext, ".jpeg")) {
-		triedjpg = true;
-		if(readJpeg(std::move(stream), reader) == ReadError::none) {
-			return reader;
-		}
-	} else if(has_suffix(ext, ".ktx")) {
-		triedktx = true;
-		if(readKtx(std::move(stream), reader) == ReadError::none) {
-			return reader;
-		}
-	} else if(has_suffix(ext, ".hdr")) {
-		triedstb = true;
-		reader = readStb(std::move(stream));
-		if(reader) {
-			return reader;
-		}
-	} else if(has_suffix(ext, ".exr")) {
-		triedexr = true;
-		if(readExr(std::move(stream), reader) == ReadError::none) {
-			return reader;
+				if(hasSuffixCI(ext, lext)) {
+					found = true;
+				}
+			}
+
+			if(found) {
+				loader.tried = true;
+				auto res = loader.loader(std::move(stream), reader);
+				if(res == ReadError::none) {
+					dlg_assert(reader);
+					return reader;
+				}
+
+				break;
+			}
 		}
 	}
 
-	// then just try all remaining loaders
-	stream->seek(0, Stream::SeekOrigin::set);
-	if(!triedpng && readPng(std::move(stream), reader) == ReadError::none) {
-		return reader;
+	// Just try out all readers
+	for(auto& loader : loaders) {
+		// Skip the loader that was already tried
+		if(loader.tried) {
+			continue;
+		}
+
+		stream->seek(0, Stream::SeekOrigin::set); // reset stream
+		auto res = loader.loader(std::move(stream), reader);
+		if(res == ReadError::none) {
+			dlg_assert(reader);
+			return reader;
+		}
 	}
 
-	stream->seek(0, Stream::SeekOrigin::set);
-	if(!triedjpg && readJpeg(std::move(stream), reader) == ReadError::none) {
-		return reader;
-	}
-
-	stream->seek(0, Stream::SeekOrigin::set);
-	if(!triedktx && readKtx(std::move(stream), reader) == ReadError::none) {
-		return reader;
-	}
-
-	stream->seek(0, Stream::SeekOrigin::set);
-	if(!triedexr && readExr(std::move(stream), reader) == ReadError::none) {
-		return reader;
-	}
-
-	stream->seek(0, Stream::SeekOrigin::set);
-	if(!triedstb) {
-		return readStb(std::move(stream));
-	}
-
-	return nullptr;
+	return {};
 }
 
-std::unique_ptr<ImageProvider> read(nytl::StringParam path) {
+std::unique_ptr<ImageProvider> loadImage(nytl::StringParam path) {
 	auto file = File(path, "rb");
 	if(!file) {
 		dlg_debug("fopen: {}", std::strerror(errno));
 		return {};
 	}
 
-	return read(std::make_unique<FileStream>(std::move(file)), path);
+	return loadImage(std::make_unique<FileStream>(std::move(file)), path);
 }
 
-std::unique_ptr<ImageProvider> read(File&& file) {
-	return read(std::make_unique<FileStream>(std::move(file)));
+std::unique_ptr<ImageProvider> loadImage(File&& file) {
+	return loadImage(std::make_unique<FileStream>(std::move(file)));
 }
 
-std::unique_ptr<ImageProvider> read(nytl::Span<const std::byte> data) {
-	return read(std::make_unique<MemoryStream>(data));
+std::unique_ptr<ImageProvider> loadImage(nytl::Span<const std::byte> data) {
+	return loadImage(std::make_unique<MemoryStream>(data));
 }
 
 // Image api
@@ -151,7 +156,7 @@ Image readImageStb(std::unique_ptr<Stream>&& stream) {
 	}
 
 	if(!data) {
-		std::string err = "STB could not load image from file: ";
+		std::string err = "STB could not load image: ";
 		err += stbi_failure_reason();
 		dlg_warn("{}", err);
 		return ret;
@@ -189,7 +194,7 @@ Image readImage(const ImageProvider& provider, unsigned mip, unsigned layer) {
 }
 
 Image readImage(std::unique_ptr<Stream>&& stream, unsigned mip, unsigned layer) {
-	auto provider = read(std::move(stream));
+	auto provider = loadImage(std::move(stream));
 	return provider ? readImage(*provider, mip, layer) : Image {};
 }
 
@@ -251,7 +256,7 @@ std::unique_ptr<ImageProvider> wrap(Image&& image) {
 	return ret;
 }
 
-std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 		nytl::Span<const std::byte> span) {
 	dlg_assert(size.x >= 1 && size.y >= 1 && size.z >= 1);
 	dlg_assert(span.size() >= size.x * size.y * vpp::formatSize(format));
@@ -266,7 +271,7 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 	return ret;
 }
 
-std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 		unsigned mips, unsigned layers,
 		nytl::Span<std::unique_ptr<std::byte[]>> data, bool cubemap) {
 	dlg_assert(size.x >= 1 && size.y >= 1 && size.z >= 1);
@@ -291,7 +296,7 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 	return ret;
 }
 
-std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 		unsigned mips, unsigned layers, std::unique_ptr<std::byte[]> data,
 		bool cubemap) {
 	dlg_assert(size.x >= 1 && size.y >= 1 && size.z >= 1);
@@ -321,7 +326,7 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 	return ret;
 }
 
-std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 		unsigned mips, unsigned layers,
 		nytl::Span<const std::byte* const> data, bool cubemap) {
 	dlg_assert(data.size() == mips * layers);
@@ -370,14 +375,14 @@ public:
 	}
 };
 
-std::unique_ptr<ImageProvider> read(nytl::Span<const char* const> paths, bool cubemap) {
+std::unique_ptr<ImageProvider> readImageLayers(nytl::Span<const char* const> paths, bool cubemap) {
 	auto ret = std::make_unique<MultiImageProvider>();
 	auto first = true;
 	ret->layers_ = paths.size();
 	ret->cubemap_ = cubemap;
 
 	for(auto& path : paths) {
-		auto provider = read(path);
+		auto provider = loadImage(path);
 		if(!provider) {
 			return {};
 		}

@@ -34,6 +34,10 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
 
+	ds_ = {};
+	blur_.dsHorz = {};
+	blur_.dsVert = {};
+
 	// test if r8Unorm can be used as storage image. Supported on pretty
 	// much all desktop systems.
 	// we use a dummy size here but that shouldn't matter
@@ -80,25 +84,25 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 		// don't want to interpolate the random sample vectors
 		vpp::descriptorBinding( // ssao noise texture
 			vk::DescriptorType::combinedImageSampler,
-			stage, -1, 1, &info.samplers.nearest),
+			stage, &info.samplers.nearest),
 		// linear sampler since we sapmle depth randomly
 		vpp::descriptorBinding( // depth texture
 			vk::DescriptorType::combinedImageSampler,
-			stage, -1, 1, &info.samplers.linear),
+			stage, &info.samplers.linear),
 		// nearest sampler since we only sample the pixel center
 		vpp::descriptorBinding( // normals texture
 			vk::DescriptorType::combinedImageSampler,
-			stage, -1, 1, &info.samplers.nearest),
+			stage, &info.samplers.nearest),
 	};
 
 	auto blurBindings = std::vector {
 		// nearest samplers since we always sample at pixel center
 		// ssao (or previous ssao blur)
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			stage, -1, 1, &info.samplers.nearest),
+			stage, &info.samplers.nearest),
 		// normals
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			stage, -1, 1, &info.samplers.nearest),
+			stage, &info.samplers.nearest),
 	};
 
 	if(compute) {
@@ -109,13 +113,13 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 			vk::DescriptorType::storageImage, stage));
 	}
 
-	dsLayout_ = {dev, ssaoBindings};
+	dsLayout_.init(dev, ssaoBindings);
 	pipeLayout_ = {dev, {{
 		info.dsLayouts.camera.vkHandle(),
 		dsLayout_.vkHandle()
 	}}, {}};
 
-	blur_.dsLayout = {dev, blurBindings};
+	blur_.dsLayout.init(dev, blurBindings);
 	vk::PushConstantRange blurPcr;
 	blurPcr.size = 4;
 	blurPcr.stageFlags = stage;
@@ -266,7 +270,7 @@ void SSAOPass::create(InitData& data, const PassCreateInfo& info) {
 
 	auto noiseFormat = vk::Format::r32g32b32a32Sfloat;
 	auto span = nytl::as_bytes(nytl::span(data.samples));
-	auto p = tkn::wrap({noiseDim, noiseDim, 1u}, noiseFormat, span);
+	auto p = tkn::wrapImage({noiseDim, noiseDim, 1u}, noiseFormat, span);
 	auto params = tkn::TextureCreateParams{};
 	params.format = noiseFormat;
 	data.initNoise = createTexture(wb, std::move(p), params);
@@ -304,7 +308,7 @@ void SSAOPass::init(InitData& data, const PassCreateInfo& info) {
 		{{copy}});
 }
 
-void SSAOPass::createBuffers(InitBufferData& data, const tkn::WorkBatcher& wb,
+void SSAOPass::createBuffers(InitBufferData& data, tkn::WorkBatcher& wb,
 		vk::Extent2D size) {
 	auto info = targetInfo(size, usingCompute());
 	dlg_assert(vpp::supported(wb.dev, info.img));

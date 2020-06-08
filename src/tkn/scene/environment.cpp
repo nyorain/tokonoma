@@ -41,8 +41,8 @@ namespace tkn {
 void Environment::create(InitData& data, WorkBatcher& wb,
 		nytl::StringParam envMapPath, nytl::StringParam irradiancePath,
 		vk::Sampler linear) {
-	auto envMap = tkn::read(envMapPath);
-	auto irradiance = tkn::read(irradiancePath);
+	auto envMap = tkn::loadImage(envMapPath);
+	auto irradiance = tkn::loadImage(irradiancePath);
 	create(data, wb, std::move(envMap), std::move(irradiance), linear);
 }
 
@@ -402,7 +402,7 @@ Sky::Sky(const vpp::Device& dev, const vpp::TrDsLayout* dsLayout,
 	}
 
 	// create cubemap on device
-	auto img = wrap({faceWidth, faceHeight, 1u}, vk::Format::r16g16b16a16Sfloat,
+	auto img = wrapImage({faceWidth, faceHeight, 1u}, vk::Format::r16g16b16a16Sfloat,
 		1u, 6u, nytl::span(ptrs), true);
 	TextureCreateParams params;
 	params.format = cubemapFormat;

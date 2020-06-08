@@ -17,7 +17,7 @@ void wander(ivec2 neighbor, vec2 o, inout vec2 v, ivec2 size) {
 		return;
 	}
 
-	vec2 d = (100 * imageLoad(old, neighbor).xy) - o;
+	vec2 d = (imageLoad(old, neighbor).xy) - o;
 	v += ubo.wander * d;
 }
 
@@ -25,7 +25,7 @@ void main() {
 	ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 size = imageSize(old);
 
-	vec2 o = 100 * imageLoad(old, pos).xy;
+	vec2 o = imageLoad(old, pos).xy;
 	vec2 v = o;
 
 	v.x += o.x * (ubo.xbirth - ubo.xdeath * o.y);
@@ -41,6 +41,6 @@ void main() {
 	wander(pos + ivec2(offx, 1), o, v, size);
 	wander(pos + ivec2(offx - 1, 1), o, v, size);
 
-	v = clamp(v / 100, 0, 1);
+	// v = clamp(v / 100, 0, 1);
 	imageStore(new, pos, vec4(v, 0, 0));
 }

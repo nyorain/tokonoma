@@ -174,7 +174,7 @@ void main() {
 
 	float z = depthtoz(depth, ubo.near, ubo.far);
 	vec3 vel = texture(velocityTex, vuv).xyz;
-	vel.y *= -1.f; // TODO: move flipping into model pipeline
+	// vel.y *= -1.f; // TODO: move flipping into model pipeline
 	vec3 color = texture(renderedTex, uv).rgb;
 
 	// TODO: this seems to cause problems. Investigate why

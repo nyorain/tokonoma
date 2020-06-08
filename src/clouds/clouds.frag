@@ -251,6 +251,9 @@ void main() {
 	// float p = phase(cosTheta, g);
 
 	// as in the frostbite theta: allow front and backscattering
+	// btw, we can only factor this out since the toLight direction
+	// vector is the same at every point. For point lights this
+	// wouldn't work
 	float p = mix(phase(cosTheta, 0.7f), phase(cosTheta, -0.08f), 0.2);
 	vec3 light = inScatter * p * sunColor;
 	// light += transmittance * bg;

@@ -69,7 +69,7 @@ int bayer8[8][8] = {
 // - pixel: current pixel (integer, not normalized)
 // To work, the shadowMap(worldPos) function has to be defined in the
 // calling shader.
-float lightScatterShadow(vec3 rayStart, vec3 rayEnd, vec2 pixel) {
+vec2 lightScatterShadow(vec3 rayStart, vec3 rayEnd, vec2 pixel) {
 	// TODO: here we probably really profit from different mipmaps
 	// or some other optimizations...
 	vec3 ray = rayEnd - rayStart;
@@ -80,10 +80,9 @@ float lightScatterShadow(vec3 rayStart, vec3 rayEnd, vec2 pixel) {
 	// rayLength = min(rayLength, 10.f);
 	// ray = rayDir * rayLength;
 
-	const uint steps = 8u;
+	const uint steps = 10u;
 	vec3 step = ray / steps;
 
-	float accum = 0.0;
 	vec3 ipos = rayStart;
 
 	// random dithering, we smooth it out later on
@@ -112,15 +111,33 @@ float lightScatterShadow(vec3 rayStart, vec3 rayEnd, vec2 pixel) {
 	// TODO: calculate out-scatter as well?
 	//   horrible integration... should use transmission and in
 	//   scattering
+
+	// we have constant density. Otherwise we'd need *a lot* more
+	// samples, if we want to capture volumes with hard edges.
+	float density = 0.1;
+	float sl = length(step);
+	float accumIn = 0.0;
+	float accumTrans = 1.0;
 	for(uint i = 0u; i < steps; ++i) {
-		accum += scatterStrength(ipos);
+		float extinction = density;
+		float itransm = exp(-extinction * sl); // transmittance over this step
+		float inScat = density * scatterStrength(ipos);
+
+		// analytical integral of (e^(-extinction * x) * lum dx)
+		// over the current step. Taken from the frostbite paper
+		// ([1] in clouds.cpp)
+		float integ = (inScat - inScat * itransm) / extinction;
+
+		accumIn += accumTrans * integ;
+		accumTrans *= itransm;
+
 		ipos += step;
 	}
 
 	// TODO: not sure why clamping to 0 here is needed, accum
 	// can't get negative. Otherwise we get some black-pixel
 	// artefacts. Maybe accum overflows in same cases?
-	return max(accum * length(step), 0.0);
+	return vec2(max(accumIn, 0.0), accumTrans);
 }
 
 // ro: ray origin
@@ -171,7 +188,8 @@ void main() {
 	}
 
 	vec2 pixel = gl_FragCoord.xy;
-	float scatter = lightScatterShadow(start, end, pixel);
-	outScatter = vec4(scatter * light.color, 1.0);
+	vec2 scatter = lightScatterShadow(start, end, pixel);
+	// outScatter = vec4(scatter.x * light.color, scatter.y);
+	outScatter = vec4(scatter.x * light.color, 1.0);
 }
 

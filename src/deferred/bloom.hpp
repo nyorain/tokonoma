@@ -64,8 +64,7 @@ public:
 	void create(InitData&, const PassCreateInfo&);
 	void init(InitData&, const PassCreateInfo&);
 
-	void createBuffers(InitBufferData&, const tkn::WorkBatcher&,
-		const vk::Extent2D&);
+	void createBuffers(InitBufferData&, tkn::WorkBatcher&, const vk::Extent2D&);
 	void initBuffers(InitBufferData&, vk::ImageView lightInput);
 
 	void record(vk::CommandBuffer cb, vk::Image emission, vk::Extent2D);

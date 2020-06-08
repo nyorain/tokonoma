@@ -156,14 +156,13 @@ public:
 		dev_ = &dev;
 
 		// gfx stuff
-		auto gfxBindings = {
+		auto gfxBindings = std::array {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment,
-				0),
+				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		gfxDsLayout_ = {dev, gfxBindings};
+		gfxDsLayout_.init(dev, gfxBindings);
 		gfxDs_ = {dev.descriptorAllocator(), gfxDsLayout_};
 		gfxPipelineLayout_ = {dev, {{gfxDsLayout_.vkHandle()}}, {}};
 
@@ -219,7 +218,7 @@ public:
 				vk::ShaderStageBits::compute));
 		}
 
-		compDsLayout_ = {dev, compBindings};
+		compDsLayout_.init(dev, compBindings);
 		compDs_ = {dev.descriptorAllocator(), compDsLayout_};
 		compPipelineLayout_ = {dev, {{compDsLayout_.vkHandle()}}, {}};
 

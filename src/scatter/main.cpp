@@ -40,6 +40,7 @@
 #include <shaders/tkn.shadowPoint.frag.h>
 
 #include <random>
+#include <array>
 
 // TODO:
 // - correctly resolve the dithering (4x4 blurs? maybe just use
@@ -47,8 +48,6 @@
 //   hack-mess in pp.frag
 
 using namespace tkn::types;
-
-
 
 class ScatterApp : public tkn::App {
 public:
@@ -114,7 +113,7 @@ public:
 		initPP();
 
 		// init first light
-		auto wb = tkn::WorkBatcher::createDefault(dev);
+		auto wb = tkn::WorkBatcher(dev);
 		auto& l = lights_.emplace_back(wb, shadowData_);
 		l.data.position = {1.f, 1.f, 1.f};
 		l.data.radius = 10.f;
@@ -125,7 +124,7 @@ public:
 
 	void initGeom() {
 		// upload geometry
-		std::vector<Vec3f> vertices = {
+		const std::vector<Vec3f> vertices = {
 			// outer rect
 			{-1.f, -1.f, 0.f},
 			{1.f, -1.f, 0.f},
@@ -140,7 +139,7 @@ public:
 		};
 
 		// we render using triangle list
-		std::vector<u32> indices = {
+		const std::vector<u32> indices = {
 			0, 1, 4,
 			5, 4, 1,
 			1, 2, 5,
@@ -155,6 +154,8 @@ public:
 
 		auto vertSpan = tkn::bytes(vertices);
 		auto indSpan = tkn::bytes(indices);
+		dlg_assert(vertSpan.size() == sizeof(vertices[0]) * vertices.size());
+		dlg_assert(indSpan.size() == sizeof(indices[0]) * indices.size());
 
 		auto& dev = vkDevice();
 		auto& qs = dev.queueSubmitter();
@@ -170,6 +171,14 @@ public:
 		vk::beginCommandBuffer(cb, {});
 		vpp::fillDirect(cb, geom_.vertices, vertSpan);
 		vpp::fillDirect(cb, geom_.indices, indSpan);
+
+		// technically, this is needed I guess...
+		// vk::MemoryBarrier b;
+		// b.srcAccessMask = vk::AccessBits::transferWrite;
+		// b.dstAccessMask = vk::AccessBits::indexRead | vk::AccessBits::vertexAttributeRead;
+		// vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
+		// 	vk::PipelineStageBits::allGraphics, {}, {{b}}, {}, {});
+
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 
@@ -192,13 +201,13 @@ public:
 		vpp::nameHandle(geom_.rp, "geom.rp");
 
 		// layouts
-		auto dsBindings = {
+		auto dsBindings = std::array{
 			vpp::descriptorBinding( // ubo
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		geom_.dsLayout = {dev, dsBindings};
+		geom_.dsLayout.init(dev, dsBindings);
 		vpp::nameHandle(geom_.dsLayout, "geom.dsLayout");
 
 		// vertex description
@@ -229,7 +238,7 @@ public:
 			tkn_shadowPoint_frag_data
 		};
 		spi.vertex = vertex;
-		shadowData_ = tkn::initShadowData(dev, depthFormat_,
+		tkn::initShadowData(shadowData_, dev, depthFormat_,
 			features_.multiview, features_.depthClamp, spi, {});
 		shadowData_.depthBias = 50.f;
 		shadowData_.depthBiasSlope = 100.f;
@@ -292,18 +301,16 @@ public:
 		vpp::nameHandle(scatter_.rp, "scatter.rp");
 
 		// layout
-		auto bindings = {
+		auto bindings = std::array{
 			vpp::descriptorBinding( // depthTex
 				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment,
-				-1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding( // noiseTex
 				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment,
-				-1, 1, &sampler_.vkHandle())
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle())
 		};
 
-		scatter_.dsLayout = {dev, bindings};
+		scatter_.dsLayout.init(dev, bindings);
 		scatter_.pipeLayout = {dev, {{
 			geom_.dsLayout.vkHandle(),
 			shadowData_.dsLayout.vkHandle(),
@@ -343,15 +350,12 @@ public:
 			paths[i] = spaths[i].data();
 		}
 
-		auto layers = tkn::read(paths);
-
 		tkn::TextureCreateParams tcp;
 		// TODO: fix blitting!
 		// tcp.format = vk::Format::r8Unorm;
 		tcp.format = vk::Format::r8g8b8a8Unorm;
 		tcp.srgb = false; // TODO: not sure tbh
-		auto tex = tkn::Texture(dev, tkn::read(paths), tcp);
-		scatter_.noise = std::move(tex.viewableImage());
+		scatter_.noise = tkn::buildTexture(dev, tkn::readImageLayers(paths), tcp);
 
 		// ds
 		scatter_.ds = {dev.descriptorAllocator(), scatter_.dsLayout};
@@ -363,17 +367,16 @@ public:
 		auto s = combineGroupDimSize;
 		tkn::ComputeGroupSizeSpec cgs(s, s);
 
-		auto bindings = {
+		auto bindings = std::array{
 			vpp::descriptorBinding( // color (input/output)
 				vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding( // scatter tex
 				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute,
-				-1, 1, &sampler_.vkHandle())
+				vk::ShaderStageBits::compute, &sampler_.vkHandle())
 		};
 
-		combine_.dsLayout = {dev, bindings};
+		combine_.dsLayout.init(dev, bindings);
 		combine_.pipeLayout = {dev, {{combine_.dsLayout.vkHandle()}}, {}};
 		vpp::nameHandle(combine_.dsLayout, "combine.dsLayout");
 		vpp::nameHandle(combine_.pipeLayout, "combine.pipeLayout");
@@ -403,13 +406,13 @@ public:
 		vpp::nameHandle(pp_.rp, "pp.rp");
 
 		// layout
-		auto bindings = {
+		auto bindings = std::array{
 			vpp::descriptorBinding( // colorTex
 				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 		};
 
-		pp_.dsLayout = {dev, bindings};
+		pp_.dsLayout.init(dev, bindings);
 		pp_.pipeLayout = {dev, {{
 			pp_.dsLayout.vkHandle(),
 		}}, {}};
@@ -553,7 +556,17 @@ public:
 			vpp::DebugLabel lbl(dev, cb, "shadow");
 			auto renderScene = [this](vk::CommandBuffer cb,
 					vk::PipelineLayout) {
-				vk::cmdDrawIndexed(cb, geom_.numIndices, 1, 0, 0, 0);
+				// NOTE: since point lights potentially use a multiview
+				// render-pass, we have to re-bind the state every time.
+				// The vulkan api is somewhat confusing here, *only* for
+				// multiview renderpasses, this has to be done. But doesn't
+				// hurt (except performance maybe a bit, but shouldn't be
+				// much in either case honestly) to do it anyways.
+				vk::cmdBindVertexBuffers(cb, 0, {{geom_.vertices.buffer().vkHandle()}},
+					{{geom_.vertices.offset()}});
+				vk::cmdBindIndexBuffer(cb, geom_.indices.buffer(),
+				geom_.indices.offset(), vk::IndexType::uint32);
+					vk::cmdDrawIndexed(cb, geom_.numIndices, 1, 0, 0, 0);
 			};
 
 			for(auto& l : lights_) {
@@ -569,13 +582,18 @@ public:
 		{
 			vpp::DebugLabel lbl(dev, cb, "geometry");
 			std::array<vk::ClearValue, 3u> cv {};
-			cv[0] = {0.f, 0.f, 0.f, 0.f}; // color, rgba16f
+			cv[0] = {0.f, 0.f, 0.f, 1.f}; // color, rgba16f
 			cv[1] = {0.f, 0.f, 0.f, 0.f}; // vel, rgba16f
 			cv[2].depthStencil = {1.f, 0u}; // depth
 
 			vk::cmdBeginRenderPass(cb, {geom_.rp, geom_.fb,
 				{0u, 0u, width, height},
 				u32(cv.size()), cv.data()}, {});
+
+			// vk::cmdBindVertexBuffers(cb, 0, {{geom_.vertices.buffer().vkHandle()}},
+			// 	{{geom_.vertices.offset()}});
+			// vk::cmdBindIndexBuffer(cb, geom_.indices.buffer(),
+			// 	geom_.indices.offset(), vk::IndexType::uint32);
 
 			// NOTE: we just lit the objects by the first light
 			dlg_assert(!lights_.empty());
@@ -600,7 +618,7 @@ public:
 			vk::cmdSetScissor(cb, 0, 1, {0, 0, hwidth, hheight});
 
 			std::array<vk::ClearValue, 1u> cv {};
-			cv[0] = {0.f, 0.f, 0.f, 0.f}; // color
+			cv[0] = {0.f, 0.f, 0.f, 1.f}; // color
 			vk::cmdBeginRenderPass(cb, {scatter_.rp, scatter_.fb,
 				{0u, 0u, hwidth, hheight},
 				u32(cv.size()), cv.data()}, {});
@@ -645,7 +663,7 @@ public:
 		{
 			vpp::DebugLabel lbl(dev, cb, "post process");
 			std::array<vk::ClearValue, 1u> cv {};
-			cv[0] = {0.f, 0.f, 0.f, 0.f}; // color
+			cv[0] = {0.f, 0.f, 0.f, 1.f}; // color
 
 			vk::cmdBeginRenderPass(cb, {pp_.rp, rb.framebuffer,
 				{0u, 0u, width, height},
@@ -755,7 +773,7 @@ public:
 				std::uniform_int_distribution<unsigned> td(1000, 8000);
 				std::uniform_real_distribution<float> rd(0.f, 20.f);
 
-				auto wb = tkn::WorkBatcher::createDefault(vkDevice());
+				auto wb = tkn::WorkBatcher(vkDevice());
 				auto& l = lights_.emplace_back(wb, shadowData_);
 				l.data.color = tkn::blackbody(td(rnd));
 				l.data.position = camera_.position();
@@ -806,7 +824,7 @@ protected:
 	} features_;
 
 	// pass 0: shadow
-	tkn::ShadowData shadowData_;
+	tkn::ShadowData shadowData_ {};
 	std::vector<tkn::PointLight> lights_;
 
 	// pass 1: render geometry

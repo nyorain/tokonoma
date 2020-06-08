@@ -20,6 +20,7 @@
 
 #include <dlg/dlg.hpp>
 #include <argagg.hpp>
+#include <array>
 
 #include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/tkn.texture.frag.h>
@@ -61,7 +62,7 @@ public:
 		vk::beginCommandBuffer(cb, {});
 
 		// load image
-		auto p = tkn::read(parsed.file);
+		auto p = tkn::loadImage(parsed.file);
 		if(!p) {
 			dlg_fatal("Cannot read image '{}'", parsed.file);
 			return false;
@@ -86,7 +87,7 @@ public:
 		dlg_info("Image has {} layers", layerCount_);
 		dlg_info("Image {} a cubemap", p->cubemap() ? "is" : "isn't");
 
-		auto wb = tkn::WorkBatcher::createDefault(dev);
+		auto wb = tkn::WorkBatcher(dev);
 		wb.cb = cb;
 		auto tex = buildTexture(wb, std::move(p), params);
 		auto [img, view] = tex.split();
@@ -107,26 +108,26 @@ public:
 		sampler_ = {dev, sci};
 
 		// layouts
-		auto tbindings = {
+		auto tbindings = std::array{
 			vpp::descriptorBinding(
 				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			// only needed for (!cubemap && tonemap_) atm
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		texDsLayout_ = {dev, tbindings};
+		texDsLayout_.init(dev, tbindings);
 
 		if(cubemap_) {
-			auto cbindings = {
+			auto cbindings = std::array{
 				vpp::descriptorBinding(
 					vk::DescriptorType::uniformBuffer,
 					vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 			};
 
-			camDsLayout_ = {dev, cbindings};
+			camDsLayout_.init(dev, cbindings);
 			pipeLayout_ = {dev, {{
 				camDsLayout_.vkHandle(),
 				texDsLayout_.vkHandle()}}, {}};

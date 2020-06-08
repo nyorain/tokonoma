@@ -15,6 +15,9 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
 
+	ds_ = {};
+	debug_.ds = {};
+
 	// render pass
 	vk::AttachmentDescription attachment;
 	attachment.format = outputFormat;
@@ -45,32 +48,32 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 	vpp::nameHandle(rp_, "PostProcessPass:rp_");
 
 	// pipe
-	auto ppInputBindings = {
+	auto ppInputBindings = std::array {
 		// we use the nearest sampler here since we use it for fxaa and ssr
 		// and for ssr we *need* nearest (otherwise we bleed artefacts).
 		// Not sure about fxaa but seems to work with nearest.
 		// TODO: not sure about fxaa tbh
 		vpp::descriptorBinding( // output from combine pass
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::fragment, &info.samplers.linear),
 		// we only need depth for dof. Use nearest sampler for that, we don't
 		// interpolate.
 		vpp::descriptorBinding( // depth
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, &info.samplers.nearest),
 		vpp::descriptorBinding( // lens
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::fragment, &info.samplers.linear),
 		vpp::descriptorBinding( // lens dirt
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::fragment, &info.samplers.linear),
 		// params ubo
 		vpp::descriptorBinding(
 			vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::fragment),
 	};
 
-	dsLayout_ = {dev, ppInputBindings};
+	dsLayout_.init(dev, ppInputBindings);
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 	vpp::nameHandle(dsLayout_, "PostProcessPass:dsLayout_");
 	vpp::nameHandle(pipeLayout_, "PostProcessPass:pipeLayout_");
@@ -97,37 +100,37 @@ void PostProcessPass::create(InitData& data, const PassCreateInfo& info,
 	auto debugInputBindings = {
 		vpp::descriptorBinding( // albedo
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, &info.samplers.nearest),
 		vpp::descriptorBinding( // normal
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, &info.samplers.nearest),
 		vpp::descriptorBinding( // depth
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, &info.samplers.nearest),
 		vpp::descriptorBinding( // ssao
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, &info.samplers.nearest),
 		vpp::descriptorBinding( // ssr
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, &info.samplers.nearest),
 		vpp::descriptorBinding( // bloom, linear sampling for upsampling
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::fragment, &info.samplers.linear),
 		vpp::descriptorBinding( // luminance
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, &info.samplers.nearest),
 		vpp::descriptorBinding( // scatter
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, &info.samplers.nearest),
 		vpp::descriptorBinding( // lens
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::fragment, &info.samplers.linear),
 		vpp::descriptorBinding( // shadow
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::fragment, &info.samplers.nearest),
 	};
 
-	debug_.dsLayout = {dev, debugInputBindings};
+	debug_.dsLayout.init(dev, debugInputBindings);
 	vk::PushConstantRange pcr;
 	pcr.stageFlags = vk::ShaderStageBits::fragment;
 	pcr.size = sizeof(u32);

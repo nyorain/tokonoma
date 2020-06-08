@@ -27,6 +27,9 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		SyncScope dstLight, bool ao, bool flipCull) {
 	auto& dev = info.wb.dev;
 
+	lightDs_ = {};
+	aoDs_ = {};
+
 	// render pass
 	// == attachments ==
 	std::array<vk::AttachmentDescription, 6> attachments;
@@ -224,7 +227,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 
 
 	// light
-	auto lightBindings = {
+	auto lightBindings = std::array{
 		vpp::descriptorBinding( // normal
 			vk::DescriptorType::inputAttachment,
 			vk::ShaderStageBits::fragment),
@@ -236,7 +239,7 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 			vk::ShaderStageBits::fragment),
 	};
 
-	lightDsLayout_ = {dev, lightBindings};
+	lightDsLayout_.init(dev, lightBindings);
 	lightPipeLayout_ = {dev, {{
 		info.dsLayouts.camera.vkHandle(),
 		lightDsLayout_.vkHandle(),
@@ -329,19 +332,19 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 			vk::ShaderStageBits::fragment),
 		vpp::descriptorBinding( // irradiance
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::fragment, &info.samplers.linear),
 		vpp::descriptorBinding( // envMap
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::fragment, &info.samplers.linear),
 		vpp::descriptorBinding( // brdflut
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::fragment, &info.samplers.linear),
 		vpp::descriptorBinding( // ubo
 			vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::fragment),
 	};
 
-	aoDsLayout_ = {dev, aoBindings};
+	aoDsLayout_.init(dev, aoBindings);
 	vk::PushConstantRange pcr;
 	pcr.size = 4u;
 	pcr.stageFlags = vk::ShaderStageBits::fragment;
@@ -386,7 +389,7 @@ void GeomLightPass::init(InitData& data) {
 }
 
 void GeomLightPass::createBuffers(InitBufferData& data,
-		const tkn::WorkBatcher& wb, vk::Extent2D size,
+		tkn::WorkBatcher& wb, vk::Extent2D size,
 		vk::Format depthFormat) {
 	auto createInfo = [&](vk::Format format,
 			vk::ImageUsageFlags usage) {

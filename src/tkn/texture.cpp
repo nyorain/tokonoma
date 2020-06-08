@@ -403,29 +403,29 @@ FillData createFill(WorkBatcher& wb, const vpp::Image& img, vk::Format dstFormat
 	res.dstFormat = dstFormat;
 	res.target = img;
 	res.source = std::move(provider);
+
 	auto hostBits = dev.hostMemoryTypes();
 	auto devBits = dev.deviceMemoryTypes();
 
 	auto size = res.source->size();
 	auto fillLevelCount = std::min(res.source->mipLevels(), maxNumLevels);
 	auto layerCount = res.source->layers();
-	auto dataFormat = res.source->format();
+	auto srcFormat = res.source->format();
 	res.numLevels = maxNumLevels;
 
-	if(forceSRGB && isSRGB(dataFormat) != *forceSRGB) {
+	if(forceSRGB && isSRGB(srcFormat) != *forceSRGB) {
 		dlg_debug("toggling srgb");
-		dataFormat = toggleSRGB(dataFormat);
+		srcFormat = toggleSRGB(srcFormat);
 	}
 
-	res.srcFormat = dataFormat;
-
-	auto blit = res.source->format() != dstFormat;
+	res.srcFormat = srcFormat;
+	auto blit = res.srcFormat != dstFormat;
 	if(blit) {
 		vk::ImageCreateInfo ici;
 		ici.arrayLayers = layerCount;
 		ici.extent = {size.x, size.y, size.z};
 		ici.usage = vk::ImageUsageBits::transferSrc;
-		ici.format = dataFormat;
+		ici.format = srcFormat;
 		ici.tiling = vk::ImageTiling::linear;
 		ici.mipLevels = fillLevelCount;
 		ici.initialLayout = vk::ImageLayout::preinitialized;
@@ -470,7 +470,7 @@ FillData createFill(WorkBatcher& wb, const vpp::Image& img, vk::Format dstFormat
 	}
 
 	if(!blit || res.copyToStageImage) {
-		auto fmtSize = vpp::formatSize(res.cpuConversion ? dstFormat : dataFormat);
+		auto fmtSize = vpp::formatSize(res.cpuConversion ? dstFormat : srcFormat);
 		auto dataSize = layerCount * fmtSize * size.x * size.y * size.z;
 		for(auto i = 1u; i < fillLevelCount; ++i) {
 			auto isize = size;
@@ -585,6 +585,10 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 			offset += lsize * layerCount;
 		}
 
+		if(!map.coherent()) {
+			map.flush();
+		}
+
 		auto target0 = data.copyToStageImage ?
 			data.stageImage.vkHandle() : data.target;
 		vk::cmdCopyBufferToImage(cb, data.stageBuffer.buffer(), target0,
@@ -598,31 +602,52 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 
 		// TODO(PERF, low): keep memory map view active over this whole time
 		// if we write to stageImage via map.
-		// At the moment, each fillMap call will map and unmap the memory.
+		// At the moment, each fillMap call will map and unmap the memory
+		// (also flush it everytime). This is hard because we might
+		// have to fill multiple mips, that each can have a different
+		// subresource layout, different offsets etc...
 
 		std::vector<vk::ImageBlit> blits;
 		blits.reserve(numFillLevels);
+		auto fmtSize = vpp::formatSize(data.srcFormat);
 		for(auto m = 0u; m < numFillLevels; ++m) {
 			auto mwidth = std::max(width >> m, 1u);
 			auto mheight = std::max(height >> m, 1u);
 			auto mdepth = std::max(depth >> m, 1u);
-			auto lsize = mwidth * mheight * mdepth * vpp::formatSize(data.srcFormat);
+			auto lsize = mwidth * mheight * mdepth * fmtSize;
 
 			if(!data.copyToStageImage) {
-				for(auto l = 0u; l < layerCount; ++l) {
-					// TODO: could offer optimization in case the
-					// data is subresource layout is tightly packed:
-					// directly let provider write to map
-					auto span = data.source->read(m, l);
-					dlg_assertm(span.size() == lsize, "{} vs {}",
-						span.size(), lsize);
+				// We check if the subresource layout is tight. If so,
+				// we can let the image provider directly write into
+				// the mapped memory.
+				auto sl = vk::getImageSubresourceLayout(data.stageImage.device(),
+					data.stageImage, {vk::ImageAspectBits::color, m, 0u});
+				if(sl.arrayPitch == lsize) { // tight subresource layout
+					auto mapBegin = vpp::texelAddress(sl, fmtSize, 0u, 0u, 0u, 0u);
+					auto map = data.stageImage.memoryMap(mapBegin, lsize * layerCount);
+					auto span = map.span();
+					for(auto l = 0u; l < layerCount; ++l) {
+						auto count = data.source->read(map.span(), m, l);
+						dlg_assert(count == lsize);
+						tkn::skip(span, lsize);
+					}
 
-					vk::ImageSubresource subres;
-					subres.arrayLayer = l;
-					subres.mipLevel = m;
-					subres.aspectMask = vk::ImageAspectBits::color;
-					vpp::fillMap(data.stageImage, data.srcFormat,
-						{mwidth, mheight, mdepth}, span, subres);
+					if(!map.coherent()) {
+						map.flush();
+					}
+				} else { // non-tight, unpack potentially row by row
+					for(auto l = 0u; l < layerCount; ++l) {
+						auto span = data.source->read(m, l);
+						dlg_assertm(span.size() == lsize, "{} vs {}",
+							span.size(), lsize);
+
+						vk::ImageSubresource subres;
+						subres.arrayLayer = l;
+						subres.mipLevel = m;
+						subres.aspectMask = vk::ImageAspectBits::color;
+						vpp::fillMap(data.stageImage, data.srcFormat,
+							{mwidth, mheight, mdepth}, span, subres);
+					}
 				}
 			}
 
@@ -648,17 +673,20 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 		b0.dstAccessMask = vk::AccessBits::transferRead;
 		b0.subresourceRange =
 			{vk::ImageAspectBits::color, 0, numFillLevels, 0, layerCount};
+
+		vk::PipelineStageBits srcStage;
 		if(data.copyToStageImage) {
 			b0.oldLayout = vk::ImageLayout::transferDstOptimal;
 			b0.srcAccessMask = vk::AccessBits::transferWrite;
+			srcStage = vk::PipelineStageBits::transfer;
 		} else {
 			b0.oldLayout = vk::ImageLayout::preinitialized;
 			b0.srcAccessMask = vk::AccessBits::hostWrite;
+			srcStage = vk::PipelineStageBits::host;
 		}
 
-		vk::cmdPipelineBarrier(cb,
-			vk::PipelineStageBits::host,
-			vk::PipelineStageBits::transfer, {}, {}, {}, {{b0}});
+		vk::cmdPipelineBarrier(cb, srcStage, vk::PipelineStageBits::transfer,
+			{}, {}, {}, {{b0}});
 
 		// nearest is enough, we are not scaling in any way
 		// NOTE: we could introduce scaling (with linear or nearest filter)
@@ -677,6 +705,9 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 		target.extent = {width, height, depth};
 		target.layerCount = layerCount;
 		target.baseLevel = numFillLevels - 1;
+		target.srcScope.access = vk::AccessBits::transferWrite;
+		target.srcScope.layout = vk::ImageLayout::transferDstOptimal;
+		target.srcScope.stages = vk::PipelineStageBits::transfer;
 
 		auto count = data.numLevels - numFillLevels;
 		tkn::downscale(cb, target, count);
@@ -759,6 +790,9 @@ TextureInitData createTexture(WorkBatcher& wb,
 		ici.flags = vk::ImageCreateBits::cubeCompatible;
 	}
 
+	// TODO: evaluate this with all needed features.
+	// When blitDst isn't supported we could fallback to cpu conversion!
+	// Just need a way to signal to createFill that blitting is not allowed
 	if(!vpp::supported(wb.dev, ici, features)) {
 		throw std::runtime_error("Image parameters not supported by device");
 	}
@@ -769,10 +803,8 @@ TextureInitData createTexture(WorkBatcher& wb,
 	data.view = params.view;
 	data.view.layerCount = data.view.layerCount ? data.view.layerCount : numLayers;
 	data.view.levelCount = data.view.levelCount ? data.view.levelCount : numLevels;
-	// data.fill = createFill(wb, data.image, dstFormat, std::move(img),
-	// 	numFilledLevels, params.srgb);
 	data.fill = createFill(wb, data.image, dstFormat, std::move(img),
-		numFilledLevels);
+		numFilledLevels, params.srgb);
 
 	data.viewType = minImageViewType({size.x, size.y, size.z},
 		data.view.layerCount, data.cubemap, params.minTypeDim);

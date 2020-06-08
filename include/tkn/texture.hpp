@@ -73,6 +73,7 @@ struct TextureCreateParams {
 
 // Basically just a ViewableImage that allows for deferred uploading.
 // Always allocated on deviceLocal memory.
+/*
 class [[deprecated("Use the standalone functions")]] Texture {
 public:
 	struct InitData {
@@ -120,6 +121,7 @@ public:
 protected:
 	vpp::ViewableImage image_;
 };
+*/
 
 // new, low-level experimental api
 struct FillData {

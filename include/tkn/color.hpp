@@ -9,10 +9,7 @@
 #include <nytl/mat.hpp>
 #include <limits>
 
-// All wavelengths measured in angstrom (10^-10 meter)
-
-// TODO: add spectrum-based blackbody function.
-//   move approx rgb blackbody function here
+// All wavelengths measured in nanometers (10^-9 meter)
 
 namespace tkn {
 
@@ -110,6 +107,14 @@ struct SpectralColor : SampledSpectrum<nSpectralSamples> {
 };
 
 nytl::Vec3f toXYZ(const SpectralColor&);
+
+float planck(float kelvin, float wavelength);
+SpectralColor blackbody(float kevlin);
+
+/// Simple blackbody approxmiation.
+/// Converts kelvin color temparature (1000K - 40000K) to a rbg color.
+/// Good enough for most purposes.
+nytl::Vec3f blackbodyApprox(float kelvin);
 
 // Given spectrum samples 'vals' and cooresponding wavelengths 'lambda',
 // both arrays with size n, computes the average value between lambdaStart

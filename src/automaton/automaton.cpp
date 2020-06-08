@@ -350,6 +350,7 @@ void Automaton::initGfxPipe(vk::RenderPass renderPass,
 		if(gridType_ == GridType::hex) {
 			frag = tkn_incolor_frag_data;
 		} else {
+			// TODO: use tonemapping
 			frag = tkn_texture_frag_data;
 		}
 	}
@@ -386,7 +387,7 @@ void Automaton::initLayouts() {
 	// compute
 	std::vector<vk::DescriptorSetLayoutBinding> bindings;
 	compDsLayout(bindings);
-	compDsLayout_ = {device(), bindings};
+	compDsLayout_.init(device(), bindings);
 
 	std::vector<vk::PushConstantRange> pcr;
 	std::vector<vk::DescriptorSetLayout> layouts;
@@ -399,7 +400,7 @@ void Automaton::initLayouts() {
 	layouts.clear();
 
 	gfxDsLayout(bindings);
-	gfxDsLayout_ = {device(), bindings};
+	gfxDsLayout_.init(device(), bindings);
 
 	gfxPipeLayout(layouts, pcr);
 	gfxPipeLayout_ = {device(), layouts, pcr};
@@ -551,7 +552,7 @@ void Automaton::gfxDsLayout(std::vector<vk::DescriptorSetLayoutBinding>& bs) {
 	bs.push_back(vpp::descriptorBinding(
 		vk::DescriptorType::combinedImageSampler,
 		vk::ShaderStageBits::fragment | vk::ShaderStageBits::vertex,
-		-1, 1, &sampler_.vkHandle()));
+		&sampler_.vkHandle()));
 }
 
 void Automaton::compPipeLayout(

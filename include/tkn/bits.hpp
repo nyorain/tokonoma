@@ -85,8 +85,12 @@ struct WriteBuffer {
 	std::vector<std::byte> buffer;
 };
 
+template<typename T> constexpr auto BytesConvertible =
+	std::is_trivially_copyable_v<T> &&
+	std::is_standard_layout_v<T>;
+
 template<typename T>
-std::enable_if_t<std::is_standard_layout_v<T>>
+std::enable_if_t<BytesConvertible<T>>
 write(WriteBuffer& buffer, const T& obj) {
 	buffer.buffer.resize(buffer.buffer.size() + sizeof(obj));
 	auto data = buffer.buffer.data() + buffer.buffer.size() - sizeof(obj);
@@ -94,25 +98,25 @@ write(WriteBuffer& buffer, const T& obj) {
 }
 
 template<typename T>
-std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<const std::byte>>
+std::enable_if_t<BytesConvertible<T>, nytl::Span<const std::byte>>
 bytes(const T& val) {
 	return {reinterpret_cast<const std::byte*>(&val), sizeof(val)};
 }
 
 template<typename T>
-std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<std::byte>>
+std::enable_if_t<BytesConvertible<T>, nytl::Span<std::byte>>
 bytes(T& val) {
 	return {reinterpret_cast<std::byte*>(&val), sizeof(val)};
 }
 
 template<typename T>
-std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<const std::byte>>
+std::enable_if_t<BytesConvertible<T>, nytl::Span<const std::byte>>
 bytes(const std::vector<T>& val) {
 	return nytl::as_bytes(nytl::span(val));
 }
 
 template<typename T>
-std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<std::byte>>
+std::enable_if_t<BytesConvertible<T>, nytl::Span<std::byte>>
 bytes(std::vector<T>& val) {
 	return nytl::as_writeable_bytes(nytl::span(val));
 }
@@ -120,7 +124,7 @@ bytes(std::vector<T>& val) {
 // There is no non-const overload for initializer list since we can't
 // ever modify data in it.
 template<typename T>
-std::enable_if_t<std::is_standard_layout_v<T>, nytl::Span<const std::byte>>
+std::enable_if_t<BytesConvertible<T>, nytl::Span<const std::byte>>
 bytes(const std::initializer_list<T>& val) {
 	return nytl::as_bytes(nytl::span(val));
 }

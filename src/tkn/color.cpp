@@ -1,4 +1,4 @@
-// Implementation contains code from pbrt-v3, licensed under BSD-2.
+// Implementation contains code from the great pbrt-v3, licensed under BSD-2.
 // See Chapter 5 of http://www.pbr-book.org/3ed-2018/contents.html for
 // a detailed documentation.
 // Also: https://github.com/mmp/pbrt-v3/blob/master/src/spectrum.cpp.
@@ -120,6 +120,95 @@ float spectrumAverage(const float* lambda, const float* vals, int n,
 
     return sum / (lambdaEnd - lambdaStart);
 }
+
+// https://en.wikipedia.org/wiki/Planck%27s_law
+float planck(float temp, float wavelength) {
+	constexpr auto c = 299792458; // speed of light
+	constexpr auto h = 6.62607015e−34; // planck constant
+	constexpr auto kb = 1.380649e−23; // boltzman constant
+
+	if(temp <= 0) {
+		return 0.f;
+	}
+
+	auto lambda = wavelength * 1e-9; // convert from nm to meters
+	auto l5 = lambda * lambda * lambda * lambda * lambda;
+	return 2 * h * c * c / (l5 * std::exp(h * c / lambda * kb * temp) - 1);
+}
+
+SpectralColor blackbody(float temp) {
+	SpectralColor res;
+	for(auto i = 0u; i < res.samples.size(); ++i) {
+		auto l = res.wavelength(i);
+		res.samples[i] = planck(temp, l);
+		dlg_assert(!std::isnan(res.samples[i]) && !std::isinf(res.samples[i]));
+	}
+
+	return res;
+}
+
+nytl::Vec3f blackbodyApproxRGB(float temp) {
+	// http://www.zombieprototypes.com/?p=210
+	// this version based upon https://github.com/neilbartlett/color-temperature,
+	// licensed under MIT as well, Copyright (c) 2015 Neil Bartlett
+	float t = temp / 100.f;
+	float r, g, b;
+
+	struct Coeffs {
+		float a, b, c, off;
+		float compute(float x) {
+			auto r = a + b * x + c * std::log(x + off);
+			return std::clamp(r, 0.f, 255.f);
+		}
+	};
+
+	if(t < 66.0) {
+		r = 255;
+	} else {
+		r = Coeffs {
+			351.97690566805693,
+			0.114206453784165,
+			-40.25366309332127,
+			-55
+		}.compute(t);
+	}
+
+	if(t < 66.0) {
+		g = Coeffs {
+			-155.25485562709179,
+			-0.44596950469579133,
+			104.49216199393888,
+			-2
+		}.compute(t);
+	} else {
+		g = Coeffs {
+			325.4494125711974,
+			0.07943456536662342,
+			-28.0852963507957,
+			-50
+		}.compute(t);
+	}
+
+	if(t >= 66.0) {
+		b = 255;
+	} else {
+
+		if(t <= 20.0) {
+			b = 0;
+		} else {
+			b = Coeffs {
+				-254.76935184120902,
+				0.8274096064007395,
+				115.67994401066147,
+				-10
+			}.compute(t);
+
+		}
+	}
+
+	return {r / 255.f, g / 255.f, b / 255.f};
+}
+
 
 SpectralColor SpectralColor::fromSamples(const float* lambda,
 		const float* vals, int n) {

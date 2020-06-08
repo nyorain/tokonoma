@@ -73,10 +73,10 @@ public:
 namespace tkn {
 namespace {
 
-TextureInitData loadImage(WorkBatcher& wb, const gltf::Image& tex,
+TextureInitData loadImageTex(WorkBatcher& wb, const gltf::Image& img,
 		nytl::StringParam path, bool srgb) {
-	auto name = tex.name.empty() ?  tex.name : "'" + tex.name + "'";
-	dlg_info("  Loading image {}", name);
+	auto name = img.name.empty() ?  img.name : "'" + img.name + "'";
+	dlg_info("  Loading image {} (uri {})", name, img.uri);
 	auto params = TextureCreateParams {};
 	params.srgb = srgb;
 	params.format = srgb ?
@@ -86,33 +86,38 @@ TextureInitData loadImage(WorkBatcher& wb, const gltf::Image& tex,
 	params.mipLevels = 0;
 	params.fillMipmaps = true;
 
+	// TODO: we currently assume that since we disabled image loading
+	// for tinygltf (ours is better suited for our purposes + less copying)
+	// and we don't support loading from buffer views yet
+	dlg_assert(img.image.empty());
+
 	// TODO: we could support additional formats like r8 or r8g8.
-	// check tex.pixel_type. Also support other image parameters
+	// check img.pixel_type. Also support other image parameters
 	// TODO: we currently don't support hdr images. Check the
 	// specified image format
-	if(tex.image.empty() && !tex.uri.empty()) {
+	if(img.image.empty() && !img.uri.empty()) {
 		auto full = std::string(path);
-		full += tex.uri;
-		return createTexture(wb, read(full), params);
+		full += img.uri;
+		return createTexture(wb, tkn::loadImage(full), params);
 	}
 
 	// TODO: simplifying assumptions that are usually met
-	dlg_assert(tex.component == 4);
-	dlg_assert(!tex.as_is);
+	dlg_assert(img.component == 4);
+	dlg_assert(!img.as_is);
 
 	// TODO: we only have to copy the image data here in case
 	// the gltf model is destroyed before the image finished initializtion...
-	Image img;
-	img.size.x = tex.width;
-	img.size.y = tex.height;
-	img.size.z = 1u;
-	img.format = srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
+	Image loaded;
+	loaded.size.x = img.width;
+	loaded.size.y = img.height;
+	loaded.size.z = 1u;
+	loaded.format = srgb ? vk::Format::r8g8b8a8Srgb : vk::Format::r8g8b8a8Unorm;
 
-	auto dataSize = tex.width * tex.height * 4u;
-	img.data = std::make_unique<std::byte[]>(dataSize);
-	std::memcpy(img.data.get(), tex.image.data(), dataSize);
+	auto dataSize = img.width * img.height * 4u;
+	loaded.data = std::make_unique<std::byte[]>(dataSize);
+	std::memcpy(loaded.data.get(), img.image.data(), dataSize);
 
-	return createTexture(wb, wrap(std::move(img)), params);
+	return createTexture(wb, wrap(std::move(loaded)), params);
 }
 
 } // anon namespace
@@ -208,7 +213,7 @@ void Scene::create(InitData& data, WorkBatcher& wb, nytl::StringParam path,
 	for(auto i = 0u; i < model.images.size(); ++i) {
 		auto& img = images_[i];
 		dlg_assertm(img.needed, "Model has unused image");
-		data.images[i] = loadImage(wb, model.images[i], path, img.srgb);
+		data.images[i] = loadImageTex(wb, model.images[i], path, img.srgb);
 	}
 
 	auto inf = std::numeric_limits<float>::infinity();
@@ -1269,7 +1274,7 @@ std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam a
 	std::string file = "test3.gltf";
 	bool binary = false;
 	if(!at.empty()) {
-		if(has_suffix(at, ".gltf")) {
+		if(hasSuffixCI(at, ".gltf")) {
 			auto i = at.find_last_of('/');
 			if(i == std::string::npos) {
 				path = {};
@@ -1278,7 +1283,7 @@ std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam a
 				path = at.substr(0, i + 1);
 				file = at.substr(i + 1);
 			}
-		} else if(has_suffix(at, ".gltb") || has_suffix(at, ".glb")) {
+		} else if(hasSuffixCI(at, ".gltb") || hasSuffixCI(at, ".glb")) {
 			binary = true;
 			auto i = at.find_last_of('/');
 			if(i == std::string::npos) {
@@ -1353,10 +1358,28 @@ std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam a
 	return {model, path};
 }
 
+
+// We use TINYGLTF_NO_EXTERNAL_IMAGE. This is still needed when images
+// are specified as buffer view
+bool tinygltfImageLoader(gltf::Image* img, const int imgID,
+		std::string* err, std::string* warn, int req_width, int req_height,
+		const unsigned char* bytes, int size, void*) {
+	// TODO: just implement is using loadImage a memory stream.
+	// Ideally though, we would just store the Provider in the image.
+	// Maybe rework tinygtlf so that this function isn't needed
+	// at all anymore and we just load from the buffer view when
+	// we load the image?
+	dlg_assert(err);
+	*err += "tkn: Loading images from buffer views not supported atm";
+	return false;
+}
+
 std::optional<gltf::Model> loadGltf(nytl::Span<const std::byte> buffer) {
 	gltf::TinyGLTF loader;
 	gltf::Model model;
 	std::string err, warn;
+
+	loader.SetImageLoader(&tinygltfImageLoader, nullptr);
 
 	auto bytes = (const unsigned char*) buffer.data();
 	auto res = loader.LoadBinaryFromMemory(&model, &err, &warn, bytes, buffer.size());

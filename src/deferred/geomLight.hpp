@@ -72,7 +72,7 @@ public:
 		bool ao, bool flipCull = false);
 	void init(InitData&);
 
-	void createBuffers(InitBufferData&, const tkn::WorkBatcher&,
+	void createBuffers(InitBufferData&, tkn::WorkBatcher&,
 		vk::Extent2D, vk::Format depthFormat);
 	void initBuffers(InitBufferData&, vk::Extent2D,
 		// following parameters only required when pass includes ao

@@ -43,6 +43,12 @@
 #ifndef TINY_GLTF_H_
 #define TINY_GLTF_H_
 
+// for tkn: we want to load images with our own loader, it's
+// faster than stb in general and gives us the data in the way
+// we need it.
+#define TINYGLTF_NO_EXTERNAL_IMAGE
+#define TINYGLTF_NO_STB_IMAGE
+
 #include <array>
 #include <cassert>
 #include <cstdint>

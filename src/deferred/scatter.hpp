@@ -46,7 +46,7 @@ public:
 	void create(InitData&, const PassCreateInfo&, bool directional);
 	void init(InitData&, const PassCreateInfo&);
 
-	void createBuffers(InitBufferData&, const tkn::WorkBatcher&, vk::Extent2D);
+	void createBuffers(InitBufferData&, tkn::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::Extent2D,
 		vk::ImageView depth);
 

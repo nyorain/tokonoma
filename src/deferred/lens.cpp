@@ -89,7 +89,7 @@ void GaussianBlur::init(const vpp::Device& dev, vk::Sampler linearSampler) {
 		// reads multiple pixels in a single fetch via linear sampling
 		vpp::descriptorBinding( // input color
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &linearSampler),
+			vk::ShaderStageBits::compute, &linearSampler),
 		vpp::descriptorBinding( // output color, blurred
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute)
@@ -99,7 +99,7 @@ void GaussianBlur::init(const vpp::Device& dev, vk::Sampler linearSampler) {
 	pcr.size = 128;
 	pcr.stageFlags = vk::ShaderStageBits::compute;
 
-	dsLayout_ = {dev, bindings};
+	dsLayout_.init(dev, bindings);
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {{pcr}}};
 	vpp::nameHandle(dsLayout_, "GaussianBlur:dsLayout");
 	vpp::nameHandle(pipeLayout_, "GaussianBlur:pipeLayout");
@@ -234,13 +234,14 @@ SyncScope GaussianBlur::srcScopeTmp() const {
 void HighLightPass::create(InitData& data, const PassCreateInfo& pci) {
 	auto& dev = pci.wb.dev;
 	ComputeGroupSizeSpec groupSizeSpec(groupDimSize, groupDimSize);
+	ds_ = {};
 
 	auto bindings = {
 		// light & emission
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &pci.samplers.nearest),
+			vk::ShaderStageBits::compute, &pci.samplers.nearest),
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &pci.samplers.nearest),
+			vk::ShaderStageBits::compute, &pci.samplers.nearest),
 		// output color
 		vpp::descriptorBinding(
 			vk::DescriptorType::storageImage,
@@ -250,7 +251,7 @@ void HighLightPass::create(InitData& data, const PassCreateInfo& pci) {
 			vk::ShaderStageBits::compute),
 	};
 
-	dsLayout_ = {dev, bindings};
+	dsLayout_.init(dev, bindings);
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 	vpp::nameHandle(dsLayout_, "HighLightPass:dsLayout");
 	vpp::nameHandle(pipeLayout_, "HighLightPass:pipeLayout");
@@ -278,7 +279,7 @@ void HighLightPass::init(InitData& data, const PassCreateInfo&) {
 }
 
 void HighLightPass::createBuffers(InitBufferData& data,
-		const tkn::WorkBatcher& wb, vk::Extent2D size) {
+		tkn::WorkBatcher& wb, vk::Extent2D size) {
 	auto& dev = wb.dev;
 	size.width = std::max(size.width >> 1, 1u);
 	size.height = std::max(size.height >> 1, 1u);
@@ -375,11 +376,13 @@ SyncScope HighLightPass::srcScopeTarget() const {
 void LensFlare::create(InitData& data, const PassCreateInfo& pci,
 		const GaussianBlur& blur) {
 	auto& dev = pci.wb.dev;
+	ds_ = {};
+	blur_ = {};
 
-	auto bindings = {
+	auto bindings = std::array {
 		vpp::descriptorBinding( // highlight input
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &pci.samplers.linear),
+			vk::ShaderStageBits::compute, &pci.samplers.linear),
 		vpp::descriptorBinding( // output color
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
@@ -388,7 +391,7 @@ void LensFlare::create(InitData& data, const PassCreateInfo& pci,
 			vk::ShaderStageBits::compute)
 	};
 
-	dsLayout_ = {dev, bindings};
+	dsLayout_.init(dev, bindings);
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 	vpp::nameHandle(dsLayout_, "LensFlare:dsLayout");
 	vpp::nameHandle(pipeLayout_, "LensFlare:pipeLayout");
@@ -419,7 +422,7 @@ void LensFlare::init(InitData& data, const PassCreateInfo&,
 	vpp::nameHandle(ds_, "LensFlare:ds");
 }
 
-void LensFlare::createBuffers(InitBufferData& data, const tkn::WorkBatcher& wb,
+void LensFlare::createBuffers(InitBufferData& data, tkn::WorkBatcher& wb,
 		vk::Extent2D size) {
 	auto& dev = wb.dev;
 	size.width = std::max(size.width >> 1, 1u);

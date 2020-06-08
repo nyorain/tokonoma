@@ -121,13 +121,13 @@ public:
 	nytl::Vec2f massPos1() const {
 		float c = std::cos(angle1 - 0.5 * nytl::constants::pi);
 		float s = std::sin(angle1 - 0.5 * nytl::constants::pi);
-		return center + screenLength * nytl::Vec2f{c, s};
+		return center + screenLength * nytl::Vec2f{c, -s};
 	}
 
 	nytl::Vec2f massPos2() const {
 		float c = std::cos(angle2 - 0.5 * nytl::constants::pi);
 		float s = std::sin(angle2 - 0.5 * nytl::constants::pi);
-		return massPos1() + screenLength * nytl::Vec2f{c, s};
+		return massPos1() + screenLength * nytl::Vec2f{c, -s};
 	}
 
 	void changeCenter(nytl::Vec2f nc) {

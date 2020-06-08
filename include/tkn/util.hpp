@@ -9,7 +9,8 @@
 #include <algorithm>
 #include <cmath>
 
-// file: general utility that hasn't found a better place yet
+// file: general utility that hasn't found a better place yet (but
+// likely needs once)
 
 namespace tkn {
 
@@ -51,9 +52,42 @@ T bilerp(float s, float t, unsigned width, unsigned height, T* vals) {
 		nytl::mix(vals[y1 * width + x0], vals[y1 * width + x1], fx), fy);
 }
 
-inline bool has_suffix(std::string_view str, std::string_view suffix) {
+// S1, S2 are expected to be string-like types.
+template<typename C, typename CT>
+inline bool hasSuffix(std::basic_string_view<C, CT> str,
+		std::basic_string_view<C, CT> suffix) {
     return str.size() >= suffix.size() &&
         str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// case-insensitive char traits
+// see https://stackoverflow.com/questions/11635
+struct CharTraitsCI : public std::char_traits<char> {
+    static bool eq(char c1, char c2) { return toupper(c1) == toupper(c2); }
+    static bool ne(char c1, char c2) { return toupper(c1) != toupper(c2); }
+    static bool lt(char c1, char c2) { return toupper(c1) <  toupper(c2); }
+    static int compare(const char* s1, const char* s2, size_t n) {
+        while(n-- != 0) {
+            if(toupper(*s1) < toupper(*s2)) return -1;
+            if(toupper(*s1) > toupper(*s2)) return 1;
+            ++s1; ++s2;
+        }
+        return 0;
+    }
+    static const char* find(const char* s, int n, char a) {
+        while(n-- > 0 && toupper(*s) != toupper(a)) {
+            ++s;
+        }
+        return s;
+    }
+};
+
+// case-insensitive
+inline bool hasSuffixCI(std::string_view cstr, std::string_view csuffix) {
+	using CIView = std::basic_string_view<char, CharTraitsCI>;
+	auto str = CIView(cstr.data(), cstr.size());
+	auto suffix = CIView(csuffix.data(), csuffix.size());
+	return hasSuffix(str, suffix);
 }
 
 // Splits the given string view at the given position.
@@ -67,10 +101,6 @@ inline std::pair<std::string_view, std::string_view> split(
 	first.remove_suffix(src.size() - pos);
 	return {first, second};
 }
-
-/// Simple blackbody approxmiation.
-/// Converts kelvin color temparature (1000K - 40000K) to a rbg color.
-nytl::Vec3f blackbody(unsigned kelvin);
 
 /// Sets/Unsets the given bit in the given bitfield.
 template<typename T>

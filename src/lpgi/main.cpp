@@ -52,6 +52,7 @@
 #include <optional>
 #include <vector>
 #include <string>
+#include <array>
 
 using namespace tkn::types;
 
@@ -101,17 +102,11 @@ public:
 		auto cb = dev.commandAllocator().get(qfam);
 		vk::beginCommandBuffer(cb, {});
 
-		alloc_.emplace(dev);
-		auto& alloc = *this->alloc_;
-		tkn::WorkBatcher batch{dev, cb, {
-				alloc.memDevice, alloc.memHost, memStage,
-				alloc.bufDevice, alloc.bufHost, bufStage,
-				dev.descriptorAllocator(),
-			}
-		};
+		tkn::WorkBatcher wb(dev);
+		wb.cb = cb;
 
-		vpp::Init<tkn::Texture> initBrdfLut(batch, tkn::read("brdflut.ktx"));
-		brdfLut_ = initBrdfLut.init(batch);
+		auto initBrdfLut = tkn::createTexture(wb, tkn::loadImage("brdflut.ktx"));
+		brdfLut_ = tkn::initTexture(initBrdfLut, wb);
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -127,10 +122,12 @@ public:
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
-		auto p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+		auto p = tkn::wrapImage({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
 		tkn::TextureCreateParams params;
 		params.format = vk::Format::r8g8b8a8Unorm;
-		dummyTex_ = {batch, std::move(p), params};
+
+		auto initDummyTex = tkn::createTexture(wb, std::move(p));
+		dummyTex_ = tkn::initTexture(initDummyTex, wb);
 
 		// Load scene
 		auto s = out.scale;
@@ -152,40 +149,40 @@ public:
 		auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
 		auto& sc = model.scenes[scene];
 
-		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
+		auto initScene = vpp::InitObject<tkn::Scene>(scene_, wb, path,
 			model, sc, mat, ri);
-		initScene.init(batch, dummyTex_.vkImageView());
+		initScene.init(wb, dummyTex_.vkImageView());
 
-		shadowData_ = tkn::initShadowData(dev, depthFormat(),
+		tkn::initShadowData(shadowData_, dev, depthFormat(),
 			scene_.dsLayout(), multiview_, depthClamp_);
 
 		// view + projection matrix
-		auto cameraBindings = {
+		auto cameraBindings = std::array {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		cameraDsLayout_ = {dev, cameraBindings};
+		cameraDsLayout_.init(dev, cameraBindings);
 
 		tkn::Environment::InitData initEnv;
-		env_.create(initEnv, batch, "convolution.ktx", "irradiance.ktx", sampler_);
+		env_.create(initEnv, wb, "convolution.ktx", "irradiance.ktx", sampler_);
 		env_.createPipe(vkDevice(), cameraDsLayout_, renderPass(), 0u, samples());
-		env_.init(initEnv, batch);
+		env_.init(initEnv, wb);
 
 		// ao
-		auto aoBindings = {
+		auto aoBindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 		};
 
-		aoDsLayout_ = {dev, aoBindings};
+		aoDsLayout_.init(dev, aoBindings);
 
 		// pipeline layout consisting of all ds layouts and pcrs
 		pipeLayout_ = {dev, {{
@@ -238,11 +235,11 @@ public:
 		envCameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
 
 		// example light
-		dirLight_ = {batch, shadowData_};
+		dirLight_ = {wb, shadowData_};
 		dirLight_.data.dir = {5.8f, -12.0f, 4.f};
 		dirLight_.data.color = {5.f, 5.f, 5.f};
 
-		pointLight_ = {batch, shadowData_};
+		pointLight_ = {wb, shadowData_};
 		pointLight_.data.position = {0.f, 5.0f, 0.f};
 		pointLight_.data.radius = 2.f;
 		pointLight_.data.attenuation = {1.f, 0.1f, 0.05f};
@@ -343,7 +340,7 @@ public:
 		adsu.uniform({{{aoUbo_}}});
 		adsu.apply();
 
-		initProbePipe(batch);
+		initProbePipe(wb);
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 
@@ -435,16 +432,16 @@ public:
 		probe_.fb = {dev, fbi};
 
 		// spherical harmonics projection pipeline
-		auto shBindings = {
+		auto shBindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()), // input cubemap
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()), // input cubemap
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute), // output image
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::compute), // ubo, output coords
 		};
 
-		probe_.comp.dsLayout = {dev, shBindings};
+		probe_.comp.dsLayout.init(dev, shBindings);
 
 		vk::PushConstantRange pcr;
 		pcr.size = sizeof(u32);
@@ -1010,20 +1007,6 @@ public:
 	const char* name() const override { return "Lightprobe GI"; }
 
 protected:
-	struct Alloc {
-		vpp::DeviceMemoryAllocator memHost;
-		vpp::DeviceMemoryAllocator memDevice;
-
-		vpp::BufferAllocator bufHost;
-		vpp::BufferAllocator bufDevice;
-
-		Alloc(const vpp::Device& dev) :
-			memHost(dev), memDevice(dev),
-			bufHost(memHost), bufDevice(memDevice) {}
-	};
-
-	std::optional<Alloc> alloc_;
-
 	vpp::Sampler sampler_;
 	vpp::TrDsLayout cameraDsLayout_;
 	vpp::PipelineLayout pipeLayout_;
@@ -1084,7 +1067,7 @@ protected:
 		std::array<Face, 6u> faces;
 	} probe_ {};
 
-	tkn::Texture dummyTex_;
+	vpp::ViewableImage dummyTex_;
 	bool moveLight_ {false};
 
 	bool anisotropy_ {}; // whether device supports anisotropy
@@ -1119,7 +1102,7 @@ protected:
 	bool updateLight_ {true};
 
 	tkn::Environment env_;
-	tkn::Texture brdfLut_;
+	vpp::ViewableImage brdfLut_;
 };
 
 int main(int argc, const char** argv) {

@@ -24,7 +24,7 @@ using tkn::ImageBarrier;
 using tkn::barrier;
 
 struct PassCreateInfo {
-	const tkn::WorkBatcher& wb;
+	tkn::WorkBatcher& wb;
 	vk::Format depthFormat;
 
 	struct {

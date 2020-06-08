@@ -1,5 +1,4 @@
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 
 #include <rvg/shapes.hpp>
 #include <rvg/context.hpp>
@@ -8,11 +7,7 @@
 #include <vui/dat.hpp>
 #include <vui/gui.hpp>
 
-#include <ny/appContext.hpp>
-#include <ny/event.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/key.hpp>
-
+#include <swa/swa.h>
 #include <nytl/vec.hpp>
 #include <dlg/dlg.hpp>
 
@@ -77,7 +72,7 @@ public:
 	nytl::Vec2f massPos() const {
 		float c = std::cos(angle + 0.5 * nytl::constants::pi);
 		float s = std::sin(angle + 0.5 * nytl::constants::pi);
-		return center + screenLength * nytl::Vec2f{c, s};
+		return center + screenLength * nytl::Vec2f{c, -s};
 	}
 
 	void changeCenter(nytl::Vec2f nc) {
@@ -90,12 +85,15 @@ public:
 };
 
 // PendulumApp
-class PendulumApp : public tkn::App {
+class PendulumApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
+
+		rvgInit();
 
 		// pendulum
 		pendulum_ = {rvgContext(), {400, 250}};
@@ -160,7 +158,7 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		rvgContext().bindDefaults(cb);
-		windowTransform().bind(cb);
+		rvgWindowTransform().bind(cb);
 
 		whitePaint_.bind(cb);
 		pendulum_.fixture.fill(cb);
@@ -172,19 +170,18 @@ public:
 		gui().draw(cb);
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		auto center = 0.5f * ev.size;
-		pendulum_.screenLength = std::min(ev.size.x, ev.size.y) * 0.48 - 30;
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
+		auto center = 0.5f * nytl::Vec2ui{w, h};
+		pendulum_.screenLength = std::min(w, h) * 0.48 - 30;
 		pendulum_.changeCenter(center);
 	}
 
 	void update(double dt) override {
-		App::update(dt);
-		App::scheduleRedraw();
+		Base::update(dt);
+		Base::scheduleRedraw();
 
 		// input
-		auto& kc = *appContext().keyboardContext();
 		// float u = xVel_ * std::pow(xFriction_, dt) - xVel_;
 		float u = -xFriction_ * xVel_;
 		auto c = pendulum_.center;
@@ -193,14 +190,14 @@ public:
 			if(c.x < 0.f) {
 				c.x = 0.f;
 				u = -xVel_ / dt;
-			} else if(kc.pressed(ny::Keycode::left)) {
+			} else if(swa_display_key_pressed(swaDisplay(), swa_key_left)) {
 				u -= 5.f;
 			}
 
-			if(c.x > window().size().x) {
-				c.x = window().size().x;
+			if(c.x > windowSize().x) {
+				c.x = windowSize().x;
 				u = -xVel_ / dt;
-			} else if(kc.pressed(ny::Keycode::right)) {
+			} else if(swa_display_key_pressed(swaDisplay(), swa_key_right)) {
 				u += 5.f;
 			}
 		} else {
@@ -245,17 +242,17 @@ public:
 	}
 
 	// NOTE: test messing with gui
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
-		if(ev.pressed && ev.keycode == ny::Keycode::q) {
+		if(ev.pressed && ev.keycode == swa_key_q) {
 			auto& f = panel_->create<vui::dat::Folder>("hidden");
 			f.create<vui::dat::Button>("Create a kitten");
 			f.open(false);
 			tmpWidgets_.push_back(&f);
-		} else if(ev.pressed && ev.keycode == ny::Keycode::c) {
+		} else if(ev.pressed && ev.keycode == swa_key_c) {
 			if(!tmpWidgets_.empty()) {
 				auto w = tmpWidgets_.back();
 				tmpWidgets_.pop_back();
@@ -274,6 +271,7 @@ protected:
 	Pendulum pendulum_;
 	rvg::Paint whitePaint_;
 	rvg::Paint redPaint_;
+	rvg::Transform windowTransform_;
 
 	vui::dat::Panel* panel_ {};
 	vui::dat::Label* angleLabel_ {};

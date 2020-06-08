@@ -12,6 +12,7 @@ void LightScatterPass::create(InitData& data, const PassCreateInfo& info,
 		bool directional) {
 	auto& dev = info.wb.dev;
 	std::array<vk::AttachmentDescription, 1u> attachments;
+	ds_ = {};
 
 	// light scattering output format
 	attachments[0].format = format;
@@ -42,16 +43,16 @@ void LightScatterPass::create(InitData& data, const PassCreateInfo& info,
 	vpp::nameHandle(rp_, "LightScatterPass:rp");
 
 	// pipeline
-	auto scatterBindings = {
+	auto scatterBindings = std::array {
 		vpp::descriptorBinding( // depthTex
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::fragment, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::fragment, &info.samplers.linear),
 		vpp::descriptorBinding( // ubo
 			vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::fragment),
 	};
 
-	dsLayout_ = {dev, scatterBindings};
+	dsLayout_.init(dev, scatterBindings);
 	pipeLayout_ = {dev, {{
 		info.dsLayouts.camera.vkHandle(),
 		dsLayout_.vkHandle(),
@@ -99,7 +100,7 @@ void LightScatterPass::init(InitData& data, const PassCreateInfo&) {
 }
 
 void LightScatterPass::createBuffers(InitBufferData& data,
-		const tkn::WorkBatcher& wb, vk::Extent2D size) {
+		tkn::WorkBatcher& wb, vk::Extent2D size) {
 	auto usage = vk::ImageUsageBits::sampled |
 		vk::ImageUsageBits::colorAttachment;
 	auto info = vpp::ViewableImageCreateInfo(format,

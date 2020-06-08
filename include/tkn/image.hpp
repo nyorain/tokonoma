@@ -77,19 +77,19 @@ public:
 /// Transforms the given image information into an image provider
 /// implementation. The provider will only reference the given data, it
 /// must stay valid until the provider is destroyed.
-std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 	nytl::Span<const std::byte> data);
 
 /// Expects: data.size() == mips * layers, with data for mip m, layer
 /// l at data[m * layer + l].
 /// Will move the given data into the provider.
-std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 	unsigned mips, unsigned layers, nytl::Span<std::unique_ptr<std::byte[]>> data,
 	bool cubemap = false);
 
 /// Expects all mips and layers to be linearly lay out in data, i.e.
 /// like done by vpp's imageOps, see vpp::imageBufferOffset.
-std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 	unsigned mips, unsigned layers, std::unique_ptr<std::byte[]> data,
 	bool cubemap = false);
 
@@ -97,7 +97,7 @@ std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
 /// l at data[m * layer + l].
 /// Alternative to function above, there the provider will only reference the
 /// given data, it must stay valid until the provider is destroyed.
-std::unique_ptr<ImageProvider> wrap(nytl::Vec3ui size, vk::Format format,
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 	unsigned mips, unsigned layers, nytl::Span<const std::byte* const> data,
 	bool cubemap = false);
 
@@ -116,14 +116,14 @@ enum class ReadError {
 /// Backend/Format-specific functions. Create image provider implementations
 /// into the given unique ptr on success. They expect binary streams.
 /// They will move from the given stream only on success.
-ReadError readKtx(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
-ReadError readJpeg(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
-ReadError readPng(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
-ReadError readExr(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&,
+ReadError loadKtx(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
+ReadError loadJpeg(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
+ReadError loadPng(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
+ReadError loadExr(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&,
 	bool forceRGBA = true);
 
 /// STB babckend is a fallback since it supports additional formats.
-std::unique_ptr<ImageProvider> readStb(std::unique_ptr<Stream>&&);
+ReadError loadStb(std::unique_ptr<Stream>&&, std::unique_ptr<ImageProvider>&);
 
 /// Tries to find the matching backend/loader for the image file at the
 /// given path. If no format/backend succeeds, the returned unique ptr will be
@@ -131,16 +131,17 @@ std::unique_ptr<ImageProvider> readStb(std::unique_ptr<Stream>&&);
 /// 'ext' can contain a file extension (e.g. the full filename or just
 /// something like ".png") to give a hint about the file type. The loader
 /// will always try all image formats if the preferred one fails.
-std::unique_ptr<ImageProvider> read(std::unique_ptr<Stream>&&, std::string_view ext = "");
-std::unique_ptr<ImageProvider> read(nytl::StringParam filename);
-std::unique_ptr<ImageProvider> read(File&& file);
-std::unique_ptr<ImageProvider> read(nytl::Span<const std::byte> data);
+std::unique_ptr<ImageProvider> loadImage(std::unique_ptr<Stream>&&, std::string_view ext = "");
+std::unique_ptr<ImageProvider> loadImage(nytl::StringParam filename);
+std::unique_ptr<ImageProvider> loadImage(File&& file);
+std::unique_ptr<ImageProvider> loadImage(nytl::Span<const std::byte> data);
 
 /// Reads multiple images from the given paths and loads them as layers.
 /// All images must have the same number of mip levels, same sizes
 /// and same formats. Will always just consider the first layer from
 /// each image.
-std::unique_ptr<ImageProvider> read(nytl::Span<const char* const> paths, bool cubemap);
+std::unique_ptr<ImageProvider> readImageLayers(nytl::Span<const char* const> paths,
+	bool cubemap = false);
 
 enum class WriteError {
 	none,

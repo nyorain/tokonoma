@@ -14,6 +14,7 @@
 void SSRPass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
+	ds_ = {};
 
 	// work group size spec info
 	ComputeGroupSizeSpec groupSizeSpec(groupDimSize, groupDimSize);
@@ -28,10 +29,10 @@ void SSRPass::create(InitData& data, const PassCreateInfo& info) {
 	auto ssrBindings = {
 		vpp::descriptorBinding( // linear depth
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		vpp::descriptorBinding( // normals
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		vpp::descriptorBinding( // output data
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
@@ -40,7 +41,7 @@ void SSRPass::create(InitData& data, const PassCreateInfo& info) {
 			vk::ShaderStageBits::compute),
 	};
 
-	dsLayout_ = {dev, ssrBindings};
+	dsLayout_.init(dev, ssrBindings);
 	pipeLayout_ = {dev, {{
 		info.dsLayouts.camera.vkHandle(),
 		dsLayout_.vkHandle()
@@ -75,7 +76,7 @@ void SSRPass::init(InitData& data, const PassCreateInfo&) {
 	vpp::nameHandle(ds_, "SSRPass:ds_");
 }
 
-void SSRPass::createBuffers(InitBufferData& data, const tkn::WorkBatcher& wb,
+void SSRPass::createBuffers(InitBufferData& data, tkn::WorkBatcher& wb,
 		vk::Extent2D size) {
 	auto usage = vk::ImageUsageBits::storage |
 		vk::ImageUsageBits::sampled |

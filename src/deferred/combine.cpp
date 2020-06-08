@@ -10,8 +10,9 @@
 void CombinePass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
+	ds_ = {};
 
-	auto combineBindings = {
+	auto combineBindings = std::array {
 		// output
 		vpp::descriptorBinding(
 			vk::DescriptorType::storageImage,
@@ -21,30 +22,30 @@ void CombinePass::create(InitData& data, const PassCreateInfo& info) {
 		// Not sure about fxaa but seems to work with nearest.
 		vpp::descriptorBinding( // output from combine pass
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		// we sample per pixel, nearest should be alright
 		vpp::descriptorBinding( // ssr output
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		// here it's important to use a linear sampler since we upscale
 		vpp::descriptorBinding( // bloom
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::compute, &info.samplers.linear),
 		// depth (for ssr), use nearest sampler as ssr does
 		vpp::descriptorBinding( // depth
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		// light scattering, no guassian blur atm, could use either sampler i
 		// guess?
 		vpp::descriptorBinding( // light scattering
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::compute, &info.samplers.linear),
 		vpp::descriptorBinding( // params ubo
 			vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::compute),
 	};
 
-	dsLayout_ = {dev, combineBindings};
+	dsLayout_.init(dev, combineBindings);
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 	vpp::nameHandle(dsLayout_, "CombinePass:dsLayout_");
 	vpp::nameHandle(pipeLayout_, "CombinePass:pipeLayout_");

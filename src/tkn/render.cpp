@@ -58,8 +58,11 @@ const vk::PipelineColorBlendAttachmentState& defaultBlendAttachment() {
 		vk::BlendFactor::oneMinusSrcAlpha, // dst
 		vk::BlendOp::add,
 		// alpha
-		vk::BlendFactor::one,
-		vk::BlendFactor::zero,
+		// Rationale behind using the dst alpha is that there
+		// is no use in storing the src alpha somewhere, as
+		// we've already processed it via the color blending above.
+		vk::BlendFactor::zero, // src
+		vk::BlendFactor::one, // dst
 		vk::BlendOp::add,
 		// color write mask
 		vk::ColorComponentBits::r |

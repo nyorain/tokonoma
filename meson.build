@@ -58,8 +58,8 @@ warnings = [
 	'-Wundef',
 	'-Wlogical-op',
 
-	# workaround for ny
-	'-Wno-non-virtual-dtor',
+	# for clang
+	'-Wno-missing-braces',
 
 	# woraround for asio
 	'-Wno-undef'

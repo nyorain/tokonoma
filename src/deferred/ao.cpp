@@ -10,41 +10,42 @@
 void AOPass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
+	ds_ = {};
 
-	auto aoBindings = {
+	auto aoBindings = std::array {
 		vpp::descriptorBinding( // target
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding( // albedo
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		vpp::descriptorBinding( // ssao
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		vpp::descriptorBinding( // emission
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		vpp::descriptorBinding( // normal
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		vpp::descriptorBinding( // linear depth
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.nearest),
+			vk::ShaderStageBits::compute, &info.samplers.nearest),
 		vpp::descriptorBinding( // irradiance
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::compute, &info.samplers.linear),
 		vpp::descriptorBinding( // envMap
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::compute, &info.samplers.linear),
 		vpp::descriptorBinding( // brdflut
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::compute, &info.samplers.linear),
 		vpp::descriptorBinding( // ubo
 			vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::compute),
 	};
 
-	dsLayout_ = {dev, aoBindings};
+	dsLayout_.init(dev, aoBindings);
 	ds_ = {data.initDs, wb.alloc.ds, dsLayout_};
 
 	vk::PushConstantRange pcr;

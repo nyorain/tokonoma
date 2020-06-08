@@ -249,7 +249,7 @@ std::ostream& operator<<(std::ostream& os, const KtxHeader& header) {
 	return os;
 }
 
-ReadError readKtx(std::unique_ptr<Stream>&& stream, KtxReader& reader) {
+ReadError loadKtx(std::unique_ptr<Stream>&& stream, KtxReader& reader) {
 	std::array<u8, 12> identifier;
 	if(!stream->readPartial(identifier)) {
 		dlg_debug("KTX can't read identifier");
@@ -361,10 +361,10 @@ ReadError readKtx(std::unique_ptr<Stream>&& stream, KtxReader& reader) {
 	return ReadError::none;
 }
 
-ReadError readKtx(std::unique_ptr<Stream>&& stream,
+ReadError loadKtx(std::unique_ptr<Stream>&& stream,
 		std::unique_ptr<ImageProvider>& ret) {
 	auto reader = std::make_unique<KtxReader>();
-	auto res = readKtx(std::move(stream), *reader);
+	auto res = loadKtx(std::move(stream), *reader);
 	if(res == ReadError::none) {
 		ret = std::move(reader);
 	}

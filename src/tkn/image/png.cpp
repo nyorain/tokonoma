@@ -76,7 +76,7 @@ void readPngDataFromStream(png_structp png_ptr, png_bytep outBytes,
 	dlg_assert(res == i64(byteCountToRead));
 }
 
-ReadError readPng(std::unique_ptr<Stream>&& stream, PngReader& reader) {
+ReadError loadPng(std::unique_ptr<Stream>&& stream, PngReader& reader) {
 	unsigned char sig[8];
 	if(!stream->readPartial(sig)) {
 		return ReadError::unexpectedEnd;
@@ -142,10 +142,10 @@ ReadError readPng(std::unique_ptr<Stream>&& stream, PngReader& reader) {
 	return ReadError::none;
 }
 
-ReadError readPng(std::unique_ptr<Stream>&& stream,
+ReadError loadPng(std::unique_ptr<Stream>&& stream,
 		std::unique_ptr<ImageProvider>& ret) {
 	auto reader = std::make_unique<PngReader>();
-	auto err = readPng(std::move(stream), *reader);
+	auto err = loadPng(std::move(stream), *reader);
 	if(err == ReadError::none) {
 		ret = std::move(reader);
 	}

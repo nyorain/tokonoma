@@ -1,6 +1,6 @@
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/features.hpp>
 #include <tkn/transform.hpp>
 
 #include <vpp/pipeline.hpp>
@@ -16,8 +16,7 @@
 #include <nytl/vecOps.hpp>
 #include <nytl/stringParam.hpp>
 
-#include <ny/mouseButton.hpp>
-#include <ny/key.hpp>
+#include <swa/swa.h>
 #include <vui/dat.hpp>
 #include <vui/gui.hpp>
 
@@ -32,6 +31,7 @@
 #include <fstream>
 
 // TODO: this whole project is broken atm, fix it!
+// TODO: use LevelView
 
 // TODO: ensure correct memory barriers
 class PredPrey : public Automaton {
@@ -72,8 +72,8 @@ protected:
 	vui::dat::Folder* field_;
 	vui::dat::Textfield* preyField_;
 	vui::dat::Textfield* predField_;
-	std::uint8_t oldPrey_ {};
-	std::uint8_t oldPred_ {};
+	float oldPrey_ {};
+	float oldPred_ {};
 	bool uploadField_ {};
 };
 
@@ -82,7 +82,7 @@ PredPrey::PredPrey(vpp::Device& dev, vk::RenderPass rp) {
 }
 
 void PredPrey::init(vpp::Device& dev, vk::RenderPass rp) {
-	auto size = nytl::Vec2ui {256, 256};
+	auto size = nytl::Vec2ui {4 * 256, 4 * 256};
 	Automaton::init(dev, rp, automaton_predprey_comp_data, size,
 		BufferMode::doubled, vk::Format::r32g32Sfloat,
 		{}, {}, {}, GridType::hex);
@@ -230,8 +230,18 @@ std::pair<bool, vk::Semaphore> PredPrey::updateDevice() {
 		auto x = tkn::read<float>(span);
 		auto y = tkn::read<float>(span);
 		if(x != oldPrey_ || y != oldPred_) {
-			preyField_->textfield().utf8(std::to_string(x));
-			predField_->textfield().utf8(std::to_string(y));
+			auto& gui = preyField_->gui();
+
+			// we don't update the content if they are focused to
+			// allow writing. NOTE: this would be easier if the automaton
+			// has knowledge about whether simulation is stopped or not.
+			if(gui.focus() != &preyField_->textfield()) {
+				preyField_->textfield().utf8(std::to_string(x));
+			}
+			if(gui.focus() != &predField_->textfield()) {
+				predField_->textfield().utf8(std::to_string(y));
+			}
+
 			oldPrey_ = x;
 			oldPred_ = y;
 		}
@@ -272,9 +282,14 @@ void PredPrey::update(double delta) {
 	if(uploadField_ && selected_) {
 		uploadField_ = false;
 		try {
-			std::uint8_t x = std::stof(std::string(preyField_->textfield().utf8()));
-			std::uint8_t y = std::stof(std::string(predField_->textfield().utf8()));
-			set(*selected_, {std::byte{x}, std::byte{y}});
+			float x = std::stof(std::string(preyField_->textfield().utf8()));
+			float y = std::stof(std::string(predField_->textfield().utf8()));
+
+			std::vector<std::byte> data(8);
+			std::memcpy(data.data() + 0u, &x, sizeof(float));
+			std::memcpy(data.data() + 4u, &y, sizeof(float));
+
+			set(*selected_, std::move(data));
 		} catch(const std::exception& err) {
 			dlg_error("Invalid float. '{}'", err.what());
 		}
@@ -337,6 +352,7 @@ void Ant::compDsLayout(std::vector<vk::DescriptorSetLayoutBinding>& bindings) {
 	Automaton::compDsLayout(bindings);
 }
 
+// TODO
 class GameOfLife : public Automaton {
 protected:
 	struct {
@@ -356,14 +372,16 @@ protected:
 	} params_;
 };
 
-class AutomatonApp : public tkn::App {
+class AutomatonApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
-		automaton_.init(vulkanDevice(), renderPass());
+		rvgInit();
+		automaton_.init(vkDevice(), renderPass());
 
 		mat_ = nytl::identity<4, float>();
 		automaton_.transform(mat_);
@@ -377,7 +395,7 @@ public:
 	}
 
 	bool features(tkn::Features& enable, const tkn::Features& supported) override {
-		if(!App::features(enable, supported)) {
+		if(!Base::features(enable, supported)) {
 			return false;
 		}
 
@@ -395,6 +413,7 @@ public:
 		// TODO: possible to do this without rerecord every time?
 		// maybe record compute into different command buffer and submit
 		// that dynamically?
+		// nah, probably best to just use dynamic dispatch in automaon_
 		if(!paused_ || oneStep_) {
 			automaton_.compute(cb);
 		}
@@ -408,27 +427,30 @@ public:
 	void update(double delta) override {
 		if(oneStep_) {
 			oneStep_ = false;
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		}
 
-		App::update(delta);
+		Base::update(delta);
 		automaton_.update(delta);
 
 		// TODO: we sometimes need this even when paused
 		if(!paused_) {
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
 	}
 
-	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
-		if(App::mouseWheel(ev)) {
+	bool mouseWheel(float dx, float dy) override {
+		if(Base::mouseWheel(dx, dy)) {
 			return true;
 		}
 
 		using namespace nytl::vec::cw::operators;
 
-		auto s = std::pow(1.05f, ev.value.y);
-		auto n = nytl::Vec2f(ev.position) / window().size();
+		int mx, my;
+		swa_display_mouse_position(swaDisplay(), &mx, &my);
+
+		auto s = std::pow(1.05f, dy);
+		auto n = nytl::Vec2f{float(mx), float(my)} / windowSize();
 		auto d = 2 * nytl::Vec2f{n.x - 0.5f, n.y - 0.5f};
 
 		tkn::translate(mat_, -d);
@@ -436,15 +458,15 @@ public:
 		tkn::translate(mat_, d);
 
 		automaton_.transform(mat_);
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 		return true;
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 		auto [rec, sem] = automaton_.updateDevice();
 		if(rec) {
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		}
 
 		if(sem) {
@@ -452,12 +474,12 @@ public:
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			mouseDown_ = ev.pressed;
 
 			if(!ev.pressed && !dragAdded_) {
@@ -469,11 +491,11 @@ public:
 				i[1][3] /= -mat_[1][1];
 
 				using namespace nytl::vec::cw::operators;
-				auto p = nytl::Vec2f(ev.position) / window().size();
+				auto p = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
 				p = 2 * p - nytl::Vec2f {1.f, 1.f};
 				auto world = nytl::Vec2f(i * nytl::Vec4f{p.x, p.y, 0.f, 1.f});
 				automaton_.worldClick(world);
-				App::scheduleRedraw();
+				Base::scheduleRedraw();
 			}
 
 			dragged_ = {};
@@ -484,14 +506,14 @@ public:
 		return false;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		if(!mouseDown_) {
 			return;
 		}
 
 		constexpr auto thresh = 16.f;
-		auto delta = nytl::Vec2f(ev.delta);
+		auto delta = nytl::Vec2f{float(ev.dx), float(ev.dy)};
 		dragged_ += delta;
 		if(!dragAdded_ && dot(dragged_, dragged_) > thresh) {
 			dragAdded_ = true;
@@ -499,36 +521,35 @@ public:
 		}
 
 		using namespace nytl::vec::cw::operators;
-		auto normed = 2 * delta / window().size();
+		auto normed = 2 * delta / windowSize();
 
 		tkn::translate(mat_, normed);
 		automaton_.transform(mat_);
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		auto fac = (float(ev.size.y) / ev.size.x);
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
+		auto fac = (float(h) / w);
 		mat_[0][0] *= fac / facOld_;
 		facOld_ = fac;
 		automaton_.transform(mat_);
-
-		App::resize(ev);
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
-		if(ev.pressed && ev.keycode == ny::Keycode::p) {
+		if(ev.pressed && ev.keycode == swa_key_p) {
 			paused_ ^= true;
-			App::scheduleRerecord();
-		} else if(paused_ && ev.pressed && ev.keycode == ny::Keycode::n) {
+			Base::scheduleRerecord();
+		} else if(paused_ && ev.pressed && ev.keycode == swa_key_n) {
 			oneStep_ = true;
-			App::scheduleRerecord();
-		} else if(ev.pressed && ev.keycode == ny::Keycode::l) {
+			Base::scheduleRerecord();
+		} else if(ev.pressed && ev.keycode == swa_key_l) {
 			automaton_.hexLines(!automaton_.hexLines());
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		} else {
 			return false;
 		}
@@ -540,7 +561,7 @@ public:
 
 protected:
 	float facOld_ {1.f};
-	bool paused_ {};
+	bool paused_ {true};
 	bool oneStep_ {};
 	nytl::Mat4f mat_;
 	PredPrey automaton_;
@@ -552,10 +573,5 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	AutomatonApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<AutomatonApp>(argc, argv);
 }

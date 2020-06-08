@@ -12,16 +12,20 @@ void BloomPass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
 
+	filter_.ds = {};
+	tmpLevels_.clear();
+	targetLevels_.clear();
+
 	// work group size spec info
 	ComputeGroupSizeSpec groupSizeSpec(groupDimSize, groupDimSize);
 
 	// filter
-	auto filterBindings = {
+	auto filterBindings = std::array {
 		// important to use linear sampler here, since we implicitly downscale
 		// the light buffer
 		vpp::descriptorBinding( // input light buffer
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::compute, &info.samplers.linear),
 		vpp::descriptorBinding( // output color
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
@@ -30,7 +34,7 @@ void BloomPass::create(InitData& data, const PassCreateInfo& info) {
 			vk::ShaderStageBits::compute)
 	};
 
-	filter_.dsLayout = {dev, filterBindings};
+	filter_.dsLayout.init(dev, filterBindings);
 	filter_.pipeLayout = {dev, {{filter_.dsLayout.vkHandle()}}, {}};
 	vpp::nameHandle(filter_.dsLayout, "BloomPass:filter_.dsLayout");
 	vpp::nameHandle(filter_.pipeLayout, "BloomPass:filter_.pipeLayout");
@@ -48,12 +52,12 @@ void BloomPass::create(InitData& data, const PassCreateInfo& info) {
 	vpp::nameHandle(filter_.pipe, "BloomPass:filter_.pipe");
 
 	// blur
-	auto blurBindings = {
+	auto blurBindings = std::array {
 		// important to use linear sampler here, our shader is optimized,
 		// reads multiple pixels in a single fetch via linear sampling
 		vpp::descriptorBinding( // input color
 			vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &info.samplers.linear),
+			vk::ShaderStageBits::compute, &info.samplers.linear),
 		vpp::descriptorBinding( // output color, blurred
 			vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute)
@@ -63,7 +67,7 @@ void BloomPass::create(InitData& data, const PassCreateInfo& info) {
 	pcr.size = 4;
 	pcr.stageFlags = vk::ShaderStageBits::compute;
 
-	blur_.dsLayout = {dev, blurBindings};
+	blur_.dsLayout.init(dev, blurBindings);
 	blur_.pipeLayout = {dev, {{blur_.dsLayout.vkHandle()}}, {{pcr}}};
 	vpp::nameHandle(blur_.dsLayout, "BloomPass:blur_.dsLayout");
 	vpp::nameHandle(blur_.pipeLayout, "BloomPass:blur_.pipeLayout");
@@ -113,7 +117,7 @@ void BloomPass::init(InitData& data, const PassCreateInfo&) {
 	}
 }
 
-void BloomPass::createBuffers(InitBufferData& data, const tkn::WorkBatcher& wb,
+void BloomPass::createBuffers(InitBufferData& data, tkn::WorkBatcher& wb,
 		const vk::Extent2D& size) {
 	auto& dev = wb.dev;
 	auto usage = vk::ImageUsageBits::storage |

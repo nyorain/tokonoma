@@ -28,6 +28,7 @@
 #include <rvg/context.hpp>
 
 #include <unordered_map>
+#include <array>
 
 #include <shaders/volume.volume.vert.h>
 #include <shaders/volume.volume.frag.h>
@@ -339,12 +340,12 @@ public:
 
 		rvgInit();
 		auto& dev = vkDevice();
-		auto bindings = {
+		auto bindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment)
 		};
 
-		dsLayout_ = {dev, bindings};
+		dsLayout_.init(dev, bindings);
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 
 		vpp::ShaderModule vertShader{dev, volume_volume_vert_data};

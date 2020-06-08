@@ -33,7 +33,7 @@ inline namespace app2 {
 class App {
 public:
 	App();
-	~App();
+	virtual ~App();
 
 	App(App&&) = delete;
 	App& operator=(App&&) = delete;

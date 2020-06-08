@@ -48,6 +48,8 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 	auto& wb = info.wb;
 	auto& dev = wb.dev;
 	extract_.rp = {}; // reset
+	extract_.ds = {};
+	mip_.levels.clear();
 
 	// test if r16f can be used as storage image. Supported on pretty
 	// much all desktop systems.
@@ -86,14 +88,14 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		vpp::nameHandle(extract_.rp, "LuminancePass:extract_.rp");
 
 		// pipeline
-		auto extractBindings = {
+		auto extractBindings = std::array {
 			// nearest sampler since we don't interpolate
 			vpp::descriptorBinding( // input light tex
 				vk::DescriptorType::combinedImageSampler,
-				stage, -1, 1, &info.samplers.nearest),
+				stage, &info.samplers.nearest),
 		};
 
-		extract_.dsLayout = {dev, extractBindings};
+		extract_.dsLayout.init(dev, extractBindings);
 		vk::PushConstantRange pcr;
 		pcr.size = sizeof(nytl::Vec3f);
 		pcr.stageFlags = stage;
@@ -118,11 +120,11 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 			// nearest sampler since we don't interpolate
 			vpp::descriptorBinding( // input light tex
 				vk::DescriptorType::combinedImageSampler,
-				stage, -1, 1, &info.samplers.nearest),
+				stage, &info.samplers.nearest),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage, stage),
 		};
 
-		extract_.dsLayout = {dev, extractBindings};
+		extract_.dsLayout.init(dev, extractBindings);
 		vk::PushConstantRange pcr;
 		pcr.size = sizeof(nytl::Vec3f);
 		pcr.stageFlags = stage;
@@ -153,10 +155,10 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		// mip pipe
 		auto mipBindings = {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				stage, -1, 1, &mip_.sampler.vkHandle()),
+				stage, &mip_.sampler.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage, stage),
 		};
-		mip_.dsLayout = {dev, mipBindings};
+		mip_.dsLayout.init(dev, mipBindings);
 		pcr.size = sizeof(nytl::Vec2u32);
 		mip_.pipeLayout = {dev, {{mip_.dsLayout.vkHandle()}}, {{pcr}}};
 
@@ -213,7 +215,7 @@ void LuminancePass::init(InitData& data, const PassCreateInfo&) {
 }
 
 void LuminancePass::createBuffers(InitBufferData& data,
-		const tkn::WorkBatcher& wb, vk::Extent2D size) {
+		tkn::WorkBatcher& wb, vk::Extent2D size) {
 	auto mem = wb.dev.deviceMemoryTypes();
 	auto info = targetInfo(size, usingCompute()).img;
 	auto levelCount = vpp::mipmapLevels(size); // full mip chain

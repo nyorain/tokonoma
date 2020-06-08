@@ -20,6 +20,11 @@
 // - support for deep images?
 // TODO: remove unneeded high-level functions from tinyexr.
 //   should reduce it by quite some size.
+// TODO: add 'class ExrReader : ImageProvider'. Make it a public
+//   interface. This can supply additional attributes, channels,
+//   allow loading deep images. Then we can also use the StreamMemoryMap
+//   optimization instead of always reading the whole image,
+//   should help performance a lot.
 
 // technical source/specificiation:
 //   https://www.openexr.com/documentation/TechnicalIntroduction.pdf
@@ -93,7 +98,7 @@ vk::Format parseFormat(const std::array<u32, 4>& mapping, int exrPixelType,
 	}
 }
 
-ReadError readExr(std::unique_ptr<Stream>&& stream,
+ReadError loadExr(std::unique_ptr<Stream>&& stream,
 		std::unique_ptr<ImageProvider>& provider, bool forceRGBA) {
 	dlg_debug("== Loading EXR image ==");
 
@@ -394,7 +399,8 @@ ReadError readExr(std::unique_ptr<Stream>&& stream,
 	}
 
 	dlg_debug("== EXR image loading success ==");
-	provider = wrap({width, height, 1u}, format, mips.size(), layers.size(), std::move(interlaced));
+	provider = wrapImage({width, height, 1u}, format, mips.size(), layers.size(),
+		std::move(interlaced));
 	return provider ? ReadError::none : ReadError::internal;
 }
 
