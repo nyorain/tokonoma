@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <nytl/vec.hpp>
 #include <nytl/mat.hpp>
 

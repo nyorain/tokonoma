@@ -56,13 +56,14 @@ bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 // FPS
 FPCamCon FPCamCon::fromOrientation(const Quaternion& q) {
 	auto [yaw, pitch, roll] = eulerAngles(q, RotationSequence::yxz);
-	dlg_assertlm(dlg_level_warn, std::abs(roll) < 0.05,
-		"Disregarding non-zero roll in conversion to FPCamCon yaw/pitch");
-	return {float(yaw), float(pitch)};
+	// dlg_assertlm(dlg_level_warn, std::abs(roll) < 0.05,
+	// 	"Disregarding non-zero roll in conversion to FPCamCon yaw/pitch");
+	return {float(yaw), float(pitch), float(roll)};
 }
 
 bool mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
 		Vec2i delta, const FPCamControls& controls) {
+	auto res = false;
 	using nytl::constants::pi;
 	if(controls.rotateButton == swa_mouse_button_none ||
 			swa_display_mouse_button_pressed(dpy, controls.rotateButton)) {
@@ -75,15 +76,32 @@ bool mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
 			con.pitch = std::clamp<float>(con.pitch, -pi / 2 + e, pi / 2 - e);
 		}
 
-		// cam.rot = Quaternion::eulerAngle(con.pitch, con.yaw, 0.f);
-		// cam.rot = Quaternion::taitBryan(-con.yaw, 0.f, 0.f) * Quaternion::taitBryan(0.f, -con.pitch, 0.f);
-		cam.rot = Quaternion::yxz(con.yaw, con.pitch, 0.f);
-		// cam.rot = Quaternion::axisAngle(1, 0, 0, con.pitch) * Quaternion::axisAngle(0, 1, 0, con.yaw);
+		cam.rot = Quaternion::yxz(con.yaw, con.pitch, con.roll);
+
+		// attempt to make rotations rotate around an axis respecting
+		// the roll. Not better though.
+		// cam.rot =
+		// 	Quaternion::axisAngle(0, 0, 1, con.roll) *
+		// 	Quaternion::axisAngle(0, 1, 0, con.yaw) *
+		// 	Quaternion::axisAngle(1, 0, 0, con.pitch);
 		cam.update = true;
-		return true;
+		res = true;
 	}
 
-	return false;
+	if(controls.rollButton != swa_mouse_button_none &&
+			swa_display_mouse_button_pressed(dpy, controls.rollButton)) {
+		con.roll = std::fmod(con.roll + controls.rollFac * delta.x, 2 * pi);
+		cam.rot = Quaternion::yxz(con.yaw, con.pitch, con.roll);
+		// cam.rot =
+		// 	Quaternion::axisAngle(0, 0, 1, con.roll) *
+		// 	Quaternion::axisAngle(0, 1, 0, con.yaw) *
+		// 	Quaternion::axisAngle(1, 0, 0, con.pitch);
+
+		cam.update = true;
+		res = true;
+	}
+
+	return res;
 }
 
 // Arcball
@@ -152,7 +170,7 @@ void mouseWheelZoom(Camera& cam, ArcballCamCon& arc, float delta, float zoomFac)
 bool checkMovement(Camera& c, swa_display* dpy, float dt,
 		const CamMoveControls& params) {
 
-	auto fac = dt;
+	auto fac = params.mult * dt;
 	if(swa_display_active_keyboard_mods(dpy) & params.fastMod) {
 		fac *= params.fastMult;
 	}

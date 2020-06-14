@@ -504,6 +504,10 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 	auto& b1 = barriers[1];
 
 	b0.image = data.target;
+	// TODO: when we support filling in just a part of the image,
+	// we have to change this and know the actual current layout.
+	// Transitioning from ImageLayout::undefined always works but might
+	// discard the contents
 	b0.oldLayout = vk::ImageLayout::undefined;
 	b0.srcAccessMask = {};
 	b0.newLayout = vk::ImageLayout::transferDstOptimal;

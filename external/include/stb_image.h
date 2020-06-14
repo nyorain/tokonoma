@@ -6503,13 +6503,13 @@ static stbi_uc *stbi__process_gif_raster(stbi__context *s, stbi__gif *g)
 static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, int req_comp, stbi_uc *two_back)
 {
    int dispose;
-   int first_frame;
+   // int first_frame;
    int pi;
    int pcount;
    STBI_NOTUSED(req_comp);
 
    // on first frame, any non-written pixels get the background colour (non-transparent)
-   first_frame = 0;
+   // first_frame = 0;
    if (g->out == 0) {
       if (!stbi__gif_header(s, g, comp,0)) return 0; // stbi__g_failure_reason set by stbi__gif_header
       if (!stbi__mad3sizes_valid(4, g->w, g->h, 0))
@@ -6527,7 +6527,7 @@ static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, i
       memset(g->out, 0x00, 4 * pcount);
       memset(g->background, 0x00, 4 * pcount); // state of the background (starts transparent)
       memset(g->history, 0x00, pcount);        // pixels that were affected previous frame
-      first_frame = 1;
+      // first_frame = 1;
    } else {
       // second frame - how do we dispoase of the previous one?
       dispose = (g->eflags & 0x1C) >> 2;

@@ -41,11 +41,11 @@ void ControlledCamera::useControl(ControlType ctrl) {
 	}
 }
 
-nytl::Mat4f ControlledCamera::viewMatrix() {
+nytl::Mat4f ControlledCamera::viewMatrix() const {
 	return tkn::viewMatrix(camera_);
 }
 
-nytl::Mat4f ControlledCamera::projectionMatrix() {
+nytl::Mat4f ControlledCamera::projectionMatrix() const {
 	nytl::Mat4f proj = std::visit(Visitor{
 		[&](const Perspective& p) {
 			dlg_assert(p.aspect != 0.f);
@@ -80,15 +80,15 @@ nytl::Mat4f ControlledCamera::projectionMatrix() {
 	return proj;
 }
 
-nytl::Mat4f ControlledCamera::viewProjectionMatrix() {
+nytl::Mat4f ControlledCamera::viewProjectionMatrix() const {
 	return projectionMatrix() * viewMatrix();
 }
 
-nytl::Mat4f ControlledCamera::fixedViewMatrix() {
+nytl::Mat4f ControlledCamera::fixedViewMatrix() const {
 	return tkn::fixedViewMatrix(camera());
 }
 
-nytl::Mat4f ControlledCamera::fixedViewProjectionMatrix() {
+nytl::Mat4f ControlledCamera::fixedViewProjectionMatrix() const {
 	return projectionMatrix() * fixedViewMatrix();
 }
 

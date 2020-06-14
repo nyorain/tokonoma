@@ -66,12 +66,13 @@ extern const float illumBlue[nSamples];
 
 } // namespace rgb2Spect
 
-float spectrumAverage(const float* lambda, const float* vals, int n,
+float spectrumAverage(const float* lambda, const float* vals, unsigned n,
         float lambdaStart, float lambdaEnd) {
 	dlg_check({
+		dlg_assert(n > 0);
     	dlg_assert(lambdaStart <= lambdaEnd);
-    	for(int i = 0; i < n - 1; ++i) {
-			dlg_assert(lambda[i + 1] > lambda[i]);
+    	for(auto i = 0u; i < n - 1; ++i) {
+			dlg_assertm(lambda[i + 1] > lambda[i], "Samples not sorted");
 		}
 	});
 
@@ -94,7 +95,7 @@ float spectrumAverage(const float* lambda, const float* vals, int n,
 	}
 
     // Advance to first relevant wavelength segment
-    int i = std::lower_bound(lambda, lambda + n, lambdaStart) - lambda;
+    auto i = std::lower_bound(lambda, lambda + n, lambdaStart) - lambda;
     dlg_assert(i < n);
 	i = i > 0 ? i - 1 : 0;
 
@@ -121,11 +122,59 @@ float spectrumAverage(const float* lambda, const float* vals, int n,
     return sum / (lambdaEnd - lambdaStart);
 }
 
+float spectrumAverage(const float* vals, unsigned n,
+		float srcStart, float srcEnd,
+        float avgStart, float avgEnd) {
+	dlg_assert(n > 0);
+
+    // Handle cases with out-of-bounds range or single sample only
+    if(avgEnd <= srcStart) {
+		return vals[0];
+	} else if(avgStart >= srcEnd) {
+		return vals[n - 1];
+	} else if(n == 1) {
+		return vals[0];
+	}
+
+    // Add contributions of constant segments before/after samples
+    float sum = 0;
+    if(avgStart < srcStart) {
+		sum += vals[0] * (srcStart - avgStart);
+	}
+    if(avgEnd > srcEnd) {
+        sum += vals[n - 1] * (avgEnd - srcEnd);
+	}
+
+    // Advance to first relevant wavelength segment
+	auto srcStep = (srcEnd - srcStart) / n;
+	unsigned i = std::floor((avgStart - srcStart) / srcStep);
+
+    // Loop over wavelength sample segments and add contributions
+	auto lambda = [srcStep, n](unsigned i) {
+		dlg_assert(i < n);
+		return i * srcStep;
+	};
+
+    auto interp = [lambda, vals](float w, int i) {
+        return nytl::mix(vals[i], vals[i + 1],
+			(w - lambda(i)) / (lambda(i + 1) - lambda(i)));
+    };
+
+    for(; i + 1 < n && avgEnd >= lambda(i); ++i) {
+        float segLambdaStart = std::max(avgStart, lambda(i));
+        float segLambdaEnd = std::min(avgEnd, lambda(i + 1));
+        sum += 0.5 * (interp(segLambdaStart, i) + interp(segLambdaEnd, i)) *
+               (segLambdaEnd - segLambdaStart);
+    }
+
+    return sum / (avgEnd - avgStart);
+}
+
 // https://en.wikipedia.org/wiki/Planck%27s_law
 float planck(float temp, float wavelength) {
 	constexpr auto c = 299792458; // speed of light
-	constexpr auto h = 6.62607015e−34; // planck constant
-	constexpr auto kb = 1.380649e−23; // boltzman constant
+	constexpr auto h = 6.62607015e-34; // planck constant
+	constexpr auto kb = 1.380649e-23; // boltzman constant
 
 	if(temp <= 0) {
 		return 0.f;
@@ -211,12 +260,25 @@ nytl::Vec3f blackbodyApproxRGB(float temp) {
 
 
 SpectralColor SpectralColor::fromSamples(const float* lambda,
-		const float* vals, int n) {
+		const float* vals, unsigned n) {
 	SpectralColor out;
 	for(auto i = 0u; i < nSpectralSamples; ++i) {
 		auto low = wavelength(i + 0);
 		auto high = wavelength(i + 1);
 		out.samples[i] = spectrumAverage(lambda, vals, n, low, high);
+	}
+
+	return out;
+}
+
+SpectralColor SpectralColor::fromSamples(const float* vals, unsigned n,
+		float lambdaMin, float lambdaMax) {
+	SpectralColor out;
+	for(auto i = 0u; i < nSpectralSamples; ++i) {
+		auto low = wavelength(i + 0);
+		auto high = wavelength(i + 1);
+		out.samples[i] = spectrumAverage(vals, n,
+			lambdaMin, lambdaMax, low, high);
 	}
 
 	return out;

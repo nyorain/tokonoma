@@ -12,6 +12,7 @@
 #include <array>
 #include <numeric>
 #include <deque>
+#include <vector>
 
 namespace tkn {
 

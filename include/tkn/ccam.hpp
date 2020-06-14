@@ -99,12 +99,12 @@ public:
 		const Perspective& = defaultPerspective);
 	explicit ControlledCamera(ControlType, const Orthographic&);
 
-	nytl::Mat4f viewMatrix();
-	nytl::Mat4f projectionMatrix();
-	nytl::Mat4f viewProjectionMatrix(); // projection * view
+	nytl::Mat4f viewMatrix() const;
+	nytl::Mat4f projectionMatrix() const;
+	nytl::Mat4f viewProjectionMatrix() const; // projection * view
 
-	nytl::Mat4f fixedViewMatrix(); // view matrix without translation
-	nytl::Mat4f fixedViewProjectionMatrix(); // projection * fixedView
+	nytl::Mat4f fixedViewMatrix() const; // view matrix without translation
+	nytl::Mat4f fixedViewProjectionMatrix() const; // projection * fixedView
 
 	// - view -
 	void position(nytl::Vec3f pos);

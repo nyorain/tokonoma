@@ -75,8 +75,8 @@ vec3 cookTorrance(vec3 n, vec3 l, vec3 v, float roughness,
 }
 
 
-// low discrepancy sequence
-vec2 hammersley(uint i, uint N) {
+// low discrepancy sequence over hemisphere
+vec2 hammersley(uint i, uint N) { 
 	// radical inverse based on
 	// http://holger.dammertz.org/stuff/notes_HammersleyOnHemisphere.html
 	uint bits = (i << 16u) | (i >> 16u);

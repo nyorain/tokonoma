@@ -28,12 +28,12 @@ float mapGamma(float g) {
 }
 
 float random(vec2 v) {
-    float a = 43758.5453;
-    float b = 12.9898;
-    float c = 78.233;
-    float dt = dot(v, vec2(b, c));
-    float sn = mod(dt, 3.14);
-    return fract(sin(sn) * a);
+	float a = 43758.5453;
+	float b = 12.9898;
+	float c = 78.233;
+	float dt = dot(v, vec2(b, c));
+	float sn = mod(dt, 3.14);
+	return fract(sin(sn) * a);
 }
 
 vec3 evalSky(vec3 dir) {
@@ -41,8 +41,8 @@ vec3 evalSky(vec3 dir) {
 	float cosTheta = dir.y;
 	float cosGamma = dot(ubo.toSun, dir);
 
-    float t = 0.5f * (cosTheta + 1);
-    float g = mapGamma(cosGamma);
+	float t = 0.5f * (cosTheta + 1);
+	float g = mapGamma(cosGamma);
 
 	vec3 F = texture(tableF, vec2(t, r)).rgb;
 	vec3 G = texture(tableG, vec2(g, r)).rgb;

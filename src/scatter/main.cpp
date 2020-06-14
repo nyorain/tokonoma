@@ -46,6 +46,10 @@
 // - correctly resolve the dithering (4x4 blurs? maybe just use
 //   a really small gaussian pass?) instead of the current
 //   hack-mess in pp.frag
+// - we cannot really do correct transmission with the way we
+//   currently render the lights. Instead one box per light,
+//   we should simply use a fullscreen shader that integrates a scene
+//   ray per pixel *for all lights at once*.
 
 using namespace tkn::types;
 

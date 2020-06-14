@@ -4,6 +4,9 @@
 #include <nytl/vecOps.hpp>
 #include <nytl/matOps.hpp>
 #include <nytl/math.hpp>
+#include <cstdint>
+#include <type_traits>
+#include <utility>
 
 namespace tkn::glsl {
 
@@ -37,13 +40,29 @@ using std::min;
 using std::max;
 using std::clamp;
 
-using namespace nytl::vec::operators;
 using namespace nytl::vec::cw;
-using namespace nytl::vec::cw::operators;
+using nytl::vec::operators::operator*;
+using nytl::vec::operators::operator/;
+using nytl::vec::cw::operators::operator*;
+using nytl::vec::cw::operators::operator/;
+using nytl::vec::cw::operators::operator*=;
+using nytl::vec::cw::operators::operator/=;
+using nytl::vec::cw::operators::operator+;
+using nytl::vec::cw::operators::operator-;
 
-using vec2 = nytl::Vec2f;
-using vec3 = nytl::Vec3f;
-using vec4 = nytl::Vec3f;
+using uint = std::uint32_t;
+
+using vec2 = nytl::Vec<2, float>;
+using vec3 = nytl::Vec<3, float>;
+using vec4 = nytl::Vec<4, float>;
+
+using uvec2 = nytl::Vec<2, uint>;
+using uvec3 = nytl::Vec<3, uint>;
+using uvec4 = nytl::Vec<4, uint>;
+
+using ivec2 = nytl::Vec<2, int>;
+using ivec3 = nytl::Vec<3, int>;
+using ivec4 = nytl::Vec<4, int>;
 
 using mat2 = nytl::Mat2f;
 using mat3 = nytl::Mat3f;

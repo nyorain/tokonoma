@@ -98,7 +98,12 @@ struct SpectralColor : SampledSpectrum<nSpectralSamples> {
 	// with the associated wavelengths 'lambda'. The sample wavelengths
 	// (i.e. lambda) must be sorted.
 	[[nodiscard]] static SpectralColor fromSamples(const float* lambda,
-		const float* vals, int n);
+		const float* vals, unsigned n);
+
+	// As above, but instead of a separate array with wavelengths,
+	// assumes n equidistant samples between lambdaMin and lambdaMax.
+	[[nodiscard]] static SpectralColor fromSamples(const float* vals,
+		unsigned n, float lambdaMin, float lambdaMax);
 
 	// The i-th sample covers range [wavelength(i), wavelength(i + 1)]
 	[[nodiscard]] static float wavelength(unsigned i) {
@@ -121,7 +126,12 @@ nytl::Vec3f blackbodyApprox(float kelvin);
 // and lambdaEnd. Basically: the integral of the spectrum in the range,
 // divided by (lambdaEnd - lambdaStart).
 // The values in 'lambda' must be sorted and not have duplicates.
-float spectrumAverage(const float* lambda, const float* vals, int n,
-        float lambdaStart, float lambdaEnd);
+float spectrumAverage(const float* lambda, const float* vals, unsigned n,
+    float lambdaStart, float lambdaEnd);
+
+// Equi-distant samples.
+float spectrumAverage(const float* vals, unsigned n,
+	float srcStart, float srcEnd,
+    float avgStart, float avgEnd);
 
 } // namespace tkn

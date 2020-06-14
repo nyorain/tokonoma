@@ -129,12 +129,12 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 		vpp::descriptorBinding(vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+			vk::ShaderStageBits::compute, &sampler_.vkHandle()),
 		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 			vk::ShaderStageBits::compute)
 	};
 
-	dsLayout_ = {dev, advectBindings};
+	dsLayout_.init(dev, advectBindings);
 	pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 
 	auto advectVelShader = vpp::ShaderModule(dev, fluids_advect_vel_comp_data);

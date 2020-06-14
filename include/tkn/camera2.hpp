@@ -75,6 +75,9 @@ struct CamMoveControls {
 	swa_keyboard_mod fastMod = swa_keyboard_mod_shift;
 	swa_keyboard_mod slowMod = swa_keyboard_mod_ctrl;
 
+	// Multiplier that is always applied
+	float mult = 1.f;
+
 	// Specifies by how much the modifiers make the movement
 	// faster or slower.
 	float fastMult = 5.f;
@@ -115,21 +118,32 @@ bool update(Camera&, SpaceshipCamCon&, swa_display* dpy, float dt,
 	const SpaceshipCamControls& = {});
 
 // First-person camera controller.
-// Permits no roll at all, limits pitch to positive or negative 90 degs.
+// Permits no roll by default, limits pitch to positive or negative 90 degs.
 // Yaw is always the rotation around a fixed up vector (0, 1, 0) instead
 // of relative to the camera.
 struct FPCamCon {
 	float yaw {0.f};
 	float pitch {0.f};
+	float roll {0.f};
 
 	[[nodiscard]] static FPCamCon fromOrientation(const Quaternion&);
 };
 
 struct FPCamControls {
-	swa_mouse_button rotateButton = swa_mouse_button_left;
 	float fac = 0.005f;
+	float rollFac = 0.005f;
 	bool limitPitch = true;
 	float pitchEps = 0.1;
+
+	// set to 'none' to always handle mouseMove as rotation
+	swa_mouse_button rotateButton = swa_mouse_button_left;
+
+	// set to 'none' to disable roll
+	// NOTE: since rotation for a first person controller
+	// is always around the 'up' axis (positive y axis),
+	// rotating after rolling will not feel intuitive.
+	// For natural camera rolling, see the spaceship controller
+	swa_mouse_button rollButton = swa_mouse_button_none;
 };
 
 bool mouseMove(Camera&, FPCamCon&, swa_display*, Vec2i delta,

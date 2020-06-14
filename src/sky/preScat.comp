@@ -1,0 +1,62 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#include "precoscat.hpp"
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+layout(set = 0, binding = 0) uniform AtmosphereUBO {
+	mat4 _1;
+	Atmosphere atmosphere;
+	vec3 _2;
+	uint texNuSize;
+};
+layout(set = 0, binding = 1) uniform sampler2D transTex;
+layout(set = 0, binding = 2) writeonly uniform image3D outScatRayleigh;
+layout(set = 0, binding = 3) writeonly uniform image3D outScatMie;
+
+void main() {
+	uvec3 size = imageSize(outScatMie);
+	uvec3 pixel = gl_GlobalInvocationID.xyz;
+	if(pixel.x >= size.x || pixel.y >= size.y || pixel.z >= size.z) {
+		return;
+	}
+
+	// assert(size.x % texNuSize == 0);
+	uint texMuSSize = size.x / texNuSize;
+
+	uint pixNu = pixel.x / texMuSSize; // floor
+	uint pixMuS = uint(mod(pixel.x, texMuSSize));
+	uvec4 pixel4 = uvec4(pixNu, pixMuS, pixel.yz);
+	vec4 max4 = vec4(texNuSize - 1.f, texMuSSize - 1.f, size.yz - 1.f);
+
+	// Make sure pixel at position 0 contains the value 0.0 and
+	// the last pixel (position size - 1) contains value 1.0.
+	// NOTE: this is basically what bruneton does via the
+	// GetUnitRangeFromTextureCoord, except that they don't use compute
+	// shaders/storage images. We can explicitly access pixels in a saner
+	// way here instead of re-normalizing the position coming from
+	// gl_FragCoord.
+	vec4 unitRange = pixel4 / max4;
+
+	ARay ray;
+	float mu_s, nu;
+	bool rayIntersectsGround;
+	scatParamsFromTexUnit(atmosphere, unitRange, ray, mu_s, nu, 
+		rayIntersectsGround, size.y);
+
+	float mu = ray.mu;
+	nu = clamp(nu, 
+		mu * mu_s - sqrt((1.0 - mu * mu) * (1.0 - mu_s * mu_s)),
+		mu * mu_s + sqrt((1.0 - mu * mu) * (1.0 - mu_s * mu_s)));
+
+	vec3 scatRayleigh, scatMie;
+	singleScattering(atmosphere, transTex, ray, mu_s, nu, rayIntersectsGround,
+		scatRayleigh, scatMie);
+
+	imageStore(outScatRayleigh, ivec3(pixel), vec4(scatRayleigh, 1.0));
+	imageStore(outScatMie, ivec3(pixel), vec4(scatMie, 1.0));
+	// imageStore(outScatMie, ivec3(pixel), vec4(nu, mu_s, ray.mu, 
+	// 	(ray.height - atmosphere.bottom) / (atmosphere.top - atmosphere.bottom)));
+	// imageStore(outScatMie, ivec3(pixel), unitRange);
+}
+
