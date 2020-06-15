@@ -4,7 +4,6 @@
 #include <tkn/transform.hpp>
 #include <tkn/render.hpp>
 #include <tkn/bits.hpp>
-#include <tkn/window.hpp>
 #include <tkn/types.hpp>
 #include <nytl/vecOps.hpp>
 #include <vpp/sharedBuffer.hpp>

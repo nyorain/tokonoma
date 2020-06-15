@@ -11,12 +11,11 @@
 #include "graph.hpp"
 
 #include <tkn/timeWidget.hpp>
-#include <tkn/app2.hpp>
+#include <tkn/app.hpp>
 #include <tkn/f16.hpp>
 #include <tkn/render.hpp>
 #include <tkn/ccam.hpp>
 #include <tkn/types.hpp>
-#include <tkn/window.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/util.hpp>
 #include <tkn/texture.hpp>
@@ -60,15 +59,6 @@
 
 using namespace tkn::types;
 using tkn::f16;
-
-namespace tkn {
-	// TODO: hack that we have to declare it here.
-	// remove when the old camera class is removed
-
-nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
-	float near = 0.01f, float far = 30.f);
-
-}
 
 class ViewApp : public tkn::App {
 public:

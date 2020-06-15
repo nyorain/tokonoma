@@ -119,7 +119,7 @@ SpectralColor blackbody(float kevlin);
 /// Simple blackbody approxmiation.
 /// Converts kelvin color temparature (1000K - 40000K) to a rbg color.
 /// Good enough for most purposes.
-nytl::Vec3f blackbodyApprox(float kelvin);
+nytl::Vec3f blackbodyApproxRGB(float kelvin);
 
 // Given spectrum samples 'vals' and cooresponding wavelengths 'lambda',
 // both arrays with size n, computes the average value between lambdaStart

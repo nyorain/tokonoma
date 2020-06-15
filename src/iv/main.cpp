@@ -1,5 +1,4 @@
 #include <tkn/singlePassApp.hpp>
-#include <tkn/window.hpp>
 #include <tkn/render.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>

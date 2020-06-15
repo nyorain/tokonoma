@@ -1,5 +1,5 @@
 #pragma once
-#include <tkn/app2.hpp>
+#include <tkn/app.hpp>
 
 namespace tkn {
 

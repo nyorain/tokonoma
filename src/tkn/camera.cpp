@@ -1,46 +1,209 @@
 #include <tkn/camera.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/key.hpp>
 #include <dlg/dlg.hpp>
 
 namespace tkn {
 
-bool checkMovement(Camera& c, bool modShift, bool modCtrl,
-		std::array<bool, 6> dirs, float dt) {
-	auto fac = dt;
-	if(modShift) {
-		fac *= 5;
-	}
-	if(modCtrl) {
-		fac *= 0.2;
+// Spaceship
+bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
+		const SpaceshipCamControls& controls) {
+	auto updated = checkMovement(cam, dpy, dt, controls.move);
+
+	// check if we are currently rotating
+	auto rot = swa_display_mouse_button_pressed(dpy, controls.rotateButton);
+	if(con.mposStart.x != con.mposInvalid) {
+		if(rot) {
+			Vec2i mpos;
+			swa_display_mouse_position(dpy, &mpos.x, &mpos.y);
+			auto d = controls.rotateFac * dt * Vec2f(mpos - con.mposStart);
+
+			auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
+			auto yaw = sign(d.x) * std::pow(std::abs(d.x), controls.rotatePow);
+			auto pitch = sign(d.y) * std::pow(std::abs(d.y), controls.rotatePow);
+			tkn::rotateView(cam, yaw, pitch, 0.f);
+			cam.update = true;
+			updated = true;
+		} else {
+			con.mposStart.x = con.mposInvalid;
+		}
+	} else if(rot) {
+		swa_display_mouse_position(dpy,
+			&con.mposStart.x, &con.mposStart.y);
 	}
 
-	auto vdir = dir(c);
-	auto vright = nytl::normalized(nytl::cross(vdir, c.up));
-	auto vup = nytl::normalized(nytl::cross(vright, vdir));
+	// update roll
+	if(swa_display_key_pressed(dpy, controls.rollLeft)) {
+		con.rollVel -= controls.rollFac * dt;
+		updated = true;
+	}
+
+	if(swa_display_key_pressed(dpy, controls.rollRight)) {
+		con.rollVel += controls.rollFac * dt;
+		updated = true;
+	}
+
+	con.rollVel *= std::pow(1.f - controls.rollFriction, dt);
+	if(std::abs(con.rollVel) > -1.0001) {
+		tkn::rotateView(cam, 0.f, 0.f, con.rollVel);
+		cam.update = true;
+		updated = true;
+	}
+
+	return updated;
+}
+
+// FPS
+FPCamCon FPCamCon::fromOrientation(const Quaternion& q) {
+	auto [yaw, pitch, roll] = eulerAngles(q, RotationSequence::yxz);
+	// dlg_assertlm(dlg_level_warn, std::abs(roll) < 0.05,
+	// 	"Disregarding non-zero roll in conversion to FPCamCon yaw/pitch");
+	return {float(yaw), float(pitch), float(roll)};
+}
+
+bool mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
+		Vec2i delta, const FPCamControls& controls) {
+	auto res = false;
+	using nytl::constants::pi;
+	if(controls.rotateButton == swa_mouse_button_none ||
+			swa_display_mouse_button_pressed(dpy, controls.rotateButton)) {
+		con.yaw = std::fmod(con.yaw - controls.fac * delta.x, 2 * pi);
+		con.pitch -= controls.fac * delta.y;
+
+		if(controls.limitPitch) {
+			using nytl::constants::pi;
+			auto e = controls.pitchEps;
+			con.pitch = std::clamp<float>(con.pitch, -pi / 2 + e, pi / 2 - e);
+		}
+
+		cam.rot = Quaternion::yxz(con.yaw, con.pitch, con.roll);
+
+		// attempt to make rotations rotate around an axis respecting
+		// the roll. Not better though.
+		// cam.rot =
+		// 	Quaternion::axisAngle(0, 0, 1, con.roll) *
+		// 	Quaternion::axisAngle(0, 1, 0, con.yaw) *
+		// 	Quaternion::axisAngle(1, 0, 0, con.pitch);
+		cam.update = true;
+		res = true;
+	}
+
+	if(controls.rollButton != swa_mouse_button_none &&
+			swa_display_mouse_button_pressed(dpy, controls.rollButton)) {
+		con.roll = std::fmod(con.roll + controls.rollFac * delta.x, 2 * pi);
+		cam.rot = Quaternion::yxz(con.yaw, con.pitch, con.roll);
+		// cam.rot =
+		// 	Quaternion::axisAngle(0, 0, 1, con.roll) *
+		// 	Quaternion::axisAngle(0, 1, 0, con.yaw) *
+		// 	Quaternion::axisAngle(1, 0, 0, con.pitch);
+
+		cam.update = true;
+		res = true;
+	}
+
+	return res;
+}
+
+// Arcball
+Vec3f center(const Camera& cam, const ArcballCamCon& con) {
+	return cam.pos + con.offset * dir(cam);
+}
+
+bool mouseMove(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
+		Vec2i delta, const ArcballControls& controls, Vec2f panFac) {
+	bool ret = false;
+	auto mods = swa_display_active_keyboard_mods(dpy);
+	if(swa_display_mouse_button_pressed(dpy, controls.panButton) &&
+			mods == controls.panMod) {
+		// y is double flipped because of y-down convention for
+		// mouse corrds vs y-up convention of rendering
+		// TODO: maybe don't do this here but let the user decide
+		// by mirroring panFac? At least document it the behavior.
+		// Same for other functions though. Document how a movement
+		// (especially mouse up/down) is translated into camera rotation.
+		auto x = -panFac.x * delta.x * right(cam);
+		auto y = panFac.y * delta.y * up(cam);
+		cam.pos += x + y;
+		cam.update = true;
+		ret = true;
+	}
+
+	if(swa_display_mouse_button_pressed(dpy, controls.rotateButton) &&
+			mods == controls.rotateMod) {
+		auto c = center(cam, arc);
+		float yaw = controls.rotateFac.x * delta.x;
+		float pitch = controls.rotateFac.y * delta.y;
+		Quaternion rot;
+		if(controls.allowRoll) {
+			rot = cam.rot * Quaternion::yxz(-yaw, -pitch, 0);
+			// rot = Quaternion::taitBryan(yaw, pitch, 0) * cam.rot;
+		} else {
+			rot = cam.rot * Quaternion::yxz(0, -pitch, 0);
+			rot = Quaternion::yxz(-yaw, 0, 0) * rot;
+		}
+
+		cam.rot = rot;
+		cam.pos = c - arc.offset * dir(cam);
+		cam.update = true;
+		ret = true;
+	}
+
+	return ret;
+}
+
+bool mouseMovePersp(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
+		Vec2i delta, Vec2ui winSize, float fov, const ArcballControls& ctrls) {
+	auto aspect = winSize.x / float(winSize.y);
+	auto f = 0.5f / float(std::tan(fov / 2.f));
+	float fx = arc.offset * aspect / (f * winSize.x);
+	float fy = arc.offset / (f * winSize.y);
+	return mouseMove(cam, arc, dpy, delta, ctrls, {fx, fy});
+}
+
+void mouseWheelZoom(Camera& cam, ArcballCamCon& arc, float delta, float zoomFac) {
+	auto c = center(cam, arc);
+	arc.offset *= std::pow(zoomFac, delta);
+	cam.pos = c - arc.offset * dir(cam);
+	cam.update = true;
+}
+
+bool checkMovement(Camera& c, swa_display* dpy, float dt,
+		const CamMoveControls& params) {
+
+	auto fac = params.mult * dt;
+	if(swa_display_active_keyboard_mods(dpy) & params.fastMod) {
+		fac *= params.fastMult;
+	}
+	if(swa_display_active_keyboard_mods(dpy) & params.slowMod) {
+		fac *= params.slowMult;
+	}
+
+	auto right = apply(c.rot, nytl::Vec3f{1.f, 0.f, 0.f});
+	auto up = params.respectRotationY ?
+		apply(c.rot, nytl::Vec3f{0.f, 1.f, 0.f}) :
+		nytl::Vec3f{0.f, 1.f, 0.f};
+	auto fwd = apply(c.rot, nytl::Vec3f{0.f, 0.f, -1.f});
 	bool update = false;
-	if(dirs[0]) { // right
-		c.pos += fac * vright;
+	if(swa_display_key_pressed(dpy, params.right)) { // right
+		c.pos += fac * right;
 		update = true;
 	}
-	if(dirs[1]) { // left
-		c.pos += -fac * vright;
+	if(swa_display_key_pressed(dpy, params.left)) { // left
+		c.pos += -fac * right;
 		update = true;
 	}
-	if(dirs[2]) { // forward
-		c.pos += fac * vdir;
+	if(swa_display_key_pressed(dpy, params.forward)) { // forward
+		c.pos += fac * fwd;
 		update = true;
 	}
-	if(dirs[3]) { // backwards
-		c.pos += -fac * vdir;
+	if(swa_display_key_pressed(dpy, params.backward)) { // backwards
+		c.pos += -fac * fwd;
 		update = true;
 	}
-	if(dirs[4]) { // up
-		c.pos += fac * vup;
+	if(swa_display_key_pressed(dpy, params.up)) { // up
+		c.pos += fac * up;
 		update = true;
 	}
-	if(dirs[5]) { // down
-		c.pos += -fac * vup;
+	if(swa_display_key_pressed(dpy, params.down)) { // down
+		c.pos += -fac * up;
 		update = true;
 	}
 
@@ -49,197 +212,6 @@ bool checkMovement(Camera& c, bool modShift, bool modCtrl,
 	}
 
 	return update;
-}
-
-bool checkMovement(Camera& c, ny::KeyboardContext& kc, float dt) {
-	auto mods = kc.modifiers();
-	return checkMovement(c,
-		mods & ny::KeyboardModifier::shift,
-		mods & ny::KeyboardModifier::ctrl, {
-			kc.pressed(ny::Keycode::d),
-			kc.pressed(ny::Keycode::a),
-			kc.pressed(ny::Keycode::w),
-			kc.pressed(ny::Keycode::s),
-			kc.pressed(ny::Keycode::q),
-			kc.pressed(ny::Keycode::e),
-	}, dt);
-}
-
-bool checkMovement(Camera& c, swa_display* dpy, float dt) {
-	auto mods = swa_display_active_keyboard_mods(dpy);
-	return checkMovement(c,
-		mods & swa_keyboard_mod_shift,
-		mods & swa_keyboard_mod_ctrl, {
-			swa_display_key_pressed(dpy, swa_key_d),
-			swa_display_key_pressed(dpy, swa_key_a),
-			swa_display_key_pressed(dpy, swa_key_w),
-			swa_display_key_pressed(dpy, swa_key_s),
-			swa_display_key_pressed(dpy, swa_key_q),
-			swa_display_key_pressed(dpy, swa_key_e),
-	}, dt);
-}
-
-nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
-		float near, float far) {
-	// y sign flipped everywhere
-	// TODO: not sure why slightly different to pbr.cpp
-	// (positive, negative y swapped), probably bug in pbr shaders
-	constexpr struct CubeFace {
-		nytl::Vec3f x;
-		nytl::Vec3f y;
-		nytl::Vec3f z; // direction of the face
-	} faces[] = {
-		{{0, 0, -1}, {0, 1, 0}, {1, 0, 0}},
-		{{0, 0, 1}, {0, 1, 0}, {-1, 0, 0}},
-		{{1, 0, 0}, {0, 0, -1}, {0, 1, 0}},
-		{{1, 0, 0}, {0, 0, 1}, {0, -1, 0}},
-		{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
-		{{-1, 0, 0}, {0, 1, 0}, {0, 0, -1}},
-	};
-
-	auto& f = faces[face];
-	dlg_assertm(nytl::cross(f.x, f.y) == f.z,
-		"{} {}", nytl::cross(f.x, f.y), f.z);
-
-	nytl::Mat4f view = nytl::identity<4, float>();
-	view[0] = nytl::Vec4f(f.x);
-	view[1] = nytl::Vec4f(f.y);
-	view[2] = -nytl::Vec4f(f.z);
-
-	view[0][3] = -dot(f.x, pos);
-	view[1][3] = -dot(f.y, pos);
-	view[2][3] = dot(f.z, pos);
-
-	auto fov = 0.5 * nytl::constants::pi;
-	auto aspect = 1.f;
-	auto mat = tkn::perspective<float>(fov, aspect, -near, -far);
-	return mat * view;
-}
-
-Frustum ndcFrustum() {
-	return {{
-		{-1.f, 1.f, 0.f},
-		{1.f, 1.f, 0.f},
-		{1.f, -1.f, 0.f},
-		{-1.f, -1.f, 0.f},
-		{-1.f, 1.f, 1.f},
-		{1.f, 1.f, 1.f},
-		{1.f, -1.f, 1.f},
-		{-1.f, -1.f, 1.f},
-	}};
-}
-
-void init(TouchCameraController& tc, tkn::Camera& cam, rvg::Context& rvgctx) {
-	tc.cam = &cam;
-	tc.paint = {rvgctx, rvg::colorPaint({255, 200, 200, 40})};
-
-	rvg::DrawMode dm;
-#ifndef __ANDROID__
-	dm.aaFill = true;
-#endif // __ANDROID__
-	dm.fill = true;
-	dm.deviceLocal = true;
-	tc.move.circle = {rvgctx, {}, 20.f, dm};
-	tc.move.circle.disable(true);
-	tc.rotate.circle = {rvgctx, {}, 20.f, dm};
-	tc.rotate.circle.disable(true);
-}
-
-void touchBegin(TouchCameraController& tc, unsigned id, nytl::Vec2f pos,
-		nytl::Vec2ui windowSize) {
-	constexpr auto invalidID = TouchCameraController::invalidID;
-	using namespace nytl::vec::cw::operators;
-	auto rp = pos / windowSize;
-	if(rp.x < 0.5f && tc.move.id == invalidID) {
-		tc.move.id = id;
-		tc.move.pos = pos;
-		tc.move.start = pos;
-
-		tc.move.circle.disable(false);
-		tc.move.circle.change()->center = pos;
-	} else if(rp.x > 0.5f && tc.rotate.id == invalidID) {
-		tc.rotate.id = id;
-		tc.rotate.pos = pos;
-		tc.rotate.start = pos;
-
-		tc.rotate.circle.disable(false);
-		tc.rotate.circle.change()->center = pos;
-	}
-}
-
-void touchEnd(TouchCameraController& tc, unsigned id) {
-	constexpr auto invalidID = TouchCameraController::invalidID;
-	if(id == tc.rotate.id) {
-		tc.rotate.id = invalidID;
-		tc.rotate.circle.disable(true);
-	} else if(id == tc.move.id) {
-		tc.move.id = invalidID;
-		tc.move.circle.disable(true);
-	}
-}
-
-void touchUpdate(TouchCameraController& tc, unsigned id, nytl::Vec2f pos) {
-	dlg_assert(tc.cam);
-	if(id == tc.rotate.id) {
-		auto delta = pos - tc.rotate.pos;
-		tc.rotate.pos = pos;
-
-		if(!tc.alt) {
-			tkn::rotateView(*tc.cam, 0.005 * delta.x, 0.005 * delta.y);
-		}
-	} else if(id == tc.move.id) {
-		auto delta = pos - tc.move.pos;
-		tc.move.pos = pos;
-
-		if(!tc.alt) {
-			auto& c = *tc.cam;
-			auto zdir = dir(c);
-			auto right = nytl::normalized(nytl::cross(zdir, c.up));
-
-			auto fac = 0.01f;
-			c.pos += fac * delta.x * right;
-			c.pos -= fac * delta.y * zdir; // y input coords have top-left origin
-			c.update = true;
-		}
-	}
-}
-
-void update(TouchCameraController& tc, double dt) {
-	dlg_assert(tc.cam);
-	constexpr auto invalidID = TouchCameraController::invalidID;
-	if(tc.alt) {
-		auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
-		auto cut = [&](auto f) {
-			auto off = 20.f;
-			if(std::abs(f) < off) return 0.f;
-			return f - sign(f) * off;
-		};
-
-		if(tc.move.id != invalidID) {
-			auto& c = *tc.cam;
-			auto zdir = dir(c);
-			auto right = nytl::normalized(nytl::cross(zdir, c.up));
-
-			nytl::Vec2f delta = tc.move.pos - tc.move.start;
-			delta = {cut(delta.x), cut(delta.y)};
-			delta.x = sign(delta.x) * std::pow(std::abs(delta.x), 1.65);
-			delta.y = sign(delta.y) * std::pow(std::abs(delta.y), 1.65);
-			delta *= tc.positionMultiplier * 0.0005f * dt;
-
-			c.pos += delta.x * right;
-			c.pos -= delta.y * zdir; // y input coords have top-left origin
-			c.update = true;
-		}
-		if(tc.rotate.id != invalidID) {
-			nytl::Vec2f delta = tc.rotate.pos - tc.rotate.start;
-			delta = {cut(delta.x), cut(delta.y)};
-			delta.x = sign(delta.x) * std::pow(std::abs(delta.x), 1.65);
-			delta.y = sign(delta.y) * std::pow(std::abs(delta.y), 1.65);
-			delta *= 0.0004f * dt;
-
-			tkn::rotateView(*tc.cam, delta.x, delta.y);
-		}
-	}
 }
 
 } // namespace tkn

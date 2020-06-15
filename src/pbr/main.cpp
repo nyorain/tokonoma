@@ -276,7 +276,7 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 
 	// auto ptr = reinterpret_cast<float*>(map.ptr());
 	// stbi_write_png(filename, size, size, 4, map.ptr(), size * 4);
-	auto provider = tkn::wrap({size, size}, format, map.span());
+	auto provider = tkn::wrapImage({size, size, 1u}, format, map.span());
 	auto res = tkn::writeKtx(filename, *provider);
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }
@@ -288,7 +288,7 @@ void saveCubemap(const char* equirectPath, const char* outfile,
 	tkn::TextureCreateParams params;
 	params.format = format;
 	params.mipLevels = 1u;
-	auto equirect = tkn::Texture(dev, tkn::read(equirectPath, true), params);
+	auto equirect = tkn::buildTexture(dev, tkn::loadImage(equirectPath), params);
 
 	auto sampler = linearSampler(dev);
 	tkn::Cubemapper cubemapper;
@@ -336,7 +336,7 @@ void saveCubemap(const char* equirectPath, const char* outfile,
 		ptr + 5 * faceSize,
 	};
 
-	auto provider = tkn::wrap({size, size}, format, 1, 1, 6, {ptrs});
+	auto provider = tkn::wrapImage({size, size, 1u}, format, 1, 6, {ptrs}, true);
 	auto res = tkn::writeKtx(outfile, *provider);
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }
@@ -348,7 +348,7 @@ void saveIrradiance(const char* infile, const char* outfile,
 	tkn::TextureCreateParams params;
 	params.format = format;
 	params.cubemap = true;
-	auto envmap = tkn::Texture(dev, tkn::read(infile, true), params);
+	auto envmap = tkn::buildTexture(dev, tkn::loadImage(infile), params);
 
 	auto sampler = linearSampler(dev);
 	tkn::Irradiancer irradiancer;
@@ -396,7 +396,7 @@ void saveIrradiance(const char* infile, const char* outfile,
 		ptr + 5 * faceSize,
 	};
 
-	auto provider = tkn::wrap({size, size}, format, 1, 1, 6, {ptrs});
+	auto provider = tkn::wrapImage({size, size, 1u}, format, 1, 6, {ptrs}, true);
 	auto res = tkn::writeKtx(outfile, *provider);
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }
@@ -404,9 +404,9 @@ void saveIrradiance(const char* infile, const char* outfile,
 void saveConvoluted(const char* cubemapFile, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
-	auto p = tkn::read(cubemapFile, true);
+	auto p = tkn::loadImage(cubemapFile);
 	auto size = p->size();
-	auto full = int(vpp::mipmapLevels({size.x, size.y})) - 4;
+	auto full = int(vpp::mipmapLevels({size.x, size.y, 1u})) - 4;
 	unsigned mipLevels = std::max(full, 1);
 	dlg_assert(mipLevels > 1);
 
@@ -416,7 +416,7 @@ void saveConvoluted(const char* cubemapFile, const char* outfile,
 	params.mipLevels = 0; // full chain
 	params.fillMipmaps = true; // fill full chain
 	params.usage = params.defaultUsage;
-	auto cubemap = tkn::Texture(dev, std::move(p), params);
+	auto cubemap = tkn::buildTexture(dev, std::move(p), params);
 
 	auto vi = vpp::ViewableImageCreateInfo(format,
 		vk::ImageAspectBits::color, {size.x, size.y},
@@ -448,7 +448,7 @@ void saveConvoluted(const char* cubemapFile, const char* outfile,
 		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
 
 	auto mips = convoluter.record(cb, cubemap.imageView(), envMap,
-		mipLevels, size);
+		mipLevels, {size.x, size.y});
 
 	barrier.oldLayout = vk::ImageLayout::general;
 	barrier.srcAccessMask = vk::AccessBits::shaderWrite;
@@ -516,7 +516,7 @@ void saveConvoluted(const char* cubemapFile, const char* outfile,
 		map.invalidate();
 	}
 
-	auto provider = tkn::wrap(size, format, mipLevels, 1, 6, pointers);
+	auto provider = tkn::wrapImage(size, format, mipLevels, 6, pointers, true);
 	auto res = tkn::writeKtx(outfile, *provider);
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }
@@ -524,10 +524,10 @@ void saveConvoluted(const char* cubemapFile, const char* outfile,
 void saveSHProj(const char* cubemap, const char* outfile,
 		const vpp::Device& dev) {
 	auto format = vk::Format::r16g16b16a16Sfloat;
-	auto p = tkn::read(cubemap, true);
+	auto p = tkn::loadImage(cubemap);
 	auto size = p->size();
 	// we mip down to the level before 32x32
-	auto maxLevels = int(vpp::mipmapLevels({size.x, size.y})) - 5;
+	auto maxLevels = int(vpp::mipmapLevels({size.x, size.y, 1u})) - 5;
 	unsigned mipLevels = std::max(maxLevels, 1);
 	auto lastSize = tkn::mipmapSize({size.x, size.y}, mipLevels - 1);
 
@@ -540,7 +540,7 @@ void saveSHProj(const char* cubemap, const char* outfile,
 		params.defaultUsage | // not really needed though
 		vk::ImageUsageBits::transferSrc |
 		vk::ImageUsageBits::transferDst;
-	auto envmap = tkn::Texture(dev, std::move(p), params);
+	auto envmap = tkn::buildTexture(dev, std::move(p), params);
 
 	auto& qs = dev.queueSubmitter();
 	auto cb = dev.commandAllocator().get(qs.queue().family());
@@ -737,6 +737,7 @@ int saveSkies(float turbidity, const char* outSkies, const char* outData,
 	qs.wait(qs.add(cb));
 
 	auto map = stage.memoryMap();
+	/*
 	auto fmtSize = vpp::formatSize(format);
 	std::vector<const std::byte*> ptrs;
 	auto debugOff = 0u;
@@ -746,7 +747,7 @@ int saveSkies(float turbidity, const char* outSkies, const char* outData,
 		auto faceSize = w * h * fmtSize;
 
 		for(auto l = 0u; l < 6 * steps; ++l) {
-			auto off = vpp::imageBufferOffset(fmtSize,
+			auto off = fmtSize * vpp::tightTexelNumber(
 				{faceWidth, faceHeight, 1u}, 6u * steps, mip, l);
 			dlg_assertm(debugOff == off, "{}, {}: {} vs {}", mip, l, debugOff, off);
 			ptrs.push_back(map.ptr() + off);
@@ -754,9 +755,10 @@ int saveSkies(float turbidity, const char* outSkies, const char* outData,
 			debugOff += faceSize;
 		}
 	}
+	*/
 
-	auto provider = tkn::wrap({faceWidth, faceHeight}, format,
-		mipLevels, steps, 6u, ptrs);
+	auto provider = tkn::wrapImage({faceWidth, faceHeight, 1u}, format,
+		mipLevels, steps * 6u, map.span(), true);
 	auto res = tkn::writeKtx(outSkies, *provider);
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
 

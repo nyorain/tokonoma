@@ -1,8 +1,6 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/render.hpp>
-#include <tkn/window.hpp>
-#include <tkn/camera.hpp>
 #include <tkn/types.hpp>
 #include <tkn/geometry.hpp>
 #include <argagg.hpp>
@@ -16,16 +14,12 @@
 #include <vpp/bufferOps.hpp>
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/key.hpp>
-#include <ny/appContext.hpp>
 #include <nytl/math.hpp>
 
 #include <shaders/tkn.simple2.vert.h>
 #include <shaders/tkn.color.frag.h>
 
-class HairApp : public tkn::App {
+class HairApp : public tkn::SinglePassApp {
 public:
 	struct Node {
 		nytl::Vec2f pos;
@@ -44,10 +38,11 @@ public:
 	static constexpr auto kd3 = 0.1f;
 	static constexpr auto kdg = 50.f; // general dampening per second
 	static constexpr auto segLength = 0.5f / nodeCount;
+	using Base = tkn::SinglePassApp;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
@@ -71,7 +66,7 @@ public:
 		nodes_[0].mass *= 3.f;
 
 		// init gfx
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		pipeLayout_ = {dev, {}, {}};
 		vpp::ShaderModule vertShader{dev, tkn_simple2_vert_data};
 		vpp::ShaderModule fragShader{dev, tkn_color_frag_data};
@@ -110,12 +105,12 @@ public:
 
 	nytl::Vec2f normalized(nytl::Vec2i winPos) {
 		return nytl::Vec2f{-1.f, -1.f} + 2.f *
-			nytl::vec::cw::divide(winPos, nytl::Vec2f(window().size()));
+			nytl::vec::cw::divide(winPos, nytl::Vec2f(windowSize()));
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
-		mpos_ = normalized(ev.position);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
+		mpos_ = normalized({ev.x, ev.y});
 	}
 
 	void render(vk::CommandBuffer cb) override {
@@ -125,12 +120,12 @@ public:
 		vk::cmdDraw(cb, nodes_.size(), 1, 0, 0);
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button == ny::MouseButton::left) {
+		if(ev.button == swa_mouse_button_left) {
 			mouseDown_ = ev.pressed;
 			return true;
 		}
@@ -147,8 +142,7 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
-		auto kc = appContext().keyboardContext();
+		Base::update(dt);
 
 		auto force = [](auto& node1, auto& node2, float ks, float kd, float l) {
 			auto diff = node2.pos - node1.pos;
@@ -177,7 +171,7 @@ public:
 			// auto width = std::pow(node1.width, 2.0); // node.width or 1?
 			auto width = node1.width; // node.width or 1?
 			// auto width = 1.f;
-			if(kc->pressed(ny::Keycode::k1)) {
+			if(swa_display_key_pressed(swaDisplay(), swa_key_k1)) {
 				// ll *= std::pow(0.1, node.width);
 				// lr /= std::pow(0.1, node.width);
 				ll *= 0.0;
@@ -185,7 +179,7 @@ public:
 				ksa = strength * width;
 				ksb = strength * width;
 			}
-			if(kc->pressed(ny::Keycode::k2)) {
+			if(swa_display_key_pressed(swaDisplay(), swa_key_k2)) {
 				// lr *= std::pow(0.1, node.width);
 				// ll /= std::pow(0.1, node.width);
 				lr *= 0.0;
@@ -469,7 +463,7 @@ public:
 
 		nodes_ = nextNodes;
 
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 	}
 
 	void updateDevice() override {
@@ -493,11 +487,5 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	HairApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<HairApp>(argc, argv);
 }
-

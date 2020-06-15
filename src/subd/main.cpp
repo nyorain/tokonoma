@@ -1,7 +1,6 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/shader.hpp>
-#include <tkn/window.hpp>
-#include <tkn/camera2.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/timeWidget.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/scene/shape.hpp>
@@ -56,7 +55,18 @@ public:
 		}
 
 		rvgInit();
-		windowTransform_ = {rvgContext()};
+		camera_.useSpaceshipControl();
+
+		camPoint_.paint = {rvgContext(), rvg::colorPaint({200, 220, 220, 80})};
+
+		rvg::DrawMode dm;
+#ifndef __ANDROID__
+		dm.aaFill = true;
+#endif // __ANDROID__
+		dm.fill = true;
+		dm.deviceLocal = true;
+		camPoint_.center = {rvgContext(), {}, 10.f, dm};
+		camPoint_.center.disable(true);
 
 		timeWidget_ = {rvgContext(), defaultFont()};
 		timeWidget_.reset();
@@ -84,7 +94,7 @@ public:
 
 		// vertices/indices
 		auto planet = tkn::Sphere {{0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}};
-		auto shape = tkn::generateUV(planet, 4, 8);
+		auto shape = tkn::generateUV(planet, 4, 8); // TODO: use ico
 		std::vector<nytl::Vec4f> vverts;
 		for(auto& v : shape.positions) vverts.emplace_back(v);
 		auto verts = tkn::bytes(vverts);
@@ -146,7 +156,6 @@ public:
 
 		auto stage0 = vpp::fillStaging(cb, keys0_, data0.buffer);
 		auto stage1 = vpp::fillStaging(cb, comp_.dispatch, tkn::bytes(cmds));
-
 		auto stage3 = vpp::fillStaging(cb, vertices_, verts);
 		auto stage4 = vpp::fillStaging(cb, indices_, inds);
 
@@ -167,13 +176,13 @@ public:
 
 	void initGfx() {
 		auto& dev = vkDevice();
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer),
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer),
 		};
 
-		gfx_.dsLayout = {dev, bindings};
+		gfx_.dsLayout.init(dev, bindings);
 		gfx_.pipeLayout = {dev, {{gfx_.dsLayout.vkHandle()}}, {}};
 
 		gfx_.ds = {dev.descriptorAllocator(), gfx_.dsLayout};
@@ -185,7 +194,7 @@ public:
 
 	void initUpdateComp() {
 		auto& dev = vkDevice();
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // read
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // write
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer), // camera
@@ -194,7 +203,7 @@ public:
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // culled
 		};
 
-		comp_.update.dsLayout = {dev, bindings};
+		comp_.update.dsLayout.init(dev, bindings);
 		comp_.update.pipeLayout = {dev, {{comp_.update.dsLayout.vkHandle()}}, {}};
 
 		comp_.update.ds = {dev.descriptorAllocator(), comp_.update.dsLayout};
@@ -209,13 +218,13 @@ public:
 
 	void initIndirectComp() {
 		auto& dev = vkDevice();
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // dispatch buf
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // counter keys1
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer), // counter keysCulled
 		};
 
-		comp_.indirect.dsLayout = {dev, bindings};
+		comp_.indirect.dsLayout.init(dev, bindings);
 		comp_.indirect.pipeLayout = {dev, {{comp_.indirect.dsLayout.vkHandle()}}, {}};
 
 		comp_.indirect.ds = {dev.descriptorAllocator(), comp_.indirect.dsLayout};
@@ -418,11 +427,14 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
 		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
 
-		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.wirePipe);
-		// vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.wirePipe);
+		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
 
 		rvgContext().bindDefaults(cb);
-		windowTransform_.bind(cb);
+		rvgWindowTransform().bind(cb);
+
+		camPoint_.paint.bind(cb);
+		camPoint_.center.fill(cb);
 
 		timeWidget_.draw(cb);
 		timeWidget_.addTimestamp(cb);
@@ -431,13 +443,18 @@ public:
 
 	void update(double dt) override {
 		Base::update(dt);
+		auto& scon = (*camera_.spaceshipControl())->con;
+		bool rot = scon.mposStart.x != scon.mposInvalid;
 
-		tkn::SpaceshipCamControls ctrls;
-		ctrls.move.fastMult = 5.f;
-		ctrls.move.slowMult = 0.05f;
-		tkn::update(camera_, camcon_, swaDisplay(), dt);
+		camera_.update(swaDisplay(), dt);
 
-		if(camera_.update) {
+		bool nrot = scon.mposStart.x != scon.mposInvalid;
+		camPoint_.center.disable(!nrot);
+		if(!rot && nrot) {
+			camPoint_.center.change()->center = Vec2f(scon.mposStart);
+		}
+
+		if(camera_.needsUpdate) {
 			Base::scheduleRedraw();
 		}
 	}
@@ -451,24 +468,17 @@ public:
 		timeWidget_.updateDevice();
 
 		// update scene ubo
-		if(camera_.update) {
-			camera_.update = false;
-
-			auto fov = 0.35 * nytl::constants::pi;
-			auto aspect = float(windowSize().x) / windowSize().y;
-			auto near = 0.001f;
-			auto far = 30.f;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
-			auto V = viewMatrix(camera_);
-			auto P = tkn::perspective<float>(fov, aspect, -near, -far);
-			auto VP = P * V;
+			auto VP = camera_.viewProjectionMatrix();
 			if(updateStep_) {
 				frozenVP_ = VP;
 			}
 			tkn::write(span, VP);
-			tkn::write(span, camera_.pos);
+			tkn::write(span, camera_.position());
 			tkn::write(span, u32(updateStep_));
 			tkn::write(span, frozenVP_);
 			map.flush();
@@ -511,14 +521,7 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		camera_.update = true;
-
-		// update window transform
-		auto s = nytl::Vec{ 2.f / w, 2.f / h, 1};
-		auto transform = nytl::identity<4, float>();
-		tkn::scale(transform, s);
-		tkn::translate(transform, nytl::Vec3f {-1, -1, 0});
-		windowTransform_.matrix(transform);
+		camera_.aspect({w, h});
 
 		// update time widget position
 		auto pos = nytl::Vec2ui{w, h};
@@ -565,9 +568,7 @@ protected:
 		vpp::SubBuffer dispatch; // indirect dispatch command
 	} comp_;
 
-	tkn::Camera camera_ {};
-	tkn::SpaceshipCamCon camcon_ {};
-
+	tkn::ControlledCamera camera_ {};
 	bool reload_ {};
 	nytl::Mat4f frozenVP_ {};
 
@@ -575,11 +576,13 @@ protected:
 	bool updateStep_ {false};
 
 	tkn::TimeWidget timeWidget_;
-	rvg::Transform windowTransform_;
+
+	struct {
+		rvg::CircleShape center;
+		rvg::Paint paint;
+	} camPoint_;
 };
 
 int main(int argc, const char** argv) {
 	tkn::appMain<SubdApp>(argc, argv);
 }
-
-

@@ -29,10 +29,9 @@ tkn_deps = [
 
 tkn_src = [
 	'app.cpp',
-	'window.cpp',
+	'singlePassApp.cpp',
 	'camera.cpp',
-	'qcamera.cpp',
-	'camera2.cpp',
+	'transform.cpp',
 	'ccam.cpp',
 	'color.cpp',
 	'geometry.cpp',
@@ -40,6 +39,7 @@ tkn_src = [
 	'render.cpp',
 	'headless.cpp',
 	'defer.cpp',
+	'shader.cpp',
 	'f16.cpp',
 	'util.cpp',
 	'headeronly.cpp',
@@ -64,9 +64,6 @@ tkn_src = [
 	'image/exr.cpp',
 
 	'kissfft/kiss_fft.c',
-
-	'app2.cpp',
-	'singlePassApp.cpp',
 
 	tkn_shaders,
 ]

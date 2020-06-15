@@ -172,8 +172,6 @@ subdir('src/smooth_shadow')
 subdir('src/pursuers')
 subdir('src/fluids')
 subdir('src/mists')
-subdir('src/fun')
-subdir('src/sentient')
 subdir('src/sss')
 subdir('src/iro')
 subdir('src/br')
@@ -182,11 +180,11 @@ subdir('src/lpgi')
 subdir('src/taa')
 subdir('src/deferred')
 subdir('src/cloth')
-subdir('src/spirv')
 
 # playground/dummy projects
-subdir('src/daudio')
-subdir('src/playground')
+if with_playground
+	subdir('src/playground')
+endif
 
 # erase shader dependencies only needed on android
 if not android
@@ -203,10 +201,6 @@ executable('pendulum',
 executable('dpend',
 	'src/dpend/main.cpp',
 	dependencies: tkn_dep)
-
-executable('audio',
-	'src/audio/main.cpp',
-	dependencies: [tkn_dep, tkn_audio_dep])
 
 executable('soundfont',
 	'src/soundfont/main.cpp',
@@ -242,10 +236,6 @@ executable('normals', [
 
 executable('sviewer', [
 		'src/sviewer/main.cpp',
-	], dependencies: tkn_dep)
-
-executable('curves', [
-		'src/curves/main.cpp',
 	], dependencies: tkn_dep)
 
 executable('visualizer', [

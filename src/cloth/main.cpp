@@ -1,7 +1,6 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/render.hpp>
-#include <tkn/window.hpp>
 #include <tkn/ccam.hpp>
 #include <tkn/types.hpp>
 #include <argagg.hpp>
@@ -15,11 +14,9 @@
 #include <vpp/bufferOps.hpp>
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
 #include <vui/dat.hpp>
 #include <vui/gui.hpp>
+#include <array>
 
 #include <shaders/tkn.simple3.vert.h>
 #include <shaders/tkn.color.frag.h>
@@ -137,12 +134,12 @@ public:
 		auto& dev = vkDevice();
 
 		// pipeline
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex)
 		};
 
-		gfx_.dsLayout = {dev, bindings};
+		gfx_.dsLayout.init(dev, bindings);
 		gfx_.pipeLayout = {dev, {{gfx_.dsLayout.vkHandle()}}, {}};
 
 		vpp::ShaderModule vertShader{dev, tkn_simple3_vert_data};
@@ -231,7 +228,7 @@ public:
 		auto& dev = vkDevice();
 
 		// pipeline
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
@@ -240,7 +237,7 @@ public:
 				vk::ShaderStageBits::compute),
 		};
 
-		comp_.dsLayout = {dev, bindings};
+		comp_.dsLayout.init(dev, bindings);
 		comp_.pipeLayout = {dev, {{comp_.dsLayout.vkHandle()}}, {}};
 
 		vpp::ShaderModule compShader(vkDevice(), cloth_cloth_comp_data);

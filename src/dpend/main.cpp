@@ -1,6 +1,4 @@
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
-
+#include <tkn/singlePassApp.hpp>
 #include <rvg/shapes.hpp>
 #include <rvg/context.hpp>
 #include <rvg/paint.hpp>
@@ -8,11 +6,7 @@
 #include <vui/dat.hpp>
 #include <vui/gui.hpp>
 
-#include <ny/appContext.hpp>
-#include <ny/event.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/key.hpp>
-
+#include <swa/swa.h>
 #include <nytl/vec.hpp>
 #include <dlg/dlg.hpp>
 
@@ -74,7 +68,7 @@ public:
 		connection2 = {ctx, {m1, m2}, drawMode};
 	}
 
-	void update(float dt /*, float u = 0.f*/) {
+	void update(float dt) {
 		using std::cos, std::sin, std::pow;
 
 		// logic
@@ -143,14 +137,16 @@ public:
 };
 
 // PendulumApp
-class PendulumApp : public tkn::App {
+class PendulumApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
 		// pendulum
+		rvgInit();
 		pendulum_ = {rvgContext(), {400, 250}};
 		whitePaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::white)};
 		redPaint_ = {rvgContext(), rvg::colorPaint(rvg::Color::red)};
@@ -203,7 +199,7 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		rvgContext().bindDefaults(cb);
-		windowTransform().bind(cb);
+		rvgWindowTransform().bind(cb);
 
 		whitePaint_.bind(cb);
 		pendulum_.fixture.fill(cb);
@@ -217,104 +213,18 @@ public:
 		gui().draw(cb);
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		auto center = 0.5f * ev.size;
-		pendulum_.screenLength = std::min(ev.size.x, ev.size.y) * 0.24 - 30;
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
+		auto center = 0.5f * nytl::Vec2f{float(w), float(h)};
+		pendulum_.screenLength = std::min(w, h) * 0.24 - 30;
 		pendulum_.changeCenter(center);
 	}
 
 	void update(double dt) override {
-		App::update(dt);
-		App::scheduleRedraw();
-
-		// input
-		// auto& kc = *appContext().keyboardContext();
-		// float u = xVel_ * std::pow(xFriction_, dt) - xVel_;
-		// float u = -xFriction_ * xVel_;
-		// auto c = pendulum_.center;
-
-		/*
-		if(manual_) {
-			if(c.x < 0.f) {
-				c.x = 0.f;
-				u = -xVel_ / dt;
-			} else if(kc.pressed(ny::Keycode::left)) {
-				u -= 5.f;
-			}
-
-			if(c.x > window().size().x) {
-				c.x = window().size().x;
-				u = -xVel_ / dt;
-			} else if(kc.pressed(ny::Keycode::right)) {
-				u += 5.f;
-			}
-		} else {
-			auto& c = pendulum_.constants;
-			auto v = 0.f;
-
-			// works somewhat nicely, after an hour of playing around
-			v -= c.m * c.l * c.g * std::sin(pendulum_.angle);
-			v += c.c * pendulum_.avel;
-			v /= (c.l * c.m * std::cos(pendulum_.angle));
-			v *= 3.f;
-
-			// formulas derived from logic.
-			// v += std::cos(pendulum_.angle) * pendulum_.avel;
-			// v -= std::sin(pendulum_.angle);
-
-			v = std::clamp(v, -10.f, 10.f);
-			u += v;
-		}
-
-		xVel_ += dt * u;
-
-		// auto scale = 1.4f * pendulum_.screenLength / pendulum_.constants.l;
-		auto scale = 400.f;
-		c.x += scale * dt * xVel_;
-		pendulum_.changeCenter(c);
-		*/
+		Base::update(dt);
+		Base::scheduleRedraw();
 
 		pendulum_.update(dt);
-
-		/*
-		// labels
-		auto labelState = [&](auto& lbl, auto& val) {
-			auto str = std::to_string(val);
-			str.resize(std::min<unsigned>(str.size(), 4u));
-			lbl.label(str);
-		};
-
-		auto a = ((int) nytl::degrees(pendulum_.angle)) % 360;
-		labelState(*angleLabel_, a);
-		labelState(*xvelLabel_, xVel_);
-		labelState(*avelLabel_, pendulum_.avel);
-		labelState(*uLabel_, u);
-		*/
-	}
-
-	// NOTE: test messing with gui
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
-			return true;
-		}
-
-		if(ev.pressed && ev.keycode == ny::Keycode::q) {
-			auto& f = panel_->create<vui::dat::Folder>("hidden");
-			f.create<vui::dat::Button>("Create a kitten");
-			f.open(false);
-			tmpWidgets_.push_back(&f);
-		} else if(ev.pressed && ev.keycode == ny::Keycode::c) {
-			if(!tmpWidgets_.empty()) {
-				auto w = tmpWidgets_.back();
-				tmpWidgets_.pop_back();
-				panel_->remove(*w);
-			}
-		} else {
-			return false;
-		}
-
-		return true;
 	}
 
 	const char* name() const override { return "double pendulum"; }
@@ -330,20 +240,10 @@ protected:
 	vui::dat::Label* xvelLabel_ {};
 	vui::dat::Label* uLabel_ {};
 
-	bool manual_ {};
-
 	std::vector<vui::Widget*> tmpWidgets_ {};
-
-	float xVel_ {};
-	float xFriction_ {8.f}; // not as it should be...
 };
 
 // main
 int main(int argc, const char** argv) {
-	PendulumApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<PendulumApp>(argc, argv);
 }

@@ -1,12 +1,11 @@
 #include <tkn/singlePassApp.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/shader.hpp>
-#include <tkn/window.hpp>
 #include <tkn/render.hpp>
 #include <tkn/f16.hpp>
-#include <tkn/qcamera.hpp>
+#include <tkn/transform.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/glsl.hpp>
-#include <shaders/atmosphere.sky.vert.h>
 
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
@@ -16,6 +15,8 @@
 #include <rvg/context.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/vec.hpp>
+
+#include <shaders/tkn.skybox.vert.h>
 
 #ifdef __ANDROID__
 #include <shaders/atmosphere.sky.frag.h>
@@ -39,15 +40,15 @@ public:
 		rvgInit();
 
 		// layouts
-		auto bindings = {
+		auto bindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 		};
 
-		dsLayout_ = {dev, bindings};
+		dsLayout_.init(dev, bindings);
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 
 		// pipeline
-		skyVert_ = {dev, atmosphere_sky_vert_data};
+		skyVert_ = {dev, tkn_skybox_vert_data};
 #ifdef __ANDROID__
 		auto fragMod = vpp::ShaderModule{dev, atmosphere_sky_frag_data};
 #else
@@ -76,10 +77,13 @@ public:
 		// initial camera pos
 		const float planetRadius = 6300000;
 		nytl::Vec3f cpos = (planetRadius + 10) * nytl::Vec3f{0, 1, 0};
-		camera_.pos = cpos;
+		camera_.position(cpos);
 
-		// touch_.positionMultiplier = 0.2 * cameraPosMult;
-		// tkn::init(touch_, camera_, rvgContext());
+		camera_.useSpaceshipControl();
+		auto& c = **camera_.spaceshipControl();
+		c.controls.move.mult = 10000.f;
+		c.controls.move.fastMult = 100.f;
+		c.controls.move.slowMult = 0.05f;
 
 		return true;
 	}
@@ -114,28 +118,11 @@ public:
 		Base::update(dt);
 		if(playing_) {
 			time_ = fract(time_ - 0.05 * dt);
-			camera_.update = true; // write ubo
+			camera_.needsUpdate = true; // write ubo
 		}
 
-		// tkn::update(touch_, dt);
-		tkn::QuatCameraMovement movement;
-		movement.fastMult = 500.f;
-		movement.slowMult = 50.f;
-		checkMovement(camera_, swaDisplay(), cameraPosMult * dt, movement);
-
-		if(rotateView_) {
-			auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
-			auto delta = mpos_ - mposStart_;
-			vel_.yaw += dt * sign(delta.x) * std::pow(std::abs(delta.x), 1.2);
-			vel_.pitch += dt * sign(delta.y) * std::pow(std::abs(delta.y), 1.2);
-		}
-
-		// make it really stiff
-		vel_.pitch *= std::pow(0.001, dt);
-		vel_.yaw *= std::pow(0.001, dt);
-		tkn::rotateView(camera_, vel_.yaw, vel_.pitch, 0.f);
-
-		if(camera_.update) {
+		camera_.update(swaDisplay(), dt);
+		if(camera_.needsUpdate) {
 			Base::scheduleRedraw();
 		}
 	}
@@ -156,51 +143,15 @@ public:
 		}
 #endif
 
-		if(camera_.update) {
-			auto fov = 0.3 * nytl::constants::pi;
-			auto aspect = float(windowSize().x) / windowSize().y;
-			auto near = 0.01f;
-			auto far = 30.f;
-
-			camera_.update = false;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
-			// tkn::write(span, fixedMatrix(camera_));
-			auto V = fixedViewMatrix(camera_);
-			auto P = tkn::flippedY(tkn::perspective<float>(fov, aspect, -near, -far));
-			tkn::write(span, P * V);
-			tkn::write(span, camera_.pos);
+			tkn::write(span, camera_.fixedViewProjectionMatrix());
+			tkn::write(span, camera_.position());
 			tkn::write(span, time_);
 			map.flush();
 		}
-	}
-
-	void mouseMove(const swa_mouse_move_event& ev) override {
-		Base::mouseMove(ev);
-		// if(rotateView_) {
-		// 	auto x = 0.005 * ev.delta.x, y = 0.005 * ev.delta.y;
-		// 	tkn::rotateView(camera_, x, y, 0.f);
-		// 	Base::scheduleRedraw();
-		// }
-
-		using namespace nytl::vec::cw::operators;
-		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
-	}
-
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(Base::mouseButton(ev)) {
-			return true;
-		}
-
-		using namespace nytl::vec::cw::operators;
-		auto mpos = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			mposStart_ = mpos;
-			return true;
-		}
-
-		return false;
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -221,13 +172,13 @@ public:
 		} else if(ev.keycode == swa_key_up) {
 			time_ = fract(time_ + 0.0025);
 			dlg_info("time: {}", time_);
-			camera_.update = true; // write ubo
+			camera_.needsUpdate = true; // write ubo
 			Base::scheduleRedraw();
 			return true;
 		} else if(ev.keycode == swa_key_down) {
 			time_ = fract(time_ - 0.0025);
 			dlg_info("time: {}", time_);
-			camera_.update = true; // write ubo
+			camera_.needsUpdate = true; // write ubo
 			Base::scheduleRedraw();
 			return true;
 		} else if(ev.keycode == swa_key_p) {
@@ -240,8 +191,7 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		// camera_.perspective.aspect = float(ev.size.x) / ev.size.y;
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	bool touchBegin(const swa_touch_event& ev) override {
@@ -290,17 +240,8 @@ public:
 	float time_ {0.25f}; // in range [0,1]
 	bool playing_ {false};
 
-	bool rotateView_ {};
-	nytl::Vec2f mposStart_ {};
-	nytl::Vec2f mpos_ {};
-
-	struct {
-		float pitch {0.f};
-		float yaw {0.f};
-	} vel_;
-
 	// tkn::Camera camera_;
-	tkn::QuatCamera camera_;
+	tkn::ControlledCamera camera_;
 
 	// tkn::TouchCameraController touch_;
 

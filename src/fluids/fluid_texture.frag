@@ -53,7 +53,8 @@ void main() {
 		float accum = 1.f;
 		vec2 pos = light;
 		for(int i = 0; i < samples; ++i) {
-			accum -= step * texture(tex, pos).r * densityFac;
+			// accum -= step * texture(tex, pos).r * densityFac;
+			accum *= exp(-densityFac * step * texture(tex, pos).r);
 			pos += step * diff;
 		}
 

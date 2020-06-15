@@ -1,10 +1,6 @@
 Todo
 =====
 
-- Re-enable Werror?
-	- probably not a good idea though, there are so many subprojects
-	  and dependencies that it's just really annoying on compiler
-	  up-/downgrade. But do it every once in a while
 - Fix all meson warnings
 - Make sure to use TKN_BASE_DIR instead of hardcoding asset paths
 - Make sure to include SSE and Neon in the speex (cubeb) build
@@ -18,7 +14,8 @@ Todo
 
 - split tkn into smaller, static libraries for dependencies
 	- e.g. libtkn-audio libtkn-audio3D libtkn-physics2D libtkn-physics3D
-	  and so on
+	  and so on. Make them optional. tkn/br shouldn't fail to compile
+	  because something is wrong with bullet, Box2D or some audio code.
 	- allows to use/propagate disabler objects from the dependencies
 
 ## Full Android support

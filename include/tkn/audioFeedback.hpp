@@ -17,6 +17,7 @@ namespace tkn {
 // to make the timing of the main thread anything to rely on,
 // when there isn't enough space, old (unconsumed) data should be overriden
 // if that is possible somehow.
+// [NOTE: nope that's not possible, at least not lockfree.]
 template<typename T>
 class FeedbackAudioSource : public tkn::AudioSource {
 public:

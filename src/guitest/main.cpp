@@ -1,5 +1,4 @@
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <dlg/dlg.hpp>
 
 #include <vui/gui.hpp>
@@ -7,13 +6,15 @@
 #include <vui/textfield.hpp>
 #include <vui/colorPicker.hpp>
 
-class DummyApp : public tkn::App {
+class DummyApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	bool init(const nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
+		rvgInit();
 		auto startPaint = rvg::Color {200, 150, 170};
 		bgPaint_ = {rvgContext(), rvg::colorPaint(startPaint)};
 		bgShape_ = {rvgContext(), {-1, -1}, {2, 2}, {true, 0.f}};
@@ -91,10 +92,5 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	DummyApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<DummyApp>(argc, argv);
 }

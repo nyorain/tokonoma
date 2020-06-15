@@ -1,5 +1,6 @@
-#include <tkn/app2.hpp>
+#include <tkn/app.hpp>
 #include <tkn/taa.hpp>
+#include <tkn/color.hpp>
 #include <tkn/render.hpp>
 #include <tkn/image.hpp>
 #include <tkn/features.hpp>
@@ -359,7 +360,7 @@ public:
 		// tcp.format = vk::Format::r8Unorm;
 		tcp.format = vk::Format::r8g8b8a8Unorm;
 		tcp.srgb = false; // TODO: not sure tbh
-		scatter_.noise = tkn::buildTexture(dev, tkn::readImageLayers(paths), tcp);
+		scatter_.noise = tkn::buildTexture(dev, tkn::loadImageLayers(paths), tcp);
 
 		// ds
 		scatter_.ds = {dev.descriptorAllocator(), scatter_.dsLayout};
@@ -779,7 +780,7 @@ public:
 
 				auto wb = tkn::WorkBatcher(vkDevice());
 				auto& l = lights_.emplace_back(wb, shadowData_);
-				l.data.color = tkn::blackbody(td(rnd));
+				l.data.color = tkn::blackbodyApproxRGB(td(rnd));
 				l.data.position = camera_.position();
 				l.data.radius = rd(rnd);
 				l.updateDevice();

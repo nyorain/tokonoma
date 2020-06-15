@@ -89,6 +89,11 @@ template<typename T> constexpr auto BytesConvertible =
 	std::is_trivially_copyable_v<T> &&
 	std::is_standard_layout_v<T>;
 
+// TODO: we probably can't assume this (e.g. for span).
+// Not sure if overload resolution works if this isn't true
+static_assert(!BytesConvertible<std::vector<int>>);
+static_assert(!BytesConvertible<nytl::Span<std::byte>>);
+
 template<typename T>
 std::enable_if_t<BytesConvertible<T>>
 write(WriteBuffer& buffer, const T& obj) {
@@ -128,5 +133,6 @@ std::enable_if_t<BytesConvertible<T>, nytl::Span<const std::byte>>
 bytes(const std::initializer_list<T>& val) {
 	return nytl::as_bytes(nytl::span(val));
 }
+
 
 } // namespace tkn

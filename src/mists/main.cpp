@@ -1,17 +1,13 @@
-#include "physics.hpp"
-#include <tkn/app.hpp>
+#include "physics.hpp" // TODO: abolish that horribleness
+#include <tkn/singlePassApp.hpp>
 #include <tkn/transform.hpp>
-#include <tkn/window.hpp>
 #include <tkn/levelView.hpp>
 #include <rvg/shapes.hpp>
 #include <rvg/paint.hpp>
 #include <rvg/context.hpp>
 #include <rvg/text.hpp>
 #include <vui/gui.hpp>
-#include <ny/event.hpp>
-#include <ny/key.hpp>
-#include <ny/appContext.hpp>
-#include <ny/keyboardContext.hpp>
+#include <swa/swa.h>
 #include <dlg/dlg.hpp>
 
 #include <Box2D/Dynamics/b2World.h>
@@ -33,8 +29,13 @@ struct Metal {
 
 	bool push {};
 	bool pull {};
-	b2Vec2 oldDir {};
-	float goalVel {}; // dooted onto direction
+
+	double olddt {};
+	b2Vec2 oldForce {};
+	b2Vec2 oldLinearVelocity {};
+
+	// b2Vec2 oldDir {};
+	// float goalVel {}; // dooted onto direction
 };
 
 struct Player {
@@ -50,12 +51,15 @@ struct ContactListener : public b2ContactListener {
 	class Mists* app;
 };
 
-class Mists : public tkn::App {
+class Mists : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	bool init(const nytl::Span<const char*> args) override {
-		if(!App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
+
+		rvgInit();
 
 		// physics_.world.SetWarmStarting(false);
 		contactListener.app = this;
@@ -91,6 +95,10 @@ public:
 				{true, 0.f}};
 			metals_.back().transform = {rvgContext()};
 			metals_.back().rigid.fixture->SetDensity(d);
+			metals_.back().rigid.fixture->SetRestitution(0.0f);
+			metals_.back().rigid.fixture->SetFriction(0.9f);
+			// metals_.back().rigid.body->SetLinearDamping(0.f);
+			// metals_.back().rigid.body->SetAngularDamping(0.f);
 			metals_.back().rigid.body->ResetMassData();
 			metals_.back().paint = {rvgContext(), metalPaint_};
 
@@ -135,7 +143,7 @@ public:
 			metal.shape.fill(cb);
 
 			labelPaint_.bind(cb);
-			windowTransform().bind(cb);
+			rvgWindowTransform().bind(cb);
 			metal.label.draw(cb);
 		}
 
@@ -144,11 +152,11 @@ public:
 		player_.shape.fill(cb);
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
+	void resize(unsigned ww, unsigned wh) override {
 		// reset transform
-		App::resize(ev);
+		App::resize(ww, wh);
 
-		auto w = ev.size.x / float(ev.size.y);
+		auto w = ww / float(wh);
 		auto h = 1.f;
 		auto fac = 10 / std::sqrt(w * w + h * h);
 
@@ -167,19 +175,19 @@ public:
 		App::scheduleRedraw();
 
 		// input
-		auto kc = appContext().keyboardContext();
 		auto accel = nytl::Vec2f {0.f, 0.f};
 		auto fac = 0.01;
-		if(kc->pressed(ny::Keycode::w)) {
+
+		if(swa_display_key_pressed(swaDisplay(), swa_key_w)) {
 			accel.y += fac;
 		}
-		if(kc->pressed(ny::Keycode::a)) {
+		if(swa_display_key_pressed(swaDisplay(), swa_key_a)) {
 			accel.x -= fac;
 		}
-		if(kc->pressed(ny::Keycode::s)) {
+		if(swa_display_key_pressed(swaDisplay(), swa_key_s)) {
 			accel.y -= fac;
 		}
-		if(kc->pressed(ny::Keycode::d)) {
+		if(swa_display_key_pressed(swaDisplay(), swa_key_d)) {
 			accel.x += fac;
 		}
 
@@ -211,8 +219,8 @@ public:
 			pp = {t[0], t[1]};
 			pp.x = 0.5f * pp.x + 0.5f;
 			pp.y = 0.5f * pp.y + 0.5f;
-			pp.x *= window().size().x;
-			pp.y *= window().size().y;
+			pp.x *= windowSize().x;
+			pp.y *= windowSize().y;
 			pp.x -= 20;
 			m.label.change()->position = pp;
 
@@ -221,6 +229,34 @@ public:
 				auto dn = distance;
 				auto d = dn.Normalize();
 
+				d *= 1 / (d * d);
+				auto fac = m.push ? 1.f : -1.f;
+				dn *= fac;
+
+				float em = m.rigid.body->GetInvMass(); // inverse of effective mass
+				float dot = b2Dot(m.oldForce, m.oldForce);
+				dlg_info("dot: {}", dot);
+				if(m.olddt && dot > 0.0) {
+					auto acc = m.rigid.body->GetLinearVelocity() - m.oldLinearVelocity;
+					// dt not needed when we use impulse
+					em = b2Dot(m.oldForce, acc) / dot;
+					em = std::clamp(em, 0.f, 100000.f);
+				}
+
+				dlg_info(em);
+				float maxStrength = 1.0 * dt;
+				auto force = maxStrength * std::pow(1.1, -0.2 * em) * dn;
+
+				m.olddt = dt;
+				m.oldForce = force;
+				m.oldLinearVelocity = m.rigid.body->GetLinearVelocity();
+
+				// m.rigid.body->ApplyForceToCenter(force, true);
+				// player_.rigid.body->ApplyForceToCenter(-force, true);
+				m.rigid.body->ApplyLinearImpulseToCenter(force, true);
+				player_.rigid.body->ApplyLinearImpulseToCenter(-force, true);
+
+				/*
 				auto fac = m.push ? 1.f : -1.f;
 				dn *= fac;
 
@@ -273,6 +309,7 @@ public:
 
 				m.oldDir = dn;
 				m.goalVel = b2Dot(dn, m.rigid.body->GetLinearVelocity());
+				*/
 			}
 		}
 
@@ -280,18 +317,18 @@ public:
 		player_.shape.change()->center = {p.x, p.y};
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
+	bool key(const swa_key_event& ev) override {
 		if(App::key(ev)) {
 			return true;
 		}
 
-		std::unordered_map<ny::Keycode, unsigned> assoc = {
-			{ny::Keycode::h, 0},
-			{ny::Keycode::j, 1},
-			{ny::Keycode::k, 2},
-			{ny::Keycode::l, 3},
-			{ny::Keycode::i, 4},
-			{ny::Keycode::o, 5},
+		std::unordered_map<swa_key, unsigned> assoc = {
+			{swa_key_h, 0},
+			{swa_key_j, 1},
+			{swa_key_k, 2},
+			{swa_key_l, 3},
+			{swa_key_i, 4},
+			{swa_key_o, 5},
 		};
 
 		/*
@@ -304,11 +341,11 @@ public:
 		}
 		*/
 
-		if(ev.keycode == ny::Keycode::space) {
+		if(ev.keycode == swa_key_space) {
 			push_ = ev.pressed;
 		}
 
-		if(auto it = assoc.find(ev.keycode); it != assoc.end() && !ev.repeat) {
+		if(auto it = assoc.find(ev.keycode); it != assoc.end() && !ev.repeated) {
 			if(it->second >= metals_.size()) {
 				return false;
 			}
@@ -329,8 +366,9 @@ public:
 				metal.pull = true;
 			}
 
-			metal.goalVel = 0;
-			metal.oldDir.SetZero();
+			metal.olddt = 0.0;
+			// metal.goalVel = 0;
+			// metal.oldDir.SetZero();
 			return true;
 		}
 

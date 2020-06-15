@@ -1,9 +1,8 @@
 #include <tkn/taa.hpp>
 #include <tkn/ccam.hpp>
-#include <tkn/app2.hpp>
+#include <tkn/app.hpp>
 #include <tkn/render.hpp>
 #include <tkn/features.hpp>
-#include <tkn/window.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>

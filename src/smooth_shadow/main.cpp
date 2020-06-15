@@ -1,17 +1,13 @@
 #include "light.hpp"
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/color.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/levelView.hpp>
 #include <vui/gui.hpp>
 #include <vui/dat.hpp>
 #include <nytl/mat.hpp>
 #include <nytl/matOps.hpp>
-#include <ny/event.hpp>
-#include <ny/key.hpp>
-#include <ny/appContext.hpp>
-#include <ny/keyboardContext.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/handles.hpp>
 #include <vpp/pipeline.hpp>
@@ -19,26 +15,29 @@
 
 #include <optional>
 #include <random>
+#include <array>
 
 #include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/smooth_shadow.light_pp.frag.h>
 
-class ShadowApp : public tkn::App {
+class ShadowApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	bool init(const nytl::Span<const char*> args) override {
-		if(!App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
-		auto& device = vulkanDevice();
+		rvgInit();
+		auto& device = vkDevice();
 		ubo_ = vpp::SubBuffer(device.bufferAllocator(),
 			sizeof(nytl::Mat4f), vk::BufferUsageBits::uniformBuffer,
 			device.hostMemoryTypes(), 4u);
 
-		auto viewLayoutBindings = {
+		auto viewLayoutBindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex)};
-		viewDsLayout_ = {device, viewLayoutBindings};
+		viewDsLayout_.init(device, viewLayoutBindings);
 		viewDs_ = {device.descriptorAllocator(), viewDsLayout_};
 
 		vpp::DescriptorSetUpdate update(viewDs_);
@@ -54,7 +53,7 @@ public:
 
 		auto& light = lightSystem().addLight();
 		light.position = {4.f, 1.5f};
-		light.color = static_cast<nytl::Vec4f>(blackbody(4100));
+		light.color = static_cast<nytl::Vec4f>(tkn::blackbodyApproxRGB(4100));
 		light.color[3] = 1.f;
 		light.radius(0.25);
 		light.strength(1.f);
@@ -71,7 +70,7 @@ public:
 		for(auto i = 0u; i < 2u && false; ++i) {
 			auto& light = lightSystem().addLight();
 			light.position = {posDistr(rgen), posDistr(rgen)};
-			light.color = static_cast<nytl::Vec4f>(blackbody(colDistr(rgen)));
+			light.color = static_cast<nytl::Vec4f>(tkn::blackbodyApproxRGB(colDistr(rgen)));
 			light.color[3] = 1.f;
 			light.radius(radDistr(rgen));
 			dlg_info(light.position);
@@ -87,14 +86,14 @@ public:
 		info.maxLod = 0.25;
 		info.mipmapMode = vk::SamplerMipmapMode::nearest;
 		sampler_ = vpp::Sampler(device, info);
-		auto ppBindings = {
+		auto ppBindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment)
 		};
 
-		pp_.dsLayout = vpp::TrDsLayout(device, ppBindings);
+		pp_.dsLayout.init(device, ppBindings);
 		auto pipeSets = {
 			pp_.dsLayout.vkHandle(),
 			lightSystem().lightDsLayout().vkHandle()
@@ -163,7 +162,7 @@ public:
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 		rerecord_ |= lightSystem().updateDevice();
 
 		if(updateView_) {
@@ -174,7 +173,7 @@ public:
 
 		auto map = pp_.ubo.memoryMap();
 		auto ptr = map.span();
-		auto ws = App::window().size();
+		auto ws = App::windowSize();
 		tkn::write(ptr, tkn::windowToLevelMatrix(ws, levelView_));
 		tkn::write(ptr, pp_.exposure);
 		tkn::write(ptr, pp_.gamma);
@@ -182,14 +181,14 @@ public:
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
-		App::beforeRender(cb);
+		Base::beforeRender(cb);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			lightSystem().lightPipeLayout(), 0, {{viewDs_.vkHandle()}}, {});
 		lightSystem().renderLights(cb);
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		App::render(cb);
+		Base::render(cb);
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pp_.pipeLayout, 0, {{pp_.ds.vkHandle()}}, {});
 
@@ -205,20 +204,19 @@ public:
 		App::update(dt);
 		if(currentLight_) {
 			auto fac = dt;
-			auto kc = appContext().keyboardContext();
-			if(kc->pressed(ny::Keycode::d)) {
+			if(swa_display_key_pressed(swaDisplay(), swa_key_d)) {
 				currentLight_->position += nytl::Vec {fac, 0.f};
 				refreshMatrices();
 			}
-			if(kc->pressed(ny::Keycode::a)) {
+			if(swa_display_key_pressed(swaDisplay(), swa_key_a)) {
 				currentLight_->position += nytl::Vec {-fac, 0.f};
 				refreshMatrices();
 			}
-			if(kc->pressed(ny::Keycode::w)) {
+			if(swa_display_key_pressed(swaDisplay(), swa_key_w)) {
 				currentLight_->position += nytl::Vec {0.f, fac};
 				refreshMatrices();
 			}
-			if(kc->pressed(ny::Keycode::s)) {
+			if(swa_display_key_pressed(swaDisplay(), swa_key_s)) {
 				currentLight_->position += nytl::Vec {0.f, -fac};
 				refreshMatrices();
 			}
@@ -228,7 +226,7 @@ public:
 	}
 
 	void refreshMatrices() {
-		nytl::Vec2ui wsize = App::window().size();
+		nytl::Vec2ui wsize = windowSize();
 		levelView_.size = tkn::levelViewSize(wsize.x / float(wsize.y), 10.f);
 		if(currentLight_) {
 			levelView_.center = currentLight_->position;
@@ -239,22 +237,17 @@ public:
 		updateView_ = true;
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
+	void resize(unsigned w, unsigned h) override {
+		App::resize(w, h);
 		refreshMatrices();
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
-	}
-
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
 		if(App::mouseButton(ev)) {
 			return true;
 		}
 
-		auto pos = tkn::windowToLevel(App::window().size(),
-			levelView_, ev.position);
+		auto pos = tkn::windowToLevel(windowSize(), levelView_, {ev.x, ev.y});
 		for(auto& light : lightSystem().lights()) {
 			if(contains(light, pos)) {
 				currentLight_ = &light;
@@ -305,10 +298,5 @@ protected:
 
 // main
 int main(int argc, const char** argv) {
-	ShadowApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<ShadowApp>(argc, argv);
 }

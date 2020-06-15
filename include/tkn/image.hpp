@@ -88,9 +88,12 @@ std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 	bool cubemap = false);
 
 /// Expects all mips and layers to be linearly lay out in data, i.e.
-/// like done by vpp's imageOps, see vpp::imageBufferOffset.
+/// like done by vpp's imageOps, see vpp::tightTexelNumber.
 std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 	unsigned mips, unsigned layers, std::unique_ptr<std::byte[]> data,
+	bool cubemap = false);
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
+	unsigned mips, unsigned layers, nytl::Span<const std::byte> data,
 	bool cubemap = false);
 
 /// Expects: data.size() == mips * layers, with data for mip m, layer
@@ -136,11 +139,11 @@ std::unique_ptr<ImageProvider> loadImage(nytl::StringParam filename);
 std::unique_ptr<ImageProvider> loadImage(File&& file);
 std::unique_ptr<ImageProvider> loadImage(nytl::Span<const std::byte> data);
 
-/// Reads multiple images from the given paths and loads them as layers.
+/// Loads multiple images from the given paths and loads them as layers.
 /// All images must have the same number of mip levels, same sizes
 /// and same formats. Will always just consider the first layer from
 /// each image.
-std::unique_ptr<ImageProvider> readImageLayers(nytl::Span<const char* const> paths,
+std::unique_ptr<ImageProvider> loadImageLayers(nytl::Span<const char* const> paths,
 	bool cubemap = false);
 
 enum class WriteError {

@@ -15,10 +15,8 @@
 
 #include <tkn/singlePassApp.hpp>
 #include <tkn/shader.hpp>
-#include <tkn/window.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/levelView.hpp>
-#include <tkn/window.hpp>
 #include <tkn/types.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/texture.hpp>
@@ -140,8 +138,8 @@ public:
 			"../assets/iro/spawner.png",
 			"../assets/iro/ample.png",
 			"../assets/iro/velocity.png"};
-		auto p = tkn::read(images);
-		textures_ = std::move(tkn::Texture(dev, std::move(p)).viewableImage());
+		auto p = tkn::loadImageLayers(images);
+		textures_ = tkn::buildTexture(dev, std::move(p));
 
 		vk::SamplerCreateInfo samplerInfo {};
 		samplerInfo.minFilter = vk::Filter::linear;
@@ -151,7 +149,7 @@ public:
 		sampler_ = {dev, samplerInfo};
 
 		// compute
-		auto compDsBindings = {
+		auto compDsBindings = std::array {
 			// old fields
 			vpp::descriptorBinding(
 				vk::DescriptorType::storageBuffer,
@@ -170,11 +168,11 @@ public:
 				vk::ShaderStageBits::compute)
 		};
 
-		compDsLayout_ = {dev, compDsBindings};
+		compDsLayout_.init(dev, compDsBindings);
 		compPipeLayout_ = {dev, {{compDsLayout_.vkHandle()}}, {}};
 
 		// graphics
-		auto gfxDsBindings = {
+		auto gfxDsBindings = std::array {
 			// transform (view) matrix
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
@@ -182,11 +180,10 @@ public:
 			// texture array
 			vpp::descriptorBinding(
 				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment,
-				-1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 		};
 
-		gfxDsLayout_ = {dev, gfxDsBindings};
+		gfxDsLayout_.init(dev, gfxDsBindings);
 		gfxPipeLayout_ = {dev, {{gfxDsLayout_.vkHandle()}},
 			{{{vk::ShaderStageBits::fragment, 0u, sizeof(nytl::Vec3f)}}}};
 

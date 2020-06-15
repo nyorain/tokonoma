@@ -1,9 +1,8 @@
 #include <tkn/singlePassApp.hpp>
-#include <tkn/window.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/formats.hpp>
 #include <tkn/render.hpp>
-#include <tkn/camera2.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/types.hpp>
 #include <tkn/shader.hpp>
 #include <tkn/image.hpp>
@@ -78,12 +77,12 @@ public:
 		ubo_ = {dev.bufferAllocator(), sizeof(ShaderData),
 			vk::BufferUsageBits::uniformBuffer, mem};
 
-		auto renderBindings = {
+		auto renderBindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 		};
 
-		dsLayout_ = {dev, renderBindings};
+		dsLayout_.init(dev, renderBindings);
 
 		vk::PushConstantRange pcr;
 		pcr.offset = 0u;
@@ -140,9 +139,14 @@ public:
 		return true;
 	}
 
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
+		cam_.aspect({w, h});
+	}
+
 	void update(double dt) override {
 		time_ += dt;
-		tkn::checkMovement(cam_, swaDisplay(), dt);
+		cam_.update(swaDisplay(), dt);
 		Base::update(dt);
 		Base::scheduleRedraw(); // we always redraw; shaders are assumed dynamic
 	}
@@ -156,9 +160,9 @@ public:
 		data.time = time_;
 		data.mpos = mpos_;
 		data.effect = effect_;
-		data.camPos = cam_.pos;
-		data.camDir = tkn::apply(cam_.rot, Vec3f{0.f, 0.f, -1.f});
-		data.aspect = float(windowSize().x) / windowSize().y;
+		data.camPos = cam_.position();
+		data.camDir = cam_.dir();
+		data.aspect = cam_.aspect();
 
 		tkn::write(span, data);
 
@@ -188,7 +192,7 @@ public:
 		Base::mouseMove(ev);
 		using namespace nytl::vec::cw::operators;
 		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
-		tkn::mouseMove(cam_, camCon_, swaDisplay(), {ev.dx, ev.dy});
+		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
 	bool initPipe(std::string_view shaderFile, vk::RenderPass rp,
@@ -373,7 +377,7 @@ public:
 			auto map = screenshot_.retrieve.memoryMap();
 
 			auto size = nytl::Vec3ui{screenshot_.width, screenshot_.height, 1u};
-			auto img = tkn::wrap(size, screenshotFormat, map.span());
+			auto img = tkn::wrapImage(size, screenshotFormat, map.span());
 			if(screenshotFormat == vk::Format::r8g8b8a8Unorm) {
 				auto fname = "sviewer.png";
 				// - using stbi -
@@ -419,9 +423,7 @@ protected:
 	vpp::TrDsLayout dsLayout_;
 	vpp::TrDs ds_;
 	vpp::PipelineCache cache_;
-
-	tkn::Camera cam_;
-	tkn::FPCamCon camCon_;
+	tkn::ControlledCamera cam_;
 
 	struct {
 		bool reloadPipe {true};

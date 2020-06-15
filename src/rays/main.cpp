@@ -1,6 +1,6 @@
 #include <tkn/singlePassApp.hpp>
-#include <tkn/window.hpp>
 #include <tkn/image.hpp>
+#include <tkn/color.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/render.hpp>
 #include <tkn/transform.hpp>
@@ -23,8 +23,6 @@ using namespace tkn::types;
 #include <vpp/formats.hpp>
 #include <vpp/vk.hpp>
 
-#include <ny/key.hpp>
-#include <ny/event.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
 #include <nytl/mat.hpp>
@@ -152,14 +150,14 @@ public:
 		auto& dev = vkDevice();
 
 		// layouts
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
 		};
 
-		tss_.dsLayout = {dev, bindings};
+		tss_.dsLayout.init(dev, bindings);
 		tss_.pipeLayout = {dev, {{tss_.dsLayout.vkHandle()}}, {}};
 
 		// pipe
@@ -179,12 +177,12 @@ public:
 		auto& dev = vkDevice();
 
 		// layouts
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 		};
 
-		pp_.dsLayout = {dev, bindings};
+		pp_.dsLayout.init(dev, bindings);
 		pp_.pipeLayout = {dev, {{pp_.dsLayout.vkHandle()}}, {}};
 
 		// pipe
@@ -213,7 +211,7 @@ public:
 		// TODO: use common unit.
 		float fac = 25.f;
 		std::initializer_list<Light> lights = {
-			{fac * tkn::blackbody(4000), 0.05f, {-1.f, 1.f}},
+			{fac * tkn::blackbodyApproxRGB(4000), 0.05f, {-1.f, 1.f}},
 			// {1.f * tkn::blackbody(3500), 0.1f, {2.0f, 1.8f}},
 			// {1.f * tkn::blackbody(5500), 0.1f, {-2.f, -1.8f}},
 			// {1 * tkn::blackbody(5000), 0.1f, {-2.f, 2.f}},
@@ -315,7 +313,7 @@ public:
 		auto& dev = vkDevice();
 
 		// layouts
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
 				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
@@ -331,10 +329,10 @@ public:
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
 		};
 
-		comp_.dsLayout = {dev, bindings};
+		comp_.dsLayout.init(dev, bindings);
 		comp_.pipeLayout = {dev, {{comp_.dsLayout.vkHandle()}}, {}};
 
 		// pipe
@@ -365,15 +363,12 @@ public:
 			paths[i] = spaths[i].data();
 		}
 
-		auto layers = tkn::read(paths);
-
 		tkn::TextureCreateParams tcp;
 		// TODO: fix blitting!
 		// tcp.format = vk::Format::r8Unorm;
 		tcp.format = vk::Format::r8g8b8a8Unorm;
 		tcp.srgb = false; // TODO: not sure tbh
-		auto tex = tkn::Texture(dev, tkn::read(paths), tcp);
-		noise_ = std::move(tex.viewableImage());
+		noise_ = tkn::buildTexture(dev, tkn::loadImageLayers(paths), tcp);
 
 		// ds
 		comp_.ds = {dev.descriptorAllocator(), comp_.dsLayout};
@@ -429,12 +424,12 @@ public:
 		gfx_.rp = {dev, rpi};
 
 		// layouts
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex),
 		};
 
-		gfx_.dsLayout = {dev, bindings};
+		gfx_.dsLayout.init(dev, bindings);
 		gfx_.pipeLayout = {dev, {{gfx_.dsLayout.vkHandle()}}, {}};
 
 		// pipe

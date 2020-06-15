@@ -4,9 +4,7 @@
 //   system like that (interesting to study the effect one individual particle
 //   has on the others over time)
 
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
-
+#include <tkn/singlePassApp.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/pipeline.hpp>
@@ -14,7 +12,6 @@
 #include <nytl/vecOps.hpp>
 #include <vui/dat.hpp>
 #include <vui/gui.hpp>
-#include <ny/key.hpp>
 #include <dlg/dlg.hpp>
 #include <cstring>
 #include <random>
@@ -154,14 +151,16 @@ protected:
 	vpp::SubBuffer buf_;
 };
 
-class PursuersApp : public tkn::App {
+class PursuersApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	bool init(const nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
+		rvgInit();
 
 		// pipe
 		auto range = vk::PushConstantRange {vk::ShaderStageBits::fragment,
@@ -242,12 +241,12 @@ public:
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 		system_->updateDevice();
 	}
 
 	void update(double dt) override {
-		App::update(dt);
+		Base::update(dt);
 
 		if(!frame_) {
 			return;
@@ -255,15 +254,15 @@ public:
 
 		// frame_ = false;
 		system_->update(dt);
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
-		if(ev.pressed && ev.keycode == ny::Keycode::p) {
+		if(ev.pressed && ev.keycode == swa_key_p) {
 			frame_ = !frame_;
 			return true;
 		}
@@ -272,7 +271,7 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		App::render(cb);
+		Base::render(cb);
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, particlePipe_);
 		system_->render(cb, particlePipeLayout_);
 		gui().draw(cb);
@@ -290,10 +289,5 @@ protected:
 
 // main
 int main(int argc, const char** argv) {
-	PursuersApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<PursuersApp>(argc, argv);
 }

@@ -7,7 +7,6 @@
 #include "tables.hpp"
 
 #include <tkn/singlePassApp.hpp>
-#include <tkn/window.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/ccam.hpp>
 #include <tkn/render.hpp>

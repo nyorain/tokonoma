@@ -15,3 +15,10 @@ executable('fft',
 	dependencies: [tkn_dep, dep_playground])
 
 executable('blur', 'blur.cpp')
+
+executable('audio',
+	'audio.cpp',
+	dependencies: [tkn_dep, tkn_audio_dep])
+
+subdir('daudio')
+subdir('spirv')

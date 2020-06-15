@@ -128,12 +128,12 @@ public:
 		initSky();
 
 		// init noise generation data
-		auto bindings = {
+		auto bindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
 		};
 
-		gen_.dsLayout = {dev, bindings};
+		gen_.dsLayout.init(dev, bindings);
 		gen_.pipeLayout = {dev, {{gen_.dsLayout.vkHandle()}}, {}};
 		gen_.sem = {dev};
 
@@ -158,10 +158,10 @@ public:
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment | vk::ShaderStageBits::vertex),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 		};
 
-		render_.dsLayout = {dev, bindings};
+		render_.dsLayout.init(dev, bindings);
 		render_.pipeLayout = {dev, {{render_.dsLayout.vkHandle()}}, {}};
 
 		render_.ubo = {dev.bufferAllocator(), sizeof(UboData),
@@ -209,7 +209,7 @@ public:
 
 		std::unique_ptr<tkn::ImageProvider> cubemaps;
 		auto stream = std::make_unique<tkn::FileStream>(tkn::File("skyEnvs.ktx", "rb"));
-		auto err = tkn::readKtx(std::move(stream), cubemaps);
+		auto err = tkn::loadKtx(std::move(stream), cubemaps);
 		if(err != tkn::ReadError::none) {
 			throw std::runtime_error("Couldn't read skyEnvs.ktx");
 		}

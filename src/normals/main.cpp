@@ -1,5 +1,4 @@
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>
 
@@ -9,35 +8,34 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/pipeline.hpp>
-
-#include <ny/key.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
+#include <array>
 
 #include <shaders/tkn.fullscreen.vert.h>
 #include <shaders/normals.texn.frag.h>
 
-class DummyApp : public tkn::App {
+class NormalsApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto mem = dev.hostMemoryTypes();
 		ubo_ = {dev.bufferAllocator(), sizeof(float) * 4,
 			vk::BufferUsageBits::uniformBuffer, mem};
 
 		// make sure to load the normal map in linear rgb space, *not* srgb
+		auto color = tkn::loadImage(TKN_BASE_DIR "/assets/gravel_color.png");
+		auto normal = tkn::loadImage(TKN_BASE_DIR "/assets/gravel_normal.png");
+
 		tkn::TextureCreateParams params;
 		params.srgb = true;
-		diffuse_ = std::move(tkn::Texture(dev,
-			tkn::read("../assets/gravel_color.png"), params).viewableImage());
+		diffuse_ = tkn::buildTexture(dev, std::move(color), params);
 
 		params.srgb = false;
-		normal_ = std::move(tkn::Texture(dev,
-			tkn::read("../assets/gravel_normal.png"), params).viewableImage());
+		normal_ = tkn::buildTexture(dev, std::move(normal), params);
 
 		// pipe
 		auto info = vk::SamplerCreateInfo {};
@@ -49,17 +47,17 @@ public:
 		info.mipmapMode = vk::SamplerMipmapMode::nearest;
 		sampler_ = vpp::Sampler(dev, info);
 
-		auto renderBindings = {
+		auto renderBindings = std::array {
 			// diffuse + normals
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 		};
 
-		dsLayout_ = {dev, renderBindings};
+		dsLayout_.init(dev, renderBindings);
 		auto pipeSets = {dsLayout_.vkHandle()};
 
 		vk::PipelineLayoutCreateInfo plInfo;
@@ -99,35 +97,34 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
+		Base::update(dt);
 
 		auto fac = dt;
-		auto kc = appContext().keyboardContext();
 
 		// we don't use a transform matrix here, so origin is top left
-		if(kc->pressed(ny::Keycode::d)) {
+		if(swa_display_key_pressed(swaDisplay(), swa_key_d)) {
 			lightPos_ += nytl::Vec {fac, 0.f, 0.f};
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
-		if(kc->pressed(ny::Keycode::a)) {
+		if(swa_display_key_pressed(swaDisplay(), swa_key_a)) {
 			lightPos_ += nytl::Vec {-fac, 0.f, 0.f};
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
-		if(kc->pressed(ny::Keycode::w)) {
+		if(swa_display_key_pressed(swaDisplay(), swa_key_w)) {
 			lightPos_ += nytl::Vec {0.f, -fac, 0.f};
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
-		if(kc->pressed(ny::Keycode::s)) {
+		if(swa_display_key_pressed(swaDisplay(), swa_key_s)) {
 			lightPos_ += nytl::Vec {0.f, fac, 0.f};
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
-		if(kc->pressed(ny::Keycode::q)) {
+		if(swa_display_key_pressed(swaDisplay(), swa_key_q)) {
 			lightPos_ += nytl::Vec {0.f, 0.f, fac};
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
-		if(kc->pressed(ny::Keycode::e)) {
+		if(swa_display_key_pressed(swaDisplay(), swa_key_e)) {
 			lightPos_ += nytl::Vec {0.f, 0.f, -fac};
-			App::scheduleRedraw();
+			Base::scheduleRedraw();
 		}
 
 		time_ += dt;
@@ -157,10 +154,5 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	DummyApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<NormalsApp>(argc, argv);
 }

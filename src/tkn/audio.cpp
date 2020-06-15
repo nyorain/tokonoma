@@ -313,7 +313,13 @@ void AudioPlayer::updateThread() {
 		}
 
 		// sleep
-		std::this_thread::sleep_until(nextIteration);
+		if(Clock::now() >= nextIteration) {
+			// This is problematic since in this case we likely can't
+			// produce new audio data in realtime.
+			dlg_warn("Updating audio sources took longer than fixed iteration time");
+		} else {
+			std::this_thread::sleep_until(nextIteration);
+		}
 	}
 }
 

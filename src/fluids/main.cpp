@@ -8,9 +8,10 @@
 //   disabled needs correct boundary conditions. But probably not
 //   really worth it anyways?)
 // - not 100% sure about the other boundary conditions
+// - make various things (such as grid size and number of iterations
+//   configurable via command line options)
 
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
 
 #include <vpp/sharedBuffer.hpp>
@@ -25,11 +26,9 @@
 #include <vpp/submit.hpp>
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
-#include <ny/key.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/appContext.hpp>
-#include <ny/keyboardContext.hpp>
 #include <dlg/dlg.hpp>
+#include <argagg.hpp>
+
 #include <cstring>
 #include <random>
 
@@ -45,8 +44,8 @@
 // == FluidSystem ==
 class FluidSystem {
 public:
-	static constexpr auto pressureIterations = 20u;
-	static constexpr auto diffuseDensIterations = 0u;
+	unsigned pressureIterations = 20u;
+	// static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
 	float densityFac {0.0};
@@ -121,7 +120,7 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 	sampler_ = vpp::Sampler(dev, info);
 
 	// pipe
-	auto advectBindings = {
+	auto advectBindings = std::array {
 		vpp::descriptorBinding(vk::DescriptorType::storageImage,
 			vk::ShaderStageBits::compute),
 		vpp::descriptorBinding(vk::DescriptorType::storageImage,
@@ -488,14 +487,17 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 }
 
 // == FluidApp ==
-class FluidApp : public tkn::App {
+class FluidApp : public tkn::SinglePassApp {
+public:
+	using Base = tkn::SinglePassApp;
+
 public:
 	bool init(const nytl::Span<const char*> args) override {
-		if(!App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// own pipe
 		auto info = vk::SamplerCreateInfo {};
@@ -507,14 +509,14 @@ public:
 		info.mipmapMode = vk::SamplerMipmapMode::nearest;
 		sampler_ = vpp::Sampler(dev, info);
 
-		auto renderBindings = {
+		auto renderBindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 		};
 
-		dsLayout_ = {dev, renderBindings};
+		dsLayout_.init(dev, renderBindings);
 		auto pipeSets = {dsLayout_.vkHandle()};
 
 		vk::PipelineLayoutCreateInfo plInfo;
@@ -533,33 +535,27 @@ public:
 
 		pipe_ = {dev, pipeInfo.info()};
 
-		// system
-		// NOTE: MUST be multiple of 16 due to work group size
-
 		// mouse ubo
 		mouseUbo_ = {dev.bufferAllocator(), sizeof(nytl::Vec2f),
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 		// ds
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
-		auto iv = system_->density().vkImageView();
-		vpp::DescriptorSetUpdate update(ds_);
-		update.imageSampler({{{}, iv, vk::ImageLayout::general}});
-		update.uniform({{{mouseUbo_}}});
-
 		return true;
 	}
 
-	// TODO: kinda hacky to put this here. Guess App should have
-	// a virtual function for these kind of things
 	void initBuffers(const vk::Extent2D& size,
 			nytl::Span<RenderBuffer> bufs) override {
-		App::initBuffers(size, bufs);
+		Base::initBuffers(size, bufs);
 
 		auto fac = size.height / float(size.width);
-		unsigned width = 256;
+		// NOTE: must both be multiples of 16 due to group size
+		// TODO: fix with standard ceil rounding in dispatch count
+		// and compute shader check
+		unsigned width = gridWidth_;
 		unsigned height = vpp::align((unsigned)(fac * width), 16u);
-		system_.emplace(vulkanDevice(), nytl::Vec2ui {width, height});
+		system_.emplace(vkDevice(), nytl::Vec2ui {width, height});
+		system_->pressureIterations = pressureIterations_;
 
 		if(viewType_ == 1) {
 			changeView_ = system_->density().vkImageView();
@@ -568,8 +564,37 @@ public:
 		}
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	argagg::parser argParser() const override {
+		auto res = Base::argParser();
+		res.definitions.push_back({
+			"size", {"--size", "-s"},
+			"Size (width) of the simulation grid", 1,
+		});
+		res.definitions.push_back({
+			"pressure-iterations", {"--pressure-iterations", "-p"},
+			"Number of pressure solver iterations", 1,
+		});
+		return res;
+	}
+
+	bool handleArgs(const argagg::parser_results& res, Base::Args& args) override {
+		if(!Base::handleArgs(res, args)) {
+			return false;
+		}
+
+		if(auto& pi = res["pressure-iterations"]; pi) {
+			pressureIterations_ = pi.as<unsigned>();
+		}
+		if(auto& s = res["size"]; s) {
+			gridWidth_ = s.as<unsigned>();
+		}
+
+		return true;
+	}
+
+
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
@@ -577,22 +602,22 @@ public:
 			return false;
 		}
 
-		if(ev.keycode == ny::Keycode::d) {
+		if(ev.keycode == swa_key_d) {
 			changeView_ = system_->density().vkImageView();
 			viewType_ = 1;
-		} else if(ev.keycode == ny::Keycode::f) {
+		} else if(ev.keycode == swa_key_f) {
 			changeView_ = system_->density().vkImageView();
 			viewType_ = 3;
-		} else if(ev.keycode == ny::Keycode::v) {
+		} else if(ev.keycode == swa_key_v) {
 			changeView_ = system_->velocity().vkImageView();
 			viewType_ = 2;
-		} else if(ev.keycode == ny::Keycode::q) {
+		} else if(ev.keycode == swa_key_q) {
 			changeView_ = system_->divergence().vkImageView();
 			viewType_ = 4;
-		} else if(ev.keycode == ny::Keycode::p) {
+		} else if(ev.keycode == swa_key_p) {
 			changeView_ = system_->pressure().vkImageView();
 			viewType_ = 1;
-		} else if(ev.keycode == ny::Keycode::l) {
+		} else if(ev.keycode == swa_key_l) {
 			changeView_ = system_->velocity().vkImageView();
 			viewType_ = 5;
 		} else {
@@ -603,13 +628,14 @@ public:
 	}
 
 	void update(double dt) override {
-		App::scheduleRedraw();
-		App::update(dt);
+		Base::scheduleRedraw();
+		Base::update(dt);
 		dt_ = dt;
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
+
 		using namespace nytl::vec::cw::operators;
 		system_->updateDevice(dt_, system_->size() * prevPos_,
 			system_->size() * mpos_);
@@ -622,28 +648,29 @@ public:
 		if(changeView_) {
 			vpp::DescriptorSetUpdate update(ds_);
 			update.imageSampler({{{}, changeView_, vk::ImageLayout::general}});
+			update.uniform({{{mouseUbo_}}});
 			changeView_ = {};
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		}
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
 		using namespace nytl::vec::cw::operators;
-		mpos_ = nytl::Vec2f(ev.position) / window().size();
+		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		auto kc = appContext().keyboardContext();
-		auto mod = kc->modifiers() & ny::KeyboardModifier::shift;
-		if(ev.button == ny::MouseButton::left && !mod) {
+		bool shift = swa_display_active_keyboard_mods(swaDisplay()) &
+			swa_keyboard_mod_shift;
+		if(ev.button == swa_mouse_button_left && !shift) {
 			system_->densityFac = ev.pressed * 0.01;
 			system_->velocityFac = 0.f;
-		} else if(ev.button == ny::MouseButton::right || mod) {
+		} else if(ev.button == swa_mouse_button_right || shift) {
 			system_->velocityFac = ev.pressed * 10.f;
 		} else {
 			return false;
@@ -652,13 +679,13 @@ public:
 		return true;
 	}
 
-	bool touchBegin(const ny::TouchBeginEvent& ev) override {
-		if(App::touchBegin(ev)) {
+	bool touchBegin(const swa_touch_event& ev) override {
+		if(Base::touchBegin(ev)) {
 			return true;
 		}
 
 		using namespace nytl::vec::cw::operators;
-		mpos_ = ev.pos / window().size();
+		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
 		prevPos_ = mpos_;
 
 		if(mpos_.x > 0.9 && mpos_.y > 0.95) {
@@ -677,13 +704,13 @@ public:
 		return true;
 	}
 
-	void touchUpdate(const ny::TouchUpdateEvent& ev) override {
+	void touchUpdate(const swa_touch_event& ev) override {
 		using namespace nytl::vec::cw::operators;
-		mpos_ = ev.pos / window().size();
+		mpos_ = nytl::Vec2f{float(ev.x), float(ev.y)} / windowSize();
 	}
 
-	bool touchEnd(const ny::TouchEndEvent& ev) override {
-		if(App::touchEnd(ev)) {
+	bool touchEnd(unsigned id) override {
+		if(Base::touchEnd(id)) {
 			return true;
 		}
 
@@ -692,12 +719,12 @@ public:
 		return true;
 	}
 
-	bool mouseWheel(const ny::MouseWheelEvent& ev) override {
-		if(App::mouseWheel(ev)) {
+	bool mouseWheel(float dx, float dy) override {
+		if(Base::mouseWheel(dx, dy)) {
 			return true;
 		}
 
-		system_->radius *= std::pow(1.05, ev.value.y);
+		system_->radius *= std::pow(1.05, dy);
 		return true;
 	}
 
@@ -731,14 +758,12 @@ protected:
 	vpp::TrDs ds_;
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
+
+	unsigned gridWidth_ {512};
+	unsigned pressureIterations_ {40};
 };
 
 // main
 int main(int argc, const char** argv) {
-	FluidApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<FluidApp>(argc, argv);
 }

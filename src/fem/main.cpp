@@ -1,5 +1,4 @@
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/levelView.hpp>
 #include <tkn/transform.hpp>
@@ -236,8 +235,9 @@ void step(Body& fe, float dt) {
 	}
 }
 
-class SoftBodyApp : public tkn::App {
+class SoftBodyApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	static constexpr auto width = 32u;
 	static constexpr auto height = 3u;
 	static constexpr float scale = 0.25;
@@ -246,7 +246,7 @@ public:
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
@@ -286,14 +286,14 @@ public:
 		}
 
 		// create pipeline
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex)
 		};
 
-		dsLayout_ = {dev, bindings};
+		dsLayout_.init(dev, bindings);
 		pipeLayout_ = {dev, {{dsLayout_}}, {}};
 
 		vpp::ShaderModule vertShader{dev, fem_body_vert_data};
@@ -431,29 +431,29 @@ public:
 		}
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		view_.size = tkn::levelViewSize(ev.size.x / float(ev.size.y), 10.f);
+	void resize(unsigned w, unsigned h) override {
+		App::resize(w, h);
+		view_.size = tkn::levelViewSize(w / float(h), 10.f);
 		updateView_ = true;
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.button != ny::MouseButton::left) {
+		if(ev.button != swa_mouse_button_left) {
 			return false;
 		}
 
 		mouseDown_ = ev.pressed;
-		levelAttractor_ = tkn::windowToLevel(window().size(), view_, ev.position);
+		levelAttractor_ = tkn::windowToLevel(windowSize(), view_, {ev.x, ev.y});
 		return true;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
-		levelAttractor_ = tkn::windowToLevel(window().size(), view_, ev.position);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
+		levelAttractor_ = tkn::windowToLevel(windowSize(), view_, {ev.x, ev.y});
 	}
 
 	const char* name() const override { return "SoftBody (FEM)"; }
@@ -475,11 +475,6 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	SoftBodyApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<SoftBodyApp>(argc, argv);
 }
 

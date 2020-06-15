@@ -123,10 +123,6 @@ shaders_src = {
 		['ps.frag'],
 		# ['ps.comp'], # always dynamically compiled
 	],
-	'sentient': [
-		['sentient.vert'],
-		['sentient.frag'],
-	],
 	'sss': [
 		['sss_shadow.vert'],
 		['sss_shadow.frag'],
@@ -218,7 +214,6 @@ shaders_src = {
 		['pp.frag'],
 	],
 	'atmosphere': [
-		['sky.vert'],
 		# needed only on android, we realtime load it on other platforms
 		# probably could add a way to make shaders conditional, depending
 		# on the platform.

@@ -1,6 +1,5 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
-#include <tkn/window.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/ccam.hpp>
 #include <tkn/features.hpp>
@@ -84,7 +83,7 @@ public:
 
 	void initComputePipe() {
 		auto& dev = vkDevice();
-		auto dsBindings = {
+		auto dsBindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
@@ -93,7 +92,7 @@ public:
 				vk::ShaderStageBits::compute)
 		};
 
-		comp_.dsLayout = {dev, dsBindings};
+		comp_.dsLayout.init(dev, dsBindings);
 		comp_.pipeLayout = {dev, {{comp_.dsLayout.vkHandle()}}, {}};
 
 		vpp::ShaderModule compShader(dev, sen_sen_comp_data);
@@ -117,7 +116,7 @@ public:
 	void initPathtracePipe() {
 		auto& dev = vkDevice();
 
-		auto dsBindings = {
+		auto dsBindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
@@ -126,7 +125,7 @@ public:
 				vk::ShaderStageBits::fragment)
 		};
 
-		pt_.dsLayout = {dev, dsBindings};
+		pt_.dsLayout.init(dev, dsBindings);
 		pt_.pipeLayout = {dev, {{pt_.dsLayout.vkHandle()}}, {}};
 
 		vpp::ShaderModule fullscreenShader(dev, tkn_fullscreen_vert_data);
@@ -209,14 +208,14 @@ public:
 		ubo_ = {dev.bufferAllocator(), sizeof(float) * 128,
 			vk::BufferUsageBits::uniformBuffer, mem};
 
-		auto renderBindings = {
+		auto renderBindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
 				vk::ShaderStageBits::fragment),
 		};
 
-		dsLayout_ = {dev, renderBindings};
+		dsLayout_.init(dev, renderBindings);
 		auto pipeSets = {dsLayout_.vkHandle()};
 
 		vk::PipelineLayoutCreateInfo plInfo;
@@ -274,22 +273,22 @@ public:
 		sampler_ = {dev, sci};
 
 		// ds layout
-		auto sceneBindings = {
+		auto sceneBindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment | vk::ShaderStageBits::vertex),
 		};
 
-		auto objectBindings = {
+		auto objectBindings = std::array{
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 			vpp::descriptorBinding(
 				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 		};
 
-		rasterSceneDsLayout_ = {dev, sceneBindings};
-		rasterObjectDsLayout_ = {dev, objectBindings};
+		rasterSceneDsLayout_.init(dev, sceneBindings);
+		rasterObjectDsLayout_.init(dev, objectBindings);
 		rasterPipeLayout_ = {dev, {{
 			rasterSceneDsLayout_.vkHandle(),
 			rasterObjectDsLayout_.vkHandle()}}, {}};

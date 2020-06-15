@@ -1,7 +1,6 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/render.hpp>
-#include <tkn/window.hpp>
 #include <tkn/ccam.hpp>
 #include <tkn/types.hpp>
 #include <argagg.hpp>
@@ -15,9 +14,6 @@
 #include <vpp/bufferOps.hpp>
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
 #include <vui/dat.hpp>
 #include <vui/gui.hpp>
 
@@ -68,12 +64,12 @@ public:
 		resetCloth();
 
 		// pipeline
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex)
 		};
 
-		gfx_.dsLayout = {dev, bindings};
+		gfx_.dsLayout.init(dev, bindings);
 		gfx_.pipeLayout = {dev, {{gfx_.dsLayout.vkHandle()}}, {}};
 
 		vpp::ShaderModule vertShader{dev, tkn_simple3_vert_data};

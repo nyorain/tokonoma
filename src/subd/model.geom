@@ -14,7 +14,6 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 const float normalLength = 0.1f;
 vec4 toGlobal(vec4 pos) {
 	pos = scene.vp * pos;
-	pos.y = -pos.y;
 	return pos;
 }
 

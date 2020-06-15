@@ -1,5 +1,4 @@
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/audio.hpp>
 #include <tkn/sound.hpp>
 #include <tkn/sampling.hpp>
@@ -10,19 +9,21 @@
 #include <rvg/state.hpp>
 #include <rvg/shapes.hpp>
 
-class Visualizer : public tkn::App {
+class Visualizer : public tkn::SinglePassApp {
 public:
 	using FeedbackMP3Audio = tkn::FeedbackAudioSource<tkn::StreamedMP3Audio>;
+	using Base = tkn::SinglePassApp;
 
 	// On how many frames to perform the DFT.
 	static constexpr auto frameCount = 1024;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
+		rvgInit();
 		ap_.emplace();
 		auto& ap = *ap_;
 
@@ -52,7 +53,7 @@ public:
 
 	void render(vk::CommandBuffer cb) override {
 		rvgContext().bindDefaults(cb);
-		windowTransform().bind(cb);
+		rvgWindowTransform().bind(cb);
 		paint_.bind(cb);
 		for(auto& bar : bars_) {
 			bar.fill(cb);
@@ -134,11 +135,6 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	Visualizer app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<Visualizer>(argc, argv);
 }
 

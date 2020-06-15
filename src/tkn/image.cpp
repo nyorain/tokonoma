@@ -327,6 +327,35 @@ std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 }
 
 std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
+		unsigned mips, unsigned layers, nytl::Span<const std::byte> data,
+		bool cubemap) {
+	dlg_assert(size.x >= 1 && size.y >= 1 && size.z >= 1);
+	dlg_assert(mips >= 1);
+	dlg_assert(layers >= 1);
+	dlg_assert(!cubemap || layers % 6 == 0u);
+
+	auto ret = std::make_unique<MemImageProvider>();
+	ret->mips_ = mips;
+	ret->layers_ = layers;
+	ret->format_ = format;
+	ret->size_ = size;
+	ret->cubemap_ = cubemap;
+	ret->data_.reserve(mips * layers);
+
+	auto fmtSize = vpp::formatSize(format);
+	for(auto m = 0u; m < mips; ++m) {
+		for(auto l = 0u; l < layers; ++l) {
+			auto& rdi = ret->data_.emplace_back();
+			auto off = fmtSize * vpp::tightTexelNumber(
+				{size.x, size.y, size.z}, layers, m, l);
+			rdi.ref = data.data() + off;
+		}
+	}
+
+	return ret;
+}
+
+std::unique_ptr<ImageProvider> wrapImage(nytl::Vec3ui size, vk::Format format,
 		unsigned mips, unsigned layers,
 		nytl::Span<const std::byte* const> data, bool cubemap) {
 	dlg_assert(data.size() == mips * layers);
@@ -375,7 +404,8 @@ public:
 	}
 };
 
-std::unique_ptr<ImageProvider> readImageLayers(nytl::Span<const char* const> paths, bool cubemap) {
+std::unique_ptr<ImageProvider> loadImageLayers(
+		nytl::Span<const char* const> paths, bool cubemap) {
 	auto ret = std::make_unique<MultiImageProvider>();
 	auto first = true;
 	ret->layers_ = paths.size();

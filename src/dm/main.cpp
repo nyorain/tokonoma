@@ -6,7 +6,6 @@
 #include <tkn/features.hpp>
 #include <tkn/singlePassApp.hpp>
 #include <tkn/render.hpp>
-#include <tkn/window.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>
@@ -118,14 +117,8 @@ public:
 		auto cb = dev.commandAllocator().get(qfam);
 		vk::beginCommandBuffer(cb, {});
 
-		alloc_.emplace(dev);
-		auto& alloc = *this->alloc_;
-		tkn::WorkBatcher batch{dev, cb, {
-				alloc.memDevice, alloc.memHost, memStage,
-				alloc.bufDevice, alloc.bufHost, bufStage,
-				dev.descriptorAllocator(),
-			}
-		};
+		tkn::WorkBatcher wb{dev};
+		wb.cb = cb;
 
 		auto brdflutFile = openAsset("brdflut.ktx");
 		if(!brdflutFile) {
@@ -136,7 +129,7 @@ public:
 		// auto initBrdfLut = tkn::createTexture(batch, tkn::read(std::move(brdflutFile)));
 		// brdfLut_ = tkn::initTexture(initBrdfLut, batch);
 
-		brdfLut_ = tkn::buildTexture(dev, tkn::read(std::move(brdflutFile)));
+		brdfLut_ = tkn::buildTexture(dev, tkn::loadImage(std::move(brdflutFile)));
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -152,7 +145,7 @@ public:
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
-		auto p = tkn::wrap({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+		auto p = tkn::wrapImage({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
 
 		// auto initDummyTex = tkn::createTexture(batch, std::move(p), params);
 		// dummyTex_ = tkn::initTexture(initDummyTex, batch);
@@ -189,31 +182,26 @@ public:
 			return false;
 		}
 
-		std::fflush(stdout);
-
 		auto& model = *omodel;
 		auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
 		auto& sc = model.scenes[scene];
 
-		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
+		auto initScene = vpp::InitObject<tkn::Scene>(scene_, wb, path,
 			model, sc, mat, ri);
 		initScene.object().rescale(4 * args.scale);
-		initScene.init(batch, dummyTex_.vkImageView());
+		initScene.init(wb, dummyTex_.vkImageView());
 
-		std::fflush(stdout);
-
-		shadowData_ = tkn::initShadowData(dev, depthFormat(),
+		tkn::initShadowData(shadowData_, dev, depthFormat(),
 			scene_.dsLayout(), multiview_, depthClamp_);
 
 		// view + projection matrix
-		auto cameraBindings = {
+		auto cameraBindings = std::array{
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		cameraDsLayout_ = {dev, cameraBindings};
-		std::fflush(stdout);
+		cameraDsLayout_.init(dev, cameraBindings);
 
 		/*
 		tkn::Environment::InitData initEnv;
@@ -244,18 +232,18 @@ public:
 		skyboxRenderer_.create(vkDevice(), pi);
 
 		// ao
-		auto aoBindings = {
+		auto aoBindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			// vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 			// 	vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 		};
 
-		aoDsLayout_ = {dev, aoBindings};
+		aoDsLayout_.init(dev, aoBindings);
 		std::fflush(stdout);
 
 		// pipeline layout consisting of all ds layouts and pcrs
@@ -315,10 +303,10 @@ public:
 		envCameraDs_ = {dev.descriptorAllocator(), cameraDsLayout_};
 
 		// example light
-		dirLight_ = {batch, shadowData_};
+		dirLight_ = {wb, shadowData_};
 		dirLight_.data.dir = {5.8f, -12.0f, 4.f};
 
-		pointLight_ = {batch, shadowData_};
+		pointLight_ = {wb, shadowData_};
 		pointLight_.data.position = {0.f, 5.0f, 0.f};
 		pointLight_.data.radius = 2.f;
 		pointLight_.data.attenuation = {1.f, 0.1f, 0.05f};

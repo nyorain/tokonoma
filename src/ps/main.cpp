@@ -1,5 +1,5 @@
-#include <tkn/app.hpp>
-#include <tkn/window.hpp>
+#include <tkn/singlePassApp.hpp>
+#include <tkn/shader.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/util.hpp>
 #include <argagg.hpp>
@@ -9,8 +9,6 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/bufferOps.hpp>
 #include <vpp/vk.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/key.hpp>
 #include <nytl/vecOps.hpp>
 #include <vui/gui.hpp>
 #include <vui/dat.hpp>
@@ -51,14 +49,13 @@ public:
 		dev_ = &dev;
 
 		// gfx stuff
-		auto gfxBindings = {
+		auto gfxBindings = std::array {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment,
-				0),
+				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		gfxDsLayout_ = {dev, gfxBindings};
+		gfxDsLayout_.init(dev, gfxBindings);
 		gfxDs_ = {dev.descriptorAllocator(), gfxDsLayout_};
 		gfxPipelineLayout_ = {dev, {{gfxDsLayout_.vkHandle()}}, {}};
 
@@ -98,16 +95,16 @@ public:
 		gfxPipeline_ = {device(), vkpipe};
 
 		// compute stuff
-		auto compBindings = {
+		auto compBindings = std::array {
 			vpp::descriptorBinding(
 				vk::DescriptorType::storageBuffer,
-				vk::ShaderStageBits::compute, 0),
+				vk::ShaderStageBits::compute),
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::compute, 1)
+				vk::ShaderStageBits::compute)
 		};
 
-		compDsLayout_ = {dev, compBindings};
+		compDsLayout_.init(dev, compBindings);
 		compDs_ = {dev.descriptorAllocator(), compDsLayout_};
 		compPipelineLayout_ = {dev, {{compDsLayout_.vkHandle()}}, {}};
 
@@ -249,16 +246,19 @@ protected:
 	float time_ {};
 };
 
-class ParticlesApp : public tkn::App {
+class ParticlesApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	bool init(const nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
+		rvgInit();
+
 		// system
 		auto initCount = 5000;
-		system_.init(vulkanDevice(), renderPass(), samples(), initCount);
+		system_.init(vkDevice(), renderPass(), samples(), initCount);
 
 		// gui
 		auto& panel = gui().create<vui::dat::Panel>(
@@ -290,7 +290,7 @@ public:
 
 	nytl::Vec2f attractorPos(const nytl::Vec2i pos) {
 		using namespace nytl::vec::cw::operators;
-		auto normed = pos / nytl::Vec2f(window().size());
+		auto normed = pos / nytl::Vec2f(windowSize());
 		return 2 * normed - nytl::Vec{1.f, 1.f};
 	}
 
@@ -304,40 +304,40 @@ public:
 	}
 
 	void update(double delta) override {
-		App::update(delta);
-		App::scheduleRedraw();
+		Base::update(delta);
+		Base::scheduleRedraw();
 		delta_ = delta;
 	}
 
 	void updateDevice() override {
-		App::updateDevice();
+		Base::updateDevice();
 		system_.updateDevice(delta_);
 
 		if(reload_) {
 			system_.reloadShader();
 			reload_ = false;
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		}
 
 		if(changeCount_) {
 			system_.count(*changeCount_);
 			changeCount_ = {};
-			App::scheduleRerecord();
+			Base::scheduleRerecord();
 		}
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
 		if(ev.pressed) {
-			if(ev.keycode == ny::Keycode::r) {
+			if(ev.keycode == swa_key_r) {
 				reload_ = true;
 			} else {
 				// check if its a number
 				unsigned num;
-				if(tkn::stoi(ev.utf8, num)) {
+				if(ev.utf8 && tkn::stoi(ev.utf8, num)) {
 					dlg_info("Effect: {}", num);
 					system_.effect = num;
 				} else {
@@ -363,11 +363,6 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	ParticlesApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<ParticlesApp>(argc, argv);
 }
 

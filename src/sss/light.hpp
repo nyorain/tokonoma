@@ -15,10 +15,6 @@ struct ShadowSegment {
 	float opacity;
 };
 
-/// Simple blackbody approxmiation.
-/// Converts kelvin color temparature (1000K - 40000K) to a rbg color.
-nytl::Vec3f blackbody(unsigned kelvin);
-
 /// Computes the radius of the light bounds for a given
 /// light radius and strength.
 float lightBounds(float radius, float strength);

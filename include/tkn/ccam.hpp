@@ -1,7 +1,7 @@
 #pragma once
 
 #include <tkn/types.hpp>
-#include <tkn/camera2.hpp>
+#include <tkn/camera.hpp>
 #include <tkn/transform.hpp>
 #include <variant>
 #include <optional>

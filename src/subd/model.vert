@@ -170,6 +170,5 @@ void main() {
 
 #ifndef NO_TRANSFORM
 	gl_Position = scene.vp * gl_Position;
-	gl_Position.y = -gl_Position.y;
 #endif
 }

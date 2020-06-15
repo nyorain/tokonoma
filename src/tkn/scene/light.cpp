@@ -1,7 +1,6 @@
 #include <tkn/scene/light.hpp>
 #include <tkn/scene/scene.hpp>
 #include <tkn/scene/shape.hpp>
-#include <tkn/camera.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/transform.hpp>
 #include <vpp/vk.hpp>

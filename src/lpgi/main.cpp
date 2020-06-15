@@ -14,7 +14,6 @@
 #include <tkn/ccam.hpp>
 #include <tkn/features.hpp>
 #include <tkn/render.hpp>
-#include <tkn/window.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>
@@ -55,15 +54,6 @@
 #include <array>
 
 using namespace tkn::types;
-
-namespace tkn {
-	// TODO: hack that we have to declare it here.
-	// remove when the old camera class is removed
-
-nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
-	float near = 0.01f, float far = 30.f);
-
-}
 
 class ViewApp : public tkn::SinglePassApp {
 public:

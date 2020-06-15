@@ -1,12 +1,8 @@
 #include <tkn/singlePassApp.hpp>
-#include <tkn/window.hpp>
 #include <tkn/shader.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/render.hpp>
-#include <ny/mouseButton.hpp>
-#include <ny/key.hpp>
-#include <ny/appContext.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/shader.hpp>
 #include <vpp/pipeline.hpp>
@@ -25,11 +21,6 @@
 
 class TessApp : public tkn::SinglePassApp {
 public:
-	static constexpr float near = 0.05f;
-	static constexpr float far = 25.f;
-	static constexpr float fov = 0.5 * nytl::constants::pi;
-
-public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!tkn::App::init(args)) {
 			return false;
@@ -40,7 +31,7 @@ public:
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 		};
 
-		dsLayout_ = {dev, bindings};
+		dsLayout_.init(dev, bindings);
 		pipeLayout_ = {dev, {{dsLayout_}}, {}};
 
 		auto uboSize = sizeof(nytl::Mat4f) + sizeof(nytl::Vec3f);
@@ -132,30 +123,21 @@ public:
 
 	void update(double dt) override {
 		App::update(dt);
-		tkn::checkMovement(camera_, swaDisplay(), dt);
-		if(camera_.update) {
+		camera_.update(swaDisplay(), dt);
+		if(camera_.needsUpdate) {
 			App::scheduleRedraw();
 		}
 	}
 
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective(fov, aspect, -near, -far);
-	}
-
-	nytl::Mat4f cameraVP() const {
-		return projectionMatrix() * viewMatrix(camera_);
-	}
-
 	void updateDevice() override {
 		// update scene ubo
-		if(camera_.update) {
-			camera_.update = false;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, cameraVP());
-			tkn::write(span, camera_.pos);
+			tkn::write(span, camera_.viewProjectionMatrix());
+			tkn::write(span, camera_.position());
 		}
 
 		if(reload_) {
@@ -167,23 +149,7 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		App::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			App::scheduleRedraw();
-		}
-	}
-
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(App::mouseButton(ev)) {
-			return true;
-		}
-
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			return true;
-		}
-
-		return false;
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
 	bool key(const swa_key_event& ev) override {
@@ -208,7 +174,7 @@ public:
 
 	void resize(unsigned w, unsigned h) override {
 		App::resize(w, h);
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	const char* name() const override { return "tess"; }
@@ -222,8 +188,7 @@ protected:
 	vpp::TrDsLayout dsLayout_;
 	vpp::TrDs ds_;
 
-	bool rotateView_ {};
-	tkn::Camera camera_ {};
+	tkn::ControlledCamera camera_ {};
 	bool reload_ {};
 };
 

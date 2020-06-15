@@ -1,22 +1,23 @@
 #pragma once
 
 #include <tkn/file.hpp>
-#include <tkn/shader.hpp>
-#include <nytl/span.hpp>
-#include <nytl/nonCopyable.hpp>
-
-#include <ny/fwd.hpp>
-#include <ny/event.hpp>
+#include <swa/swa.h>
 #include <vpp/fwd.hpp>
-#include <vpp/renderer.hpp>
-#include <vkpp/structs.hpp> // for features
 #include <rvg/fwd.hpp>
 #include <vui/fwd.hpp>
+#include <nytl/span.hpp>
+#include <nytl/vec.hpp>
+
+// - header shame -
+#include <vpp/renderer.hpp> // only needed for Renderer::RenderBuffer
 
 #include <memory>
 #include <variant>
-#include <string>
+#include <chrono>
+#include <cstdint>
 #include <optional>
+
+struct dlg_origin;
 
 namespace argagg { // fwd
 	struct parser;
@@ -25,126 +26,83 @@ namespace argagg { // fwd
 
 namespace tkn {
 
-// fwd
-class MainWindow;
-class Renderer;
 struct Features;
 
-/// Implements basic setup and main loop.
-class [[deprecated("will be removed, use tkn/app2 instead")]] App
-	: public nytl::NonMovable {
-public:
-	using RenderBuffer = vpp::Renderer::RenderBuffer;
+inline namespace app2 {
 
+class App {
 public:
 	App();
 	virtual ~App();
 
+	App(App&&) = delete;
+	App& operator=(App&&) = delete;
+
 	virtual bool init(nytl::Span<const char*> args);
 	virtual void run();
 
-	ny::AppContext& appContext() const;
-	MainWindow& window() const;
+	swa_display* swaDisplay() const;
+	swa_window* swaWindow() const;
 
-	vpp::Instance& vulkanInstance() const;
-	vpp::Device& vulkanDevice() const;
-	vpp::Device& device() const { return vulkanDevice(); }
-	vpp::RenderPass& renderPass() const;
-	vpp::DebugMessenger& debugMessenger() const;
-
-	rvg::Context& rvgContext() const;
-	rvg::Transform& windowTransform() const;
-	vui::Gui& gui() const;
-
-	vk::SampleCountBits samples() const;
+	const vpp::Instance& vkInstance() const;
+	vpp::Device& vkDevice();
+	const vpp::Device& vkDevice() const;
+	vpp::DebugMessenger& debugMessenger();
+	const vpp::DebugMessenger& debugMessenger() const;
 	const vk::SwapchainCreateInfoKHR& swapchainInfo() const;
-	rvg::Font& defaultFont() const;
+	vk::SwapchainCreateInfoKHR& swapchainInfo();
+	vpp::Renderer& renderer();
+	const vpp::Renderer& renderer() const;
 
-	// might be invalid, depends on settings
-	vpp::ViewableImage& depthTarget() const;
-	vpp::ViewableImage& multisampleTarget() const;
-	vk::Format depthFormat() const;
+	rvg::Context& rvgContext();
+	const rvg::Transform& rvgWindowTransform() const;
+	const rvg::Font& defaultFont() const;
+	rvg::FontAtlas& fontAtlas();
+	vui::Gui& gui();
+	nytl::Vec2ui windowSize() const;
+	bool hasSurface() const;
 
 protected:
-	// == Information methods: must return constant values ==
-	// If overwritten by derived class to return true, will create default
-	// framebuffer and renderpass with a depth buffer as attachment 1
-	virtual bool needsDepth() const { return false; }
+	using RenderBuffer = vpp::Renderer::RenderBuffer;
 
-	// Should be overwritten to return the name of this app.
-	virtual const char* name() const { return "tkn app"; }
+	enum class DevType {
+		igpu,
+		dgpu,
+		choose
+	};
 
-	// Should return {} if rvg (and vui) are not needed, otherwise
-	// the render and subpass they are used in.
-	// NOTE: might be a limitation for some apps to only use rvg and vui
-	// in one subpass, rvg requires it like that though. Changing it will
-	// be hard since then rvg needs to compile multiple pipelines (one
-	// for each render/subpass).
-	virtual std::pair<vk::RenderPass, unsigned> rvgPass() const;
+	struct Args {
+		bool vsync = false;
+		bool layers = true;
+		bool renderdoc = false;
+		std::variant<DevType, unsigned, const char*> phdev = DevType::choose;
+	};
 
-	virtual const char* usageParams() const { return "[options]"; }
+	virtual bool doInit(nytl::Span<const char*> args, Args& out);
 
+	// Called when the render buffers have to be initialized, e.g.
+	// at the beginning or after an update.
+	virtual void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>) = 0;
 
-	// argument parsing
-	virtual argagg::parser argParser() const;
-	virtual bool handleArgs(const argagg::parser_results&);
+	// Called for each buffer when rerecording.
+	virtual void record(const RenderBuffer&) = 0;
+
+	// Called when submitting a render buffer, see vpp::Renderer::submit.
+	virtual vk::Semaphore submit(const RenderBuffer& buf,
+		const vpp::RenderInfo& info, std::optional<std::uint64_t>* sid);
 
 	// Called before device creation with the supported features
 	// of the selected physical device (supported). Can be used to
 	// enable the supported ones.
 	virtual bool features(Features& enable, const Features& supported);
 
+	// Returns the swapchain preferences based on which the swapchain
+	// settings will be selected.
+	virtual vpp::SwapchainPreferences swapchainPrefs(const Args&) const;
 
-	// == Render stuff ==
-	// Called after the vulkan device is initialized but before any
-	// rendering data will be initialized (render pass, buffers etc).
-	// Can be used to initialize static data such as layouts and samplers
-	// that may be used in functions like initBuffers.
-	virtual void initRenderData() {}
-
-	// Called on initialization to create the default render pass.
-	// The render pass will be used to optionally initialize rvg
-	// and vui (see rvgSubpass) and in the default record implementation.
-	// If neither are used, derived classes can return the empty render pass
-	// here.
-	virtual vpp::RenderPass createRenderPass();
-
-	// Called to recreate all framebuffers (e.g. after resize).
-	virtual void initBuffers(const vk::Extent2D&, nytl::Span<RenderBuffer>);
-
-	// Default implementation of depth/multisample target creation.
-	// Will be called by the default initBuffers implementation.
-	virtual vpp::ViewableImage createDepthTarget(const vk::Extent2D&);
-	virtual vpp::ViewableImage createMultisampleTarget(const vk::Extent2D&);
-
-	virtual vpp::SwapchainPreferences swapchainPrefs() const;
-
-	// Called for each buffer when rerecording.
-	// By default will call beforeRender, start a render pass instance with
-	// the created renderpass (see createRenderPass), call render, end
-	// the render pass and call afterRender.
-	virtual void record(const RenderBuffer&);
-
-	// Called by the default App::record implemention when starting
-	// the renderpass instance.
-	virtual std::vector<vk::ClearValue> clearValues();
-
-	// Called by the default App::record implementation during the
-	// renderpass instance.
-	virtual void render(vk::CommandBuffer) {}
-
-	// Called by the default App::record implementation before starting
-	// the renderpass instance.
-	virtual void beforeRender(vk::CommandBuffer) {}
-
-	// Called by the default App::record implementation after finishing
-	// the renderpass instance.
-	virtual void afterRender(vk::CommandBuffer) {}
-	virtual void samples(vk::SampleCountBits);
-
-	// == Frame logic ==
 	// Called every frame with the time since the last call to update
-	// in seconds.
+	// in seconds. Must not change any device resources since rendering
+	// might still be active. See updateDevice.
 	virtual void update(double dt);
 
 	// Called every frame when the last frame has finished and device
@@ -162,52 +120,114 @@ protected:
 	// Adds the given semaphore to the semaphores to wait for next frame
 	// (in the given stage).
 	void addSemaphore(vk::Semaphore, vk::PipelineStageFlags waitDst);
-	void callUpdate();
 
-	/// Utility function that opens an asset for reading.
-	/// When on desktop, will try to open the file in the current directory
-	/// or the asset/ source dir, while on android, it will use the asset
-	/// manager.
+	// Initializes rvg and gui for use.
+	// NOTE: might be a limitation for some apps to only use rvg and vui
+	// in one subpass, rvg requires it like that though. Changing it will
+	// be hard since then rvg needs to compile multiple pipelines (one
+	// for each render/subpass).
+	virtual void rvgInit(vk::RenderPass rp, unsigned subpass,
+		vk::SampleCountBits samples);
+
+	// Should be overwritten to return the name of this app.
+	virtual const char* name() const { return "tkn"; }
+
+	// Handler for dlg output (log & failed assertions).
+	// The default implementation just calls the default handler.
+	// But it also counts the number of error/warnings, mainly to
+	// allow inserting breakpoints there.
+	virtual void dlgHandler(const struct dlg_origin*, const char* string);
+
+	// Handler for output from the vulkan debug messenger (vulkan layers).
+	// The default implementation just calls the default handler.
+	virtual void vkDebug(
+		vk::DebugUtilsMessageSeverityBitsEXT,
+		vk::DebugUtilsMessageTypeFlagsEXT,
+		const vk::DebugUtilsMessengerCallbackDataEXT& data);
+
+	// Utility function that opens an asset for reading.
+	// When on desktop, will try to open the file in the current directory
+	// or the asset/ source dir, while on android, it will use the asset
+	// manager.
 	File openAsset(nytl::StringParam path, bool binary = true);
 
-	// events
-	virtual void resize(const ny::SizeEvent&);
-	virtual bool key(const ny::KeyEvent&);
-	virtual bool mouseButton(const ny::MouseButtonEvent&);
-	virtual void mouseMove(const ny::MouseMoveEvent&);
-	virtual bool mouseWheel(const ny::MouseWheelEvent&);
-	virtual void mouseCross(const ny::MouseCrossEvent&);
-	virtual void focus(const ny::FocusEvent&);
-	virtual void close(const ny::CloseEvent&);
-	virtual bool touchBegin(const ny::TouchBeginEvent&);
-	virtual bool touchEnd(const ny::TouchEndEvent&);
-	virtual void touchUpdate(const ny::TouchUpdateEvent&);
-	virtual void touchCancel(const ny::TouchCancelEvent&) {}
+	// Argument parsing
+	virtual argagg::parser argParser() const;
+	virtual bool handleArgs(const argagg::parser_results&, Args& out);
+	virtual const char* usageParams() const { return "[options]"; }
 
 protected:
-	struct RenderImpl;
+	// events
+	virtual void resize(unsigned width, unsigned height);
+	virtual bool key(const swa_key_event&);
+	virtual bool mouseButton(const swa_mouse_button_event&);
+	virtual void mouseMove(const swa_mouse_move_event&);
+	virtual bool mouseWheel(float x, float y);
+	virtual void mouseCross(const swa_mouse_cross_event&);
+	virtual void windowFocus(bool gained);
+	virtual void windowDraw();
+	virtual void windowClose();
+	virtual void windowState(swa_window_state state);
+	virtual bool touchBegin(const swa_touch_event&);
+	virtual bool touchEnd(unsigned id);
+	virtual void touchUpdate(const swa_touch_event&);
+	virtual void touchCancel();
+	virtual void surfaceDestroyed();
+	virtual void surfaceCreated();
+
+	// stuff needed for own implementation
+	std::optional<std::uint64_t> submitFrame();
+	void dispatch();
+
+protected:
+	struct Renderer;
+	struct GuiListener;
+	struct Callbacks;
+	struct DebugMessenger;
+
+	// We pImpl away certain app member for multiple reasons:
+	// - allows us to keep App header complexity simple by only
+	//   defining impl classes (such as Renderer or GuiListener)
+	//   in the source
+	// - allows us to not have to include headers that might not be
+	//   needed by all apps, improving compile times
 	struct Impl;
 	std::unique_ptr<Impl> impl_;
 
+	// Whether the app is supposed to run.
+	// When this is set to false from within the main loop, the loop
+	// will return.
 	bool run_ {};
-	bool resize_ {};
+
+	// Whether a rerecord is needed. Will be done during the next
+	// updateDevice phase.
 	bool rerecord_ {};
+
+	// Whether a redraw is needed. While this is false, won't draw
+	// anything.
 	bool redraw_ {};
-	bool surface_ {};
 
-	enum class DevType {
-		igpu,
-		dgpu,
-		choose
-	};
+	// Whether a resize event was received. Rendering might still be
+	// active when we process events so we will recreate rendering
+	// resources later on.
+	bool resize_ {};
+	nytl::Vec2ui winSize_ {0, 0};
 
-	struct {
-		bool vsync = false;
-		bool layers = true;
-		bool renderdoc = false;
-		unsigned samples = 1;
-		std::variant<DevType, unsigned, const char*> phdev = DevType::choose;
-	} args_ {};
+	// available features and extensions
+	bool hasClipDistance_ {}; // tracked for rvg
+
+	bool hasExtColorSpace_ {};
+	bool hasExtHdrMetadata_ {};
 };
 
+
+int appMain(App& app, int argc, const char** argv);
+
+template<typename AppT>
+int appMain(int argc, const char** argv) {
+	AppT app;
+	return appMain(app, argc, argv);
+}
+
+} // namespace app2
 } // namespace tkn

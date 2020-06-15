@@ -1,7 +1,6 @@
 #include <tkn/singlePassApp.hpp>
-#include <tkn/window.hpp>
 #include <tkn/render.hpp>
-#include <tkn/camera.hpp>
+#include <tkn/ccam.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/scene/environment.hpp>
 #include <tkn/scene/shape.hpp>
@@ -32,10 +31,6 @@ public:
 		std::string file;
 	};
 
-	static constexpr float near = 0.05f;
-	static constexpr float far = 25.f;
-	static constexpr float fov = 0.5 * nytl::constants::pi;
-
 public:
 	bool init(nytl::Span<const char*> cargs) override {
 		Args args;
@@ -45,7 +40,7 @@ public:
 
 		// TODO: better pack coeffs (as vec4) in uniform buffer
 		auto& dev = vkDevice();
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex),
@@ -54,7 +49,7 @@ public:
 				vk::ShaderStageBits::fragment),
 		};
 
-		dsLayout_ = {dev, bindings};
+		dsLayout_.init(dev, bindings);
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 
 		// data
@@ -91,7 +86,7 @@ public:
 		coeffs_ = {dev.bufferAllocator(), sizeof(coeffs),
 			vk::BufferUsageBits::storageBuffer |
 			vk::BufferUsageBits::transferDst, dev.hostMemoryTypes()};
-		auto coeffsStage = vpp::fillStaging(cb, coeffs_, coeffs);
+		auto coeffsStage = vpp::fillStaging(cb, coeffs_, tkn::bytes(coeffs));
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
@@ -171,7 +166,9 @@ public:
 		auto posStage = vpp::fillStaging(cb, spherePositions_, poss);
 
 		indexCount_ = shape.indices.size();
-		camera_.pos.z += 2.f;
+		auto pos = camera_.position();
+		pos.z += 2.f;
+		camera_.position(pos);
 		return {std::move(indStage), std::move(posStage)};
 	}
 
@@ -191,52 +188,32 @@ public:
 
 	void update(double dt) override {
 		Base::update(dt);
-		tkn::checkMovement(camera_, swaDisplay(), dt);
+		camera_.update(swaDisplay(), dt);
 		Base::scheduleRedraw();
-	}
-
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(windowSize().x) / windowSize().y;
-		return tkn::perspective(fov, aspect, -near, -far);
 	}
 
 	void updateDevice() override {
 		Base::updateDevice();
 
-		if(camera_.update) {
-			camera_.update = false;
+		if(camera_.needsUpdate) {
+			camera_.needsUpdate = false;
 			auto map = cameraUbo_.memoryMap();
 			auto span = map.span();
-			auto v = skybox_ ? fixedViewMatrix(camera_) : viewMatrix(camera_);
-			tkn::write(span, projectionMatrix() * v);
+			tkn::write(span, skybox_ ?
+				camera_.fixedViewProjectionMatrix() :
+				camera_.viewProjectionMatrix());
 			map.flush();
 		}
 	}
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.dx, 0.005 * ev.dy);
-			Base::scheduleRedraw();
-		}
-	}
-
-	bool mouseButton(const swa_mouse_button_event& ev) override {
-		if(Base::mouseButton(ev)) {
-			return true;
-		}
-
-		if(ev.button == swa_mouse_button_left) {
-			rotateView_ = ev.pressed;
-			return true;
-		}
-
-		return false;
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
-		camera_.update = true;
+		camera_.aspect({w, h});
 	}
 
 	argagg::parser argParser() const override {
@@ -277,10 +254,9 @@ protected:
 	vpp::SubBuffer cameraUbo_;
 	vpp::SubBuffer indices_;
 	vpp::SubBuffer spherePositions_;
-	bool rotateView_ {};
 	bool skybox_ {};
 	unsigned indexCount_ {}; // only for sphere
-	tkn::Camera camera_ {};
+	tkn::ControlledCamera camera_ {};
 };
 
 int main(int argc, const char** argv) {

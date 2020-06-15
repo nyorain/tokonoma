@@ -241,7 +241,8 @@ public:
 		labelState(*uLabel_, u);
 	}
 
-	// NOTE: test messing with gui
+	// test messing with gui
+	// TODO: remove this, no effect
 	bool key(const swa_key_event& ev) override {
 		if(Base::key(ev)) {
 			return true;
@@ -289,10 +290,5 @@ protected:
 
 // main
 int main(int argc, const char** argv) {
-	PendulumApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<PendulumApp>(argc, argv);
 }

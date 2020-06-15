@@ -1,4 +1,4 @@
-#include <tkn/app.hpp>
+#include <tkn/singlePassApp.hpp>
 #include <tkn/window.hpp>
 #include <ny/event.hpp>
 #include <ny/mouseButton.hpp>
@@ -38,6 +38,7 @@ long dataCb(cubeb_stream*, void*, const void*, void* outBuf, long nframes) {
 }
 
 void stateCb(cubeb_stream*, void* user, cubeb_state state) {
+	(void) user;
 	dlg_info("state changed to {}", state);
 }
 
@@ -70,8 +71,9 @@ void log(const char* fmt, ...) {
 	dlg_debugt(("cubeb"), "{}", msg);
 }
 
-class DummyAudioApp : public tkn::App {
+class DummyAudioApp : public tkn::SinglePassApp {
 public:
+	using Base = tkn::SinglePassApp;
 	~DummyAudioApp() {
 		dlg_trace("~DummyAudioApp");
 		if(stream_) {
@@ -87,7 +89,7 @@ public:
 	}
 
 	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+		if(!Base::init(args)) {
 			return false;
 		}
 
@@ -156,7 +158,7 @@ public:
 
 	void clickat(nytl::Vec2f pos) {
 		using namespace nytl::vec::cw::operators;
-		auto rp = pos / window().size();
+		auto rp = pos / windowSize();
 		dlg_info("clickat {}", rp);
 		if(rp.x > 0.8 && rp.y > 0.9) {
 			cubeb_stream_start(stream_);
@@ -171,23 +173,23 @@ public:
 		}
 	}
 
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
+	bool mouseButton(const swa_mouse_button_event& ev) override {
 		if(App::mouseButton(ev)) {
 			return true;
 		}
 
-		if(ev.pressed && ev.button == ny::MouseButton::left) {
-			clickat(nytl::Vec2f(ev.position));
+		if(ev.pressed && ev.button == swa_mouse_button_left) {
+			clickat(nytl::Vec2f{float(ev.x), float(ev.y)});
 		}
 		return true;
 	}
 
-	bool touchBegin(const ny::TouchBeginEvent& ev) override {
+	bool touchBegin(const swa_touch_event& ev) override {
 		if(App::touchBegin(ev)) {
 			return true;
 		}
 
-		clickat(ev.pos);
+		clickat(nytl::Vec2f{float(ev.x), float(ev.y)});
 		return true;
 	}
 
@@ -199,11 +201,6 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	DummyAudioApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<DummyAudioApp>(argc, argv);
 }
 

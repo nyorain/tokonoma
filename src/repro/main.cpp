@@ -1,7 +1,7 @@
-#include <tkn/camera.hpp>
-#include <tkn/app.hpp>
+#include <tkn/ccam.hpp>
+#include <tkn/singlePassApp.hpp>
+#include <tkn/features.hpp>
 #include <tkn/render.hpp>
-#include <tkn/window.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>
@@ -12,11 +12,6 @@
 #include <tkn/scene/scene.hpp>
 #include <tkn/scene/environment.hpp>
 #include <argagg.hpp>
-
-#include <ny/key.hpp>
-#include <ny/keyboardContext.hpp>
-#include <ny/appContext.hpp>
-#include <ny/mouseButton.hpp>
 
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/init.hpp>
@@ -45,6 +40,7 @@
 #include <optional>
 #include <vector>
 #include <string>
+#include <array>
 
 // ideas:
 // - use depth bounds (and other stuff) as effects
@@ -92,29 +88,27 @@
 
 using namespace tkn::types;
 
-class ViewApp : public tkn::App {
+class ViewApp : public tkn::SinglePassApp {
 public:
 	static constexpr auto snapFormat = vk::Format::d32Sfloat;
 	static constexpr auto sceneFormat = vk::Format::r16Sfloat;
 	static constexpr auto snapSize = vk::Extent2D {4096, 4096};
 	static constexpr auto reproBlend = true;
 
-	static constexpr float near = 0.01f;
-	static constexpr float far = 10.f;
-	static constexpr float fov = 0.5 * nytl::constants::pi;
+	using Base = tkn::SinglePassApp;
+	struct Args : Base::Args {
+		std::string model;
+		float scale {1.f};
+	};
 
 public:
-	bool init(nytl::Span<const char*> args) override {
-		if(!tkn::App::init(args)) {
+	bool init(nytl::Span<const char*> cargs) override {
+		Args args;
+		if(!Base::doInit(cargs, args)) {
 			return false;
 		}
 
-		return true;
-	}
-
-	void initRenderData() override {
-		// init pipeline
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 		auto hostMem = dev.hostMemoryTypes();
 		vpp::DeviceMemoryAllocator memStage(dev);
 		vpp::BufferAllocator bufStage(memStage);
@@ -124,14 +118,8 @@ public:
 		auto cb = dev.commandAllocator().get(qfam);
 		vk::beginCommandBuffer(cb, {});
 
-		alloc_.emplace(dev);
-		auto& alloc = *this->alloc_;
-		tkn::WorkBatcher batch{dev, cb, {
-				alloc.memDevice, alloc.memHost, memStage,
-				alloc.bufDevice, alloc.bufHost, bufStage,
-				dev.descriptorAllocator(),
-			}
-		};
+		tkn::WorkBatcher wb{dev};
+		wb.cb = cb;
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -147,13 +135,15 @@ public:
 
 		auto idata = std::array<std::uint8_t, 4>{255u, 255u, 255u, 255u};
 		auto span = nytl::as_bytes(nytl::span(idata));
-		auto p = tkn::wrap({1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
+		auto p = tkn::wrapImage({1u, 1u, 1u}, vk::Format::r8g8b8a8Unorm, span);
 		tkn::TextureCreateParams params;
 		params.format = vk::Format::r8g8b8a8Unorm;
-		dummyTex_ = {batch, std::move(p), params};
+
+		auto initDummyTex = tkn::createTexture(wb, std::move(p), params);
+		dummyTex_ = tkn::initTexture(initDummyTex, wb);
 
 		// Load scene
-		auto s = sceneScale_;
+		auto s = args.scale;
 		auto mat = tkn::scaleMat<4, float>(nytl::Vec3f{s, s, s});
 		auto samplerAnisotropy = 1.f;
 		if(anisotropy_) {
@@ -163,7 +153,7 @@ public:
 			dummyTex_.vkImageView(),
 			samplerAnisotropy, false, multiDrawIndirect_
 		};
-		auto [omodel, path] = tkn::loadGltf(modelname_);
+		auto [omodel, path] = tkn::loadGltf(args.model);
 		if(!omodel) {
 			throw std::runtime_error("Failed to load model");
 		}
@@ -172,18 +162,18 @@ public:
 		auto scene = model.defaultScene >= 0 ? model.defaultScene : 0;
 		auto& sc = model.scenes[scene];
 
-		auto initScene = vpp::InitObject<tkn::Scene>(scene_, batch, path,
+		auto initScene = vpp::InitObject<tkn::Scene>(scene_, wb, path,
 			model, sc, mat, ri);
-		initScene.init(batch, dummyTex_.vkImageView());
+		initScene.init(wb, dummyTex_.vkImageView());
 
 		// view + projection matrix
-		auto sceneBindings = {
+		auto sceneBindings = std::array{
 			vpp::descriptorBinding(
 				vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
 		};
 
-		sceneDsLayout_ = {dev, sceneBindings};
+		sceneDsLayout_.init(dev, sceneBindings);
 
 		// camera
 		auto sceneUboSize = 2 * sizeof(nytl::Mat4f)
@@ -203,6 +193,8 @@ public:
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
+
+		return true;
 	}
 
 	// Records the command buffer to render a snapshot
@@ -232,7 +224,7 @@ public:
 	}
 
 	void initSnap(vk::CommandBuffer cb) {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// rp
 		std::array<vk::AttachmentDescription, 1> attachments;
@@ -356,7 +348,7 @@ public:
 	}
 
 	void initRepro() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// rp
 		std::array<vk::AttachmentDescription, 2> attachments;
@@ -408,12 +400,12 @@ public:
 		repro_.rp = {dev, rpi};
 
 		// layouts
-		auto snapBindings = {
+		auto snapBindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 		};
 
-		repro_.snapDsLayout = {dev, snapBindings};
+		repro_.snapDsLayout.init(dev, snapBindings);
 		repro_.snapDs = {dev.descriptorAllocator(), repro_.snapDsLayout};
 		repro_.pipeLayout = {dev, {{
 			sceneDsLayout_.vkHandle(),
@@ -476,17 +468,17 @@ public:
 	}
 
 	void initPP() {
-		auto& dev = vulkanDevice();
+		auto& dev = vkDevice();
 
 		// layouts
-		auto bindings = {
+		auto bindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
 		};
 
-		pp_.dsLayout = {dev, bindings};
+		pp_.dsLayout.init(dev, bindings);
 		pp_.pipeLayout = {dev, {{pp_.dsLayout}}, {}};
 
 		vpp::ShaderModule vertShader(dev, tkn_fullscreen_vert_data);
@@ -511,7 +503,7 @@ public:
 	}
 
 	bool features(tkn::Features& enable, const tkn::Features& supported) override {
-		if(!App::features(enable, supported)) {
+		if(!Base::features(enable, supported)) {
 			return false;
 		}
 
@@ -547,7 +539,7 @@ public:
 	}
 
 	argagg::parser argParser() const override {
-		auto parser = App::argParser();
+		auto parser = Base::argParser();
 		parser.definitions.push_back({
 			"model", {"--model"},
 			"Path of the gltf model to load (dir must contain scene.gltf)", 1
@@ -559,16 +551,18 @@ public:
 		return parser;
 	}
 
-	bool handleArgs(const argagg::parser_results& result) override {
-		if(!App::handleArgs(result)) {
+	bool handleArgs(const argagg::parser_results& result,
+			Base::Args& bout) override {
+		if(!Base::handleArgs(result, bout)) {
 			return false;
 		}
 
+		auto& out = static_cast<Args&>(bout);
 		if(result.has_option("model")) {
-			modelname_ = result["model"].as<const char*>();
+			out.model = result["model"].as<const char*>();
 		}
 		if(result.has_option("scale")) {
-			sceneScale_ = result["scale"].as<float>();
+			out.scale = result["scale"].as<float>();
 		}
 
 		return true;
@@ -576,8 +570,8 @@ public:
 
 	void initBuffers(const vk::Extent2D& size,
 			nytl::Span<RenderBuffer> bufs) override {
-		App::initBuffers(size, bufs);
-		auto& dev = vulkanDevice();
+		Base::initBuffers(size, bufs);
+		auto& dev = vkDevice();
 
 		auto info = vpp::ViewableImageCreateInfo(sceneFormat,
 			vk::ImageAspectBits::color, size,
@@ -607,7 +601,7 @@ public:
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
-		App::beforeRender(cb);
+		Base::beforeRender(cb);
 
 		// depth/repro pass
 		auto [width, height] = swapchainInfo().imageExtent;
@@ -637,28 +631,23 @@ public:
 	}
 
 	void update(double dt) override {
-		App::update(dt);
+		Base::update(dt);
 		time_ += dt;
-
-		// movement
-		auto kc = appContext().keyboardContext();
-		if(kc) {
-			tkn::checkMovement(camera_, *kc, dt);
-		}
+		camera_.update(swaDisplay(), dt);
 
 		if(snap_.pending) {
 			snap_.time = time_;
-			snap_.vp = cameraVP();
-			camera_.update = true; // trigger scene ubo update
+			snap_.vp = camera_.viewProjectionMatrix();
+			camera_.needsUpdate = true; // trigger scene ubo update
 			snap_.pending = false;
 		}
 
 		// we currently always redraw to see consistent fps
-		App::scheduleRedraw();
+		Base::scheduleRedraw();
 	}
 
-	bool key(const ny::KeyEvent& ev) override {
-		if(App::key(ev)) {
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
 			return true;
 		}
 
@@ -667,26 +656,26 @@ public:
 		}
 
 		switch(ev.keycode) {
-			case ny::Keycode::up:
+			case swa_key_up:
 				pp_.exposure *= 1.1;
 				pp_.update = true;
 				dlg_info("exposure: {}", pp_.exposure);
 				return true;
-			case ny::Keycode::down:
+			case swa_key_down:
 				pp_.exposure /= 1.1;
 				pp_.update = true;
 				dlg_info("exposure: {}", pp_.exposure);
 				return true;
-			case ny::Keycode::left:
+			case swa_key_left:
 				repro_.exposure *= 1.1;
 				dlg_info("repro exposure: {}", repro_.exposure);
 				return true;
-			case ny::Keycode::right:
+			case swa_key_right:
 				repro_.exposure /= 1.1;
 				dlg_info("repro exposure: {}", repro_.exposure);
 				return true;
-			case ny::Keycode::space: {
-				auto& qs = vulkanDevice().queueSubmitter();
+			case swa_key_space: {
+				auto& qs = vkDevice().queueSubmitter();
 				vk::SubmitInfo si;
 				si.commandBufferCount = 1;
 				si.pCommandBuffers = &snap_.cb.vkHandle();
@@ -694,7 +683,7 @@ public:
 				si.pSignalSemaphores = &snap_.semaphore.vkHandle();
 				qs.add(si);
 				snap_.pending = true;
-				App::addSemaphore(snap_.semaphore,
+				Base::addSemaphore(snap_.semaphore,
 					vk::PipelineStageBits::allGraphics);
 				return true;
 			} default:
@@ -704,34 +693,9 @@ public:
 		return false;
 	}
 
-	void mouseMove(const ny::MouseMoveEvent& ev) override {
-		App::mouseMove(ev);
-		if(rotateView_) {
-			tkn::rotateView(camera_, 0.005 * ev.delta.x, 0.005 * ev.delta.y);
-			App::scheduleRedraw();
-		}
-	}
-
-	bool mouseButton(const ny::MouseButtonEvent& ev) override {
-		if(App::mouseButton(ev)) {
-			return true;
-		}
-
-		if(ev.button == ny::MouseButton::left) {
-			rotateView_ = ev.pressed;
-			return true;
-		}
-
-		return false;
-	}
-
-	nytl::Mat4f projectionMatrix() const {
-		auto aspect = float(window().size().x) / window().size().y;
-		return tkn::perspective(fov, aspect, -near, -far);
-	}
-
-	nytl::Mat4f cameraVP() const {
-		return projectionMatrix() * viewMatrix(camera_);
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
 	void updateDevice() override {
@@ -739,13 +703,13 @@ public:
 		{
 			auto map = sceneUbo_.memoryMap();
 			auto span = map.span();
-			tkn::write(span, cameraVP());
-			tkn::write(span, camera_.pos);
+			tkn::write(span, camera_.viewProjectionMatrix());
+			tkn::write(span, camera_.position());
 			tkn::write(span, time_);
 			tkn::write(span, snap_.vp);
 			tkn::write(span, snap_.time);
-			tkn::write(span, near);
-			tkn::write(span, far);
+			tkn::write(span, -camera_.near());
+			tkn::write(span, -camera_.far());
 			tkn::write(span, repro_.exposure);
 			map.flush();
 		}
@@ -757,37 +721,23 @@ public:
 			map.flush();
 		}
 
-		auto semaphore = scene_.updateDevice(cameraVP());
+		auto semaphore = scene_.updateDevice(camera_.viewProjectionMatrix());
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
 			// HACK: we need to trigger initBuffers to rerecord all cb's...
-			// App::scheduleRerecord();
-			App::resize_ = true;
+			// Base::scheduleRerecord();
+			Base::resize_ = true;
 		}
 	}
 
-	void resize(const ny::SizeEvent& ev) override {
-		App::resize(ev);
-		camera_.update = true;
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
+		camera_.aspect({w, h});
 	}
 
 	const char* name() const override { return "repro"; }
 
 protected:
-	struct Alloc {
-		vpp::DeviceMemoryAllocator memHost;
-		vpp::DeviceMemoryAllocator memDevice;
-
-		vpp::BufferAllocator bufHost;
-		vpp::BufferAllocator bufDevice;
-
-		Alloc(const vpp::Device& dev) :
-			memHost(dev), memDevice(dev),
-			bufHost(memHost), bufDevice(memDevice) {}
-	};
-
-	std::optional<Alloc> alloc_;
-
 	vpp::Sampler sampler_;
 
 	vpp::TrDsLayout sceneDsLayout_;
@@ -833,7 +783,7 @@ protected:
 		float exposure {1.f};
 	} pp_;
 
-	tkn::Texture dummyTex_;
+	vpp::ViewableImage dummyTex_;
 
 	bool anisotropy_ {}; // whether device supports anisotropy
 	bool multiview_ {}; // whether device supports multiview
@@ -841,21 +791,10 @@ protected:
 	bool multiDrawIndirect_ {};
 
 	float time_ {};
-	bool rotateView_ {false}; // mouseLeft down
-
 	tkn::Scene scene_; // no default constructor
-	tkn::Camera camera_ {};
-
-	// args
-	std::string modelname_ {};
-	float sceneScale_ {1.f};
+	tkn::ControlledCamera camera_ {};
 };
 
 int main(int argc, const char** argv) {
-	ViewApp app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<ViewApp>(argc, argv);
 }
