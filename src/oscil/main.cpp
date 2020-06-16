@@ -19,7 +19,7 @@
 #include <argagg.hpp>
 
 #include <shaders/oscil.particle.vert.h>
-#include <shaders/tkn.color.frag.h>
+#include <shaders/tkn.incolor.frag.h>
 
 #ifdef TKN_WITH_PULSE_SIMPLE
   #include <tkn/pulseRecorder.hpp>
@@ -84,6 +84,8 @@ public:
 		dsLayout_.init(dev, bindings);
 		pipeLayout_ = {dev, {{dsLayout_}}, {}};
 
+		// for tkn/color.frag
+		/*
 		nytl::Vec4f color{0.f, 1.f, 0.f, 0.2f};
 
 		vk::SpecializationMapEntry sentries[4];
@@ -98,23 +100,46 @@ public:
 		sci.pData = &color;
 		sci.mapEntryCount = 4u;
 		sci.pMapEntries = sentries;
+		*/
 
 		vpp::ShaderModule vert{dev, oscil_particle_vert_data};
-		vpp::ShaderModule frag{dev, tkn_color_frag_data};
+		vpp::ShaderModule frag{dev, tkn_incolor_frag_data};
 
 		vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
 			{vert, vk::ShaderStageBits::vertex},
-			{frag, vk::ShaderStageBits::fragment, &sci},
+			{frag, vk::ShaderStageBits::fragment /*, &sci*/},
 		}}}, 0u, samples());
 
 		gpi.assembly.topology = vk::PrimitiveTopology::pointList;
-		gpi.blend.pAttachments = &tkn::defaultBlendAttachment();
+		gpi.blend.attachmentCount = 1u;
+
+		// simple additive blending.
+		const vk::PipelineColorBlendAttachmentState ba = {
+			true, // blending enabled
+			// color
+			vk::BlendFactor::srcAlpha, // src
+			vk::BlendFactor::one, // dst
+			vk::BlendOp::add,
+			// alpha
+			// Rationale behind using the dst alpha is that there
+			// is no use in storing the src alpha somewhere, as
+			// we've already processed it via the color blending above.
+			vk::BlendFactor::zero, // src
+			vk::BlendFactor::one, // dst
+			vk::BlendOp::add,
+			// color write mask
+			vk::ColorComponentBits::r |
+				vk::ColorComponentBits::g |
+				vk::ColorComponentBits::b |
+				vk::ColorComponentBits::a,
+		};
+		gpi.blend.pAttachments = &ba;
 
 		pipe_ = {dev, gpi.info()};
 
 		// buffers
 		auto initUbo = vpp::Init<vpp::SubBuffer>(dev.bufferAllocator(),
-			3 * sizeof(float), vk::BufferUsageBits::uniformBuffer,
+			4 * sizeof(float), vk::BufferUsageBits::uniformBuffer,
 			dev.hostMemoryTypes());
 		auto initSsbo = vpp::Init<vpp::SubBuffer>(dev.bufferAllocator(),
 			2 * maxFrameCount * sizeof(float), vk::BufferUsageBits::storageBuffer,
@@ -213,19 +238,21 @@ public:
 			auto cut = 2 * unsigned(std::round(dt * ap_.rate()));
 			// auto cut = 0u;
 			if(audioSamples_.size() < 2 * frameCount_) {
-				dlg_info("0");
 				cut = 0u;
-			} else if(audioSamples_.size() - cut < 2 * frameCount_) {
-				cut = audioSamples_.size() - 2 * frameCount_;
-			} else if(audioSamples_.size() - cut > 2 * maxCount) {
-				dlg_info("2");
+			} else if(audioSamples_.size() < 2 * frameCount_ + cut) {
+				if(audioSamples_.size() < 2 * frameCount_) {
+					cut = 0u;
+				} else {
+					cut = audioSamples_.size() - 2 * frameCount_;
+				}
+			} else if(audioSamples_.size() > 2 * maxCount + cut) {
 				cut = audioSamples_.size() - 2 * maxCount;
 			}
 
-			dlg_info("{}", cut);
 			auto d = audioSamples_.data();
 			auto ns = audioSamples_.size() - cut;
-			dlg_assertm(ns >= 2 * frameCount_, "{}, {}", ns, 2 * frameCount_);
+			// this might be false when we just increased the frameCount_
+			// dlg_assertm(ns >= 2 * frameCount_, "{}, {}", ns, 2 * frameCount_);
 			std::memmove(d, d + cut, ns * sizeof(float));
 
 			audioSamples_.resize(std::max<u32>(ns, 2 * frameCount_));
@@ -260,6 +287,7 @@ public:
 			tkn::write(span, float(frameCount_) / float(particleCount_));
 			tkn::write(span, amp_);
 			tkn::write(span, frameCount_);
+			tkn::write(span, alpha_);
 		}
 	}
 
@@ -305,15 +333,24 @@ public:
 					dlg_info("amp: {}", amp_);
 					return true;
 
-				// Only allow these big steps to keep frameCount a power of 2
+				case swa_key_k1:
+					alpha_ /= 1.1;
+					dlg_info("alpha: {}", alpha_);
+					return true;
+				case swa_key_k2:
+					alpha_ *= 1.1;
+					dlg_info("alpha: {}", alpha_);
+					return true;
+
+				// Only allow these big steps to keep frameCount a power of 2?
 				// TODO: when using pulse recording, we might wanna adjust
 				// buffer size? not sure how that works exactly
 				case swa_key_o:
-					frameCount_ = std::min(maxFrameCount, frameCount_ * 2);
+					frameCount_ = std::min<unsigned>(maxFrameCount, frameCount_ * 1.1);
 					dlg_info("frameCount: {}", frameCount_);
 					return true;
 				case swa_key_i:
-					frameCount_ /= 2;
+					frameCount_ /= 1.1;
 					dlg_info("frameCount: {}", frameCount_);
 					return true;
 
@@ -409,6 +446,7 @@ private:
 	unsigned particleCount_ {64 * 1024};
 	u32 frameCount_ {8 * 1024};
 
+	float alpha_ {0.1f};
 	float amp_ {1.f};
 	bool advanceTime_ {true};
 

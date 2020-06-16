@@ -17,7 +17,8 @@ namespace tkn {
 // simple utility that gets audio from system
 class PulseAudioRecorder {
 public:
-	static constexpr auto bufferSize = 1024 * 8;
+	static constexpr auto bufferSize = 1024 * 4;
+	static constexpr auto rate = 44100u;
 
 	PulseAudioRecorder() = default;
 
@@ -30,12 +31,12 @@ public:
 
 		pa_sample_spec spec {};
 		spec.format = PA_SAMPLE_FLOAT32LE;
-		spec.rate = 44100;
+		spec.rate = rate;
 		spec.channels = 2;
 
 		pa_buffer_attr attr {};
 		attr.maxlength = bufferSize;
-		attr.fragsize = bufferSize;
+		attr.fragsize = 2 * bufferSize;
 
 		int perr;
 		pa_ = pa_simple_new(NULL, "tkn-recorder", PA_STREAM_RECORD,
@@ -62,14 +63,18 @@ public:
 		std::vector<float> buf(bufferSize);
 		int perr;
 
+		auto total = 0u;
 		while(!exit_.load()) {
-			if(pa_simple_read(pa_, buf.data(), buf.size(), &perr) < 0) {
+			if(pa_simple_read(pa_, buf.data(), buf.size() * sizeof(float), &perr) < 0) {
 				dlg_error("pa_simple_read: {}", pa_strerror(perr));
 				return;
 			}
 
+			total += buf.size();
 			recorded_.enqueue(buf.data(), buf.size());
 		}
+
+		dlg_info("total read: {}", total);
 	}
 
 	unsigned available() const {

@@ -13,8 +13,8 @@ layout(std430, set = 0, binding = 0) buffer Particles {
 layout(set = 0, binding = 1) uniform UBO {
 	// vec4 for alignment
 	// xy is one attraction, zw is one
-	// so we really have 10 possible attractions
-	vec4 attract[5]; // attraction positions
+	// so we really have 8 possible attractions
+	vec4 attract[4]; // attraction positions
 
 	// physically correct: only the third component is set (to a value
 	// depending on the mass). But it looks nicer if we add normalized
@@ -29,6 +29,10 @@ layout(set = 0, binding = 1) uniform UBO {
 	float deltaT; // time delta in seconds
 	uint count; // number of attraction positions (<= 10)
 	float time;
+
+	// range in x is always [-1, 1], this provides the range in
+	// y range. Needed to account for aspect ratio 
+	float ysize;
 } ubo;
 
 
@@ -49,18 +53,18 @@ vec2 attraction(vec2 pos, vec2 attractPos) {
 	return delta * dot(ubo.attractionFactors.xyz, vec3(id1, id2, id3));
 }
 
-// x dimension: bounce-back
+// y dimension: bounce-back
 void topBorder(inout vec2 pos, inout vec2 vel) {
-	pos.y = -2.f - pos.y;
+	pos.y = -2.f * ubo.ysize - pos.y;
 	vel.y = -vel.y;
 }
 
 void bottomBorder(inout vec2 pos, inout vec2 vel) {
-	pos.y = 2.f - pos.y;
+	pos.y = 2.f * ubo.ysize - pos.y;
 	vel.y = -vel.y;
 }
 
-// y-dimension: wrap around
+// x-dimension: wrap around
 // NOTE: we could duplicate all attractors at least once to the
 // left and right to simulate real world wrapping. When attractor is left
 // but particle on the right it should (logically, for a really wrapped world)
@@ -168,9 +172,9 @@ void main() {
 		rightBorder(pos, vel);
 	}
 
-	if(pos.y < -1.0) {
+	if(pos.y < -ubo.ysize) {
 		topBorder(pos, vel);
-	} else if(pos.y > 1.0) {
+	} else if(pos.y > ubo.ysize) {
 		bottomBorder(pos, vel);
 	}
 

@@ -1,6 +1,7 @@
 #include <tkn/config.hpp>
 #include <tkn/singlePassApp.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/types.hpp>
 #include <argagg.hpp>
 
 #include <vpp/trackedDescriptor.hpp>
@@ -13,7 +14,6 @@
 #include <vpp/commandAllocator.hpp>
 #include <vpp/vk.hpp>
 
-#include <ny/mouseButton.hpp>
 #include <nytl/vecOps.hpp>
 #include <vui/gui.hpp>
 #include <vui/dat.hpp>
@@ -48,14 +48,42 @@ using FeedbackMP3Audio = tkn::FeedbackAudioSource<tkn::StreamedMP3Audio>;
 // TODO: alternatively, allow to visualize audio recorded via mic instead of
 //   audio file or system audio
 
-constexpr auto compUboSize = (6 + 3 + 4 * 5) * sizeof(float);
-constexpr auto gfxUboSize = 2 * sizeof(float);
+using namespace tkn::types;
 
 class ParticleSystem {
+public:
+	struct CompUboData {
+		// packed as vec4[4] on gpu
+		nytl::Vec2f attractPoints[8];
+
+		// packed as vec4 on gpu
+		nytl::Vec3f attractFacs;
+		float friction;
+
+		float maxVel;
+		float distOff;
+		float dt;
+		u32 count;
+		float time;
+		float ysize;
+	};
+
+	struct GfxUboData {
+		float alpha;
+		float pointSize;
+		float ysize;
+	};
+
+	struct Particle {
+		nytl::Vec2f pos;
+		nytl::Vec2f vel;
+	};
+
 public:
 	// params and stuff
 	float alpha {0.1f};
 	float pointSize {1.f};
+	float ysize {1.f};
 
 	// set to true if one of above (gfx params) was changed
 	bool paramsChanged {true};
@@ -69,11 +97,6 @@ public:
 
 	float maxVel {5.f}; // screen space per second
 	float distOff {0.05f};
-
-	struct Particle {
-		nytl::Vec2f pos;
-		nytl::Vec2f vel;
-	};
 
 public:
 	ParticleSystem() = default;
@@ -95,7 +118,7 @@ public:
 
 		auto usage = nytl::Flags(vk::BufferUsageBits::uniformBuffer);
 		auto mem = dev.memoryTypeBits(vk::MemoryPropertyBits::hostVisible);
-		gfxUbo_ = {device().bufferAllocator(), gfxUboSize, usage, mem};
+		gfxUbo_ = {device().bufferAllocator(), sizeof(GfxUboData), usage, mem};
 
 		vpp::ShaderModule vertShader(device(), particles_particle_vert_data);
 		vpp::ShaderModule fragShader(device(), particles_particle_frag_data);
@@ -176,10 +199,9 @@ public:
 			| vk::BufferUsageBits::transferDst;
 		particleBuffer_ = {device().bufferAllocator(), bufSize, usage, mem};
 
-		bufSize = compUboSize;
 		usage = vk::BufferUsageBits::uniformBuffer;
 		mem = dev.memoryTypeBits(vk::MemoryPropertyBits::hostVisible);
-		compUbo_ = {device().bufferAllocator(), bufSize, usage, mem};
+		compUbo_ = {device().bufferAllocator(), sizeof(CompUboData), usage, mem};
 
 		// create & upload particles
 		count_ = count;
@@ -255,35 +277,37 @@ public:
 
 	void updateDevice(double delta, nytl::Span<nytl::Vec2f> attractors) {
 		time_ += delta;
-		if(attractors.size() > 5) {
-			 attractors = attractors.first(5);
+		if(attractors.size() > 8) {
+			 attractors = attractors.first(8);
 		}
 
 		auto view = compUbo_.memoryMap();
 		auto span = view.span();
 
-		for(auto p : attractors) {
-			tkn::write(span, p);
-		}
-
-		span = view.span();
-		auto off = sizeof(nytl::Vec4f) * 5;
-		tkn::skip(span, off);
-
-		tkn::write(span, attractionFactors);
-		tkn::write(span, friction);
-		tkn::write(span, maxVel);
-		tkn::write(span, distOff);
-		tkn::write(span, float(delta));
-		tkn::write(span, std::uint32_t(attractors.size()));
-		tkn::write(span, time_);
+		CompUboData data;
+		std::copy(attractors.begin(), attractors.end(), data.attractPoints);
+		data.attractFacs = attractionFactors;
+		data.friction = friction;
+		data.maxVel = maxVel;
+		data.distOff = distOff;
+		data.dt = delta;
+		data.count = attractors.size();
+		data.time = time_;
+		data.ysize = ysize;
+		tkn::write(span, data);
 		view.flush();
 
 		if(paramsChanged) {
+			paramsChanged = false;
 			auto view = gfxUbo_.memoryMap();
 			auto span = view.span();
-			tkn::write(span, alpha);
-			tkn::write(span, pointSize);
+
+			GfxUboData data;
+			data.alpha = alpha;
+			data.pointSize = pointSize;
+			data.ysize = ysize;
+
+			tkn::write(span, data);
 			view.flush();
 		}
 	}
@@ -436,8 +460,9 @@ public:
 
 	nytl::Vec2f attractorPos(const nytl::Vec2i pos) {
 		using namespace nytl::vec::cw::operators;
-		auto normed = pos / nytl::Vec2f(windowSize());
-		return 2 * normed - nytl::Vec{1.f, 1.f};
+		auto ws = windowSize();
+		auto normed = (1.f / ws.x) * pos;
+		return 2 * normed - nytl::Vec{1.f, system_.ysize};
 	}
 
 	// TODO: mouse and touch currently not usable at the same time
@@ -672,6 +697,12 @@ public:
 			map.flush();
 		}
 #endif // TKN_WITH_AUDIO
+	}
+
+	void resize(unsigned w, unsigned h) override {
+		Base::resize(w, h);
+		system_.ysize = float(h) / w;
+		system_.paramsChanged = true;
 	}
 
 	const char* name() const override { return "particles"; }

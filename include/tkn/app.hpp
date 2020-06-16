@@ -103,6 +103,7 @@ protected:
 	// Called every frame with the time since the last call to update
 	// in seconds. Must not change any device resources since rendering
 	// might still be active. See updateDevice.
+	// dt: Time since last update in seconds.
 	virtual void update(double dt);
 
 	// Called every frame when the last frame has finished and device
