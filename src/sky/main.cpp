@@ -131,6 +131,43 @@ public:
 		}
 
 		float diff = 0.001 + 0.005 * std::abs(std::sin(2 * pi * daytime_));
+		if(useHosek_) {
+			switch(ev.keycode) {
+				case swa_key_left: {
+					auto& s = hosekSky_;
+					s.roughness(std::clamp(s.roughness() - 0.02, 0.0, 1.0));
+					dlg_info("roughness: {}", s.roughness());
+					return true;
+				} case swa_key_right: {
+					auto& s = hosekSky_;
+					s.roughness(std::clamp(s.roughness() + 0.02, 0.0, 1.0));
+					dlg_info("roughness: {}", s.roughness());
+					return true;
+				} case swa_key_pageup: {
+					auto& s = hosekSky_;
+					s.turbidity(std::clamp(s.turbidity() + 0.25, 1.0, 10.0));
+					dlg_info("turbidity: {}", s.turbidity());
+					rebuild();
+					return true;
+				} case swa_key_pagedown: {
+					auto& s = hosekSky_;
+					s.turbidity(std::clamp(s.turbidity() - 0.25, 1.0, 10.0));
+					dlg_info("turbidity: {}", s.turbidity());
+					rebuild();
+					return true;
+				}
+				default: break;
+			}
+		} else {
+			switch(ev.keycode) {
+				case swa_key_t:
+					reloadGenPipe_ = true;
+					return true;
+				default:
+					break;
+			}
+		}
+
 		switch(ev.keycode) {
 			case swa_key_r:
 				reloadPipe_ = true;
@@ -148,37 +185,7 @@ public:
 			case swa_key_o:
 				switchSky();
 				return true;
-			// i mean, why not. Might be considered bad coding style
-			// but it seems pretty clear to me tbh
-			if(useHosek_) {
-				case swa_key_left: {
-					auto& s = hosekSky_;
-					s.roughness(std::clamp(s.roughness() - 0.02, 0.0, 1.0));
-					dlg_info("roughness: {}", s.roughness());
-					break;
-				} case swa_key_right: {
-					auto& s = hosekSky_;
-					s.roughness(std::clamp(s.roughness() + 0.02, 0.0, 1.0));
-					dlg_info("roughness: {}", s.roughness());
-					break;
-				} case swa_key_pageup: {
-					auto& s = hosekSky_;
-					s.turbidity(std::clamp(s.turbidity() + 0.25, 1.0, 10.0));
-					dlg_info("turbidity: {}", s.turbidity());
-					rebuild();
-					return true;
-				} case swa_key_pagedown: {
-					auto& s = hosekSky_;
-					s.turbidity(std::clamp(s.turbidity() - 0.25, 1.0, 10.0));
-					dlg_info("turbidity: {}", s.turbidity());
-					rebuild();
-					return true;
-				}
-			} else {
-				case swa_key_t:
-					reloadGenPipe_ = true;
-					return true;
-			} default:
+			default:
 				break;
 		}
 

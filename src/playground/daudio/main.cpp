@@ -11,7 +11,7 @@ public:
 			return false;
 		}
 
-		ap_.emplace();
+		ap_.emplace("dummy audio");
 		auto& ap = *ap_;
 
 		auto asset = openAsset("test.ogg");

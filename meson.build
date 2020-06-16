@@ -339,6 +339,12 @@ sky = build_target('sky', [
 	], dependencies: [tkn_dep],
 	target_type: exetarget)
 
+oscil = build_target('oscil', [
+		'src/oscil/main.cpp',
+		oscil_shaders,
+	], dependencies: [tkn_dep, tkn_audio_dep, dep_pulse_simple_optional],
+	target_type: exetarget)
+
 if android
 	subdir('apk')
 endif

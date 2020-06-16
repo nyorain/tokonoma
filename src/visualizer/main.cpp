@@ -24,7 +24,7 @@ public:
 		}
 
 		rvgInit();
-		ap_.emplace();
+		ap_.emplace("visualizer");
 		auto& ap = *ap_;
 
 		auto asset = openAsset("test.mp3");

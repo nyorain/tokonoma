@@ -97,11 +97,18 @@ public:
 	};
 
 public:
+	AudioPlayer() = default;
+
 	/// Throws std::runtime_error if something could not be initialized.
-	AudioPlayer(const char* name = "tkn", // stream name sent to backend
+	AudioPlayer(const char* name, // stream name sent to backend
 		unsigned rate = 0, // rate to use. 0 for default/preferred rate
 		unsigned channels = 2, // num channels
 		unsigned latencyBlocks = 1); // minimum render latency in blocks
+	void init(const char* name = "tkn",
+		unsigned rate = 0,
+		unsigned channels = 2,
+		unsigned latencyBlocks = 1);
+
 	virtual ~AudioPlayer();
 
 	/// Starts playback.

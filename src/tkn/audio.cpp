@@ -75,11 +75,16 @@ struct AudioPlayer::Util {
 
 AudioPlayer::AudioPlayer(const char* name, unsigned rate, unsigned channels,
 		unsigned latencyBlocks) {
+	init(name, rate, channels, latencyBlocks);
+}
+
+void AudioPlayer::init(const char* name, unsigned rate, unsigned channels,
+		unsigned latencyBlocks) {
 	int rv = cubeb_set_log_callback(CUBEB_LOG_VERBOSE, Util::log);
 
 #ifdef _WIN32
 	// Needed for cubeb on windows
-	// Se cubeb.h documentation
+	// Se cubeb.h documentation and various issues
 	auto hres = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 	dlg_assert(hres == S_OK || hres == S_FALSE);
 #endif

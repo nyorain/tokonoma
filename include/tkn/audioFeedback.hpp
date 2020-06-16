@@ -54,6 +54,9 @@ public:
 		return feedback_.deque(buf, ns);
 	}
 
+	auto& inner() { return impl_; }
+	auto& inner() const { return impl_; }
+
 protected:
 	T impl_;
 	std::vector<float> tmpBuf_; // TODO: use buf cache

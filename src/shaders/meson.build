@@ -250,6 +250,9 @@ shaders_src = {
 		['combine.comp'],
 		['pp.frag'],
 	],
+	'oscil': [
+		['particle.vert'],
+	],
 }
 
 # build them
