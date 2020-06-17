@@ -1,5 +1,8 @@
 #version 450
 
+#extension GL_GOOGLE_include_directive : require
+#include "noise.glsl"
+
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform Params {
@@ -7,16 +10,21 @@ layout(set = 0, binding = 0) uniform Params {
 	float amp;
 	uint frameCount;
 	float alpha;
+	float thickness;
+	float fadeExp;
+	float ySize;
 };
 
 layout(set = 0, binding = 1) buffer Audio {
 	float stereo[];
 };
 
+// TODO: detect discontinuities and don't interpolate over them.
+
 // Evaluate cubic b-spline via De Boor.
 // https://en.wikipedia.org/wiki/De_Boor%27s_algorithm
 // We do this so the result is smoother.
-layout(constant_id = 0u) const int p = 3;
+layout(constant_id = 0u) const int p = 2;
 
 float t(int i) {
 	return clamp(i, 0, frameCount - 1);
@@ -46,8 +54,6 @@ vec2 splineAudio(float x) {
 }
 
 void main() {
-	outColor = vec4(0.1, 1.0, 0.1, alpha);
-
 	float at = min(gl_VertexIndex * idstep, frameCount - 1);
 	vec2 xy = splineAudio(at);
 
@@ -55,6 +61,18 @@ void main() {
 	// mode works.
 	xy.y = -xy.y;
 
+	// Account for aspect of window
+	xy.y /= ySize;
+
+	// TODO: should probably rather be just along normal
+	vec2 roff = -1.0 + 2.0 * random2(vec2(at, 1.f + stereo[0]) + xy);
+	xy += thickness * roff; // pow(roff, 2.0) but keep sign
+
 	gl_Position = vec4(amp * xy, 0.0, 1.0);
 	gl_PointSize = 1.f;
+
+	// float atn = at / (frameCount - 1);
+	// float a = alpha * pow(1 - atn, 2); // basically fade out points
+	float a = alpha * exp(-fadeExp * (frameCount - 1 - at));
+	outColor = vec4(0.1, 1.0, 0.1, a);
 }

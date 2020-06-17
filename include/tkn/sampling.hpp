@@ -11,6 +11,8 @@
 
 namespace tkn {
 
+static constexpr auto volumePause = std::numeric_limits<float>::min();
+
 // Writes nf frames from 'rb' into 'buf'. If not enough samples
 // are available, uses 0 for the remaining frames.
 // When mix is true, will mix itself into 'buf', otherwise overwrite it.
@@ -140,7 +142,7 @@ public:
 		auto b0 = bufs_.update.get(ns).data();
 		nf = inner_.get(b0, nf);
 		if(nf <= 0) {
-			volume_.store(0.f);
+			volume_.store(volumePause);
 			return;
 		}
 
@@ -183,10 +185,11 @@ public:
 	unsigned rate() const { return rate_; }
 	unsigned channels() const { return channels_; }
 
-	// Set volume to 0.0 to pause the audio.
+	// To pause, just call volume with volumePause.
+	// To unpause, call it with a valid volume.
 	void volume(float v) { volume_.store(v); }
 	float volume() const { return volume_.load(); }
-	bool playing() const { return volume_.load() != 0.f; }
+	bool playing() const { return volume_.load() != volumePause; }
 
 private:
 	T inner_;
@@ -203,5 +206,6 @@ private:
 
 using StreamedVorbisAudio = tkn::Streamed<tkn::VorbisDecoder>;
 using StreamedMP3Audio = tkn::Streamed<tkn::MP3Decoder>;
+using StreamedWavAudio = tkn::Streamed<tkn::WavDecoder>;
 
 } // namespace tkn

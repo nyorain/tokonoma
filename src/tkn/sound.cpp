@@ -4,6 +4,7 @@
 #include <dlg/dlg.hpp>
 #include <nytl/scope.hpp>
 #include <cmath>
+#include <cerrno>
 
 #define STB_VORBIS_HEADER_ONLY
 #include <stb_vorbis.h>
@@ -444,6 +445,35 @@ unsigned VorbisDecoder::rate() const {
 unsigned VorbisDecoder::channels() const {
 	auto info = stb_vorbis_get_info(vorbis_);
 	return info.channels;
+}
+
+// WavDecoder
+WavDecoder::WavDecoder(nytl::StringParam file) {
+	errno = 0u;
+	if(!drwav_init_file(&wav_, file.c_str(), NULL)) {
+		dlg_info("drwav_init_file failed, errno: {}", std::strerror(errno));
+		throw std::runtime_error("Failed to initializer wav reader");
+	}
+}
+WavDecoder::WavDecoder(nytl::Span<const std::byte> buf) {
+	if(!drwav_init_memory(&wav_, buf.data(), buf.size(), NULL)) {
+		throw std::runtime_error("Failed to initializer wav reader");
+	}
+}
+WavDecoder::~WavDecoder() {
+	drwav_uninit(&wav_);
+}
+
+int WavDecoder::get(float* buf, unsigned nf) {
+	return drwav_read_pcm_frames_f32(&wav_, nf, buf);
+}
+
+unsigned WavDecoder::rate() const {
+	return wav_.sampleRate;
+}
+
+unsigned WavDecoder::channels() const {
+	return wav_.channels;
 }
 
 } // namespace tkn

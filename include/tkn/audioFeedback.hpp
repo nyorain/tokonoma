@@ -10,14 +10,6 @@ namespace tkn {
 // like visualizers.
 // TODO: would be cleaner to do all feedback stuff in update if possible
 // (e.g. for streamed sources)
-// TODO: when used with something that already uses a ring buffer,
-// the best way would probably be to use a single-producer but
-// two-consumer ring buffer (where data is considered consumed
-// when it has been consumed by both). But since we don't want
-// to make the timing of the main thread anything to rely on,
-// when there isn't enough space, old (unconsumed) data should be overriden
-// if that is possible somehow.
-// [NOTE: nope that's not possible, at least not lockfree.]
 template<typename T>
 class FeedbackAudioSource : public tkn::AudioSource {
 public:

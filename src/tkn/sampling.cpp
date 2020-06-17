@@ -278,7 +278,7 @@ void writeSamples(unsigned nf, float* buf, RingBuffer<float>& rb,
 		BufCache& tmpbuf, float volume) {
 	dlg_assert(srcChannels <= dstChannels);
 	auto dns = dstChannels * nf;
-	if(volume <= 0.f) {
+	if(volume == volumePause) {
 		if(!mix) {
 			std::memset(buf, 0x0, dns * sizeof(float));
 		}

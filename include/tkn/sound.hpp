@@ -10,6 +10,7 @@
 #include <minimp3.h>
 #include <cmath>
 #include <speex_resampler.h>
+#include <dr_wav.h>
 
 typedef struct SpeexResamplerState_ SpeexResamplerState;
 typedef struct stb_vorbis stb_vorbis;
@@ -142,6 +143,24 @@ private:
 	std::vector<float> samples_ {};
 	std::size_t samplesCount_ {};
 	std::size_t samplesOff_ {};
+};
+
+class WavDecoder {
+public:
+	explicit WavDecoder(nytl::StringParam file);
+	explicit WavDecoder(nytl::Span<const std::byte> buf);
+	~WavDecoder();
+
+	// TODO
+	// explicit WavDecoder(File&& file);
+	// explicit WavDecoder(std::unique_ptr<Stream>&& stream);
+
+	int get(float* buf, unsigned nf);
+	unsigned rate() const;
+	unsigned channels() const;
+
+private:
+	drwav wav_;
 };
 
 } // namespace tkn

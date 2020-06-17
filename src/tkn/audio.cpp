@@ -158,7 +158,9 @@ AudioPlayer::~AudioPlayer() {
 	// TODO: this might take a while when the thread is sleeping.
 	// We could instead make it wait on a cv everytime it goes
 	// to sleep and signal that here
-	updateThread_.join();
+	if(updateThread_.joinable()) {
+		updateThread_.join();
+	}
 
 	// destroy remaning active audios
 	// no thread is accessing them anymore
