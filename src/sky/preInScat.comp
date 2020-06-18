@@ -1,0 +1,43 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#include "precoscat.hpp"
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+layout(set = 0, binding = 0) uniform AtmosphereUBO {
+	mat4 _1;
+	Atmosphere atmosphere;
+	vec3 _2;
+	uint texNuSize;
+};
+layout(set = 0, binding = 1) uniform sampler2D transTex;
+layout(set = 0, binding = 2) uniform sampler3D scatRTex;
+layout(set = 0, binding = 3) uniform sampler3D scatMTex;
+layout(set = 0, binding = 4) uniform sampler3D scatMultiTex; // last iteration
+layout(set = 0, binding = 5) uniform sampler2D groundTex;
+layout(set = 0, binding = 6) writeonly uniform image3D outInScat;
+
+layout(push_constant) uniform PCR {
+	uint scatOrder;
+};
+
+void main() {
+	uvec3 size = imageSize(outInScat);
+	uvec3 pixel = gl_GlobalInvocationID.xyz;
+	if(pixel.x >= size.x || pixel.y >= size.y || pixel.z >= size.z) {
+		return;
+	}
+
+	// get params for this invocation
+	ARay ray;
+	float mu_s, nu;
+	bool rayIntersectsGround;
+	scatParamsFromPixel(atmosphere, pixel, size, ray, mu_s, nu, rayIntersectsGround);
+
+	// compute
+	vec3 scat = computeIncomingScattering(atmosphere, transTex,
+		scatRTex, scatMTex, scatMultiTex, groundTex, ray, mu_s, nu, scatOrder);
+
+	// factor for precision, we divide by it in computeMutlipleScattering
+	imageStore(outInScat, ivec3(pixel), vec4(100000 * scat, 1.0));
+}

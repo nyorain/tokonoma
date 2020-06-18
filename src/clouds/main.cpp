@@ -3,6 +3,7 @@
 #include <tkn/ccam.hpp>
 #include <tkn/stream.hpp>
 #include <tkn/features.hpp>
+#include <tkn/util.hpp>
 #include <tkn/glsl.hpp>
 #include <tkn/shader.hpp>
 #include <tkn/render.hpp>
@@ -36,10 +37,6 @@ using tkn::glsl::fract;
 //  http://advances.realtimerendering.com/s2015/The%20Real-time%20Volumetric%20Cloudscapes%20of%20Horizon%20-%20Zero%20Dawn%20-%20ARTR.pdf
 // [3] Nubis: Authoring Real-Time Volumetric Cloudscapes, A. Schneider
 //  http://advances.realtimerendering.com/s2017/Nubis%20-%20Authoring%20Realtime%20Volumetric%20Cloudscapes%20with%20the%20Decima%20Engine%20-%20Final%20.pdf
-
-unsigned ceilDivide(unsigned num, unsigned denom) {
-	return (num + denom - 1) / denom;
-}
 
 // from pbr/main.cpp
 struct SkyData {
@@ -296,9 +293,9 @@ public:
 			{gen_.ds.vkHandle()});
 		vk::cmdBindPipeline(gen_.cb, vk::PipelineBindPoint::compute, gen_.pipe);
 		vk::cmdDispatch(gen_.cb,
-			ceilDivide(noiseExtent.width, groupDimSize),
-			ceilDivide(noiseExtent.height, groupDimSize),
-			ceilDivide(noiseExtent.depth, groupDimSize));
+			tkn::ceilDivide(noiseExtent.width, groupDimSize),
+			tkn::ceilDivide(noiseExtent.height, groupDimSize),
+			tkn::ceilDivide(noiseExtent.depth, groupDimSize));
 
 		// generate LODs. We need this to approximate the rough
 		// neighborhood density for lighting.

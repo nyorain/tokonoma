@@ -634,7 +634,7 @@ private:
 	unsigned particleCount_ {64 * 1024};
 	u32 frameCount_ {2 * 1024};
 
-	float thickness_ {0.0005};
+	float thickness_ {0.00005}; // this feature is kinda useless tbh
 	float fadeExp_ {0.0025};
 	float ysize_ {1.f};
 	float alpha_ {0.1f};

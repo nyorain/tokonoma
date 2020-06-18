@@ -121,7 +121,7 @@ void Environment::createPipe(const vpp::Device& dev,
 void Environment::render(vk::CommandBuffer cb) const {
 	tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 1, {ds_});
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-	vk::cmdDraw(cb, 14, 1, 0, 0, 0);
+	vk::cmdDraw(cb, 14, 1, 0, 0, 0); // skybox triangle strip
 }
 
 // SkyboxRenderer

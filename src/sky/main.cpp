@@ -87,6 +87,11 @@ public:
 	void updateDevice() override {
 		Base::updateDevice();
 
+		if(rebuild_) {
+			rebuild_ = false;
+			rebuild();
+		}
+
 		auto rerec = false;
 		if(useHosek_) {
 			rerec |= hosekSky_.updateDevice(camera_, reloadPipe_);
@@ -147,20 +152,34 @@ public:
 					auto& s = hosekSky_;
 					s.turbidity(std::clamp(s.turbidity() + 0.25, 1.0, 10.0));
 					dlg_info("turbidity: {}", s.turbidity());
-					rebuild();
+					rebuild_ = true;
 					return true;
 				} case swa_key_pagedown: {
 					auto& s = hosekSky_;
 					s.turbidity(std::clamp(s.turbidity() - 0.25, 1.0, 10.0));
 					dlg_info("turbidity: {}", s.turbidity());
-					rebuild();
+					rebuild_ = true;
 					return true;
 				}
 				default: break;
 			}
 		} else {
 			switch(ev.keycode) {
-				case swa_key_t:
+				case swa_key_left: {
+					auto order = brunetonSky_.maxScatOrder_;
+					order = std::clamp(order - 1u, 1u, 10u);
+					dlg_info("maxScatOrder: {}", order);
+					brunetonSky_.maxScatOrder_ = order;
+					rebuild_ = true;
+					return true;
+				} case swa_key_right: {
+					auto order = brunetonSky_.maxScatOrder_;
+					order = std::clamp(order + 1u, 1u, 10u);
+					dlg_info("maxScatOrder: {}", order);
+					brunetonSky_.maxScatOrder_ = order;
+					rebuild_ = true;
+					return true;
+				} case swa_key_t:
 					reloadGenPipe_ = true;
 					return true;
 				default:
@@ -175,12 +194,16 @@ public:
 			case swa_key_up:
 				daytime_ = std::fmod(daytime_ + diff, 1.0);
 				dlg_info("daytime: {}", daytime_);
-				rebuild();
+				if(useHosek_) {
+					rebuild_ = true;
+				}
 				return true;
 			case swa_key_down:
 				daytime_ = std::fmod(daytime_ + 1.0 - diff, 1.0); // -0.0025
 				dlg_info("daytime: {}", daytime_);
-				rebuild();
+				if(useHosek_) {
+					rebuild_ = true;
+				}
 				return true;
 			case swa_key_o:
 				switchSky();
@@ -195,7 +218,7 @@ public:
 	void switchSky() {
 		useHosek_ = !useHosek_;
 		dlg_info("useHosek: {}", useHosek_);
-		rebuild();
+		rebuild_ = true;
 		Base::scheduleRerecord();
 
 		if(useHosek_) {
@@ -240,6 +263,7 @@ public:
 private:
 	tkn::ControlledCamera camera_;
 
+	bool rebuild_ {false};
 	bool useHosek_ {true};
 	HosekWilkieSky hosekSky_;
 	BrunetonSky brunetonSky_;

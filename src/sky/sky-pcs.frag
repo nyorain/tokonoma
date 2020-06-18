@@ -2,7 +2,8 @@
 
 #extension GL_GOOGLE_include_directive : require
 
-// definitely supposed to mean preCosCat, btw
+// Definitely supposed to mean preCosCat, btw, i.e. just the cat 
+// instead of cos(cat).
 #include "precoscat.hpp"
 #include "color.glsl"
 
@@ -10,16 +11,22 @@ layout(location = 0) in vec3 inCoords;
 layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform AtmosUBO {
-	mat4 _;
+	mat4 _1;
 	Atmosphere atmos;
 	vec3 sunDir;
-	uint scatNuSize;
+	float _2;
 	vec3 viewPos;
 };
 
 layout(set = 0, binding = 1) uniform sampler2D transTex;
 layout(set = 0, binding = 2) uniform sampler3D scatRayleighTex;
 layout(set = 0, binding = 3) uniform sampler3D scatMieTex;
+layout(set = 0, binding = 4) uniform sampler3D scatCombinedTex;
+layout(set = 0, binding = 5) uniform sampler2D groundTex;
+
+layout(push_constant) uniform PCR {
+	uint scatOrder;
+};
 
 // only used for dithering. Bad function.
 float random(vec2 v) {
@@ -62,8 +69,13 @@ void main() {
 	const bool lookup = true;
 	if(lookup) {
 		// lookup from texture
-		scat = getScattering(atmos, scatMieTex, scatRayleighTex,
-			ray, mu_s, nu, rayIntersectsGround, scatNuSize) + 0.0 * trans;
+		if(scatOrder == 1) {
+			scat = getScattering(atmos, scatRayleighTex, scatMieTex,
+				ray, mu_s, nu, rayIntersectsGround);
+		} else {
+			scat = getScattering(atmos, scatCombinedTex, scatMieTex,
+				ray, mu_s, nu, rayIntersectsGround);
+		}
 	} else {
 		// reference: just recalculate it per pixel.
 		// Useful to detect texture mapping issues.
@@ -77,9 +89,21 @@ void main() {
 		scat = phaseRayleigh(nu) * sr + phase(nu, atmos.mieG) * sm;
 	}
 
+	if(rayIntersectsGround) {
+		vec3 albedo = vec3(atmos.groundAlbedo);
+
+		float r_d = atmos.bottom;
+		float d = distanceToBottom(atmos, ray);
+		float mu_s_d = clamp((ray.height * mu_s + d * nu) / r_d, -1.f, 1.f);
+
+		vec3 transToGround = getTransmittance(atmos, transTex, ray, d, true);
+		ARay toSun = {r_d, mu_s_d};
+		vec3 groundIrradiance = getGroundIrradiance(atmos, groundTex, toSun);
+		scat += (1 / pi) * albedo * transToGround * groundIrradiance;
+	}
+	
 	float exposure = 1.f;
 	scat = 1.0 - exp(-exposure * scat);
-	
 	outColor = vec4(clamp(scat, 0.f, 1.f), 1.0);
 
 	// anti-banding dithering

@@ -25,7 +25,7 @@ void main() {
 	// way here instead of re-normalizing the position coming from
 	// gl_FragCoord.
 	vec2 unitRange = pixel / (size - 1.f);
-	ARay ray = transmittanceRayFromUnit(atmosphere, unitRange);
+	ARay ray = rayFromTransTexUnit(atmosphere, unitRange);
 	vec3 trans = transmittanceToTop(atmosphere, ray);
 
 	imageStore(outTrans, ivec2(pixel), vec4(trans, 1.0));

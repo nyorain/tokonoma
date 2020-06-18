@@ -1,9 +1,11 @@
-// Implement E. Bruneton's per-calculated atmospheric scattering solution.
+// Implements E. Bruneton's pre-calculated atmospheric scattering solution.
 // https://ebruneton.github.io/precomputed_atmospheric_scattering/
 // https://ebruneton.github.io/precomputed_atmospheric_scattering/atmosphere/functions.glsl.html
-// We use some code from the sample implementation:
+// We use most of the code from the sample implementation, with only
+// slight changes.
 //
 // Copyright (c) 2017 Eric Bruneton
+// Copyright (c) 2020 Jan Kelling
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -31,6 +33,31 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+// The major interesting points about this implementations:
+// - the way rays and scattering is parameterized. The graphs on
+//   E. Bruneton's website are good for understand how a ray through
+//   the atmosphere (ARay with r, mu), the sun direction (mu_s),
+//   and angle between ray and sun direction (nu) are defined.
+// - the way the data is written and read from textures.
+//   The mapping onto/from texture coordinates is not trivial and optimized
+//   to give precision where it is needed, allowing to keep the LUTs
+//   as small as possible (which is needed, given for scattering they
+//   have 4 dimensions).
+// - optimizations in pre calculation, especially for multi scattering.
+// - how we can retrieve scattering and transmission on a ray segment
+//   though the atmosphere (defined by start and end point) by using
+//   multiple respective texture lookups.
+
+// NOTE: some calculations currently use (0, 0, 1) as zenith internally.
+//   Although this does not match the orientation we usually use, it does not
+//   matter since the vector representation is only a utility anyways, in the
+//   end everything is converted from/to the cos(angle) representation that
+//   is coordinate-system agnostic.
+
+// TODO: optimization/improvement ideas
+// - when integrating over spheres/hemispheres, we could use a low discprepancy
+//   sequence instead of the current elevation/azimuth iteration that
+//   has a lot more samples near the poles.
 
 #ifdef __cplusplus
 	#include <cassert>
@@ -40,6 +67,7 @@
 	#include <tkn/glsl.hpp>
 	using namespace tkn::glsl;
 	using namespace tkn::types;
+	using nytl::constants::pi;
 
 	#define IN(T) const T&
 	#define OUT(T) T&
@@ -47,10 +75,10 @@
 	// sorry, no other sane way.
 	// Adding custom constructors to the vec class takes
 	// its beautiful aggregrate property away
-	#define vec2(x, y) vec2{x, y}
-	#define vec3(x, y, z) vec3{x, y, z}
-	#define vec4(x, y, z, w) vec4{x, y, z, w}
-	#define uvec4(x, y, z, w) uvec4{x, y, z, w}
+	#define vec2(x, y) vec2{float(x), float(y)}
+	#define vec3(x, y, z) vec3{float(x), float(y), float(z)}
+	#define vec4(x, y, z, w) vec4{float(x), float(y), float(z), float(w)}
+	#define uvec4(x, y, z, w) uvec4{uint(x), uint(y), uint(z), uint(w)}
 
 	nytl::Vec3f rgb(nytl::Vec4f vec) {
 		return {vec[0], vec[1], vec[2]};
@@ -94,6 +122,7 @@
 	#define IN(T) in T
 	#define OUT(T) out T
 	#define assert(x)
+	const float pi = 3.14159265359;
 
 	vec3 rgb(vec4 v) {
 		return v.rgb;
@@ -125,7 +154,7 @@ struct Atmosphere {
 	float minMuS;
 
 	float mieG;
-	float _pad1;
+	uint scatNuSize;
 	float _pad2;
 	float _pad3;
 
@@ -139,6 +168,7 @@ struct Atmosphere {
 	vec4 mieScattering;
 	vec4 rayleighScattering; // same as rayleighExtinction
 	vec4 solarIrradiance;
+	vec4 groundAlbedo;
 };
 
 // Ray through all of the atmosphere
@@ -257,7 +287,7 @@ vec4 uvFromUnitRange(vec4 range, ivec4 size) {
 	return 0.5f / size + range * (1.f - 1.f / size);
 }
 
-vec2 transmittanceUnitFromRay(IN(Atmosphere) atmos, IN(ARay) ray) {
+vec2 transTexUnitFromRay(IN(Atmosphere) atmos, IN(ARay) ray) {
 	assert(ray.height >= atmos.bottom && ray.height <= atmos.top);
 	assert(ray.mu >= -1.0 && ray.mu <= 1.0);
 
@@ -275,7 +305,7 @@ vec2 transmittanceUnitFromRay(IN(Atmosphere) atmos, IN(ARay) ray) {
 	return vec2(x_mu, x_r);
 }
 
-ARay transmittanceRayFromUnit(IN(Atmosphere) atmos, IN(vec2) range) {
+ARay rayFromTransTexUnit(IN(Atmosphere) atmos, IN(vec2) range) {
 	float x_mu = range.x;
 	float x_r = range.y;
 	// Distance to top atmosphere boundary for a horizontal ray at ground level.
@@ -300,12 +330,12 @@ ARay transmittanceRayFromUnit(IN(Atmosphere) atmos, IN(vec2) range) {
 vec3 transmittanceToTop(IN(Atmosphere) atmos, IN(sampler2D) transTex, IN(ARay) ray) {
 	assert(ray.height >= atmos.bottom && ray.height <= atmos.top);
 	assert(ray.mu >= -1.f && ray.mu <= 1.f);
-	vec2 unit = transmittanceUnitFromRay(atmos, ray);
+	vec2 unit = transTexUnitFromRay(atmos, ray);
 	vec2 uv = uvFromUnitRange(unit, textureSize(transTex, 0));
 	return rgb(texture(transTex, uv));
 }
 
-vec3 transmittance(IN(Atmosphere) atmos, IN(sampler2D) transTex, IN(ARay) ray,
+vec3 getTransmittance(IN(Atmosphere) atmos, IN(sampler2D) transTex, IN(ARay) ray,
 		float depth, bool rayIntersectsGround) {
 	assert(ray.height >= atmos.bottom && ray.height <= atmos.top);
 	assert(ray.mu >= -1.f && ray.mu <= 1.f);
@@ -337,8 +367,8 @@ vec3 transmittance(IN(Atmosphere) atmos, IN(sampler2D) transTex, IN(ARay) ray,
 	// should naturally return something <= 1.f.
 	// I guess the min is needed for some corner cases.
 	return min(vec3(1.f, 1.f, 1.f),
-			transmittanceToTop(atmos, transTex, full) /
-			transmittanceToTop(atmos, transTex, nonrelevant));
+		transmittanceToTop(atmos, transTex, full) /
+		transmittanceToTop(atmos, transTex, nonrelevant));
 }
 
 vec3 transmittanceToSun(IN(Atmosphere) atmos, IN(sampler2D) transTex,
@@ -371,7 +401,7 @@ void singleScatteringIntegrand(IN(Atmosphere) atmos, IN(sampler2D) transTex,
 
 	ARay q2Sun = {r_d, mu_s_d};
 	vec3 trans =
-		transmittance(atmos, transTex, ray, d, rayIntersectsGround) *
+		getTransmittance(atmos, transTex, ray, d, rayIntersectsGround) *
 		transmittanceToSun(atmos, transTex, q2Sun);
 
 	rayleigh = trans * density(atmos.rayleighDensity, r_d - atmos.bottom);
@@ -533,36 +563,298 @@ void scatParamsFromTexUnit(IN(Atmosphere) atmos, vec4 unit, OUT(ARay) ray,
 	nu = clamp(2.f * unit[0] - 1.f, -1.f, 1.f);
 }
 
-// quad-linear interpolated lookup
-vec3 getScattering(IN(Atmosphere) atmos,
-		IN(sampler3D) scatMieTex, IN(sampler3D) scatRayleighTex,
-		IN(ARay) ray, float mu_s, float nu,
-		bool rayIntersectsGround, uint scatNuSize) {
+void scatParamsFromPixel(IN(Atmosphere) atmos, uvec3 pixel, uvec3 texSize,
+		OUT(ARay) ray, OUT(float) mu_s, OUT(float) nu,
+		OUT(bool) rayIntersectsGround) {
+	// assert(texSize.x % atmos.scatNuSize == 0);
+	uint texMuSSize = texSize.x / atmos.scatNuSize;
 
-	uvec3 tsize = uvec3(textureSize(scatMieTex, 0));
-	uvec4 usize = uvec4(scatNuSize, tsize[0] / scatNuSize,
-		tsize[1], tsize[2]);
+	uint pixNu = pixel.x / texMuSSize; // floor
+	uint pixMuS = uint(mod(pixel.x, texMuSSize));
+	uvec4 pixel4 = uvec4(pixNu, pixMuS, pixel.y, pixel.z);
+	vec4 max4 = vec4(atmos.scatNuSize, texMuSSize, texSize.y, texSize.z) - 1.f;
+	vec4 unitRange = pixel4 / max4;
+	scatParamsFromTexUnit(atmos, unitRange, ray, mu_s, nu,
+		rayIntersectsGround, texSize.y);
 
-	vec4 unit = scatTexUVFromParams(atmos, ray, mu_s, nu,
-		rayIntersectsGround, usize);
+	float mu = ray.mu;
+	nu = clamp(nu,
+		mu * mu_s - sqrt((1.f - mu * mu) * (1.f - mu_s * mu_s)),
+		mu * mu_s + sqrt((1.f - mu * mu) * (1.f - mu_s * mu_s)));
+}
 
-	// unit[1] = uvFromUnitRange(unit[1], tsize.x / scatNuSize);
-	// unit[2] = uvFromUnitRange(unit[2], tsize.y);
-	// unit[3] = uvFromUnitRange(unit[3], tsize.z);
 
-	float x = (scatNuSize - 1) * unit[0];
+// Quad-linear interpolated lookup for scattering.
+void lerpScatteringCoords(IN(Atmosphere) atmos, ivec3 scatTexSize,
+		IN(ARay) ray, float mu_s, float nu, bool rayIntersectsGround,
+		OUT(vec3) uvw0, OUT(vec3) uvw1, OUT(float) lerp) {
+	uvec3 tsize = uvec3(scatTexSize);
+	uvec4 usize = uvec4(atmos.scatNuSize, tsize[0] / atmos.scatNuSize, tsize[1], tsize[2]);
+	vec4 unit = scatTexUVFromParams(atmos, ray, mu_s, nu, rayIntersectsGround, usize);
+
+	float x = (atmos.scatNuSize - 1) * unit[0];
 	float x0 = floor(x);
-	float lerp = x - x0;
+	lerp = x - x0;
 
-	vec3 uvw0 = vec3((x0 + unit[1]) / scatNuSize, unit[2], unit[3]);
-	vec3 uvw1 = vec3((x0 + 1.f + unit[1]) / scatNuSize, unit[2], unit[3]);
+	uvw0 = vec3((x0 + unit[1]) / atmos.scatNuSize, unit[2], unit[3]);
+	uvw1 = vec3((x0 + 1.f + unit[1]) / atmos.scatNuSize, unit[2], unit[3]);
+}
 
-	// vec3 m = rgb(texture(scatMieTex, uvw0));
-	vec3 m = rgb(mix(texture(scatMieTex, uvw0), texture(scatMieTex, uvw1), lerp));
-	m *= phase(nu, atmos.mieG);
-	// vec3 r = rgb(texture(scatRayleighTex, uvw0));
-	vec3 r = rgb(mix(texture(scatRayleighTex, uvw0), texture(scatRayleighTex, uvw1), lerp));
-	r *= phaseRayleigh(nu);
+// All textures must have the same extent.
+// Single scattering
+vec3 getScattering(IN(Atmosphere) atmos,
+		IN(sampler3D) singleRScatTex, IN(sampler3D) singleMScatTex,
+		IN(ARay) ray, float mu_s, float nu, bool rayIntersectsGround) {
+	vec3 uvw0, uvw1;
+	float lerp;
+	lerpScatteringCoords(atmos, textureSize(singleRScatTex, 0),
+		ray, mu_s, nu, rayIntersectsGround, uvw0, uvw1, lerp);
 
+	vec3 m0 = rgb(texture(singleMScatTex, uvw0));
+	vec3 m1 = rgb(texture(singleMScatTex, uvw1));
+
+	vec3 r0 = rgb(texture(singleRScatTex, uvw0));
+	vec3 r1 = rgb(texture(singleRScatTex, uvw1));
+
+	vec3 m = phase(nu, atmos.mieG) * mix(m0, m1, lerp);
+	vec3 r = phaseRayleigh(nu) * mix(r0, r1, lerp);
 	return r + m;
+}
+
+vec3 getScattering(IN(Atmosphere) atmos,
+		IN(sampler3D) scatTex, IN(ARay) ray, float mu_s, float nu,
+		bool rayIntersectsGround) {
+	vec3 uvw0, uvw1;
+	float lerp;
+	lerpScatteringCoords(atmos, textureSize(scatTex, 0),
+		ray, mu_s, nu, rayIntersectsGround, uvw0, uvw1, lerp);
+
+	vec3 s0 = rgb(texture(scatTex, uvw0));
+	vec3 s1 = rgb(texture(scatTex, uvw1));
+	return mix(s0, s1, lerp);
+}
+
+// Possibly multi scattering.
+vec3 getScattering(IN(Atmosphere) atmos,
+		IN(sampler3D) singleRScatTex, IN(sampler3D) singleMScatTex,
+		IN(sampler3D) multiScatTex, IN(ARay) ray, float mu_s, float nu,
+		bool rayIntersectsGround, uint scatOrder) {
+	if(scatOrder == 1) {
+		return getScattering(atmos, singleRScatTex, singleMScatTex,
+			ray, mu_s, nu, rayIntersectsGround);
+	}
+
+	return getScattering(atmos, multiScatTex, ray, mu_s, nu,
+		rayIntersectsGround);
+}
+
+// ground irradiance
+// most naive mapping between ray and tex unit
+vec3 computeIndirectIrradiance(IN(Atmosphere) atmos,
+		IN(sampler3D) singleMScatTex, IN(sampler3D) singleRScatTex,
+		IN(sampler3D) multiScatTex, IN(ARay) toSun, uint scatOrder) {
+	assert(toSun.height >= atmos.bottom && toSun.height <= atmos.top);
+	assert(toSun.mu >= -1.0 && toSun.mu <= 1.0);
+	assert(scatOrder >= 1);
+
+	const uint sampleCount = 32u;
+	const float dphi = pi / sampleCount;
+	const float dtheta = pi / sampleCount;
+
+	vec3 result = vec3(0.f, 0.f, 0.f);
+	vec3 omega_s = vec3(sqrt(1.f - toSun.mu * toSun.mu), 0.f, toSun.mu);
+
+	// Integrate over hemisphere
+	for(uint j = 0u; j < sampleCount / 2; ++j) {
+		float theta = (j + 0.5) * dtheta; // elevation
+		float cos_theta = cos(theta);
+		float sin_theta = sin(theta);
+		ARay inRay = {toSun.height, cos_theta};
+
+		for(uint i = 0u; i < 2 * sampleCount; ++i) {
+			float phi = (i + 0.5) * dphi; // azimuth
+			vec3 omega = vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+			float domega = dtheta * dphi * sin_theta; // solid angle
+
+			float nu = dot(omega, omega_s);
+			result += cos_theta * domega * getScattering(atmos,
+				singleRScatTex, singleMScatTex, multiScatTex, inRay,
+				toSun.mu, nu, false, scatOrder);
+		}
+	}
+	return result;
+}
+
+vec3 computeDirectIrradiance(IN(Atmosphere) atmos,
+		IN(sampler2D) transTex, IN(ARay) toSun) {
+	assert(toSun.height >= atmos.bottom && toSun.height <= atmos.top);
+	assert(toSun.mu >= -1.0 && toSun.mu <= 1.0);
+
+	// Approximate average of the cosine factor mu_s over the visible fraction of
+	// the Sun disc.
+	float alpha_s = atmos.sunAngularRadius;
+	float avgCosFac =
+		toSun.mu < -alpha_s ? 0.0 :
+		(toSun.mu > alpha_s ? toSun.mu :
+		(toSun.mu + alpha_s) * (toSun.mu + alpha_s) / (4.0 * alpha_s));
+
+	vec3 sun = avgCosFac * rgb(atmos.solarIrradiance);
+	return sun * transmittanceToTop(atmos, transTex, toSun);
+}
+
+ARay rayFromGroundTexUnit(IN(Atmosphere) atmos, vec2 unit) {
+	assert(unit.x >= 0.0 && unit.x <= 1.0);
+	assert(unit.y >= 0.0 && unit.y <= 1.0);
+
+	ARay res;
+  	res.height = atmos.bottom + unit.y * (atmos.top - atmos.bottom);
+  	res.mu = clamp(2.f * unit.x - 1.f, -1.f, 1.f);
+	return res;
+}
+
+vec2 groundTexUnitFromRay(IN(Atmosphere) atmos, IN(ARay) toSun) {
+	assert(toSun.height >= atmos.bottom && toSun.height <= atmos.top);
+	assert(toSun.mu >= -1.f && toSun.mu <= 1.f);
+	float x_r = (toSun.height - atmos.bottom) / (atmos.top - atmos.bottom);
+	float x_mu_s = 0.5 * toSun.mu + 0.5;
+	return vec2(x_mu_s, x_r);
+}
+
+vec3 getGroundIrradiance(IN(Atmosphere) atmos, IN(sampler2D) irradianceTex,
+		IN(ARay) toSun) {
+	ivec2 texSize = textureSize(irradianceTex, 0);
+	vec2 uv = uvFromUnitRange(groundTexUnitFromRay(atmos, toSun), texSize);
+	return rgb(texture(irradianceTex, uv));
+}
+
+// === multi-scattering ===
+// Returns the combined rayleigh and mie scattering this is scattered
+// back along 'ray' (i.e. in direction of -ray.mu) from all incoming
+// directions, using the given previously computed scattering LUTs.
+vec3 computeIncomingScattering(IN(Atmosphere) atmos, IN(sampler2D) transTex,
+		IN(sampler3D) singleRScatTex, IN(sampler3D) singleMScatTex,
+		IN(sampler3D) multiScatTex, IN(sampler2D) groundTex,
+		IN(ARay) ray, float mu_s, float nu, uint scatOrder) {
+
+	assert(ray.height >= atmos.bottom && ray.height <= atmos.top);
+	assert(ray.mu >= -1.0 && ray.mu <= 1.0);
+	assert(mu_s >= -1.0 && mu_s <= 1.0);
+	assert(nu >= -1.0 && nu <= 1.0);
+	assert(scatOrder >= 2);
+
+	// Compute (any, examplary) unit direction vectors for the zenith, the view
+	// direction omega and and the sun direction omega_s, such that the cosine of
+	// the view-zenith angle is mu, the cosine of the sun-zenith angle is mu_s,
+	// and the cosine of the view-sun angle is nu.
+	// The goal is to simplify computations below.
+	vec3 zenith = vec3(0.f, 0.f, 1.f);
+	vec3 omega = vec3(sqrt(1.f - ray.mu * ray.mu), 0.f, ray.mu);
+	float sunX = omega.x == 0.0 ? 0.0 : (nu - ray.mu * mu_s) / omega.x;
+	float sunY = sqrt(max(1.0 - sunX * sunX - mu_s * mu_s, 0.0));
+	vec3 omega_s = vec3(sunX, sunY, mu_s);
+
+	const uint sampleCount = 16u;
+	const float dphi = pi / sampleCount;
+	const float dtheta = pi / sampleCount;
+	vec3 sum = vec3(0.f, 0.f, 0.f);
+
+	// Nested loops for the integral over all the incident directions omega_i.
+	for(uint l = 0u; l < sampleCount; ++l) {
+		float theta = (l + 0.5) * dtheta; // elevation
+		float cos_theta = cos(theta);
+		float sin_theta = sin(theta);
+
+		ARay inRay = {ray.height, cos_theta};
+		bool inIntersectsGround = intersectsGround(atmos, inRay);
+
+		// The distance and transmittance to the ground only depend on theta, so we
+		// can compute them in the outer loop for efficiency.
+		float distToGround;
+		vec3 transToGround;
+		vec3 groundAlbedo;
+		if(inIntersectsGround) {
+			distToGround = distanceToBottom(atmos, inRay);
+			transToGround = getTransmittance(atmos, transTex, inRay, distToGround, true);
+
+			// we simply assume uniform ground albedo. Good enough for most purposes,
+			// but we couldn't reconstruct the real position where this ray hits
+			// the ground anyways.
+			groundAlbedo = rgb(atmos.groundAlbedo);
+		}
+
+		for(uint m = 0u; m < 2 * sampleCount; ++m) {
+			float phi = (m + 0.5) * dphi; // azimuth
+
+			// omega_i: direction (outgoing) of solid we are integrating
+			// the incoming radiance over.
+			vec3 omega_i = vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+			float domega_i = dtheta * dphi * sin_theta; // solid angle
+
+			// The radiance L_i arriving from direction omega_i after n-1 bounces is
+			// the sum of a term given by the precomputed scattering texture for the
+			// (n-1)-th order:
+			float nu1 = dot(omega_s, omega_i);
+			vec3 inRadiance = getScattering(atmos,
+				singleRScatTex, singleMScatTex, multiScatTex,
+				inRay, mu_s, nu1, inIntersectsGround, scatOrder - 1);
+
+			// and of the contribution from the light paths with n-1 bounces and whose
+			// last bounce is on the ground. This contribution is the product of the
+			// transmittance to the ground, the ground albedo, the ground BRDF, and
+			// the irradiance received on the ground after n-2 bounces.
+			if(inIntersectsGround) {
+				vec3 groundNormal = normalize(ray.height * zenith + distToGround * omega_i);
+				ARay toSun = {atmos.bottom, dot(groundNormal, omega_s)};
+				vec3 groundIrradiance = getGroundIrradiance(atmos, groundTex, toSun);
+				inRadiance += transToGround * groundAlbedo * (1.0 / pi) * groundIrradiance;
+			}
+
+			// The radiance finally scattered from direction omega_i towards direction
+			// -omega is the product of the incident radiance, the scattering
+			// coefficient, and the phase function for directions omega and omega_i
+			// (all this summed over all particle types, i.e. Rayleigh and Mie).
+			float nu2 = dot(omega, omega_i);
+			float rDens = density(atmos.rayleighDensity, ray.height - atmos.bottom);
+			float mDens = density(atmos.mieDensity, ray.height - atmos.bottom);
+			sum += inRadiance * domega_i * (
+				rgb(atmos.rayleighScattering) * rDens * phaseRayleigh(nu2) +
+				rgb(atmos.mieScattering) * mDens * phase(atmos.mieG, nu2));
+		}
+	}
+
+	return sum;
+}
+
+vec3 computeMultipleScattering(IN(Atmosphere) atmos, IN(sampler2D) transTex,
+		IN(sampler3D) inScatTex, IN(ARay) ray, float mu_s, float nu,
+		bool rayIntersectsGround) {
+	assert(ray.height >= atmos.bottom && ray.height <= atmos.top);
+	assert(ray.mu >= -1.0 && ray.mu <= 1.0);
+	assert(mu_s >= -1.0 && mu_s <= 1.0);
+	assert(nu >= -1.0 && nu <= 1.0);
+
+	const uint sampleCount = 50u;
+	float dt = distanceToNearestBoundary(atmos, ray, rayIntersectsGround) / sampleCount;
+
+	vec3 sum = vec3(0.f, 0.f, 0.f);
+	for(uint i = 0u; i <= sampleCount; ++i) {
+		float t_i = i * dt;
+		float w_i = (i == 0 || i == sampleCount) ? 0.5 : 1.0;
+
+		// The r, mu and mu_s parameters at the current integration point (see the
+		// single scattering section for a detailed explanation).
+		float rr = t_i * t_i + 2.0 * ray.height * ray.mu * t_i + ray.height * ray.height;
+		float r_i = clamp(sqrt(rr), atmos.bottom, atmos.top);
+		float mu_i = clamp((ray.height * ray.mu + t_i) / r_i, -1.f, 1.f);
+		float mu_s_i = clamp((ray.height * mu_s + t_i * nu) / r_i, -1.f, 1.f);
+
+		// The Rayleigh and Mie multiple scattering at the current sample point.
+		ARay ray_i = {r_i, mu_i};
+		vec3 scat_i = getScattering(atmos, inScatTex, ray_i, mu_s_i, nu, rayIntersectsGround) / 100000.f;
+		vec3 trans_i = getTransmittance(atmos, transTex, ray, t_i, rayIntersectsGround);
+		// Sample weight (from the trapezoidal rule).
+		sum += w_i * dt * trans_i * scat_i;
+	}
+
+	return sum;
 }

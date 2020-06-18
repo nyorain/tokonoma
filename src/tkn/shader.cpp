@@ -4,6 +4,16 @@
 
 namespace tkn {
 
+// TODO: don't use std::system for this. Instead use a proper
+// subprocess abstraction. This allows to:
+// - better specify arguments and environment
+// - properly redirect output if needed
+// - get more information about exit status? not about this
+// - not block until it terminates. Async and parallel shader compilation
+//   (without starting multiple thread that only wait for std::system
+//   to complete, that's insane honestly) would be pretty neat
+// https://github.com/benman64/subprocess looks quite promising.
+
 std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 		std::string_view glslPath, nytl::StringParam args) {
 	static const auto spv = "live.frag.spv";

@@ -101,6 +101,11 @@ float mod(float x, float y) {
 }
 
 template<size_t D, typename T>
+constexpr auto normalize(const Vec<D, T>& a) {
+	return nytl::normalized(a);
+}
+
+template<size_t D, typename T>
 constexpr auto min(Vec<D, T> a, const T& val) {
 	for(auto& v : a) v = min(v, val);
 	return a;
