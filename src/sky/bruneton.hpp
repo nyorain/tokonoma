@@ -1,7 +1,9 @@
 #pragma once
 
+// only needed for Atmosphere declaration
 #include "precoscat.hpp"
 
+#include <tkn/config.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/color.hpp>
 #include <tkn/ccam.hpp>
@@ -48,7 +50,7 @@ struct qwe::ValueParser<nytl::Vec<N, T>> {
 
 class BrunetonSky {
 public:
-	static constexpr auto configFile = "atmosphere.qwe";
+	static constexpr auto configFile = TKN_BASE_DIR "/assets/atmosphere.qwe";
 
 	static constexpr auto transFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto scatFormat = vk::Format::r16g16b16a16Sfloat;
