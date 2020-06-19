@@ -59,75 +59,7 @@
 //   sequence instead of the current elevation/azimuth iteration that
 //   has a lot more samples near the poles.
 
-#ifdef __cplusplus
-	#include <cassert>
-	#include <memory>
-
-	#include <tkn/types.hpp>
-	#include <tkn/glsl.hpp>
-	using namespace tkn::glsl;
-	using namespace tkn::types;
-	using nytl::constants::pi;
-
-	#define IN(T) const T&
-	#define OUT(T) T&
-
-	// sorry, no other sane way.
-	// Adding custom constructors to the vec class takes
-	// its beautiful aggregrate property away
-	#define vec2(x, y) vec2{float(x), float(y)}
-	#define vec3(x, y, z) vec3{float(x), float(y), float(z)}
-	#define vec4(x, y, z, w) vec4{float(x), float(y), float(z), float(w)}
-	#define uvec4(x, y, z, w) uvec4{uint(x), uint(y), uint(z), uint(w)}
-
-	nytl::Vec3f rgb(nytl::Vec4f vec) {
-		return {vec[0], vec[1], vec[2]};
-	}
-
-	template<std::size_t D>
-	struct sampler {
-		nytl::Vec<D, unsigned> size;
-		std::unique_ptr<nytl::Vec4f[]> data;
-	};
-
-	template<std::size_t D>
-	nytl::Vec4f texture(const sampler<D>& sampler, nytl::Vec<D, float> coords) {
-		// TODO: linear interpolation and such
-		// we currently use clampToEdge addressing, nearest neighbor
-		auto x = coords * sampler.size;
-		x = clamp(x, Vec<D, float>{}, Vec<D, float>(sampler.size) - 1.f);
-		auto u = Vec<D, unsigned>(x);
-		auto id = 0u;
-		for(auto i = 0u; i < D; ++i) {
-			auto prod = 1u;
-			for(auto j = 0u; j < i; ++j) {
-				prod *= sampler.size[j];
-			}
-			id += prod * u[i];
-		}
-
-		return sampler.data[id];
-	}
-
-	template<std::size_t D>
-	nytl::Vec<D, int> textureSize(const sampler<D>& sampler, int lod) {
-		assert(lod == 0u);
-		return Vec<D, int>(sampler.size);
-	}
-
-	using sampler1D = sampler<1>;
-	using sampler2D = sampler<2>;
-	using sampler3D = sampler<3>;
-#else
-	#define IN(T) in T
-	#define OUT(T) out T
-	#define assert(x)
-	const float pi = 3.14159265359;
-
-	vec3 rgb(vec4 v) {
-		return v.rgb;
-	}
-#endif
+#include "glsl.hpp"
 
 // Describes falloff of a group of particles throughout the atmosphere
 struct Layer {
@@ -155,7 +87,7 @@ struct Atmosphere {
 
 	float mieG;
 	uint scatNuSize;
-	float _pad2;
+	float absorptionPeak;
 	float _pad3;
 
 	vec4 mieExtinction;
@@ -163,7 +95,8 @@ struct Atmosphere {
 
 	Layer rayleighDensity;
 	Layer mieDensity;
-	Layer absorptionDensity;
+	Layer absorptionDensity0;
+	Layer absorptionDensity1;
 
 	vec4 mieScattering;
 	vec4 rayleighScattering; // same as rayleighExtinction
@@ -253,10 +186,15 @@ vec3 opticalDepths(IN(Atmosphere) atmos, IN(ARay) ray) {
 	vec3 accum = vec3(0.f, 0.f, 0.f);
 	for(uint i = 0u; i <= sampleCount; ++i) {
 		float t_i = i * dt;
-		float r_i = sqrt(t_i * t_i + 2.f * r * ray.mu * t_i + r * r);
-		float dr_i = density(atmos.rayleighDensity, r_i - atmos.bottom);
-		float dm_i = density(atmos.mieDensity, r_i - atmos.bottom);
-		float da_i = density(atmos.absorptionDensity, r_i - atmos.bottom);
+		float off_i = sqrt(t_i * t_i + 2.f * r * ray.mu * t_i + r * r) - atmos.bottom;
+		float dr_i = density(atmos.rayleighDensity, off_i);
+		float dm_i = density(atmos.mieDensity, off_i);
+		float da_i;
+		if(off_i > atmos.absorptionPeak) {
+			da_i = density(atmos.absorptionDensity1, off_i);
+		} else {
+			da_i = density(atmos.absorptionDensity0, off_i);
+		}
 		float w_i = (i == 0u || i == sampleCount) ? 0.5f : 1.f;
 		accum += dt * w_i * vec3(dr_i, dm_i, da_i);
 	}

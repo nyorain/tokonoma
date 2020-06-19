@@ -150,9 +150,9 @@ float spectrumAverage(const float* vals, unsigned n,
 	unsigned i = std::floor((avgStart - srcStart) / srcStep);
 
     // Loop over wavelength sample segments and add contributions
-	auto lambda = [srcStep, n](unsigned i) {
+	auto lambda = [srcStart, srcStep, n](unsigned i) {
 		dlg_assert(i < n);
-		return i * srcStep;
+		return srcStart + i * srcStep;
 	};
 
     auto interp = [lambda, vals](float w, int i) {

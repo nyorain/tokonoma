@@ -126,10 +126,10 @@ the excellent [dat.gui](https://github.com/dataarts/dat.gui).
 
 ## Licenses
 
-Unless stated otherwise, the code is available under the MIT license, see LICENSE.
-Some projects (mainly the ones where some time was invested or new techniques
-developed, like `rays`, `repro`, `iro` or `smooth-shadow`) may use GPL
-or other licenses, they have their own LICENSE file in their src/ folder then.
+Unless stated otherwise, the code (in `src`) is available under the MIT license, 
+see LICENSE. Some projects (mainly the ones where some time was invested 
+or new techniques developed, like `rays`, `repro`, `iro` or `smooth-shadow`) may 
+use GPL or other licenses, they have their own LICENSE file in their `src/` folder then.
 Additional external licenses for distributed code/assets:
 
 - `assets/LiberationSans-*.ttf`: [SIL Open Font License 1.1](https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL#5667e9e4)
@@ -138,6 +138,8 @@ Additional external licenses for distributed code/assets:
 - `assets/gravel_*`: CC0, from [https://cc0textures.com/view.php?tex=Gravel08](!)
 
 The files in `assets/gltf` have their copyright embedded.
+The projects in `external` have their licenses included into the files
+or in the `external/licenses` folder.
 
 ---
 

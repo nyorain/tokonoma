@@ -12,7 +12,6 @@
 using nytl::approx;
 using namespace nytl::approxOps;
 
-/*
 TEST(A) {
 	// sunny 16
 	tkn::PBRCamera cam;
@@ -23,6 +22,7 @@ TEST(A) {
 	dlg_info(exposure(cam));
 }
 
+/*
 TEST(B) {
 	auto turb = 8.0;
 	auto ground = nytl::Vec3f{1.f, 1.f, 1.f};

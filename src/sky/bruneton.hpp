@@ -3,6 +3,7 @@
 #include "precoscat.hpp"
 
 #include <tkn/texture.hpp>
+#include <tkn/color.hpp>
 #include <tkn/ccam.hpp>
 #include <tkn/util.hpp>
 #include <tkn/bits.hpp>
@@ -26,118 +27,111 @@
 #include <vpp/util/file.hpp>
 #include <vpp/vk.hpp>
 
+#include <qwe/parse.hpp>
+#include <qwe/util.hpp>
 #include <array>
+
 #include <shaders/tkn.skybox.vert.h>
 
 using std::move;
 using nytl::constants::pi;
 using namespace tkn::types;
 
+template<typename T, std::size_t N>
+struct qwe::ValueParser<nytl::Vec<N, T>> {
+	static std::optional<nytl::Vec<N, T>> call(const Value& value) {
+		nytl::Vec<N, T> res;
+		return qwe::readRange(res.begin(), res.end(), value) ?
+			std::optional(res) : std::nullopt;
+	}
+};
+
 class BrunetonSky {
 public:
-	u32 maxScatOrder_ {2u};
-
-public:
-	// WorkGroup extents (per dimension).
-	// Aiming for a total of ~64 invorcations per WorkGroup is usually
-	// a good idea. Could do less if the done work is heave.
-	static constexpr auto groupDimSize2D = 8u; // transmission, ground
-	static constexpr auto groupDimSize3D = 4u; // scattering
+	static constexpr auto configFile = "atmosphere.qwe";
 
 	static constexpr auto transFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto transMuSize = 512u;
-	static constexpr auto transHeightSize = 128u;
-	static constexpr auto transExtent = vk::Extent3D{
-		transMuSize,
-		transHeightSize,
-		1u
-	};
-
-	// must be the same for single mie, rayleigh and multi scattering
 	static constexpr auto scatFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto scatNuSize = 8u;
-	static constexpr auto scatMuSSize = 32u;
-	static constexpr auto scatMuSize = 128u;
-	static constexpr auto scatHeightSize = 64u;
-	static constexpr auto scatExtent = vk::Extent3D{
-		scatNuSize * scatMuSSize,
-		scatMuSize,
-		scatHeightSize
-	};
-
 	static constexpr auto groundFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto groundMuSSize = 512u;
-	static constexpr auto groundHeightSize = 128u;
-	static constexpr auto groundExtent = vk::Extent3D{
-		groundMuSSize,
-		groundHeightSize,
-		1u
-	};
 
 	struct UboData {
 		mat4 vp; // only needed for rendering
 		Atmosphere atmosphere;
-		vec3 sunDir;
+		vec3 toSun;
 		float _; // padding
 		vec3 viewPos;
 	};
 
 public:
-	Atmosphere atmosphere;
+	nytl::Vec3f toSun {};
+	vk::Semaphore waitSemaphore {};
+
+public:
+	struct {
+		u32 groupDimSize2D = 8u;
+		u32 groupDimSize3D = 4u;
+
+		u32 transMuSize = 512u;
+		u32 transHeightSize = 128u;
+
+		// the same for single mie, rayleigh and multi scattering tables
+		u32 scatNuSize = 8u;
+		u32 scatMuSSize = 32u;
+		u32 scatMuSize = 128u;
+		u32 scatHeightSize = 64u;
+
+		u32 groundMuSSize = 512u;
+		u32 groundHeightSize = 128u;
+		u32 maxScatOrder = 2u;
+
+		Atmosphere atmos {};
+	} config_;
 
 public:
 	BrunetonSky() = default;
 	bool init(vpp::Device& dev, vk::Sampler sampler, vk::RenderPass rp) {
+		sampler_ = sampler;
 		rp_ = rp;
-
-		// earth-like
-		atmosphere.bottom = 6360000.0;
-		atmosphere.top = 6420000.0;
-		// atmosphere.top = 7000000.0;
-		atmosphere.sunAngularRadius = 0.00935 / 2.0;
-		atmosphere.minMuS = -0.2;
-		atmosphere.mieG = 0.8f;
-		atmosphere.scatNuSize = scatNuSize;
-
-		const auto rayleighH = 8000.f;
-		atmosphere.rayleighDensity.constantTerm = 0.f;
-		atmosphere.rayleighDensity.expScale = -1.f / rayleighH;
-		atmosphere.rayleighDensity.expTerm = 1.f;
-		atmosphere.rayleighDensity.lienarTerm = 0.f;
-
-		// TODO: re-add mie
-		const auto mieH = 1200.f;
-		atmosphere.mieDensity.constantTerm = 0.f;
-		atmosphere.mieDensity.expScale = -1.f / mieH;
-		atmosphere.mieDensity.expTerm = 1.f;
-		atmosphere.mieDensity.lienarTerm = 0.f;
-
-		// TODO: add ozone layer
-		atmosphere.absorptionDensity = {};
-		atmosphere.absorptionExtinction = {};
-
-		// TODO: use spectral colors, build them from scratch
-		atmosphere.solarIrradiance = {1.f, 1.f, 1.f};
-		atmosphere.solarIrradiance *= 5.f;
-		// atmosphere.mieScattering = {2e-5, 3e-5, 4e-5};
-		atmosphere.mieScattering = {5e-5f, 5e-5, 5e-5};
-		// atmosphere.mieScattering = {0.f, 0.f, 0.f};
-		atmosphere.mieExtinction = 0.9f * atmosphere.mieScattering;
-		// rayleigh scattering coefficients roughly for RGB wavelengths, from
-		// http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
-		atmosphere.rayleighScattering = {6.95e-6, 1.18e-5, 2.44e-5};
-
-		// TODO eh not sure at all about this
-		atmosphere.groundAlbedo = {0.1f, 0.1f, 0.1f, 1.f};
 
 		auto initUbo = vpp::Init<vpp::SubBuffer>(dev.bufferAllocator(),
 			sizeof(UboData), vk::BufferUsageBits::uniformBuffer,
 			dev.hostMemoryTypes());
 		ubo_ = initUbo.init();
 
+		auto& qs = dev.queueSubmitter();
+		auto qfam = qs.queue().family();
+		genSem_ = vpp::Semaphore{dev};
+		genCb_ = dev.commandAllocator().get(qfam,
+			vk::CommandPoolCreateBits::resetCommandBuffer);
+
+		// init layouts
+		initPreTrans();
+		initPreSingleScat();
+		initPreGroundIrradiance();
+		initPreInScat();
+		initPreMultiScat();
+		initRender();
+
+		// load config
+		if(!loadConfig()) {
+			return false;
+		}
+
+		initTables();
+		updateDescriptors();
+		if(!loadGenPipes() || !loadRenderPipe()) {
+			return false;
+		}
+
+		return true;
+	}
+
+	void initTables() {
+		auto& dev = device();
+
 		// trans
 		vk::ImageCreateInfo ici;
-		ici.extent = transExtent;
+		ici.extent = transExtent();
 		ici.arrayLayers = 1u;
 		ici.format = transFormat;
 		ici.mipLevels = 1u;
@@ -154,7 +148,7 @@ public:
 		auto initGround = vpp::Init<vpp::ViewableImage>(alloc, ici, devTypes);
 
 		// scat
-		ici.extent = scatExtent;
+		ici.extent = scatExtent();
 		ici.format = scatFormat;
 		ici.imageType = vk::ImageType::e3d;
 
@@ -188,20 +182,6 @@ public:
 		vpp::nameHandle(scatTableMulti_, "BrunetonSky:scatTableMulti");
 		vpp::nameHandle(inScatTable_, "BrunetonSky:inScatTable");
 		vpp::nameHandle(scatTableCombined_, "BrunetonSky:scatTableCombined");
-
-		// init pipelines and stuff
-		initPreTrans();
-		initPreSingleScat(sampler);
-		initPreGroundIrradiance(sampler);
-		initPreInScat(sampler);
-		initPreMultiScat(sampler);
-		initRender(sampler);
-
-		if(!loadGenPipes() || !loadRenderPipe()) {
-			return false;
-		}
-
-		return true;
 	}
 
 	void initPreTrans() {
@@ -220,20 +200,16 @@ public:
 		vpp::nameHandle(preTrans_.pipeLayout, "BrunetonSky:preTrans:pipeLayout");
 		preTrans_.ds = {dev.descriptorAllocator(), preTrans_.dsLayout};
 		vpp::nameHandle(preTrans_.ds, "BrunetonSky:preTrans:ds");
-
-		vpp::DescriptorSetUpdate dsu(preTrans_.ds);
-		dsu.uniform({{{ubo_}}});
-		dsu.storage({{{}, transTable_.imageView(), vk::ImageLayout::general}});
 	}
 
-	void initPreSingleScat(vk::Sampler sampler) {
+	void initPreSingleScat() {
 		auto& dev = device();
 		auto bindings = std::array{
 			// in: atmosphere data
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 			// in: transmittance
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// out: single rayleigh scattering
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
@@ -251,32 +227,25 @@ public:
 		vpp::nameHandle(preSingleScat_.pipeLayout, "BrunetonSky:preSingleScat:pipeLayout");
 		preSingleScat_.ds = {dev.descriptorAllocator(), preSingleScat_.dsLayout};
 		vpp::nameHandle(preSingleScat_.ds, "BrunetonSky:preSingleScat:ds");
-
-		vpp::DescriptorSetUpdate dsu(preSingleScat_.ds);
-		dsu.uniform({{{ubo_}}});
-		dsu.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.storage({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::general}});
-		dsu.storage({{{}, scatTableMie_.imageView(), vk::ImageLayout::general}});
-		dsu.storage({{{}, scatTableCombined_.imageView(), vk::ImageLayout::general}});
 	}
 
-	void initPreGroundIrradiance(vk::Sampler sampler) {
+	void initPreGroundIrradiance() {
 		auto& dev = device();
 		auto bindings = std::array{
 			// in: atmosphere data
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 			// in: transmittance
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// in: single rayleigh scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// in: single mie scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// in: combined multi scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// out: ground irradiance
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
@@ -293,41 +262,32 @@ public:
 
 		preGround_.ds = {dev.descriptorAllocator(), preGround_.dsLayout};
 		vpp::nameHandle(preGround_.ds, "BrunetonSky:preGround:ds");
-
-		vpp::DescriptorSetUpdate dsu(preGround_.ds);
-		dsu.uniform({{{ubo_}}});
-		dsu.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.storage({{{}, groundTable_.imageView(), vk::ImageLayout::general}});
 	}
 
-	void initPreInScat(vk::Sampler sampler) {
+	void initPreInScat() {
 		auto& dev = device();
 		auto bindings = std::array{
 			// in: atmosphere data
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 			// in: transmittance
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// in: single rayleigh scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// in: single mie scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// in: combined multi scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// in: ground irradiance
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// out: in scattering
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
 		};
-
 
 		preInScat_.dsLayout.init(dev, bindings);
 		vpp::nameHandle(preInScat_.dsLayout, "BrunetonSky:preInScat:dsLayout");
@@ -340,28 +300,19 @@ public:
 
 		preInScat_.ds = {dev.descriptorAllocator(), preInScat_.dsLayout};
 		vpp::nameHandle(preInScat_.ds, "BrunetonSky:preInScat:ds");
-
-		vpp::DescriptorSetUpdate dsu(preInScat_.ds);
-		dsu.uniform({{{ubo_}}});
-		dsu.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, groundTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.storage({{{}, inScatTable_.imageView(), vk::ImageLayout::general}});
 	}
 
-	void initPreMultiScat(vk::Sampler sampler) {
+	void initPreMultiScat() {
 		auto& dev = device();
 		auto bindings = std::array{
 			// in: atmosphere data
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 			// in: transmittance
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// in: inScat (multi scattering step 1)
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler),
+				vk::ShaderStageBits::compute, &sampler_),
 			// out: multi scattering
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
@@ -376,35 +327,28 @@ public:
 		vpp::nameHandle(preMultiScat_.pipeLayout, "BrunetonSky:preMultiScat:pipeLayout");
 		preMultiScat_.ds = {dev.descriptorAllocator(), preMultiScat_.dsLayout};
 		vpp::nameHandle(preMultiScat_.ds, "BrunetonSky:preMultiScat:ds");
-
-		vpp::DescriptorSetUpdate dsu(preMultiScat_.ds);
-		dsu.uniform({{{ubo_}}});
-		dsu.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, inScatTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.storage({{{}, scatTableMulti_.imageView(), vk::ImageLayout::general}});
-		dsu.storage({{{}, scatTableCombined_.imageView(), vk::ImageLayout::general}});
 	}
 
-	void initRender(vk::Sampler sampler) {
+	void initRender() {
 		auto& dev = device();
 		auto bindings = std::array{
 			// atmosphere parameters
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
 			// tranmission
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler),
+				vk::ShaderStageBits::fragment, &sampler_),
 			// scat rayleigh
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler),
+				vk::ShaderStageBits::fragment, &sampler_),
 			// scat mie
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler),
+				vk::ShaderStageBits::fragment, &sampler_),
 			// combined scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler),
+				vk::ShaderStageBits::fragment, &sampler_),
 			// ground texture
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler),
+				vk::ShaderStageBits::fragment, &sampler_),
 		};
 
 		render_.dsLayout.init(dev, bindings);
@@ -418,14 +362,16 @@ public:
 
 		render_.ds = {dev.descriptorAllocator(), render_.dsLayout};
 		vpp::nameHandle(render_.ds, "BrunetonSky:render:ds");
+	}
 
-		vpp::DescriptorSetUpdate dsu(render_.ds);
-		dsu.uniform({{{ubo_}}});
-		dsu.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, scatTableCombined_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, groundTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+	void updateDescriptors() {
+		vpp::DescriptorSetUpdate dsuRender(render_.ds);
+		dsuRender.uniform({{{ubo_}}});
+		dsuRender.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, scatTableCombined_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, groundTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 
 		// debugging, for seeing muli scat textures in renderdoc.
 		// The first three textures are not used for multi-scat-lookup anyways.
@@ -435,6 +381,41 @@ public:
 		// dsu.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		// dsu.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		// dsu.imageSampler({{{}, groundTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+
+		vpp::DescriptorSetUpdate dsuMScat(preMultiScat_.ds);
+		dsuMScat.uniform({{{ubo_}}});
+		dsuMScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuMScat.imageSampler({{{}, inScatTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuMScat.storage({{{}, scatTableMulti_.imageView(), vk::ImageLayout::general}});
+		dsuMScat.storage({{{}, scatTableCombined_.imageView(), vk::ImageLayout::general}});
+
+		vpp::DescriptorSetUpdate dsuInScat(preInScat_.ds);
+		dsuInScat.uniform({{{ubo_}}});
+		dsuInScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuInScat.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuInScat.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuInScat.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuInScat.imageSampler({{{}, groundTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuInScat.storage({{{}, inScatTable_.imageView(), vk::ImageLayout::general}});
+
+		vpp::DescriptorSetUpdate dsuIrrad(preGround_.ds);
+		dsuIrrad.uniform({{{ubo_}}});
+		dsuIrrad.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuIrrad.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuIrrad.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuIrrad.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuIrrad.storage({{{}, groundTable_.imageView(), vk::ImageLayout::general}});
+
+		vpp::DescriptorSetUpdate dsuTrans(preTrans_.ds);
+		dsuTrans.uniform({{{ubo_}}});
+		dsuTrans.storage({{{}, transTable_.imageView(), vk::ImageLayout::general}});
+
+		vpp::DescriptorSetUpdate dsuSScat(preSingleScat_.ds);
+		dsuSScat.uniform({{{ubo_}}});
+		dsuSScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuSScat.storage({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::general}});
+		dsuSScat.storage({{{}, scatTableMie_.imageView(), vk::ImageLayout::general}});
+		dsuSScat.storage({{{}, scatTableCombined_.imageView(), vk::ImageLayout::general}});
 	}
 
 	bool loadGenPipes() {
@@ -455,7 +436,7 @@ public:
 		cpi.stage.stage = vk::ShaderStageBits::compute;
 
 		// 2D
-		tkn::ComputeGroupSizeSpec specTrans(groupDimSize2D, groupDimSize2D);
+		tkn::ComputeGroupSizeSpec specTrans(config_.groupDimSize2D, config_.groupDimSize2D);
 		cpi.layout = preTrans_.pipeLayout;
 		cpi.stage.module = *preTrans;
 		cpi.stage.pSpecializationInfo = &specTrans.spec;
@@ -466,7 +447,7 @@ public:
 		preGround_.pipe = {dev, cpi};
 
 		// 3D
-		auto sgds = groupDimSize3D;
+		auto sgds = config_.groupDimSize3D;
 		tkn::ComputeGroupSizeSpec specScat(sgds, sgds, sgds);
 		cpi.layout = preSingleScat_.pipeLayout;
 		cpi.stage.module = *preSingleScat;
@@ -506,9 +487,9 @@ public:
 	}
 
 	void recordGroundGen(vk::CommandBuffer cb, u32 scatOrder) {
-		auto sgx = tkn::ceilDivide(scatExtent.width, groupDimSize3D);
-		auto sgy = tkn::ceilDivide(scatExtent.height, groupDimSize3D);
-		auto sgz = tkn::ceilDivide(scatExtent.depth, groupDimSize3D);
+		auto sgx = tkn::ceilDivide(scatExtent().width, config_.groupDimSize3D);
+		auto sgy = tkn::ceilDivide(scatExtent().height, config_.groupDimSize3D);
+		auto sgz = tkn::ceilDivide(scatExtent().depth, config_.groupDimSize3D);
 
 		// discard old content if there is any
 		vk::ImageMemoryBarrier bGround;
@@ -541,9 +522,9 @@ public:
 	}
 
 	void recordMultiScatGen(vk::CommandBuffer cb, u32 scatOrder) {
-		auto sgx = tkn::ceilDivide(scatExtent.width, groupDimSize3D);
-		auto sgy = tkn::ceilDivide(scatExtent.height, groupDimSize3D);
-		auto sgz = tkn::ceilDivide(scatExtent.depth, groupDimSize3D);
+		auto sgx = tkn::ceilDivide(scatExtent().width, config_.groupDimSize3D);
+		auto sgy = tkn::ceilDivide(scatExtent().height, config_.groupDimSize3D);
+		auto sgz = tkn::ceilDivide(scatExtent().depth, config_.groupDimSize3D);
 
 		// 1: inScat
 		vk::ImageMemoryBarrier bInScat;
@@ -638,8 +619,8 @@ public:
 			{}, {}, {}, {{bT, bM, bR, bC, bMulti}});
 
 		// #1: calculate transmission
-		auto tgx = tkn::ceilDivide(transExtent.width, groupDimSize2D);
-		auto tgy = tkn::ceilDivide(transExtent.width, groupDimSize2D);
+		auto tgx = tkn::ceilDivide(transExtent().width, config_.groupDimSize2D);
+		auto tgy = tkn::ceilDivide(transExtent().width, config_.groupDimSize2D);
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, preTrans_.pipe);
 		tkn::cmdBindComputeDescriptors(cb, preTrans_.pipeLayout, 0, {preTrans_.ds});
@@ -658,9 +639,9 @@ public:
 			vk::PipelineStageBits::fragmentShader, {}, {}, {}, {{bT}});
 
 		// #2: calculate scattering
-		auto sgx = tkn::ceilDivide(scatExtent.width, groupDimSize3D);
-		auto sgy = tkn::ceilDivide(scatExtent.height, groupDimSize3D);
-		auto sgz = tkn::ceilDivide(scatExtent.depth, groupDimSize3D);
+		auto sgx = tkn::ceilDivide(scatExtent().width, config_.groupDimSize3D);
+		auto sgy = tkn::ceilDivide(scatExtent().height, config_.groupDimSize3D);
+		auto sgz = tkn::ceilDivide(scatExtent().depth, config_.groupDimSize3D);
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, preSingleScat_.pipe);
 		tkn::cmdBindComputeDescriptors(cb, preSingleScat_.pipeLayout,
@@ -678,7 +659,7 @@ public:
 			{}, {}, {}, {{bM, bR}});
 
 		recordGroundGen(cb, 1u);
-		for(auto i = 2u; i <= maxScatOrder_; ++i) {
+		for(auto i = 2u; i <= config_.maxScatOrder; ++i) {
 			recordMultiScatGen(cb, i);
 			recordGroundGen(cb, i);
 		}
@@ -693,25 +674,58 @@ public:
 			vk::PipelineStageBits::fragmentShader, {}, {}, {}, {{bC}});
 	}
 
+	void recordGenCb() {
+		vk::beginCommandBuffer(genCb_, {});
+		generate(genCb_);
+		vk::endCommandBuffer(genCb_);
+	}
+
 	void render(vk::CommandBuffer cb) {
 		vk::cmdPushConstants(cb, render_.pipeLayout,
-			vk::ShaderStageBits::fragment, 0u, sizeof(u32), &maxScatOrder_);
+			vk::ShaderStageBits::fragment, 0u, sizeof(u32), &config_.maxScatOrder);
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, render_.pipe);
 		tkn::cmdBindGraphicsDescriptors(cb, render_.pipeLayout, 0, {render_.ds});
 		vk::cmdDraw(cb, 14u, 1, 0, 0); // skybox triangle strip
 	}
 
-	bool updateDevice(const tkn::ControlledCamera& cam,
-			bool reloadRender, bool reloadGen, nytl::Vec3f sunDir) {
+	// Returns whether a rerecord is needed
+	bool updateDevice(const tkn::ControlledCamera& cam) {
 		auto res = false;
-		if(reloadRender) {
+		if(reloadRenderPipe_) {
+			reloadRenderPipe_ = false;
 			loadRenderPipe();
 			res = true;
 		}
 
-		if(reloadGen) {
+		if(reloadGenPipes_) {
+			reloadGenPipes_ = false;
 			loadGenPipes();
+			recordGenCb();
 			res = true;
+
+			regen_ = true;
+		}
+
+		if(recreateTables_) {
+			recreateTables_ = false;
+			initTables();
+			updateDescriptors();
+			recordGenCb();
+			res = true;
+			regen_ = true;
+		}
+
+		if(regen_) {
+			regen_ = false;
+			vk::SubmitInfo si;
+			si.commandBufferCount = 1u;
+			si.pCommandBuffers = &genCb_.vkHandle();
+			si.pSignalSemaphores = &genSem_.vkHandle();
+			si.signalSemaphoreCount = 1u;
+
+			auto& qs = device().queueSubmitter();
+			qs.add(si);
+			waitSemaphore = genSem_;
 		}
 
 		auto map = ubo_.memoryMap();
@@ -719,26 +733,252 @@ public:
 
 		UboData data;
 		data.vp = cam.fixedViewProjectionMatrix();
-		data.atmosphere = atmosphere;
-		data.sunDir = sunDir;
+		data.atmosphere = config_.atmos;
+		data.toSun = toSun;
 		data.viewPos = cam.position();
 		tkn::write(span, data);
-
 		map.flush();
 
 		return res;
 	}
 
+	bool loadConfig() {
+		qwe::Value parsed;
+		try {
+			auto str = tkn::readFile(configFile);
+			if(str.empty()) {
+				dlg_warn("Can't read {}", configFile);
+				return false;
+			}
+
+			qwe::Parser parser{str};
+			auto res = qwe::parseTableOrArray(parser);
+			if(auto err = std::get_if<qwe::Error>(&res)) {
+				dlg_warn("Error parsing {}: {}", configFile, qwe::print(*err));
+				return false;
+			}
+
+			parsed = std::move(std::get<qwe::NamedValue>(res).value);
+		} catch(const std::exception& err) {
+			dlg_warn("Error reading/parsing {}: {}", configFile, err.what());
+			return false;
+		}
+
+		try {
+			// meta
+			readT(config_.maxScatOrder, parsed, "meta.maxScatterOrder");
+			readT(config_.transMuSize, parsed, "meta.transmission.muSize");
+			readT(config_.transHeightSize, parsed, "meta.transmission.heightSize");
+
+			readT(config_.scatNuSize, parsed, "meta.scatter.nuSize");
+			readT(config_.scatMuSSize, parsed, "meta.scatter.muSSize");
+			readT(config_.scatMuSize, parsed, "meta.scatter.muSize");
+			readT(config_.scatHeightSize, parsed, "meta.scatter.heightSize");
+
+			readT(config_.groundMuSSize, parsed, "meta.ground.muSSize");
+			readT(config_.groundHeightSize, parsed, "meta.ground.heightSize");
+
+			if(qwe::asT<bool>(parsed, "meta.recreateTables")) {
+				recreateTables_ = true;
+			}
+
+			if(qwe::asT<bool>(parsed, "meta.reloadGen")) {
+				reloadGenPipes_ = true;
+			}
+
+			// atmosphere
+			auto& atmos = config_.atmos;
+			auto& pa = atT(parsed, "atmosphere");
+
+			readT(atmos.bottom, pa, "bottom");
+			readT(atmos.top, pa, "top");
+			readT(atmos.sunAngularRadius, pa, "sunAngularRadius");
+			readT(atmos.minMuS, pa, "minMuS");
+			atmos.groundAlbedo = Vec4f(qwe::asT<nytl::Vec3f>(pa, "groundAlbedo"));
+
+			// mie
+			float mieH;
+			readT(mieH, pa, "mie.scaleHeight");
+			atmos.mieDensity.constantTerm = 0.f;
+			atmos.mieDensity.expScale = -1.f / mieH;
+			atmos.mieDensity.expTerm = 1.f;
+			atmos.mieDensity.lienarTerm = 0.f;
+			readT(atmos.mieG, pa, "mie.g");
+
+			auto mieScatUse = qwe::asT<std::string_view>(pa, "mie.scattering.use");
+			if(mieScatUse == "rgb") {
+				atmos.mieExtinction = Vec4f(qwe::asT<nytl::Vec3f>(pa, "mie.scattering.rgb"));
+				atmos.mieScattering = 0.9f * atmos.mieExtinction;
+			} else {
+				dlg_assert(mieScatUse == "compute");
+				auto alpha = qwe::asT<double>(pa, "mie.scattering.alpha");
+				auto beta = qwe::asT<double>(pa, "mie.scattering.beta");
+				auto albedo = qwe::asT<double>(pa, "mie.scattering.scatterAlbedo");
+				generateMieScattering(alpha, beta, mieH, albedo,
+					atmos.mieScattering, atmos.mieExtinction);
+			}
+
+			// rayleigh
+			float rayleighH;
+			readT(rayleighH, pa, "rayleigh.scaleHeight");
+			atmos.rayleighDensity.constantTerm = 0.f;
+			atmos.rayleighDensity.expScale = -1.f / rayleighH;
+			atmos.rayleighDensity.expTerm = 1.f;
+			atmos.rayleighDensity.lienarTerm = 0.f;
+
+			auto rayleighScatUse = qwe::asT<std::string_view>(pa, "rayleigh.scattering.use");
+			if(rayleighScatUse == "rgb") {
+				atmos.rayleighScattering = Vec4f(qwe::asT<nytl::Vec3f>(pa, "rayleigh.scattering.rgb"));
+			} else {
+				dlg_assert(rayleighScatUse == "compute");
+				auto strength = qwe::asT<double>(pa, "rayleigh.scattering.strength");
+				atmos.rayleighScattering = Vec4f(generateRayleigh(strength));
+			}
+
+			// ozone
+			readT(atmos.absorptionPeak, pa, "ozone.peak");
+			if(qwe::asT<bool>(pa, "ozone.enable")) {
+				// TODO: make configurable
+				atmos.absorptionDensity0 = {};
+				atmos.absorptionDensity1.lienarTerm = 1.0 / 15000.0;
+				atmos.absorptionDensity1.constantTerm = -2.0 / 3.0;
+
+				atmos.absorptionDensity1 = {};
+				atmos.absorptionDensity1.lienarTerm = -1.0 / 15000.0;
+				atmos.absorptionDensity1.constantTerm = 8.0 / 3.0;
+
+				constexpr auto dobsonUnit = 2.687e20;
+				constexpr auto maxOzoneNumberDensity = 300.0 * dobsonUnit / 15000.0;
+				auto ozone = parseSpectral(atT(pa, "ozone.scattering.crossSection"));
+				for(auto& val : ozone.samples) {
+					val *= maxOzoneNumberDensity;
+				}
+
+				atmos.absorptionExtinction = Vec4f(tkn::XYZtoRGB(toXYZ(ozone)));
+			} else {
+				atmos.absorptionExtinction = {};
+			}
+
+
+			// solar irradiance
+			auto siUse = qwe::asT<std::string_view>(pa, "solarIrradiance.use");
+			if(siUse == "rgb") {
+				atmos.solarIrradiance = Vec4f(qwe::asT<nytl::Vec3f>(pa, "solarIrradiance.rgb"));
+			} else {
+				dlg_assert(siUse == "spectral");
+				auto spectral = parseSpectral(atT(pa, "solarIrradiance.spectral"));
+				atmos.solarIrradiance = Vec4f(tkn::XYZtoRGB(toXYZ(spectral)));
+			}
+
+			atmos.scatNuSize = config_.scatNuSize;
+		} catch(const std::exception& err) {
+			dlg_warn("Error processing {}: {}", configFile, err.what());
+			return false;
+		}
+
+		return true;
+	}
+
+	static nytl::Vec3f generateRayleigh(float strength) {
+		tkn::SpectralColor spectral;
+		for(auto i = 0u; i < tkn::SpectralColor::nSamples; ++i) {
+			auto l = tkn::SpectralColor::wavelength(i);
+			spectral.samples[i] = strength * std::pow(l * 1e-3, -4.0);
+		}
+
+		return tkn::XYZtoRGB(toXYZ(spectral));
+	}
+
+	static void generateMieScattering(double alpha, double beta,
+			double scaleHeight, double scatterAlbedo,
+			nytl::Vec4f& outScatter, nytl::Vec4f& outAbsorption) {
+
+		tkn::SpectralColor scatter, absorption;
+		outScatter = {};
+		outAbsorption = {};
+		for(auto i = 0u; i < tkn::SpectralColor::nSamples; ++i) {
+			auto l = tkn::SpectralColor::wavelength(i);
+			double mie = beta / scaleHeight * std::pow(l * 1e-3, -alpha);
+			scatter.samples[i] = scatterAlbedo * mie;
+			absorption.samples[i] = mie;
+		}
+
+		outScatter = Vec4f(tkn::XYZtoRGB(toXYZ(scatter)));
+		outAbsorption = Vec4f(tkn::XYZtoRGB(toXYZ(absorption)));
+	}
+
+	static tkn::SpectralColor parseSpectral(const qwe::Value& value) {
+		float lStart, lEnd;
+		readT(lStart, value, "start");
+		readT(lEnd, value, "end");
+
+		std::vector<float> spectrum;
+		readT(spectrum, value, "values");
+		return tkn::SpectralColor::fromSamples(spectrum.data(), spectrum.size(),
+			lStart, lEnd);
+	}
+
 	Vec3f startViewPos() const {
-		return (atmosphere.bottom + 5000.f) * Vec3f{0.f, 1.f, 0.f}; // north pole
+		return (config_.atmos.bottom + 500.f) * Vec3f{0.f, 1.f, 0.f}; // north pole
 	}
 
 	const vpp::Device& device() const { return ubo_.device(); }
 
+	vk::Extent3D transExtent() const {
+		return {config_.transMuSize, config_.transHeightSize, 1u};
+	}
+	vk::Extent3D scatExtent() const {
+		auto w = config_.scatNuSize * config_.scatMuSSize;
+		return {w, config_.scatMuSize, config_.scatHeightSize};
+	}
+	vk::Extent3D groundExtent() const {
+		return {config_.groundMuSSize, config_.groundHeightSize, 1u};
+	}
+
+	bool key(swa_key keycode) {
+		switch(keycode) {
+			case swa_key_left: {
+				auto order = config_.maxScatOrder;
+				order = std::clamp(order - 1u, 1u, 10u);
+				dlg_info("maxScatOrder: {}", order);
+				config_.maxScatOrder = order;
+				regen_ = true;
+				return true;
+			} case swa_key_right: {
+				auto order = config_.maxScatOrder;
+				order = std::clamp(order + 1u, 1u, 10u);
+				dlg_info("maxScatOrder: {}", order);
+				config_.maxScatOrder = order;
+				regen_ = true;
+				return true;
+			} case swa_key_r:
+				reloadRenderPipe_ = true;
+				return true;
+			case swa_key_c:
+				loadConfig();
+				return true;
+			case swa_key_t:
+				reloadGenPipes_ = true;
+				return true;
+			default:
+				return false;
+		}
+	}
+
 private:
+	vk::Sampler sampler_;
 	vk::RenderPass rp_;
 	vpp::SubBuffer ubo_;
 
+	bool reloadRenderPipe_ {}; // whether to reload render pipe on updateDevice
+	bool reloadGenPipes_ {}; // whether to recreate gen pipes on updateDevice
+	bool regen_ {true}; // whether to regen on updateDevice
+	bool recreateTables_ {}; // whether to recreate tables on updateDevice
+
+	vpp::Semaphore genSem_;
+	vpp::CommandBuffer genCb_;
+
+	// tables
 	vpp::ViewableImage transTable_;
 	vpp::ViewableImage scatTableRayleigh_;
 	vpp::ViewableImage scatTableMie_;
@@ -795,3 +1035,4 @@ private:
 		vpp::Pipeline pipe;
 	} preGround_;
 };
+

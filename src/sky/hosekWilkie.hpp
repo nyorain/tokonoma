@@ -55,6 +55,9 @@ public:
 	};
 
 public:
+	vk::Semaphore waitSemaphore;
+
+public:
 	HosekWilkieSky() = default;
 	bool init(vpp::Device& dev, vk::Sampler sampler, vk::RenderPass rp) {
 		using namespace tkn::hosekSky;
@@ -74,6 +77,12 @@ public:
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {}};
 		ubo_ = {dev.bufferAllocator(), sizeof(UboData),
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+
+		auto& qs = dev.queueSubmitter();
+		auto qfam = qs.queue().family();
+		genSem_ = vpp::Semaphore{dev};
+		genCb_ = dev.commandAllocator().get(qfam,
+			vk::CommandPoolCreateBits::resetCommandBuffer);
 
 		vk::ImageCreateInfo ici;
 		ici.arrayLayers = 1u;
@@ -139,11 +148,30 @@ public:
 	}
 
 
-	bool updateDevice(const tkn::ControlledCamera& cam, bool reloadPipe) {
+	bool updateDevice(const tkn::ControlledCamera& cam) {
 		auto res = false;
-		if(reloadPipe) {
+		if(reloadPipe_) {
+			reloadPipe_ = false;
 			loadPipe();
 			res = true;
+		}
+
+		if(rebuild_) {
+			rebuild_ = false;
+
+			vk::beginCommandBuffer(genCb_, {});
+			buildTables(genCb_);
+			vk::endCommandBuffer(genCb_);
+
+			auto& qs = vkDevice().queueSubmitter();
+			vk::SubmitInfo si;
+			si.commandBufferCount = 1u;
+			si.pCommandBuffers = &genCb_.vkHandle();
+			si.pSignalSemaphores = &genSem_.vkHandle();
+			si.signalSemaphoreCount = 1u;
+			qs.add(si);
+
+			waitSemaphore = genSem_;
 		}
 
 		auto coeff = [&](unsigned i) {
@@ -175,7 +203,7 @@ public:
 		return res;
 	}
 
-	void buildTables(vk::CommandBuffer cb, Vec3f toSun) {
+	void buildTables(vk::CommandBuffer cb) {
 		auto& dev = vkDevice();
 
 		using namespace tkn::hosekSky;
@@ -183,7 +211,7 @@ public:
 
 		sky_.groundAlbedo = {0.7f, 0.7f, 0.9f};
 		sky_.turbidity = turbidity_;
-		sky_.toSun = nytl::normalized(toSun);
+		sky_.toSun = nytl::normalized(toSun_);
 		sky_.config = bakeConfiguration(sky_.turbidity, sky_.groundAlbedo, sky_.toSun);
 		auto table = generateTable(sky_);
 
@@ -227,19 +255,54 @@ public:
 		doFill(fillDatas[2], cb);
 	}
 
-	float turbidity() const { return turbidity_; }
-	void turbidity(float newT) { turbidity_ = newT; }
-
-	float roughness() const { return roughness_; }
-	void roughness(float newR) { roughness_ = newR; }
+	void toSun(const nytl::Vec3f& ndir) {
+		toSun_ = ndir;
+		rebuild_ = true;
+	}
 
 	const vpp::Device& vkDevice() { return pipeLayout_.device(); }
+
+	bool key(swa_key keycode) {
+		switch(keycode) {
+			case swa_key_r:
+				reloadPipe_ = true;
+				return true;
+			case swa_key_left: {
+				roughness_ = std::clamp(roughness_ - 0.02, 0.0, 1.0);
+				dlg_info("roughness: {}", roughness_);
+				return true;
+			} case swa_key_right: {
+				roughness_ = std::clamp(roughness_ + 0.02, 0.0, 1.0);
+				dlg_info("roughness: {}", roughness_);
+				return true;
+			} case swa_key_pageup: {
+				turbidity_ = std::clamp(turbidity_ + 0.25, 1.0, 10.0);
+				dlg_info("turbidity: {}", turbidity_);
+				rebuild_ = true;
+				return true;
+			} case swa_key_pagedown: {
+				turbidity_ = std::clamp(turbidity_ - 0.25, 1.0, 10.0);
+				dlg_info("turbidity: {}", turbidity_);
+				rebuild_ = true;
+				return true;
+			}
+			default:
+				return false;
+		}
+	}
 
 private:
 	float roughness_ {0.f};
 	float turbidity_ {2.f};
 
 	vk::RenderPass rp_;
+
+	bool reloadPipe_ {};
+	bool rebuild_ {true};
+	nytl::Vec3f toSun_ {};
+
+	vpp::CommandBuffer genCb_;
+	vpp::Semaphore genSem_;
 
 	tkn::hosekSky::Sky sky_;
 	vpp::TrDsLayout dsLayout_;

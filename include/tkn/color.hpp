@@ -84,7 +84,8 @@ void clamp(SampledSpectrum<S, P>& s, float low = 0.f,
 // a (more or less) arbitrarily chosen number of samples and wavelength range.
 // The samples are equidistantly distributed over the chosen spectrum.
 constexpr auto nSpectralSamples = 60;
-struct SpectralColor : SampledSpectrum<nSpectralSamples> {
+struct SpectralColor : public SampledSpectrum<nSpectralSamples> {
+	static constexpr auto nSamples = nSpectralSamples;
 	static constexpr auto lambdaStart = 400u;
 	static constexpr auto lambdaEnd = 700u;
 

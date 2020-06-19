@@ -6,6 +6,7 @@
 #include <dlg/dlg.hpp>
 #include <cstdlib>
 #include <string>
+#include <fstream>
 #include <algorithm>
 #include <cmath>
 
@@ -111,6 +112,22 @@ T bit(T value, T bit, bool set) {
 // Returns ceil(num / denom), efficiently, only using integer division.
 inline unsigned ceilDivide(unsigned num, unsigned denom) {
 	return (num + denom - 1) / denom;
+}
+
+inline std::string readFile(std::string_view filename) {
+	auto openmode = std::ios::ate;
+	std::ifstream ifs(std::string{filename}, openmode);
+	ifs.exceptions(std::ostream::failbit | std::ostream::badbit);
+
+	auto size = ifs.tellg();
+	ifs.seekg(0, std::ios::beg);
+
+	std::string buffer;
+	buffer.resize(size);
+	auto data = reinterpret_cast<char*>(buffer.data());
+	ifs.read(data, size);
+
+	return buffer;
 }
 
 } // namespace tkn
