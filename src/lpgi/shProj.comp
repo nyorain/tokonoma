@@ -6,7 +6,7 @@
 //   otherwise we would have to use some kind of multi-pass-reduction
 //   or use atomic addition (ugly since we need float here)
 
-// nope to all 32x32 stuff, temporary rewored for 128x128
+// NOTE: nope to all 32x32 stuff, temporary rewored for 128x128
 
 #version 460
 

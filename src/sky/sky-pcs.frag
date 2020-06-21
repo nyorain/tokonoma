@@ -61,10 +61,6 @@ void main() {
 	float nu = dot(viewDir, sunDir);
 	bool rayIntersectsGround = intersectsGround(atmos, ray);
 
-	// TODO: this is only here so the texture isn't optimized out and we it 
-	// in the debug viewer. Can be removed.
-	vec3 trans = texture(transTex, vec2(0.0)).rgb;
-
 	vec3 scat;
 	const bool lookup = true;
 	if(lookup) {
@@ -90,19 +86,27 @@ void main() {
 	}
 
 	if(rayIntersectsGround) {
-		vec3 albedo = vec3(atmos.groundAlbedo);
-
 		float r_d = atmos.bottom;
 		float d = distanceToBottom(atmos, ray);
+
+		vec3 albedo = vec3(atmos.groundAlbedo);
+		vec3 normal = normalize(startPos + d * viewDir);
+
+		// indirect
 		float mu_s_d = clamp((ray.height * mu_s + d * nu) / r_d, -1.f, 1.f);
 
 		vec3 transToGround = getTransmittance(atmos, transTex, ray, d, true);
 		ARay toSun = {r_d, mu_s_d};
 		vec3 groundIrradiance = getGroundIrradiance(atmos, groundTex, toSun);
 		scat += (1 / pi) * albedo * transToGround * groundIrradiance;
+
+		// direct
+		scat += albedo * vec3(atmos.solarIrradiance) * 
+			transmittanceToSun(atmos, transTex, toSun) *
+			max(dot(normal, sunDir), 0.0);
 	}
 	
-	float exposure = 1.f;
+	float exposure = 4.f;
 	scat = 1.0 - exp(-exposure * scat);
 	outColor = vec4(clamp(scat, 0.f, 1.f), 1.0);
 

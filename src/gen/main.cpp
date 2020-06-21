@@ -33,6 +33,11 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <tkn/stb_image_write.h>
 
+// TODO: make all the resolutions, sample counts and such configurable.
+// But that's too much for the command line, maybe just use
+// a config file, something like `assets/gen.qwe`?
+// Make formats configurable as well?
+
 using namespace tkn::types;
 
 vpp::Sampler linearSampler(const vpp::Device& dev);
@@ -737,25 +742,6 @@ int saveSkies(float turbidity, const char* outSkies, const char* outData,
 	qs.wait(qs.add(cb));
 
 	auto map = stage.memoryMap();
-	/*
-	auto fmtSize = vpp::formatSize(format);
-	std::vector<const std::byte*> ptrs;
-	auto debugOff = 0u;
-	for(auto mip = 0u; mip < mipLevels; ++mip) {
-		auto w = std::max(faceWidth >> mip, 1u);
-		auto h = std::max(faceHeight >> mip, 1u);
-		auto faceSize = w * h * fmtSize;
-
-		for(auto l = 0u; l < 6 * steps; ++l) {
-			auto off = fmtSize * vpp::tightTexelNumber(
-				{faceWidth, faceHeight, 1u}, 6u * steps, mip, l);
-			dlg_assertm(debugOff == off, "{}, {}: {} vs {}", mip, l, debugOff, off);
-			ptrs.push_back(map.ptr() + off);
-
-			debugOff += faceSize;
-		}
-	}
-	*/
 
 	auto provider = tkn::wrapImage({faceWidth, faceHeight, 1u}, format,
 		mipLevels, steps * 6u, map.span(), true);

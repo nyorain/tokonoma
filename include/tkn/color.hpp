@@ -86,8 +86,8 @@ void clamp(SampledSpectrum<S, P>& s, float low = 0.f,
 constexpr auto nSpectralSamples = 60;
 struct SpectralColor : public SampledSpectrum<nSpectralSamples> {
 	static constexpr auto nSamples = nSpectralSamples;
-	static constexpr auto lambdaStart = 400u;
-	static constexpr auto lambdaEnd = 700u;
+	static constexpr auto lambdaStart = 380;
+	static constexpr auto lambdaEnd = 720;
 
 	// Conversion from RGB (linear srgb) to a spectrum cannot be solved uniquely.
 	// Just tries its best to deliver a smooth spectrum.

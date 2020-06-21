@@ -12,14 +12,16 @@ layout(set = 0, binding = 1) uniform sampler2D transTex;
 layout(set = 0, binding = 2) uniform sampler3D scatRTex;
 layout(set = 0, binding = 3) uniform sampler3D scatMTex;
 layout(set = 0, binding = 4) uniform sampler3D scatMultiTex; // last iteration
-layout(set = 0, binding = 5) writeonly uniform image2D outGround;
+
+layout(set = 0, binding = 5, rgba16f) uniform image2D outIrradiance;
+layout(set = 0, binding = 6) writeonly uniform image2D outDelta;
 
 layout(push_constant) uniform PCR {
 	uint scatOrder;
 };
 
 void main() {
-	uvec2 size = imageSize(outGround);
+	uvec2 size = imageSize(outIrradiance);
 	uvec2 pixel = gl_GlobalInvocationID.xy;
 	if(pixel.x >= size.x || pixel.y >= size.y) {
 		return;
@@ -27,9 +29,16 @@ void main() {
 
 	vec2 unitRange = pixel / (size - 1.f);
 	ARay toSun = rayFromGroundTexUnit(atmosphere, unitRange);
-	vec3 ground = computeIndirectIrradiance(atmosphere,
-		scatRTex, scatMTex, scatMultiTex, toSun, scatOrder);
-	ground += computeDirectIrradiance(atmosphere, transTex, toSun);
 
-	imageStore(outGround, ivec2(pixel), vec4(ground, 1.0));
+	vec3 irrad;
+	vec4 accum;
+	// assert(scatOrder >= 2);
+	irrad = computeIndirectIrradiance(atmosphere,
+		scatRTex, scatMTex, scatMultiTex, toSun, scatOrder);
+
+	vec4 prev = imageLoad(outIrradiance, ivec2(pixel));
+	accum = prev + vec4(irrad, 1.0);
+
+	imageStore(outDelta, ivec2(pixel), vec4(irrad, 1.0));
+	imageStore(outIrradiance, ivec2(pixel), accum);
 }

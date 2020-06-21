@@ -48,13 +48,62 @@ struct qwe::ValueParser<nytl::Vec<N, T>> {
 	}
 };
 
+// TODO: we should make this a general thing.
+// maybe integrate into vkpp? as a separate header?
+template<typename T> struct FromString;
+
+bool fromString(vk::Format& dst, std::string_view view) {
+#define FORMAT(name) if(view == #name) { dst = vk::Format::name; return true; }
+		FORMAT(r8g8Unorm)
+		FORMAT(r8g8Snorm)
+		FORMAT(r8g8Uint)
+		FORMAT(r8g8Srgb)
+		FORMAT(r8g8Sint)
+		FORMAT(r8g8Uscaled)
+		FORMAT(r8g8Sscaled)
+
+		FORMAT(r8g8b8a8Unorm)
+		FORMAT(r8g8b8a8Snorm)
+		FORMAT(r8g8b8a8Uint)
+		FORMAT(r8g8b8a8Srgb)
+		FORMAT(r8g8b8a8Sint)
+		FORMAT(r8g8b8a8Uscaled)
+		FORMAT(r8g8b8a8Sscaled)
+
+		FORMAT(r16g16b16a16Unorm)
+		FORMAT(r16g16b16a16Snorm)
+		FORMAT(r16g16b16a16Uint)
+		FORMAT(r16g16b16a16Sfloat)
+		FORMAT(r16g16b16a16Sint)
+		FORMAT(r16g16b16a16Uscaled)
+		FORMAT(r16g16b16a16Sscaled)
+
+		FORMAT(r32g32b32a32Sfloat)
+		FORMAT(r32g32b32a32Uint)
+		FORMAT(r32g32b32a32Sint)
+
+		FORMAT(e5b9g9r9UfloatPack32)
+#undef FORMAT
+
+		return false;
+}
+
+template<>
+struct qwe::ValueParser<vk::Format> {
+	static std::optional<vk::Format> call(const Value& value) {
+		auto* str = asString(value);
+		if(!str) {
+			return std::nullopt;
+		}
+
+		vk::Format res;
+		return fromString(res, *str) ? std::optional(res) : std::nullopt;
+	}
+};
+
 class BrunetonSky {
 public:
 	static constexpr auto configFile = TKN_BASE_DIR "/assets/atmosphere.qwe";
-
-	static constexpr auto transFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto scatFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto groundFormat = vk::Format::r16g16b16a16Sfloat;
 
 	struct UboData {
 		mat4 vp; // only needed for rendering
@@ -70,6 +119,19 @@ public:
 
 public:
 	struct {
+		// NOTE: 32-bit float format for transmission is needed, otherwise
+		// we get artifacts near the horizon for setups with a lot of scattering.
+		// For extreme scattering, we get it even with 32-bit floats.
+		// Near the horizon, the transmission goes to zero, we could probably
+		// fix this issue (and probably even use 16-bit floats again) by
+		// storing something like pow(transmission, 1 / gamma).
+		// Maybe we could even get away with something like e5r9g9b9.
+		// maybe even less? the transmission values are all in [0, 1] range.
+		// 16-bit fixed format better?
+		vk::Format transFormat = vk::Format::r16g16b16a16Unorm;
+		vk::Format scatFormat = vk::Format::r16g16b16a16Sfloat;
+		vk::Format irradianceFormat = vk::Format::r16g16b16a16Sfloat;
+
 		u32 groupDimSize2D = 8u;
 		u32 groupDimSize3D = 4u;
 
@@ -82,8 +144,8 @@ public:
 		u32 scatMuSize = 128u;
 		u32 scatHeightSize = 64u;
 
-		u32 groundMuSSize = 512u;
-		u32 groundHeightSize = 128u;
+		u32 irradianceMuSSize = 512u;
+		u32 irradianceHeightSize = 128u;
 		u32 maxScatOrder = 2u;
 
 		Atmosphere atmos {};
@@ -109,7 +171,7 @@ public:
 		// init layouts
 		initPreTrans();
 		initPreSingleScat();
-		initPreGroundIrradiance();
+		initPreIrradiance();
 		initPreInScat();
 		initPreMultiScat();
 		initRender();
@@ -135,7 +197,7 @@ public:
 		vk::ImageCreateInfo ici;
 		ici.extent = transExtent();
 		ici.arrayLayers = 1u;
-		ici.format = transFormat;
+		ici.format = config_.transFormat;
 		ici.mipLevels = 1u;
 		ici.imageType = vk::ImageType::e2d;
 		ici.initialLayout = vk::ImageLayout::undefined;
@@ -147,11 +209,14 @@ public:
 		auto& alloc = dev.devMemAllocator();
 		auto devTypes = dev.deviceMemoryTypes();
 		auto initTrans = vpp::Init<vpp::ViewableImage>(alloc, ici, devTypes);
-		auto initGround = vpp::Init<vpp::ViewableImage>(alloc, ici, devTypes);
+
+		ici.format = config_.irradianceFormat;
+		auto initIrradiance = vpp::Init<vpp::ViewableImage>(alloc, ici, devTypes);
+		auto initDeltaIrradiance = vpp::Init<vpp::ViewableImage>(alloc, ici, devTypes);
 
 		// scat
 		ici.extent = scatExtent();
-		ici.format = scatFormat;
+		ici.format = config_.scatFormat;
 		ici.imageType = vk::ImageType::e3d;
 
 		auto initScatR = vpp::Init<vpp::ViewableImage>(alloc, ici, devTypes);
@@ -163,13 +228,16 @@ public:
 
 		// initialize
 		vk::ImageViewCreateInfo ivi;
-		ivi.format = transFormat;
+		ivi.format = config_.transFormat;
 		ivi.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
 		ivi.viewType = vk::ImageViewType::e2d;
 		transTable_ = initTrans.init(ivi);
-		groundTable_ = initGround.init(ivi);
 
-		ivi.format = scatFormat;
+		ivi.format = config_.irradianceFormat;
+		deltaIrradianceTable_ = initDeltaIrradiance.init(ivi);
+		irradianceTable_ = initIrradiance.init(ivi);
+
+		ivi.format = config_.scatFormat;
 		ivi.viewType = vk::ImageViewType::e3d;
 		scatTableRayleigh_ = initScatR.init(ivi);
 		scatTableMie_ = initScatM.init(ivi);
@@ -178,7 +246,8 @@ public:
 		scatTableCombined_ = initScatCombined.init(ivi);
 
 		vpp::nameHandle(transTable_, "BrunetonSky:transTable");
-		vpp::nameHandle(groundTable_, "BrunetonSky:groundTable");
+		vpp::nameHandle(irradianceTable_, "BrunetonSky:irradianceTable");
+		vpp::nameHandle(deltaIrradianceTable_, "BrunetonSky:deltaIrradianceTable");
 		vpp::nameHandle(scatTableRayleigh_, "BrunetonSky:scatTableRayleigh");
 		vpp::nameHandle(scatTableMie_, "BrunetonSky:scatTableMie");
 		vpp::nameHandle(scatTableMulti_, "BrunetonSky:scatTableMulti");
@@ -231,7 +300,7 @@ public:
 		vpp::nameHandle(preSingleScat_.ds, "BrunetonSky:preSingleScat:ds");
 	}
 
-	void initPreGroundIrradiance() {
+	void initPreIrradiance() {
 		auto& dev = device();
 		auto bindings = std::array{
 			// in: atmosphere data
@@ -248,22 +317,25 @@ public:
 			// in: combined multi scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::compute, &sampler_),
-			// out: ground irradiance
+			// out: delta irradiance
+			vpp::descriptorBinding(vk::DescriptorType::storageImage,
+				vk::ShaderStageBits::compute),
+			// in/out: accum irradiance
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
 		};
 
-		preGround_.dsLayout.init(dev, bindings);
-		vpp::nameHandle(preGround_.dsLayout, "BrunetonSky:preGround:dsLayout");
+		preIrrad_.dsLayout.init(dev, bindings);
+		vpp::nameHandle(preIrrad_.dsLayout, "BrunetonSky:preGround:dsLayout");
 
 		vk::PushConstantRange pcr;
 		pcr.size = sizeof(u32);
 		pcr.stageFlags = vk::ShaderStageBits::compute;
-		preGround_.pipeLayout = {dev, {{preGround_.dsLayout.vkHandle()}}, {{pcr}}};
-		vpp::nameHandle(preGround_.pipeLayout, "BrunetonSky:preGround:pipeLayout");
+		preIrrad_.pipeLayout = {dev, {{preIrrad_.dsLayout.vkHandle()}}, {{pcr}}};
+		vpp::nameHandle(preIrrad_.pipeLayout, "BrunetonSky:preGround:pipeLayout");
 
-		preGround_.ds = {dev.descriptorAllocator(), preGround_.dsLayout};
-		vpp::nameHandle(preGround_.ds, "BrunetonSky:preGround:ds");
+		preIrrad_.ds = {dev.descriptorAllocator(), preIrrad_.dsLayout};
+		vpp::nameHandle(preIrrad_.ds, "BrunetonSky:preGround:ds");
 	}
 
 	void initPreInScat() {
@@ -283,7 +355,7 @@ public:
 			// in: combined multi scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::compute, &sampler_),
-			// in: ground irradiance
+			// in: (ground) irradiance
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::compute, &sampler_),
 			// out: in scattering
@@ -318,7 +390,7 @@ public:
 			// out: multi scattering
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
-			// out: combined scattering
+			// in/out: combined scattering
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
 		};
@@ -348,7 +420,7 @@ public:
 			// combined scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, &sampler_),
-			// ground texture
+			// irradiance texture
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, &sampler_),
 		};
@@ -373,7 +445,7 @@ public:
 		dsuRender.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuRender.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuRender.imageSampler({{{}, scatTableCombined_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, groundTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, irradianceTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 
 		// debugging, for seeing muli scat textures in renderdoc.
 		// The first three textures are not used for multi-scat-lookup anyways.
@@ -397,16 +469,17 @@ public:
 		dsuInScat.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuInScat.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuInScat.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.imageSampler({{{}, groundTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuInScat.imageSampler({{{}, deltaIrradianceTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuInScat.storage({{{}, inScatTable_.imageView(), vk::ImageLayout::general}});
 
-		vpp::DescriptorSetUpdate dsuIrrad(preGround_.ds);
+		vpp::DescriptorSetUpdate dsuIrrad(preIrrad_.ds);
 		dsuIrrad.uniform({{{ubo_}}});
 		dsuIrrad.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuIrrad.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuIrrad.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuIrrad.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuIrrad.storage({{{}, groundTable_.imageView(), vk::ImageLayout::general}});
+		dsuIrrad.storage({{{}, deltaIrradianceTable_.imageView(), vk::ImageLayout::general}});
+		dsuIrrad.storage({{{}, irradianceTable_.imageView(), vk::ImageLayout::general}});
 
 		vpp::DescriptorSetUpdate dsuTrans(preTrans_.ds);
 		dsuTrans.uniform({{{ubo_}}});
@@ -426,7 +499,7 @@ public:
 		auto preSingleScat = tkn::loadShader(dev, "sky/preSingleScat.comp");
 		auto preMultiScat = tkn::loadShader(dev, "sky/preMultiScat.comp");
 		auto preInScat = tkn::loadShader(dev, "sky/preInScat.comp");
-		auto preGround = tkn::loadShader(dev, "sky/preGround.comp");
+		auto preIrradiance = tkn::loadShader(dev, "sky/preIrradiance.comp");
 		if(!preTrans || !preSingleScat || !preMultiScat) {
 			dlg_error("Failed to reload/compile pcs computation shaders");
 			return false;
@@ -444,9 +517,9 @@ public:
 		cpi.stage.pSpecializationInfo = &specTrans.spec;
 		preTrans_.pipe = {dev, cpi};
 
-		cpi.layout = preGround_.pipeLayout;
-		cpi.stage.module = *preGround;
-		preGround_.pipe = {dev, cpi};
+		cpi.layout = preIrrad_.pipeLayout;
+		cpi.stage.module = *preIrradiance;
+		preIrrad_.pipe = {dev, cpi};
 
 		// 3D
 		auto sgds = config_.groupDimSize3D;
@@ -488,39 +561,58 @@ public:
 		return true;
 	}
 
-	void recordGroundGen(vk::CommandBuffer cb, u32 scatOrder) {
+	void recordIrradGen(vk::CommandBuffer cb, u32 scatOrder) {
 		auto sgx = tkn::ceilDivide(scatExtent().width, config_.groupDimSize3D);
 		auto sgy = tkn::ceilDivide(scatExtent().height, config_.groupDimSize3D);
 		auto sgz = tkn::ceilDivide(scatExtent().depth, config_.groupDimSize3D);
 
-		// discard old content if there is any
-		vk::ImageMemoryBarrier bGround;
-		bGround.image = groundTable_.image();
-		bGround.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-		bGround.oldLayout = vk::ImageLayout::undefined;
-		bGround.srcAccessMask = vk::AccessBits::shaderRead;
-		bGround.newLayout = vk::ImageLayout::general;
-		bGround.dstAccessMask = vk::AccessBits::shaderWrite;
+		vk::ImageMemoryBarrier bI;
+		bI.image = irradianceTable_.image();
+		bI.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+		if(scatOrder == 1u) {
+			bI.oldLayout = vk::ImageLayout::undefined;
+			bI.srcAccessMask = vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite;
+		} else {
+			bI.oldLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+			bI.srcAccessMask = vk::AccessBits::shaderRead;
+		}
+		bI.newLayout = vk::ImageLayout::general;
+		bI.dstAccessMask = vk::AccessBits::shaderWrite;
+
+		// content of delta table is overriden
+		vk::ImageMemoryBarrier bdI;
+		bdI.image = deltaIrradianceTable_.image();
+		bdI.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+		bdI.oldLayout = vk::ImageLayout::undefined;
+		bdI.srcAccessMask = vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite;
+		bdI.newLayout = vk::ImageLayout::general;
+		bdI.dstAccessMask = vk::AccessBits::shaderWrite;
 
 		vk::cmdPipelineBarrier(cb,
 			vk::PipelineStageBits::computeShader,
-			vk::PipelineStageBits::computeShader, {}, {}, {}, {{bGround}});
+			vk::PipelineStageBits::computeShader, {}, {}, {}, {{bI, bdI}});
 
 		// compute
-		vk::cmdPushConstants(cb, preGround_.pipeLayout,
+		vk::cmdPushConstants(cb, preIrrad_.pipeLayout,
 			vk::ShaderStageBits::compute, 0u, sizeof(u32), &scatOrder);
-		tkn::cmdBindComputeDescriptors(cb, preGround_.pipeLayout, 0u, {preGround_.ds});
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, preGround_.pipe);
+		tkn::cmdBindComputeDescriptors(cb, preIrrad_.pipeLayout, 0u, {preIrrad_.ds});
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, preIrrad_.pipe);
 		vk::cmdDispatch(cb, sgx, sgy, sgz);
 
-		bGround.srcAccessMask = vk::AccessBits::shaderWrite;
-		bGround.oldLayout = vk::ImageLayout::general;
-		bGround.dstAccessMask = vk::AccessBits::shaderRead;
-		bGround.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		bI.srcAccessMask = vk::AccessBits::shaderWrite;
+		bI.oldLayout = vk::ImageLayout::general;
+		bI.dstAccessMask = vk::AccessBits::shaderRead;
+		bI.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+
+		bdI.srcAccessMask = vk::AccessBits::shaderWrite;
+		bdI.oldLayout = vk::ImageLayout::general;
+		bdI.dstAccessMask = vk::AccessBits::shaderRead;
+		bdI.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+
 		vk::cmdPipelineBarrier(cb,
 			vk::PipelineStageBits::computeShader,
 			vk::PipelineStageBits::computeShader | vk::PipelineStageBits::fragmentShader,
-			{}, {}, {}, {{bGround}});
+			{}, {}, {}, {{bI, bdI}});
 	}
 
 	void recordMultiScatGen(vk::CommandBuffer cb, u32 scatOrder) {
@@ -608,8 +700,8 @@ public:
 		bC.image = scatTableCombined_.image();
 
 		// bring multi scat table into readOnly layout
-		// this is needed because the first iteration expects it in this format
-		// even though it doesn't read it.
+		// this is needed because the first multi-scatter iteration expects
+		// it in this format even though it doesn't read it.
 		auto bMulti = bT;
 		bMulti.image = scatTableMulti_.image();
 		bMulti.dstAccessMask = vk::AccessBits::shaderRead;
@@ -660,10 +752,10 @@ public:
 			vk::PipelineStageBits::computeShader | vk::PipelineStageBits::fragmentShader,
 			{}, {}, {}, {{bM, bR}});
 
-		recordGroundGen(cb, 1u);
+		recordIrradGen(cb, 1u);
 		for(auto i = 2u; i <= config_.maxScatOrder; ++i) {
 			recordMultiScatGen(cb, i);
-			recordGroundGen(cb, i);
+			recordIrradGen(cb, i);
 		}
 
 		// final transition for combined scattering
@@ -744,6 +836,8 @@ public:
 		return res;
 	}
 
+	// TODO: should be moved outside of this class.
+	// Just allow changing the config from outside.
 	bool loadConfig() {
 		qwe::Value parsed;
 		try {
@@ -771,14 +865,17 @@ public:
 			readT(config_.maxScatOrder, parsed, "meta.maxScatterOrder");
 			readT(config_.transMuSize, parsed, "meta.transmission.muSize");
 			readT(config_.transHeightSize, parsed, "meta.transmission.heightSize");
+			readT(config_.transFormat, parsed, "meta.transmission.format");
 
 			readT(config_.scatNuSize, parsed, "meta.scatter.nuSize");
 			readT(config_.scatMuSSize, parsed, "meta.scatter.muSSize");
 			readT(config_.scatMuSize, parsed, "meta.scatter.muSize");
 			readT(config_.scatHeightSize, parsed, "meta.scatter.heightSize");
+			readT(config_.scatFormat, parsed, "meta.scatter.format");
 
-			readT(config_.groundMuSSize, parsed, "meta.ground.muSSize");
-			readT(config_.groundHeightSize, parsed, "meta.ground.heightSize");
+			readT(config_.irradianceMuSSize, parsed, "meta.irradiance.muSSize");
+			readT(config_.irradianceHeightSize, parsed, "meta.irradiance.heightSize");
+			readT(config_.irradianceFormat, parsed, "meta.irradiance.format");
 
 			if(qwe::asT<bool>(parsed, "meta.recreateTables")) {
 				recreateTables_ = true;
@@ -838,26 +935,42 @@ public:
 			}
 
 			// ozone
-			readT(atmos.absorptionPeak, pa, "ozone.peak");
+			atmos.absorptionDensity0 = {};
+			atmos.absorptionDensity1 = {};
 			if(qwe::asT<bool>(pa, "ozone.enable")) {
+				double start;
+				double end;
+				double peak;
+				readT(start, pa, "ozone.start");
+				readT(end, pa, "ozone.end");
+				readT(peak, pa, "ozone.peak");
+
+				dlg_assert(end >= peak);
+				dlg_assert(peak >= start);
+
+				auto height0 = peak - start;
+				auto height1 = end - peak;
+
 				// TODO: make configurable
-				atmos.absorptionDensity0 = {};
-				atmos.absorptionDensity1.lienarTerm = 1.0 / 15000.0;
-				atmos.absorptionDensity1.constantTerm = -2.0 / 3.0;
+				atmos.absorptionDensity0.lienarTerm = 1.0 / height0;
+				atmos.absorptionDensity0.constantTerm = -float(start) / height0;
 
-				atmos.absorptionDensity1 = {};
-				atmos.absorptionDensity1.lienarTerm = -1.0 / 15000.0;
-				atmos.absorptionDensity1.constantTerm = 8.0 / 3.0;
+				atmos.absorptionDensity1.lienarTerm = -1.0 / height1;
+				atmos.absorptionDensity1.constantTerm = 1.0 + float(peak) / height1;
 
-				constexpr auto dobsonUnit = 2.687e20;
-				constexpr auto maxOzoneNumberDensity = 300.0 * dobsonUnit / 15000.0;
+				double maxDensity;
+				readT(maxDensity, pa, "ozone.maxDensity");
+
+
 				auto ozone = parseSpectral(atT(pa, "ozone.scattering.crossSection"));
 				for(auto& val : ozone.samples) {
-					val *= maxOzoneNumberDensity;
+					val *= maxDensity;
 				}
 
+				atmos.absorptionPeak = peak;
 				atmos.absorptionExtinction = Vec4f(tkn::XYZtoRGB(toXYZ(ozone)));
 			} else {
+				atmos.absorptionPeak = {};
 				atmos.absorptionExtinction = {};
 			}
 
@@ -869,7 +982,11 @@ public:
 			} else {
 				dlg_assert(siUse == "spectral");
 				auto spectral = parseSpectral(atT(pa, "solarIrradiance.spectral"));
+				// for(auto i = 0u; i < spectral.samples.size(); ++i) {
+				// 	dlg_info("{}: {}", spectral.wavelength(i), spectral.samples[i]);
+				// }
 				atmos.solarIrradiance = Vec4f(tkn::XYZtoRGB(toXYZ(spectral)));
+				// dlg_info("solarIrradiance: {}", atmos.solarIrradiance);
 			}
 
 			atmos.scatNuSize = config_.scatNuSize;
@@ -933,8 +1050,8 @@ public:
 		auto w = config_.scatNuSize * config_.scatMuSSize;
 		return {w, config_.scatMuSize, config_.scatHeightSize};
 	}
-	vk::Extent3D groundExtent() const {
-		return {config_.groundMuSSize, config_.groundHeightSize, 1u};
+	vk::Extent3D irradianceExtent() const {
+		return {config_.irradianceMuSSize, config_.irradianceHeightSize, 1u};
 	}
 
 	bool key(swa_key keycode) {
@@ -981,17 +1098,19 @@ private:
 	vpp::CommandBuffer genCb_;
 
 	// tables
-	vpp::ViewableImage transTable_;
+	// single scattering tables
 	vpp::ViewableImage scatTableRayleigh_;
 	vpp::ViewableImage scatTableMie_;
 
 	// needed for multiple scattering
-	vpp::ViewableImage scatTableMulti_;
+	vpp::ViewableImage scatTableMulti_; // scattering from last bounce
 	vpp::ViewableImage inScatTable_; // first step of multi-scattering precomp
+	vpp::ViewableImage deltaIrradianceTable_; // irradiance from last bound
 
 	// what we get in the end
-	vpp::ViewableImage groundTable_; // ground irradiance
-	vpp::ViewableImage scatTableCombined_;
+	vpp::ViewableImage transTable_; // transmission table
+	vpp::ViewableImage irradianceTable_; // irradiance (e.g. on ground)
+	vpp::ViewableImage scatTableCombined_; // accumulated scattering
 
 	// NOTE: we can probably combine some of the dsLayout's and pipeLayout's
 	// later on. Especially for just precomputation.
@@ -1035,6 +1154,6 @@ private:
 		vpp::TrDs ds;
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
-	} preGround_;
+	} preIrrad_;
 };
 

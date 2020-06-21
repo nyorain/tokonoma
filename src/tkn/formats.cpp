@@ -3,6 +3,7 @@
 #include <tkn/bits.hpp>
 #include <vkpp/enums.hpp>
 #include <vkpp/structs.hpp>
+#include <cmath>
 
 namespace tkn {
 
@@ -25,6 +26,9 @@ bool isHDR(vk::Format format) {
 		case vk::Format::r64g64Sfloat:
 		case vk::Format::r64g64b64Sfloat:
 		case vk::Format::r64g64b64a64Sfloat:
+		// NOTE: we consider this format hdr since it can represent numbers
+		// >1.0 and can have almost floating point precision
+		case vk::Format::e5b9g9r9UfloatPack32:
 			return true;
 		default:
 			return false;
@@ -114,30 +118,46 @@ vk::ImageViewType minImageViewType(vk::Extent3D size, unsigned layers,
 	}
 }
 
+template<std::size_t N, typename T>
+nytl::Vec<N, T> read(nytl::Span<const std::byte>& src) {
+	nytl::Vec<N, T> ret;
+	for(auto& val : ret) {
+		read<T>(val, src);
+	}
+	return ret;
+}
 
 nytl::Vec4d read(vk::Format srcFormat, nytl::Span<const std::byte>& src) {
 	switch(srcFormat) {
 		case vk::Format::r16Sfloat:
-			return {
-				float(read<f16>(src)),
-				1.0,
-				1.0,
-				1.0
-			};
+			return nytl::Vec4d(read<1, f16>(src));
 		case vk::Format::r16g16Sfloat:
-			return {
-				float(read<f16>(src)),
-				float(read<f16>(src)),
-				1.0,
-				1.0
-			};
+			return nytl::Vec4d(read<2, f16>(src));
 		case vk::Format::r16g16b16Sfloat:
-			return {
-				float(read<f16>(src)),
-				float(read<f16>(src)),
-				float(read<f16>(src)),
-				1.0
-			};
+			return nytl::Vec4d(read<3, f16>(src));
+		case vk::Format::r16g16b16a16Sfloat:
+			return nytl::Vec4d(read<4, f16>(src));
+
+		case vk::Format::r32Sfloat:
+			return nytl::Vec4d(read<1, float>(src));
+		case vk::Format::r32g32Sfloat:
+			return nytl::Vec4d(read<2, float>(src));
+		case vk::Format::r32g32b32Sfloat:
+			return nytl::Vec4d(read<3, float>(src));
+		case vk::Format::r32g32b32a32Sfloat:
+			return nytl::Vec4d(read<4, float>(src));
+
+		case vk::Format::r64Sfloat:
+			return nytl::Vec4d(read<1, double>(src));
+		case vk::Format::r64g64Sfloat:
+			return nytl::Vec4d(read<2, double>(src));
+		case vk::Format::r64g64b64Sfloat:
+			return nytl::Vec4d(read<3, double>(src));
+		case vk::Format::r64g64b64a64Sfloat:
+			return nytl::Vec4d(read<4, double>(src));
+
+		case vk::Format::e5b9g9r9UfloatPack32:
+			return nytl::Vec4d(e5b9g9r9ToRgb(read<u32>(src)));
 		default:
 			throw std::logic_error("Format not supported for CPU reading");
 	}
@@ -183,6 +203,11 @@ void write(vk::Format dstFormat, nytl::Span<std::byte>& dst, nytl::Vec4d color) 
 		case vk::Format::r16g16b16a16Sfloat:
 			write(dst, nytl::Vec4<f16>(color));
 			break;
+
+		case vk::Format::e5b9g9r9UfloatPack32:
+			write(dst, e5b9g9r9FromRgb(nytl::Vec3f(color)));
+			break;
+
 		default:
 			throw std::logic_error("Format not supported for CPU writing");
 	}
@@ -192,6 +217,92 @@ void convert(vk::Format dstFormat, nytl::Span<std::byte>& dst,
 		vk::Format srcFormat, nytl::Span<const std::byte>& src) {
 	auto col = read(srcFormat, src);
 	write(dstFormat, dst, col);
+}
+
+// Implementation directly from the OpenGL EXT_texture_shared_exponent spec
+// https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/
+//  d62c37dde0a40148aecc9e9701ba0ae4ab83ee22/extensions/EXT/
+//  EXT_texture_shared_exponent.txt
+// Notable differences: we use an endianess-agnostic implementation that
+// extracts bit parts manually. Might hurt performance marginally but makes
+// the implementation simpler. Also use already existent modern utility.
+namespace e5b9g9r9 {
+	constexpr auto expBias = 15;
+	constexpr auto maxBiasedExp = 32;
+	constexpr auto maxExp = maxBiasedExp - expBias;
+	constexpr auto mantissaValues = 1 << 9;
+	constexpr auto maxMantissa = mantissaValues - 1;
+	constexpr auto max = float(maxMantissa) / mantissaValues * (1 << maxExp);
+
+	float clamp(float x) {
+		// x == NaN fails first comparison and returns 0.0
+		// That's why we don't use std::clamp
+		return x > 0.0 ? ((x > max) ? max : x) : 0.0;
+	}
+
+	int floorLog2(float x) {
+		// int res;
+		// std::frexp(x, &res);
+		// return res;
+
+		// Ok, FloorLog2 is not correct for the denorm and zero values, but we
+		// are going to do a max of this value with the minimum rgb9e5 exponent
+		// that will hide these problem cases.
+		u32 uval;
+		static_assert(sizeof(x) == sizeof(uval));
+		std::memcpy(&uval, &x, sizeof(x));
+		return int((uval >> 23) & 0b11111111u) - 127;
+	}
+
+} // namespace e5r9g9b9
+
+
+u32 e5b9g9r9FromRgb(nytl::Vec3f rgb) {
+	using namespace e5b9g9r9;
+	auto rc = clamp(rgb[0]);
+	auto gc = clamp(rgb[1]);
+	auto bc = clamp(rgb[2]);
+	auto maxrgb = std::max(rc, std::max(gc, bc));
+
+	int expShared = std::max(0, floorLog2(maxrgb) + 1 + expBias);
+	dlg_assert(expShared <= maxBiasedExp);
+	dlg_assert(expShared >= 0);
+
+	/* This pow function could be replaced by a table. */
+	double denom = std::exp2(expShared - expBias - 9);
+	int maxm = (int) std::floor(maxrgb / denom + 0.5);
+	if(maxm == maxMantissa + 1) {
+		denom *= 2;
+		expShared += 1;
+		dlg_assert(expShared <= maxBiasedExp);
+	} else {
+		dlg_assert(maxm <= maxMantissa);
+	}
+
+	auto rm = (int) std::floor(rc / denom + 0.5);
+	auto gm = (int) std::floor(gc / denom + 0.5);
+	auto bm = (int) std::floor(bc / denom + 0.5);
+
+	dlg_assert(rm <= maxMantissa);
+	dlg_assert(gm <= maxMantissa);
+	dlg_assert(bm <= maxMantissa);
+	dlg_assert(rm >= 0);
+	dlg_assert(gm >= 0);
+	dlg_assert(bm >= 0);
+
+	return (expShared << 27) | (bm << 18) | (gm << 9) | rm;
+}
+
+nytl::Vec3f e5b9g9r9ToRgb(u32 ebgr) {
+	using namespace e5b9g9r9;
+
+	int exponent = int(ebgr >> 27) - int(expBias) - 9u;
+  	float scale = (float) pow(2, exponent);
+	return {
+		scale * (ebgr & 0b111111111u),
+		scale * ((ebgr >> 9) & 0b111111111u),
+		scale * ((ebgr >> 18) & 0b111111111u),
+	};
 }
 
 } // namespace tkn

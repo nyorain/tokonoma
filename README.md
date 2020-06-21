@@ -63,10 +63,11 @@ related to it.
   the particles, varying the attraction based on particle properties
   and current audio frequencies.
   ![particles screenshot](./assets/pics/particles1.png)
-- pbr: command line utility program for stuff required by the pbr renderer projects,
+- gen: command line utility program for stuff required by the pbr renderer projects,
   like generating cubemaps from equirectangular environment maps, baking irradiance maps or
   specular IBL maps and the brdf lookup table for the split-sum approximation.
-  Can also project a cubemap to spherical harmonics coefficients (9x)
+  Can also project a cubemap to spherical harmonics coefficients (9x) or
+  bake multiple daytime layers and metadata of a Hosek-Wilkie sky cubemap.
 - pendulum: simulation of a simple pendulum from an exercise in a
   computational engineering and robotics lecture i heard.
   The challenge is to keep the pendulum standing upwards (unstable stationary

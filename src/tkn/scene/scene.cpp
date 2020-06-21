@@ -1364,6 +1364,9 @@ std::tuple<std::optional<gltf::Model>, std::string> loadGltf(nytl::StringParam a
 bool tinygltfImageLoader(gltf::Image* img, const int imgID,
 		std::string* err, std::string* warn, int req_width, int req_height,
 		const unsigned char* bytes, int size, void*) {
+	nytl::unused(img, imgID, err, warn, req_width, req_height,
+			bytes, size);
+
 	// TODO: just implement is using loadImage a memory stream.
 	// Ideally though, we would just store the Provider in the image.
 	// Maybe rework tinygtlf so that this function isn't needed

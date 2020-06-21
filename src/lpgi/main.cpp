@@ -753,6 +753,11 @@ public:
 		std::array<vk::ClearValue, 6u> cv {};
 		cv[0] = {0.f, 0.f, 0.f, 0.f}; // color
 		cv[1].depthStencil = {1.f, 0u}; // depth
+
+		// TODO: when the multiview feature is available, rendering
+		// all faces at once might be more efficient.
+		// Then we wouldnt need some barriers and the tmpSh tex
+		// as well I think.
 		for(auto i = 0u; i < 6; ++i) {
 			auto& face = probe_.faces[i];
 

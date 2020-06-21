@@ -9,11 +9,33 @@
 namespace tkn {
 
 template<typename T>
+std::enable_if_t<std::is_standard_layout_v<T>>
+read(T& dst, const std::byte*& data) {
+	std::memcpy(&dst, data, sizeof(dst));
+	data += sizeof(dst);
+}
+
+template<typename T>
+std::enable_if_t<std::is_standard_layout_v<T>>
+read(T& dst, nytl::Span<std::byte>& span) {
+	dlg_assert(std::size_t(span.size()) >= sizeof(dst));
+	std::memcpy(&dst, span.data(), sizeof(dst));
+	span = span.last(span.size() - sizeof(dst));
+}
+
+template<typename T>
+std::enable_if_t<std::is_standard_layout_v<T>>
+read(T& dst, nytl::Span<const std::byte>& span) {
+	dlg_assert(std::size_t(span.size()) >= sizeof(dst));
+	std::memcpy(&dst, span.data(), sizeof(dst));
+	span = span.last(span.size() - sizeof(dst));
+}
+
+template<typename T>
 std::enable_if_t<std::is_standard_layout_v<T>, T>
 read(const std::byte*& data) {
 	T ret;
-	std::memcpy(&ret, data, sizeof(ret));
-	data += sizeof(ret);
+	read(ret, data);
 	return ret;
 }
 
@@ -21,9 +43,7 @@ template<typename T>
 std::enable_if_t<std::is_standard_layout_v<T>, T>
 read(nytl::Span<std::byte>& span) {
 	T ret;
-	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
-	std::memcpy(&ret, span.data(), sizeof(ret));
-	span = span.last(span.size() - sizeof(ret));
+	read(ret, span);
 	return ret;
 }
 
@@ -31,9 +51,7 @@ template<typename T>
 std::enable_if_t<std::is_standard_layout_v<T>, T>
 read(nytl::Span<const std::byte>& span) {
 	T ret;
-	dlg_assert(std::size_t(span.size()) >= sizeof(ret));
-	std::memcpy(&ret, span.data(), sizeof(ret));
-	span = span.last(span.size() - sizeof(ret));
+	read(ret, span);
 	return ret;
 }
 

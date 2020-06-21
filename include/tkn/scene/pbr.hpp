@@ -7,7 +7,9 @@
 #include <nytl/vec.hpp>
 
 // Just a collection of various utilities useful for pbr.
-// Some of them should probably be split into their own files.
+// TODO: Some of them should probably be split into their own files.
+//   especially all the mapper/baker are not really related to pbr per se,
+//   they should in something like 'bake.hpp' or 'gen.hpp'.
 
 namespace tkn {
 
@@ -118,6 +120,7 @@ protected:
 
 /// Projects cubemaps to sphere harmonics (up to l=2, i.e. 9 coefficients).
 /// Requires a cubemap 32x32-per-face image as input.
+/// TODO: allow arbitrary sizes.
 class SHProjector {
 public:
 	void create(const vpp::Device& dev, vk::Sampler linear);

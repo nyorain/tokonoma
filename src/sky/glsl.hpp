@@ -60,7 +60,12 @@
 #else
 	#define IN(T) in T
 	#define OUT(T) out T
+
+	// debug hack
+	// float one = 1.0;
+	// #define assert(x) if(!(x)) { one = 0; }
 	#define assert(x)
+
 	const float pi = 3.14159265359;
 
 	vec3 rgb(vec4 v) {

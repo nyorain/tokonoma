@@ -252,8 +252,8 @@ executable('sen', [
 		sen_shaders,
 	], dependencies: tkn_dep)
 
-executable('pbr', [
-		'src/pbr/main.cpp',
+executable('gen', [
+		'src/gen/main.cpp',
 		tkn_shaders,
 	], dependencies: tkn_dep)
 

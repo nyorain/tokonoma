@@ -48,6 +48,11 @@
 //   though the atmosphere (defined by start and end point) by using
 //   multiple respective texture lookups.
 
+// Changes done from Bruneton's implementation:
+// - change the way we store transmittance. Bruneton needs a 32-bit floating
+//   point texture, since we need great precision near tramission ~ 0 for rays
+//   with mu ~ 0, i.e. near the horizon. We get away with 16-bit by gamma-mapping it.
+
 // NOTE: some calculations currently use (0, 0, 1) as zenith internally.
 //   Although this does not match the orientation we usually use, it does not
 //   matter since the vector representation is only a utility anyways, in the
@@ -265,12 +270,13 @@ ARay rayFromTransTexUnit(IN(Atmosphere) atmos, IN(vec2) range) {
 }
 
 // lookup
+const float tGamma = 4;
 vec3 transmittanceToTop(IN(Atmosphere) atmos, IN(sampler2D) transTex, IN(ARay) ray) {
 	assert(ray.height >= atmos.bottom && ray.height <= atmos.top);
 	assert(ray.mu >= -1.f && ray.mu <= 1.f);
 	vec2 unit = transTexUnitFromRay(atmos, ray);
 	vec2 uv = uvFromUnitRange(unit, textureSize(transTex, 0));
-	return rgb(texture(transTex, uv));
+	return pow(rgb(texture(transTex, uv)), vec3(tGamma, tGamma, tGamma));
 }
 
 vec3 getTransmittance(IN(Atmosphere) atmos, IN(sampler2D) transTex, IN(ARay) ray,
@@ -400,6 +406,13 @@ float phaseRayleigh(float nu) {
 
 float unit2Half(float x, uint texSize) {
 	return x * (texSize - 1) / (texSize - 2);
+
+	// Not 100% sure the above is correct, this code
+	// emulates gl_FragCoord, like used by bruneton.
+	// x *= (texSize - 1);
+	// x += 0.5;
+	// x /= texSize;
+	// return (x - 0.5 / texSize) / (1.0 - 1.0 / texSize);
 }
 
 vec4 scatTexUVFromParams(IN(Atmosphere) atmos, IN(ARay) ray,
@@ -429,8 +442,7 @@ vec4 scatTexUVFromParams(IN(Atmosphere) atmos, IN(ARay) ray,
 		float d = -r_mu - sqrt(max(0.f, discriminant));
 		float d_min = r - atmos.bottom;
 		float d_max = rho;
-		u_mu = 0.5 - 0.5 * (d_max == d_min ? 0.0 :
-			uvFromUnitRange((d - d_min) / (d_max - d_min), texSize[2] / 2));
+		u_mu = 0.5 - 0.5 * (d_max == d_min ? 0.0 : uvFromUnitRange((d - d_min) / (d_max - d_min), texSize[2] / 2));
 	} else {
 		// Distance to the top atmosphere boundary for the ray (r,mu), and its
 		// minimum and maximum values over all mu - obtained for (r,1) and
@@ -438,8 +450,7 @@ vec4 scatTexUVFromParams(IN(Atmosphere) atmos, IN(ARay) ray,
 		float d = -r_mu + sqrt(max(0.f, discriminant + H * H));
 		float d_min = atmos.top - r;
 		float d_max = rho + H;
-		u_mu = 0.5 + 0.5 *
-			uvFromUnitRange((d - d_min) / (d_max - d_min), texSize[2] / 2);
+		u_mu = 0.5 + 0.5 * uvFromUnitRange((d - d_min) / (d_max - d_min), texSize[2] / 2);
 	}
 
 	ARay toSun = {atmos.bottom, mu_s};

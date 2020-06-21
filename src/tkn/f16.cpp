@@ -10,6 +10,7 @@ f16::f16(float val) {
 	u32 uval;
 	std::memcpy(&uval, &val, sizeof(val));
 
+	// endianess independent
 	u16 sign = (uval >> 31) & 0b1u;
 	u8 fexp = (uval >> 23) & 0b11111111u;
 	u32 fmantissa = (uval >> 0) & 0b11111111111111111111111u;
