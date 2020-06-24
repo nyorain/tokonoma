@@ -1,0 +1,42 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#include "precoscat.hpp"
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+layout(set = 0, binding = 0) uniform AtmosphereUBO {
+	Atmosphere atmosphere;
+};
+layout(set = 0, binding = 1) uniform sampler2D transTex;
+layout(set = 0, binding = 2) writeonly uniform image3D outScatRayleigh;
+layout(set = 0, binding = 3) writeonly uniform image3D outScatMie;
+layout(set = 0, binding = 4) writeonly uniform image3D outCombined;
+
+void main() {
+	uvec3 size = imageSize(outScatMie);
+	uvec3 pixel = gl_GlobalInvocationID.xyz;
+	if(pixel.x >= size.x || pixel.y >= size.y || pixel.z >= size.z) {
+		return;
+	}
+
+	// get params for this invocation
+	ARay ray;
+	float mu_s, nu;
+	bool rayIntersectsGround;
+	scatParamsFromPixel(atmosphere, pixel, size, ray, mu_s, nu, rayIntersectsGround);
+
+	// compute
+	vec3 scatRayleigh, scatMie;
+	singleScattering(atmosphere, transTex, ray, mu_s, nu, rayIntersectsGround,
+		scatRayleigh, scatMie);
+
+	imageStore(outScatRayleigh, ivec3(pixel), vec4(scatRayleigh, 1.0));
+	imageStore(outScatMie, ivec3(pixel), vec4(scatMie, 1.0));
+	imageStore(outCombined, ivec3(pixel), vec4(scatRayleigh, 1.0));
+
+	// for debugging
+	// imageStore(outScatMie, ivec3(pixel), vec4(nu, mu_s, ray.mu, 
+	// 	(ray.height - atmosphere.bottom) / (atmosphere.top - atmosphere.bottom)));
+	// imageStore(outScatMie, ivec3(pixel), unitRange);
+}
+

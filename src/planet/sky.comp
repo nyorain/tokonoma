@@ -1,0 +1,105 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : require
+
+// Definitely supposed to mean preCosCat, btw, i.e. just the cat 
+// instead of cos(cat).
+#include "precoscat.hpp"
+#include "color.glsl"
+#include "scene.glsl"
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+layout(set = 0, binding = 0) uniform AtmosUBO {
+	Atmosphere atmos;
+	vec3 sunDir;
+	float camAspect;
+	vec3 viewPos;
+	float camNear;
+	vec3 camDir;
+	float camFar;
+	vec3 camUp;
+	float camFov;
+};
+
+layout(set = 0, binding = 1) uniform sampler2D transTex;
+layout(set = 0, binding = 2) uniform sampler3D scatRayleighTex;
+layout(set = 0, binding = 3) uniform sampler3D scatMieTex;
+layout(set = 0, binding = 4) uniform sampler3D scatCombinedTex;
+
+layout(set = 0, binding = 5) uniform sampler2D inDepth;
+layout(set = 0, binding = 6, rgba16f) uniform image2D ioColor;
+
+layout(push_constant) uniform PCR {
+	uint scatOrder;
+};
+
+void main() {
+	uvec2 size = imageSize(ioColor);
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return; // invalid invocation
+	}
+
+	vec2 uv = (pixel + 0.5) / size;
+	vec3 startPos = viewPos;
+	vec3 viewDir = worldDirRay(vec2(uv.x, 1 - uv.y), camDir, camUp, camFov,
+		camAspect);
+
+	float r = length(startPos);
+	float rmu = dot(startPos, viewDir);
+	float distToTop = -rmu - sqrt(rmu * rmu - r * r + atmos.top * atmos.top);
+
+	float depth = texture(inDepth, uv).r;
+	float z = depthtoz(depth, camNear, camFar);
+	vec3 bgColor = imageLoad(ioColor, ivec2(pixel)).rgb;
+
+	// imageStore(ioColor, ivec2(pixel), vec4(bgColor, 1.0));
+	// return;
+
+	if(distToTop > 0.0 && (depth == 1.f || z > distToTop)) {
+		startPos += distToTop * viewDir;
+		r = atmos.top;
+		rmu += distToTop;
+		z -= distToTop;
+	} else if(r > atmos.top) {
+		return; // nothing to do here, ray doesn't cross atmosphere
+	}
+
+	float mu = rmu / r;
+	ARay ray = {r, mu};
+
+	float mu_s = dot(startPos, sunDir) / r;
+	float nu = dot(viewDir, sunDir);
+	bool rayIntersectsGround = intersectsGround(atmos, ray);
+
+	vec3 scat;
+	vec3 trans;
+	// lookup from texture
+	if(scatOrder == 1) {
+		// TODO: depth == 1
+		scat = getSkyRadianceToPoint(atmos, transTex,
+			scatRayleighTex, scatMieTex, startPos, startPos + z * viewDir, 
+			0.0, sunDir, trans);
+	} else {
+		if(false && depth == 1.f) {
+			scat = getScattering(atmos, scatCombinedTex, scatMieTex,
+				ray, mu_s, nu, rayIntersectsGround);
+			trans = transmittanceToTop(atmos, transTex, ray);
+		} else {
+			scat = getSkyRadianceToPoint(atmos, transTex,
+				scatRayleighTex, scatMieTex, startPos, startPos + z * viewDir, 
+				0.0, sunDir, trans);
+		}
+	}
+
+	// vec3 trans;
+	// if(depth == 1.f) {
+	// 	trans = transmittanceToTop(atmos, transTex, ray);
+	// } else {
+	// 	trans = getTransmittance(atmos, transTex, ray, z, rayIntersectsGround);
+	// }
+
+	scat += trans * bgColor;
+	imageStore(ioColor, ivec2(pixel), vec4(scat, 1.0));
+}
+

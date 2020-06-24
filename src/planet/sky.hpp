@@ -111,19 +111,6 @@ struct qwe::ValueParser<vk::Format> {
 
 class BrunetonSky {
 public:
-	struct UboData {
-		Atmosphere atmosphere;
-		vec3 toSun;
-		float camAspect;
-		vec3 viewPos;
-		float camNear;
-		vec3 camDir;
-		float camFar;
-		vec3 camUp;
-		float camFov;
-	};
-
-public:
 	const char* configFile = TKN_BASE_DIR "/assets/atmosphere.qwe";
 	nytl::Vec3f toSun {};
 	vk::Semaphore waitSemaphore {};
@@ -164,12 +151,11 @@ public:
 
 public:
 	BrunetonSky() = default;
-	bool init(vpp::Device& dev, vk::Sampler sampler, vk::RenderPass rp) {
+	bool init(vpp::Device& dev, vk::Sampler sampler) {
 		sampler_ = sampler;
-		rp_ = rp;
 
 		auto initUbo = vpp::Init<vpp::SubBuffer>(dev.bufferAllocator(),
-			sizeof(UboData), vk::BufferUsageBits::uniformBuffer,
+			sizeof(Atmosphere), vk::BufferUsageBits::uniformBuffer,
 			dev.hostMemoryTypes());
 		ubo_ = initUbo.init();
 
@@ -196,7 +182,6 @@ public:
 		initPreIrradiance();
 		initPreInScat();
 		initPreMultiScat();
-		initRender();
 
 		// load config
 		if(!loadConfig()) {
@@ -205,10 +190,11 @@ public:
 
 		initTables();
 		updateDescriptors();
-		if(!loadGenPipes() || !loadRenderPipe()) {
+		if(!loadGenPipes()) {
 			return false;
 		}
 
+		recordGenCb();
 		return true;
 	}
 
@@ -426,68 +412,7 @@ public:
 		vpp::nameHandle(preMultiScat_.ds, "BrunetonSky:preMultiScat:ds");
 	}
 
-	void initRender() {
-		auto& dev = device();
-		auto bindings = std::array{
-			// atmosphere parameters
-			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
-			// tranmission
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler_),
-			// scat rayleigh
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler_),
-			// scat mie
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler_),
-			// combined scattering
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler_),
-			// in color
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler_),
-			// in depth
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler_),
-		};
-
-		render_.dsLayout.init(dev, bindings);
-		vpp::nameHandle(render_.dsLayout, "BrunetonSky:render:dsLayout");
-
-		vk::PushConstantRange pcr;
-		pcr.size = sizeof(u32);
-		pcr.stageFlags = vk::ShaderStageBits::fragment;
-		render_.pipeLayout = {dev, {{render_.dsLayout.vkHandle()}}, {{pcr}}};
-		vpp::nameHandle(render_.pipeLayout, "BrunetonSky:render:pipeLayout");
-
-		render_.ds = {dev.descriptorAllocator(), render_.dsLayout};
-		vpp::nameHandle(render_.ds, "BrunetonSky:render:ds");
-	}
-
-	void updateRenderInputs(vk::ImageView color, vk::ImageView depth) {
-		vpp::DescriptorSetUpdate dsuRender(render_.ds);
-		dsuRender.skip(5);
-		dsuRender.imageSampler({{{}, color, vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, depth, vk::ImageLayout::shaderReadOnlyOptimal}});
-	}
-
 	void updateDescriptors() {
-		vpp::DescriptorSetUpdate dsuRender(render_.ds);
-		dsuRender.uniform({{{ubo_}}});
-		dsuRender.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, scatTableCombined_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-
-		// debugging, for seeing muli scat textures in renderdoc.
-		// The first three textures are not used for multi-scat-lookup anyways.
-		// dsu.uniform({{{ubo_}}});
-		// dsu.imageSampler({{{}, inScatTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		// dsu.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		// dsu.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		// dsu.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		// dsu.imageSampler({{{}, groundTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-
 		vpp::DescriptorSetUpdate dsuMScat(preMultiScat_.ds);
 		dsuMScat.uniform({{{ubo_}}});
 		dsuMScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
@@ -529,11 +454,11 @@ public:
 		auto& dev = device();
 		reloadGenPipes_ = false;
 
-		auto preTrans = tkn::loadShader(dev, "sky/preTrans.comp");
-		auto preSingleScat = tkn::loadShader(dev, "sky/preSingleScat.comp");
-		auto preMultiScat = tkn::loadShader(dev, "sky/preMultiScat.comp");
-		auto preInScat = tkn::loadShader(dev, "sky/preInScat.comp");
-		auto preIrradiance = tkn::loadShader(dev, "sky/preIrradiance.comp");
+		auto preTrans = tkn::loadShader(dev, "planet/preTrans.comp");
+		auto preSingleScat = tkn::loadShader(dev, "planet/preSingleScat.comp");
+		auto preMultiScat = tkn::loadShader(dev, "planet/preMultiScat.comp");
+		auto preInScat = tkn::loadShader(dev, "planet/preInScat.comp");
+		auto preIrradiance = tkn::loadShader(dev, "planet/preIrradiance.comp");
 		if(!preTrans || !preSingleScat || !preMultiScat) {
 			dlg_error("Failed to reload/compile pcs computation shaders");
 			return false;
@@ -570,27 +495,6 @@ public:
 		cpi.stage.module = *preInScat;
 		preInScat_.pipe = {dev, cpi};
 
-		return true;
-	}
-
-	bool loadRenderPipe() {
-		auto& dev = device();
-		vpp::ShaderModule vert(dev, tkn_fullscreen_vert_data);
-		auto mod = tkn::loadShader(dev, "planet/sky-pcs.frag");
-		if(!mod) {
-			dlg_error("Failed to reload/compile sky-pcs.frag");
-			return false;
-		}
-
-		vpp::GraphicsPipelineInfo gpi{rp_, render_.pipeLayout, {{{
-			{vert, vk::ShaderStageBits::vertex},
-			{*mod, vk::ShaderStageBits::fragment},
-		}}}};
-
-		gpi.assembly.topology = vk::PrimitiveTopology::triangleStrip;
-		gpi.blend.pAttachments = &tkn::noBlendAttachment();
-
-		render_.pipe = {dev, gpi.info()};
 		return true;
 	}
 
@@ -807,26 +711,12 @@ public:
 		vk::endCommandBuffer(genCb_);
 	}
 
-	void render(vk::CommandBuffer cb) {
-		vk::cmdPushConstants(cb, render_.pipeLayout,
-			vk::ShaderStageBits::fragment, 0u, sizeof(u32), &config_.maxScatOrder);
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, render_.pipe);
-		tkn::cmdBindGraphicsDescriptors(cb, render_.pipeLayout, 0, {render_.ds});
-		vk::cmdDraw(cb, 14u, 1, 0, 0); // skybox triangle strip
-	}
-
-	// Returns whether a rerecord is needed
-	bool updateDevice(const tkn::ControlledCamera& cam) {
+	// Returns whether rerecord is needed
+	// TODO: rename to regen or something
+	bool updateDevice() {
 		auto res = false;
-		if(reloadRenderPipe_) {
-			reloadRenderPipe_ = false;
-			loadRenderPipe();
-			res = true;
-		}
-
 		if(reloadGenPipes_) {
 			loadGenPipes();
-			recordGenCb();
 			res = true;
 			regen_ = true;
 		}
@@ -840,6 +730,9 @@ public:
 		}
 
 		if(regen_) {
+			// TODO: not needed in most cases
+			recordGenCb();
+
 			regen_ = false;
 			vk::SubmitInfo si;
 			si.commandBufferCount = 1u;
@@ -847,26 +740,15 @@ public:
 			si.pSignalSemaphores = &genSem_.vkHandle();
 			si.signalSemaphoreCount = 1u;
 
+			auto map = ubo_.memoryMap();
+			auto span = map.span();
+			tkn::write(span, config_.atmos);
+			map.flush();
+
 			auto& qs = device().queueSubmitter();
 			qs.add(si);
 			waitSemaphore = genSem_;
 		}
-
-		auto map = ubo_.memoryMap();
-		auto span = map.span();
-
-		UboData data;
-		data.atmosphere = config_.atmos;
-		data.toSun = toSun;
-		data.viewPos = cam.position();
-		data.camNear = -cam.near();
-		data.camDir = cam.dir();
-		data.camUp = cam.up();
-		data.camAspect = cam.aspect();
-		data.camFov = *cam.perspectiveFov();
-		data.camFar = -cam.far();
-		tkn::write(span, data);
-		map.flush();
 
 		return res;
 	}
@@ -933,9 +815,9 @@ public:
 			// mie
 			float mieH;
 			readT(mieH, pa, "mie.scaleHeight");
-			atmos.mieDensity.constantTerm = 0.f;
+			readT(atmos.mieDensity.expTerm, pa, "mie.expScale");
+			atmos.mieDensity.constantTerm = 0.0f;
 			atmos.mieDensity.expScale = -1.f / mieH;
-			atmos.mieDensity.expTerm = 1.f;
 			atmos.mieDensity.lienarTerm = 0.f;
 			readT(atmos.mieG, pa, "mie.g");
 
@@ -955,9 +837,9 @@ public:
 			// rayleigh
 			float rayleighH;
 			readT(rayleighH, pa, "rayleigh.scaleHeight");
+			readT(atmos.rayleighDensity.expTerm, pa, "rayleigh.expScale");
 			atmos.rayleighDensity.constantTerm = 0.f;
 			atmos.rayleighDensity.expScale = -1.f / rayleighH;
-			atmos.rayleighDensity.expTerm = 1.f;
 			atmos.rayleighDensity.lienarTerm = 0.f;
 
 			auto rayleighScatUse = qwe::asT<std::string_view>(pa, "rayleigh.scattering.use");
@@ -1108,10 +990,7 @@ public:
 				config_.maxScatOrder = order;
 				regen_ = true;
 				return true;
-			} case swa_key_r:
-				reloadRenderPipe_ = true;
-				return true;
-			case swa_key_c:
+			} case swa_key_c:
 				loadConfig();
 				return true;
 			case swa_key_t:
@@ -1122,12 +1001,17 @@ public:
 		}
 	}
 
+	const auto& scatTableRayleigh() const { return scatTableRayleigh_; }
+	const auto& scatTableMie() const { return scatTableMie_; }
+	const auto& scatTableCombined() const { return scatTableCombined_; }
+	const auto& irradianceTable() const { return irradianceTable_; }
+	const auto& transTable() const { return transTable_; }
+
 private:
 	vk::Sampler sampler_;
 	vk::RenderPass rp_;
 	vpp::SubBuffer ubo_;
 
-	bool reloadRenderPipe_ {}; // whether to reload render pipe on updateDevice
 	bool reloadGenPipes_ {}; // whether to recreate gen pipes on updateDevice
 	bool regen_ {true}; // whether to regen on updateDevice
 	bool recreateTables_ {}; // whether to recreate tables on updateDevice
@@ -1151,14 +1035,7 @@ private:
 	vpp::ViewableImage scatTableCombined_; // accumulated scattering
 
 	// NOTE: we can probably combine some of the dsLayout's and pipeLayout's
-	// later on. Especially for just precomputation.
-	struct {
-		vpp::TrDsLayout dsLayout;
-		vpp::TrDs ds;
-		vpp::PipelineLayout pipeLayout;
-		vpp::Pipeline pipe;
-	} render_;
-
+	// later on
 	struct {
 		vpp::TrDsLayout dsLayout;
 		vpp::TrDs ds;

@@ -600,6 +600,26 @@ vec3 getScattering(IN(Atmosphere) atmos,
 		rayIntersectsGround);
 }
 
+// TODO: confusing naming
+vec3 getCombinedScattering(IN(Atmosphere) atmos,
+		IN(sampler3D) multiScatTex, IN(sampler3D) singleMScatTex,
+		IN(ARay) ray, float mu_s, float nu, bool rayIntersectsGround,
+		OUT(vec3) singleMieScattering) {
+	vec3 uvw0, uvw1;
+	float lerp;
+	lerpScatteringCoords(atmos, textureSize(multiScatTex, 0),
+		ray, mu_s, nu, rayIntersectsGround, uvw0, uvw1, lerp);
+
+	singleMieScattering = mix(
+		rgb(texture(singleMScatTex, uvw0)),
+		rgb(texture(singleMScatTex, uvw1)),
+		lerp);
+	return mix(
+		rgb(texture(multiScatTex, uvw0)),
+		rgb(texture(multiScatTex, uvw1)),
+		lerp);
+}
+
 // ground irradiance
 // most naive mapping between ray and tex unit
 vec3 computeIndirectIrradiance(IN(Atmosphere) atmos,
@@ -809,5 +829,85 @@ vec3 computeMultipleScattering(IN(Atmosphere) atmos, IN(sampler2D) transTex,
 	}
 
 	return sum;
+}
+
+// TODO: wip
+vec3 getSkyRadianceToPoint(
+    IN(Atmosphere) atmosphere,
+    IN(sampler2D) transmittance_texture,
+    IN(sampler3D) scattering_texture,
+    IN(sampler3D) single_mie_scattering_texture,
+    vec3 camera, IN(vec3) point, float shadow_length,
+    IN(vec3) sun_direction, OUT(vec3) transmittance) {
+  // Compute the distance to the top atmosphere boundary along the view ray,
+  // assuming the viewer is in space (or NaN if the view ray does not intersect
+  // the atmosphere).
+  vec3 view_ray = normalize(point - camera);
+  float r = length(camera);
+  float rmu = dot(camera, view_ray);
+  float distance_to_top_atmosphere_boundary = -rmu -
+      sqrt(rmu * rmu - r * r + atmosphere.top * atmosphere.top);
+  // If the viewer is in space and the view ray intersects the atmosphere, move
+  // the viewer to the top atmosphere boundary (along the view ray):
+  if (distance_to_top_atmosphere_boundary > 0.0) {
+    camera = camera + view_ray * distance_to_top_atmosphere_boundary;
+    r = atmosphere.top;
+    rmu += distance_to_top_atmosphere_boundary;
+  }
+
+  // Compute the r, mu, mu_s and nu parameters for the first texture lookup.
+  float mu = rmu / r;
+  float mu_s = dot(camera, sun_direction) / r;
+  float nu = dot(view_ray, sun_direction);
+  float d = length(point - camera);
+
+  ARay ray = {r, mu};
+  bool ray_r_mu_intersects_ground = intersectsGround(atmosphere, ray);
+
+  transmittance = getTransmittance(atmosphere, transmittance_texture,
+      ray, d, ray_r_mu_intersects_ground);
+
+  vec3 single_mie_scattering;
+  vec3 scattering = getCombinedScattering(
+      atmosphere, scattering_texture, single_mie_scattering_texture,
+      ray, mu_s, nu, ray_r_mu_intersects_ground,
+      single_mie_scattering);
+
+  // Compute the r, mu, mu_s and nu parameters for the second texture lookup.
+  // If shadow_length is not 0 (case of light shafts), we want to ignore the
+  // scattering along the last shadow_length meters of the view ray, which we
+  // do by subtracting shadow_length from d (this way scattering_p is equal to
+  // the S|x_s=x_0-lv term in Eq. (17) of our paper).
+  d = max(d - shadow_length, 0.f);
+  float r_p = clamp(sqrt(d * d + 2.f * r * mu * d + r * r),
+		atmosphere.bottom, atmosphere.top);
+  float mu_p = (r * mu + d) / r_p;
+  float mu_s_p = (r * mu_s + d * nu) / r_p;
+
+  vec3 single_mie_scattering_p;
+  ARay ray1 = {r_p, mu_p};
+  vec3 scattering_p = getCombinedScattering(
+      atmosphere, scattering_texture, single_mie_scattering_texture,
+      ray1, mu_s_p, nu, ray_r_mu_intersects_ground,
+      single_mie_scattering_p);
+
+  // Combine the lookup results to get the scattering between camera and point.
+  vec3 shadow_transmittance = transmittance;
+  if (shadow_length > 0.0) {
+    // This is the T(x,x_s) term in Eq. (17) of our paper, for light shafts.
+    shadow_transmittance = getTransmittance(atmosphere, transmittance_texture,
+        ray, d, ray_r_mu_intersects_ground);
+  }
+
+  scattering = scattering - shadow_transmittance * scattering_p;
+  single_mie_scattering =
+      single_mie_scattering - shadow_transmittance * single_mie_scattering_p;
+
+  // Hack to avoid rendering artifacts when the sun is below the horizon.
+  single_mie_scattering = single_mie_scattering *
+      smoothstep(float(0.0), float(0.01), mu_s);
+
+  return scattering * phaseRayleigh(nu) + single_mie_scattering *
+      phase(nu, atmosphere.mieG);
 }
 

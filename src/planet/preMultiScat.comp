@@ -1,0 +1,38 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#include "precoscat.hpp"
+
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+layout(set = 0, binding = 0) uniform AtmosphereUBO {
+	Atmosphere atmosphere;
+};
+layout(set = 0, binding = 1) uniform sampler2D transTex;
+layout(set = 0, binding = 2) uniform sampler3D scatInTex; // step 1
+layout(set = 0, binding = 3) writeonly uniform image3D outScat;
+layout(set = 0, binding = 4, rgba16f) uniform image3D outCombined;
+
+void main() {
+	uvec3 size = imageSize(outScat);
+	uvec3 pixel = gl_GlobalInvocationID.xyz;
+	if(pixel.x >= size.x || pixel.y >= size.y || pixel.z >= size.z) {
+		return;
+	}
+
+	// get params for this invocation
+	ARay ray;
+	float mu_s, nu;
+	bool rayIntersectsGround;
+	scatParamsFromPixel(atmosphere, pixel, size, ray, mu_s, nu, rayIntersectsGround);
+
+	// compute
+	vec3 scat = computeMultipleScattering(atmosphere, transTex, scatInTex,
+		ray, mu_s, nu, rayIntersectsGround);
+	imageStore(outScat, ivec3(pixel), vec4(scat, 1.0));
+
+	// we multiply it later with the rayleigh term
+	scat /= phaseRayleigh(nu);
+	vec3 prev = imageLoad(outCombined, ivec3(pixel)).rgb;
+	imageStore(outCombined, ivec3(pixel), vec4(prev + scat, 1.0));
+}
+

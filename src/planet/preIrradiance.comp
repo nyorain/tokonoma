@@ -1,0 +1,51 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#include "precoscat.hpp"
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+layout(set = 0, binding = 0) uniform AtmosphereUBO {
+	Atmosphere atmosphere;
+};
+layout(set = 0, binding = 1) uniform sampler2D transTex;
+layout(set = 0, binding = 2) uniform sampler3D scatRTex;
+layout(set = 0, binding = 3) uniform sampler3D scatMTex;
+layout(set = 0, binding = 4) uniform sampler3D scatMultiTex; // last iteration
+
+layout(set = 0, binding = 5) writeonly uniform image2D outDelta;
+layout(set = 0, binding = 6, rgba16f) uniform image2D outIrradiance;
+
+layout(push_constant) uniform PCR {
+	uint scatOrder;
+};
+
+void main() {
+	uvec2 size = imageSize(outIrradiance);
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 unitRange = pixel / (size - 1.f);
+	ARay toSun = rayFromGroundTexUnit(atmosphere, unitRange);
+
+	vec3 irrad;
+	vec4 accum;
+	if(scatOrder >= 2) {
+		irrad = computeIndirectIrradiance(atmosphere,
+			scatRTex, scatMTex, scatMultiTex, toSun, scatOrder);
+
+		vec4 prev = imageLoad(outIrradiance, ivec2(pixel));
+		accum = prev + vec4(irrad, 0.0);
+	} else {
+		irrad = computeDirectIrradiance(atmosphere, transTex, toSun);
+
+		// zero-initialize the accumulation texture. We don't want
+		// the direct irradiance in there.
+		accum = vec4(0.0);
+	}
+
+	imageStore(outDelta, ivec2(pixel), vec4(irrad, 1.0));
+	imageStore(outIrradiance, ivec2(pixel), accum);
+}
+

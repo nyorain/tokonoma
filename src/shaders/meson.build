@@ -260,6 +260,7 @@ shaders_src = {
 		['update.comp'],
 		['dispatch.comp'],
 		['pp.frag'],
+		['sky.comp'],
 	],
 }
 

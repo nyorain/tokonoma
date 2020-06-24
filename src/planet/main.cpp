@@ -30,6 +30,7 @@
 #include <shaders/planet.update.comp.h>
 #include <shaders/planet.dispatch.comp.h>
 #include <shaders/planet.pp.frag.h>
+#include <shaders/planet.sky.comp.h>
 
 using namespace tkn::types;
 
@@ -38,11 +39,24 @@ using namespace tkn::types;
 class PlanetApp : public tkn::App {
 public:
 	static constexpr auto colorFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto atmosGroupDimSize = 8u;
 
-	struct UboData {
+	struct TerrainUboData {
 		nytl::Mat4f vp;
 		nytl::Vec3f eye;
 		u32 enable;
+	};
+
+	struct AtmosphereUboData {
+		Atmosphere atmosphere;
+		vec3 toSun;
+		float camAspect;
+		vec3 viewPos;
+		float camNear;
+		vec3 camDir;
+		float camFar;
+		vec3 camUp;
+		float camFov;
 	};
 
 public:
@@ -53,6 +67,13 @@ public:
 		}
 
 		cam_.useSpaceshipControl();
+		cam_.near(-5.f);
+		cam_.far(-100000.f);
+		auto& c = **cam_.spaceshipControl();
+		c.controls.move.mult = 10000.f;
+		c.controls.move.fastMult = 100.f;
+		c.controls.move.slowMult = 0.05f;
+
 		auto& dev = vkDevice();
 		depthFormat_ = tkn::findDepthFormat(dev);
 		if(depthFormat_ == vk::Format::undefined) {
@@ -63,7 +84,7 @@ public:
 		sampler_ = vpp::Sampler(dev, tkn::linearSamplerInfo());
 
 		auto devMem = dev.deviceMemoryTypes();
-		ubo_ = {dev.bufferAllocator(), sizeof(UboData),
+		ubo_ = {dev.bufferAllocator(), sizeof(TerrainUboData),
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 		// indirect dispatch buffer
@@ -272,24 +293,88 @@ public:
 		comp_.indirect.pipe = {dev, cpi};
 	}
 
-
 	void initAtmosphere() {
 		auto& dev = vkDevice();
-		auto pass0 = {0u};
-		auto rpi = tkn::renderPassInfo({{colorFormat}}, {{pass0}});
-		atmosphere_.rp = {dev, rpi.info()};
-		nameHandle(atmosphere_.rp);
 
 		auto& sky = atmosphere_.sky;
 		sky.configFile = TKN_BASE_DIR "/assets/planet.atmos.qwe";
-		atmosphere_.sky.init(dev, sampler_, atmosphere_.rp,
-			cam_.near(), cam_.far());
+		atmosphere_.sky.init(dev, sampler_);
+
+		auto bindings = std::array{
+			// atmosphere parameters
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer),
+			// tranmission
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
+			// scat rayleigh
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
+			// scat mie
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
+			// combined scattering
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
+			// in depth
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
+			// in,out color
+			vpp::descriptorBinding(vk::DescriptorType::storageImage,
+				vk::ShaderStageBits::compute),
+		};
+
+		atmosphere_.dsLayout.init(dev, bindings);
+		nameHandle(atmosphere_.dsLayout);
+
+		vk::PushConstantRange pcr;
+		pcr.size = sizeof(u32);
+		pcr.stageFlags = vk::ShaderStageBits::compute;
+		atmosphere_.pipeLayout = {dev, {{atmosphere_.dsLayout.vkHandle()}}, {{pcr}}};
+		nameHandle(atmosphere_.pipeLayout);
+
+		atmosphere_.ubo = {dev.bufferAllocator(), sizeof(AtmosphereUboData),
+			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+
+		atmosphere_.ds = {dev.descriptorAllocator(), atmosphere_.dsLayout};
+		nameHandle(atmosphere_.ds);
+
+		// pipe
+		auto mod = vpp::ShaderModule(dev, planet_sky_comp_data);
+		auto cgs = tkn::ComputeGroupSizeSpec(atmosGroupDimSize, atmosGroupDimSize);
+		vk::ComputePipelineCreateInfo cpi;
+		cpi.layout = atmosphere_.pipeLayout;
+		cpi.stage.module = mod;
+		cpi.stage.pName = "main";
+		cpi.stage.stage = vk::ShaderStageBits::compute;
+		cpi.stage.pSpecializationInfo = &cgs.spec;
+		atmosphere_.pipe = {dev, cpi};
+	}
+
+	void updateAtmosphereDs() {
+		auto& sky = atmosphere_.sky;
+		vpp::DescriptorSetUpdate dsuRender(atmosphere_.ds);
+		dsuRender.uniform({{{atmosphere_.ubo}}});
+		dsuRender.imageSampler({{{}, sky.transTable().imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, sky.scatTableRayleigh().imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, sky.scatTableMie().imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, sky.scatTableCombined().imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+
+		// window-size-dependent buffers
+		dsuRender.imageSampler({{{}, terrain_.depth.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.storage({{{}, terrain_.color.imageView(),
+			vk::ImageLayout::general}});
 	}
 
 	void initRenderTerrain() {
 		auto& dev = vkDevice();
 		auto pass0 = {0u, 1u};
 		auto rpi = tkn::renderPassInfo({{colorFormat, depthFormat_}}, {{pass0}});
+		rpi.attachments[0].finalLayout = vk::ImageLayout::general;
 		terrain_.rp = {dev, rpi.info()};
 		nameHandle(terrain_.rp);
 
@@ -504,17 +589,27 @@ public:
 		renderTerrain(cb);
 		vk::cmdEndRenderPass(cb);
 
-		// render atmosphere
-		auto cva = std::array {
-			vk::ClearValue{0.f, 0.f, 0.f, 1.f}, // color
-		};
-		vk::cmdBeginRenderPass(cb, {
-			atmosphere_.rp, atmosphere_.fb,
-			{0u, 0u, width, height},
-			u32(cva.size()), cva.data()
-		}, {});
-		atmosphere_.sky.render(cb);
-		vk::cmdEndRenderPass(cb);
+		// atmosphere
+		u32 scatOrder = atmosphere_.sky.config_.maxScatOrder;
+		vk::cmdPushConstants(cb, atmosphere_.pipeLayout,
+			vk::ShaderStageBits::compute, 0u, sizeof(u32), &scatOrder);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, atmosphere_.pipe);
+		tkn::cmdBindComputeDescriptors(cb, atmosphere_.pipeLayout, 0, {atmosphere_.ds});
+
+		auto cx = tkn::ceilDivide(width, atmosGroupDimSize);
+		auto cy = tkn::ceilDivide(height, atmosGroupDimSize);
+		vk::cmdDispatch(cb, cx, cy, 1u);
+
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = terrain_.color.image();
+		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+		barrier.oldLayout = vk::ImageLayout::general;
+		barrier.srcAccessMask = vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite;
+		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		barrier.dstAccessMask = vk::AccessBits::shaderRead;
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
+			vk::PipelineStageBits::fragmentShader | vk::PipelineStageBits::computeShader,
+			{}, {}, {}, {{barrier}});
 
 		// post process
 		auto cvpp = std::array {
@@ -546,11 +641,11 @@ public:
 
 		// color
 		usage = vk::ImageUsageBits::colorAttachment |
-			vk::ImageUsageBits::sampled;
+			vk::ImageUsageBits::sampled |
+			vk::ImageUsageBits::storage;
 		info = vpp::ViewableImageCreateInfo(colorFormat,
 			vk::ImageAspectBits::color, size, usage);
 		terrain_.color = {dev.devMemAllocator(), info, devMem};
-		atmosphere_.color = {dev.devMemAllocator(), info, devMem};
 
 		// fb
 		auto atts0 = {terrain_.color.vkImageView(), terrain_.depth.vkImageView()};
@@ -563,18 +658,11 @@ public:
 		fbi.pAttachments = atts0.begin();
 		terrain_.fb = {dev, fbi};
 
-		auto atts1 = {atmosphere_.color.vkImageView()};
-		fbi.renderPass = atmosphere_.rp;
-		fbi.attachmentCount = atts1.size();
-		fbi.pAttachments = atts1.begin();
-		atmosphere_.fb = {dev, fbi};
-
 		// update descriptors
-		atmosphere_.sky.updateRenderInputs(terrain_.color.imageView(),
-			terrain_.depth.imageView());
+		updateAtmosphereDs();
 
 		vpp::DescriptorSetUpdate dsu(pp_.ds);
-		dsu.imageSampler({{{}, atmosphere_.color.imageView(),
+		dsu.imageSampler({{{}, terrain_.color.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsu.apply();
 
@@ -602,11 +690,13 @@ public:
 
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
-			auto VP = cam_.viewProjectionMatrix();
+			auto vp = cam_.viewProjectionMatrix();
 
-			tkn::write(span, VP);
-			tkn::write(span, cam_.position());
-			tkn::write(span, u32(!frozen_));
+			TerrainUboData data;
+			data.vp = vp;
+			data.eye = cam_.position();
+			data.enable = !frozen_;
+			tkn::write(span, data);
 			map.flush();
 
 			// stars ubo
@@ -614,9 +704,36 @@ public:
 			span = map.span();
 			tkn::write(span, cam_.fixedViewProjectionMatrix());
 			map.flush();
+
+			// atmosphere ubo
+			AtmosphereUboData aud;
+			aud.atmosphere = atmosphere_.sky.config_.atmos;
+			aud.camAspect = cam_.aspect();
+			aud.camDir = cam_.dir();
+			aud.camNear = -cam_.near();
+			aud.camFar = -cam_.far();
+			aud.camFov = *cam_.perspectiveFov();
+			aud.camUp = cam_.up();
+			aud.toSun = toSun_;
+			aud.viewPos = cam_.position();
+
+			map = atmosphere_.ubo.memoryMap();
+			span = map.span();
+			tkn::write(span, aud);
+			map.flush();
 		}
 
-		atmosphere_.sky.updateDevice(cam_);
+		// TODO: more explicit regeneration...
+		if(atmosphere_.sky.updateDevice()) {
+			updateAtmosphereDs();
+			Base::scheduleRerecord();
+		}
+
+		if(atmosphere_.sky.waitSemaphore) {
+			Base::addSemaphore(atmosphere_.sky.waitSemaphore,
+				vk::PipelineStageBits::allGraphics);
+			atmosphere_.sky.waitSemaphore = {};
+		}
 	}
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
@@ -627,6 +744,18 @@ public:
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
 		cam_.aspect({w, h});
+	}
+
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
+			return true;
+		}
+
+		if(ev.pressed && atmosphere_.sky.key(ev.keycode)) {
+			return true;
+		}
+
+		return false;
 	}
 
 	const char* name() const override { return "planet"; }
@@ -645,6 +774,7 @@ private:
 	vpp::SubBuffer keys1_; // temporary buffer we write updates to
 
 	bool frozen_ {false};
+	nytl::Vec3f toSun_ {0.f, 1.f, 0.f};
 
 	// render pass: render terrain
 	struct {
@@ -670,10 +800,12 @@ private:
 
 	// render pass: atmosphere
 	struct {
-		vpp::RenderPass rp;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+		vpp::SubBuffer ubo;
 		BrunetonSky sky;
-		vpp::ViewableImage color;
-		vpp::Framebuffer fb;
 	} atmosphere_;
 
 	// render pass: post-process/tonemap

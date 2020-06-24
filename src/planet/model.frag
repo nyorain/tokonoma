@@ -41,12 +41,13 @@ void main() {
 
 	vec3 dphi = sph_dphi(1.f, theta, phi);
 	vec3 dtheta = sph_dtheta(1.f, theta, phi);
+	float fac = 0.1;
 	vec3 n = cross(
-		(1 + 0.25 * h.x) * dtheta + dot(dtheta, 0.25 * h.yzw) * pos, 
-		(1 + 0.25 * h.x) * dphi + dot(dphi, 0.25 * h.yzw) * pos);
+		(1 + fac * h.x) * dtheta + dot(dtheta, fac * h.yzw) * pos, 
+		(1 + fac * h.x) * dphi + dot(dphi, fac * h.yzw) * pos);
 	n = normalize(n);
 
-	const vec3 lightDir = vec3(0, -1, 0);
-	float l = max(dot(n, lightDir), 0.0);
+	const vec3 toLight = vec3(0, 1, 0);
+	float l = max(dot(n, toLight), 0.0);
 	fragColor = vec4(vec3(l), 1);
 }

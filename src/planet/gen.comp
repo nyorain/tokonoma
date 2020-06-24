@@ -51,7 +51,6 @@ void main() {
 
 	vec3 pos = normalize(dir.z + uv.x * dir.x + uv.y * dir.y);
 
-	vec4 h = 0.5 * mfbm(pos);
-	h.x += 0.5;
+	vec4 h = mfbm(pos);
 	imageStore(outCol, ivec3(pixel, dir.face), h);
 }
