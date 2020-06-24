@@ -78,6 +78,9 @@ struct Material {
 	vec2 pad;
 };
 
+// TODO: implement depth <-> z conversion for inverted depth buffer.
+// Then, also for infinite far plane.
+
 // returns the (positive) z value belonging to the given depth buffer value
 // obviously requires the near and far plane values that were used
 // in the perspective projection.
@@ -97,6 +100,18 @@ float ztodepth(float z, float near, float far) {
 vec3 multPos(mat4 transform, vec3 pos) {
 	vec4 v = transform * vec4(pos, 1.0);
 	return vec3(v) / v.w;
+}
+
+vec3 worldDirRay(vec2 uv, vec3 camDir, vec3 camUp, float fov, float aspect) {
+	uv = 2 * uv - 1;
+	vec3 dir = camDir;
+	vec3 x = normalize(cross(dir, camUp));
+	vec3 y = cross(x, dir);
+
+	float maxy = tan(fov / 2);
+	uv *= vec2(maxy * aspect, maxy);
+
+	return normalize(dir + uv.x * x + uv.y * y);
 }
 
 // Reconstructs the fragment position in world space from the it's uv coord,

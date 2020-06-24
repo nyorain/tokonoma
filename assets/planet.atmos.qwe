@@ -1,0 +1,224 @@
+# vim: set ts=2 sw=2 noexpandtab syntax=yaml:
+
+meta:
+	# whether to recreate table textures on each config reload
+	recreateTables: true
+	# whether to reload generation pipeline
+	reloadGen: true
+	# compute work group sizes (per dimension)
+	# Aiming for a total of ~64 invorcations per WorkGroup is usually
+	# a good idea. Could do less if the done work is heavy
+	groupDimSize2D: 8
+	groupDimSize3D: 4
+	# texture sizes and formats
+	transmission:
+		format: r32g32b32a32Sfloat
+		# format: r16g16b16a16Sfloat
+		# format: r8g8b8a8Unorm
+		muSize: 512
+		heightSize: 128
+	scatter:
+		format: r16g16b16a16Sfloat
+		nuSize: 8
+		muSSize: 32
+		muSize: 256
+		heightSize: 64
+	irradiance:
+		format: r16g16b16a16Sfloat
+		muSSize: 512
+		heightSize: 128
+	# maximum multiscattering level. Must be >= 1
+	# table generation time increases linearly with this
+	maxScatterOrder: 3
+atmosphere:
+	# atmosphere boundaries in meters
+	# mini-earth
+	# bottom: 63600
+	# top: 64200
+
+	# current atmosphere width: ~60km
+	bottom: 6360000
+	top: 6420000
+	sunAngularRadius: 0.004675
+	# Minimum mu_s we store in out scattering lookup tables.
+	# A negative mu_s value means that the sun is below the horizon (when
+	# on the ground at least) and we don't need to store extremely
+	# low values (e.g. -1 means that the sun is exactly on the other
+	# side of the plant).
+	# With a larger atmosphere, the sun might influence the sky more when
+	# on the other side of the planet so this is somewhat dependent on atmosphere
+	# size.
+	minMuS: -0.2
+	# average ground color, rgb. Used for multi scattering
+	groundAlbedo:
+		0.1
+		0.1
+		0.1
+	mie:
+		g: 0.8
+		# ref: 1200
+		scaleHeight: 1200
+		scattering:
+			# compute: generate it manually, physically based. 
+			#   Uses 'alpha', 'beta', 'scatterAlbedo' parameter.
+			# rgb: Just use given rgb parameters
+			use: compute
+			# ref: 0.0
+			alpha: 0.0
+			# ref 5.328e-3
+			beta: 1.328e-2
+			scatterAlbedo: 0.95
+			# only for use: rgb
+			rgb:
+				8.e-5
+				8.e-5
+				8.e-5
+	rayleigh:
+		scattering:
+			use: compute
+			# Bruneton's reference: 1.8402e-6
+			strength: 4.8e-6
+			# only for use: rgb
+			# From http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
+			# Those values should rather be calculated with a wavelength-dependent
+			# formula
+			rgb:
+				6.95e-5
+				1.18e-4
+				2.44e-4
+		# ref: 7000
+		scaleHeight: 7000
+	# absorption particles
+	# https://ozonewatch.gsfc.nasa.gov/facts/SH.html
+	ozone: 
+		# we model ozone as linear increase from start to peak
+		# and then linear decrease from peak to end
+		# TODO: there are graph that make it look like the decrase after
+		# the peak is more exponential, investigate that
+		start: 10000
+		peak: 25000	
+		end: 40000
+		# reference:
+		# dobsonUnit: 2.687e20
+		# maxDensity: 300.0 * dobsonUnit / (peak - start)
+		#  i.e. 5.374e18
+		maxDensity: 5.374e18
+		enable: true
+		scattering:
+			crossSection:
+				start: 360
+				end: 830
+				values:
+					1.18e-27
+					2.182e-28
+					2.818e-28
+					6.636e-28
+					1.527e-27
+					2.763e-27
+					5.52e-27
+					8.451e-27
+					1.582e-26
+					2.316e-26
+					3.669e-26
+					4.924e-26
+					7.752e-26
+					9.016e-26
+					1.48e-25
+					1.602e-25
+					2.139e-25
+					2.755e-25
+					3.091e-25
+					3.5e-25
+					4.266e-25
+					4.672e-25
+					4.398e-25
+					4.701e-25
+					5.019e-25
+					4.305e-25
+					3.74e-25
+					3.215e-25
+					2.662e-25
+					2.238e-25
+					1.852e-25
+					1.473e-25
+					1.209e-25
+					9.423e-26
+					7.455e-26
+					6.566e-26
+					5.105e-26
+					4.15e-26
+					4.228e-26
+					3.237e-26
+					2.451e-26
+					2.801e-26
+					2.534e-26
+					1.624e-26
+					1.465e-26
+					2.078e-26
+					1.383e-26
+					7.105e-27
+	solarIrradiance:
+		use: spectral
+		# a really crude approximation of rgb values
+		rgb:
+			5.5
+			5.5
+			5.5
+		# spectral values of solar irradiance
+		# taken directly from E. Bruneton's sample implementation:
+		# Source "Reference Solar Spectral Irradiance: ASTM G-173", ETR column,
+		# (see http://rredc.nrel.gov/solar/spectra/am1.5/ASTMG173/ASTMG173.html),
+		# summed and averaged in each bin.
+		spectral:
+			# minimum/maximum lambda values
+			start: 360
+			end: 830
+			values:
+				1.11776
+				1.14259
+				1.01249
+				1.14716
+				1.72765
+				1.73054
+				1.6887
+				1.61253
+				1.91198
+				2.03474
+				2.02042
+				2.02212
+				1.93377
+				1.95809
+				1.91686
+				1.8298
+				1.8685
+				1.8931
+				1.85149
+				1.8504
+				1.8341
+				1.8345
+				1.8147
+				1.78158
+				1.7533
+				1.6965
+				1.68194
+				1.64654
+				1.6048
+				1.52143
+				1.55622
+				1.5113
+				1.474
+				1.4482
+				1.41018
+				1.36775
+				1.34188
+				1.31429
+				1.28303
+				1.26758
+				1.2367
+				1.2082
+				1.18737
+				1.14683
+				1.12362
+				1.1058
+				1.07124
+				1.04992

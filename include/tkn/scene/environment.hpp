@@ -80,7 +80,7 @@ public:
 		vk::RenderPass renderPass; // render pass in which it is rendered
 
 		vk::SampleCountBits samples {vk::SampleCountBits::e1};
-		bool reverseDepth {false}; // whether to use reversed depth checking
+		bool reverseDepth {false}; // whether to use reversed depth testing
 		unsigned subpass {0u};
 
 		// When this is true, will create a skybox that reads from
@@ -111,7 +111,7 @@ public:
 
 	// Expects a descriptor set bound at slot 0, containing
 	// a ubo at binding 0. That ubo starts with a mat4 holding
-	// the view and projection matrix to be used for the skybox.
+	// the view-projection matrix to be used for the skybox.
 	// Simply see skybox.vert.
 	void render(vk::CommandBuffer cb, vk::DescriptorSet ds);
 

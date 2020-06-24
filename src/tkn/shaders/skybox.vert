@@ -1,6 +1,11 @@
 #version 450
 
-layout(location = 0) out vec3 uvw;
+layout(location = 0) out vec3 xyz;
+
+// TODO: this does not seems to work, even with 'noperspective' in the shader.
+// Would be useful in some cases.
+layout(location = 1) out vec3 uvw;
+
 layout(set = 0, binding = 0, row_major) uniform UBO {
 	mat4 transform;
 } ubo;
@@ -17,9 +22,10 @@ void main() {
 	float z = 2 * float((0x31e3 & mask) != 0) - 1;
 
 	vec3 pos = vec3(x, y, z);
-	uvw = pos;
+	xyz = pos;
 
 	gl_Position = ubo.transform * vec4(pos, 1.0);
+	uvw = vec3(0.5 + 0.5 * gl_Position.xy, gl_Position.w);
 
 	if(reverseDepth) {
 		// This just means ndcPosition.z = 0.f. Rendering it behind all other
@@ -33,6 +39,6 @@ void main() {
 		// Will always project vertices on the far plane, behind
 		// all other geometry, allowing to render the skybox after
 		// the scene.
-		gl_Position = gl_Position.xyww;
+		gl_Position.z = gl_Position.w;
 	}
 }

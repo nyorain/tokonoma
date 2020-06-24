@@ -1,3 +1,5 @@
+#include "sky.hpp"
+
 #include <tkn/app.hpp>
 #include <tkn/ccam.hpp>
 #include <tkn/render.hpp>
@@ -5,6 +7,7 @@
 #include <tkn/util.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/formats.hpp>
+#include <tkn/scene/environment.hpp>
 #include <tkn/scene/shape.hpp>
 
 #include <vpp/trackedDescriptor.hpp>
@@ -145,15 +148,55 @@ public:
 		heightmap_ = tkn::initTexture(initHeightmap, wb);
 		nameHandle(heightmap_);
 
-		vk::endCommandBuffer(cb);
-		qs.wait(qs.add(cb));
-
 		initUpdateComp();
 		initIndirectComp();
+		initAtmosphere();
 		initRenderTerrain();
 		initRenderPP();
 
+		// starmap & skybox renderer
+		initStars(wb);
+
+		vk::endCommandBuffer(cb);
+		qs.wait(qs.add(cb));
+
 		return true;
+	}
+
+	void initStars(tkn::WorkBatcher& wb) {
+		auto& dev = vkDevice();
+		auto bindings = {
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::vertex),
+		};
+
+		stars_.ubo = {dev.bufferAllocator(), sizeof(nytl::Mat4f),
+			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+		stars_.dsLayout.init(dev, bindings);
+		stars_.dsCam = {dev.descriptorAllocator(), stars_.dsLayout};
+
+		vpp::DescriptorSetUpdate dsuCam(stars_.dsCam);
+		dsuCam.uniform({{{stars_.ubo}}});
+		dsuCam.apply();
+
+		tkn::SkyboxRenderer::PipeInfo skyboxInfo;
+		skyboxInfo.sampler = sampler_;
+		skyboxInfo.camDsLayout = stars_.dsLayout;
+		skyboxInfo.renderPass = terrain_.rp;
+		stars_.renderer.create(dev, skyboxInfo);
+
+		auto starmapProvider = tkn::loadImage("galaxy2.ktx");
+		tkn::TextureCreateParams params;
+		params.cubemap = true;
+		params.usage = vk::ImageUsageBits::sampled;
+		auto initTex = tkn::createTexture(wb, std::move(starmapProvider), params);
+		stars_.map = tkn::initTexture(initTex, wb);
+
+		stars_.dsMap = {dev.descriptorAllocator(), stars_.renderer.dsLayout()};
+		vpp::DescriptorSetUpdate dsuMap(stars_.dsMap);
+		dsuMap.imageSampler({{{}, stars_.map.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuMap.apply();
 	}
 
 	void initUpdateComp() {
@@ -227,6 +270,20 @@ public:
 		cpi.stage.pName = "main";
 		cpi.stage.stage = vk::ShaderStageBits::compute;
 		comp_.indirect.pipe = {dev, cpi};
+	}
+
+
+	void initAtmosphere() {
+		auto& dev = vkDevice();
+		auto pass0 = {0u};
+		auto rpi = tkn::renderPassInfo({{colorFormat}}, {{pass0}});
+		atmosphere_.rp = {dev, rpi.info()};
+		nameHandle(atmosphere_.rp);
+
+		auto& sky = atmosphere_.sky;
+		sky.configFile = TKN_BASE_DIR "/assets/planet.atmos.qwe";
+		atmosphere_.sky.init(dev, sampler_, atmosphere_.rp,
+			cam_.near(), cam_.far());
 	}
 
 	void initRenderTerrain() {
@@ -416,6 +473,11 @@ public:
 
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, terrain_.pipe);
 		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
+
+		// stars are also rendered in this pass
+		auto& sbr = stars_.renderer;
+		tkn::cmdBindGraphicsDescriptors(cb, sbr.pipeLayout(), 0, {stars_.dsCam});
+		sbr.render(cb, stars_.dsMap);
 	}
 
 	void record(const RenderBuffer& rb) override {
@@ -440,6 +502,18 @@ public:
 			u32(cvT.size()), cvT.data()
 		}, {});
 		renderTerrain(cb);
+		vk::cmdEndRenderPass(cb);
+
+		// render atmosphere
+		auto cva = std::array {
+			vk::ClearValue{0.f, 0.f, 0.f, 1.f}, // color
+		};
+		vk::cmdBeginRenderPass(cb, {
+			atmosphere_.rp, atmosphere_.fb,
+			{0u, 0u, width, height},
+			u32(cva.size()), cva.data()
+		}, {});
+		atmosphere_.sky.render(cb);
 		vk::cmdEndRenderPass(cb);
 
 		// post process
@@ -476,21 +550,31 @@ public:
 		info = vpp::ViewableImageCreateInfo(colorFormat,
 			vk::ImageAspectBits::color, size, usage);
 		terrain_.color = {dev.devMemAllocator(), info, devMem};
+		atmosphere_.color = {dev.devMemAllocator(), info, devMem};
 
 		// fb
-		auto attachments = {terrain_.color.vkImageView(), terrain_.depth.vkImageView()};
+		auto atts0 = {terrain_.color.vkImageView(), terrain_.depth.vkImageView()};
 		vk::FramebufferCreateInfo fbi;
 		fbi.renderPass = terrain_.rp;
 		fbi.width = size.width;
 		fbi.height = size.height;
 		fbi.layers = 1;
-		fbi.attachmentCount = attachments.size();
-		fbi.pAttachments = attachments.begin();
+		fbi.attachmentCount = atts0.size();
+		fbi.pAttachments = atts0.begin();
 		terrain_.fb = {dev, fbi};
 
-		// update pp ds
+		auto atts1 = {atmosphere_.color.vkImageView()};
+		fbi.renderPass = atmosphere_.rp;
+		fbi.attachmentCount = atts1.size();
+		fbi.pAttachments = atts1.begin();
+		atmosphere_.fb = {dev, fbi};
+
+		// update descriptors
+		atmosphere_.sky.updateRenderInputs(terrain_.color.imageView(),
+			terrain_.depth.imageView());
+
 		vpp::DescriptorSetUpdate dsu(pp_.ds);
-		dsu.imageSampler({{{}, terrain_.color.imageView(),
+		dsu.imageSampler({{{}, atmosphere_.color.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsu.apply();
 
@@ -524,7 +608,15 @@ public:
 			tkn::write(span, cam_.position());
 			tkn::write(span, u32(!frozen_));
 			map.flush();
+
+			// stars ubo
+			map = stars_.ubo.memoryMap();
+			span = map.span();
+			tkn::write(span, cam_.fixedViewProjectionMatrix());
+			map.flush();
 		}
+
+		atmosphere_.sky.updateDevice(cam_);
 	}
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
@@ -557,8 +649,8 @@ private:
 	// render pass: render terrain
 	struct {
 		vpp::RenderPass rp;
-		vpp::PipelineLayout pipeLayout;
 		vpp::TrDsLayout dsLayout;
+		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 		vpp::TrDs ds;
 
@@ -567,11 +659,28 @@ private:
 		vpp::Framebuffer fb;
 	} terrain_;
 
+	struct {
+		vpp::SubBuffer ubo;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs dsCam;
+		tkn::SkyboxRenderer renderer;
+		vpp::TrDs dsMap;
+		vpp::ViewableImage map;
+	} stars_;
+
+	// render pass: atmosphere
+	struct {
+		vpp::RenderPass rp;
+		BrunetonSky sky;
+		vpp::ViewableImage color;
+		vpp::Framebuffer fb;
+	} atmosphere_;
+
 	// render pass: post-process/tonemap
 	struct {
 		vpp::RenderPass rp;
-		vpp::PipelineLayout pipeLayout;
 		vpp::TrDsLayout dsLayout;
+		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 		vpp::TrDs ds;
 	} pp_;
@@ -585,9 +694,9 @@ private:
 		} update;
 
 		struct {
+			vpp::TrDsLayout dsLayout;
 			vpp::PipelineLayout pipeLayout;
 			vpp::Pipeline pipe;
-			vpp::TrDsLayout dsLayout;
 			vpp::TrDs ds;
 		} indirect;
 

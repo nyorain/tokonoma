@@ -1,5 +1,13 @@
 #pragma once
 
+// file is directly taken from tkn/sky/bruneton.hpp.
+// Those two should be merged at some point and moved to libtkn.
+
+// TODO: separate generation and rendering.
+// 	Applications usually won't have custom requirements for generation
+// 	of the tables (as they can already fully set the config) but
+// 	might want to render differently.
+
 // only needed for Atmosphere declaration
 #include "precoscat.hpp"
 
@@ -33,7 +41,7 @@
 #include <qwe/util.hpp>
 #include <array>
 
-#include <shaders/tkn.skybox.vert.h>
+#include <shaders/tkn.fullscreen.vert.h>
 
 using std::move;
 using nytl::constants::pi;
@@ -104,11 +112,15 @@ struct qwe::ValueParser<vk::Format> {
 class BrunetonSky {
 public:
 	struct UboData {
-		mat4 vp; // only needed for rendering
 		Atmosphere atmosphere;
 		vec3 toSun;
-		float _; // padding
+		float camAspect;
 		vec3 viewPos;
+		float camNear;
+		vec3 camDir;
+		float camFar;
+		vec3 camUp;
+		float camFov;
 	};
 
 public:
@@ -175,10 +187,6 @@ public:
 		params.cubemap = true;
 		params.usage = vk::ImageUsageBits::sampled;
 
-		auto starmapProvider = tkn::loadImage("galaxy2.ktx");
-		auto initTex = tkn::createTexture(wb, std::move(starmapProvider), params);
-		starmap_ = tkn::initTexture(initTex, wb);
-
 		vk::endCommandBuffer(genCb_);
 		qs.wait(qs.add(genCb_));
 
@@ -206,6 +214,7 @@ public:
 
 	void initTables() {
 		auto& dev = device();
+		recreateTables_ = false;
 
 		// trans
 		vk::ImageCreateInfo ici;
@@ -434,10 +443,10 @@ public:
 			// combined scattering
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, &sampler_),
-			// irradiance texture
+			// in color
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, &sampler_),
-			// galaxy
+			// in depth
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, &sampler_),
 		};
@@ -455,6 +464,13 @@ public:
 		vpp::nameHandle(render_.ds, "BrunetonSky:render:ds");
 	}
 
+	void updateRenderInputs(vk::ImageView color, vk::ImageView depth) {
+		vpp::DescriptorSetUpdate dsuRender(render_.ds);
+		dsuRender.skip(5);
+		dsuRender.imageSampler({{{}, color, vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, depth, vk::ImageLayout::shaderReadOnlyOptimal}});
+	}
+
 	void updateDescriptors() {
 		vpp::DescriptorSetUpdate dsuRender(render_.ds);
 		dsuRender.uniform({{{ubo_}}});
@@ -462,8 +478,6 @@ public:
 		dsuRender.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuRender.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuRender.imageSampler({{{}, scatTableCombined_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, irradianceTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, starmap_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 
 		// debugging, for seeing muli scat textures in renderdoc.
 		// The first three textures are not used for multi-scat-lookup anyways.
@@ -513,6 +527,8 @@ public:
 
 	bool loadGenPipes() {
 		auto& dev = device();
+		reloadGenPipes_ = false;
+
 		auto preTrans = tkn::loadShader(dev, "sky/preTrans.comp");
 		auto preSingleScat = tkn::loadShader(dev, "sky/preSingleScat.comp");
 		auto preMultiScat = tkn::loadShader(dev, "sky/preMultiScat.comp");
@@ -522,7 +538,6 @@ public:
 			dlg_error("Failed to reload/compile pcs computation shaders");
 			return false;
 		}
-
 
 		vk::ComputePipelineCreateInfo cpi;
 		cpi.stage.pName = "main";
@@ -560,8 +575,8 @@ public:
 
 	bool loadRenderPipe() {
 		auto& dev = device();
-		vpp::ShaderModule vert(dev, tkn_skybox_vert_data);
-		auto mod = tkn::loadShader(dev, "sky/sky-pcs.frag");
+		vpp::ShaderModule vert(dev, tkn_fullscreen_vert_data);
+		auto mod = tkn::loadShader(dev, "planet/sky-pcs.frag");
 		if(!mod) {
 			dlg_error("Failed to reload/compile sky-pcs.frag");
 			return false;
@@ -810,16 +825,13 @@ public:
 		}
 
 		if(reloadGenPipes_) {
-			reloadGenPipes_ = false;
 			loadGenPipes();
 			recordGenCb();
 			res = true;
-
 			regen_ = true;
 		}
 
 		if(recreateTables_) {
-			recreateTables_ = false;
 			initTables();
 			updateDescriptors();
 			recordGenCb();
@@ -844,10 +856,15 @@ public:
 		auto span = map.span();
 
 		UboData data;
-		data.vp = cam.fixedViewProjectionMatrix();
 		data.atmosphere = config_.atmos;
 		data.toSun = toSun;
 		data.viewPos = cam.position();
+		data.camNear = -cam.near();
+		data.camDir = cam.dir();
+		data.camUp = cam.up();
+		data.camAspect = cam.aspect();
+		data.camFov = *cam.perspectiveFov();
+		data.camFar = -cam.far();
 		tkn::write(span, data);
 		map.flush();
 
@@ -1015,6 +1032,7 @@ public:
 			return false;
 		}
 
+		regen_ = true;
 		return true;
 	}
 
@@ -1175,8 +1193,5 @@ private:
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 	} preIrrad_;
-
-	// galaxy cubemap
-	vpp::ViewableImage starmap_;
 };
 
