@@ -357,6 +357,10 @@ void BloomPass::record(vk::CommandBuffer cb, vk::Image emission,
 			layout = barrier.newLayout;
 			srcAccess = barrier.dstAccessMask;
 			srcStage = vk::PipelineStageBits::computeShader;
+
+			// that's the pipeline we need after this, no matter if
+			// mipBlurred is true or not
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, blur_.pipe);
 		}
 
 		if(mipBlurred) {
@@ -370,7 +374,6 @@ void BloomPass::record(vk::CommandBuffer cb, vk::Image emission,
 				vk::PipelineStageBits::computeShader,
 				{}, {}, {}, {{barrier}});
 
-			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, blur_.pipe);
 			recordBlur(cb, i, size);
 
 			// from recordBur
@@ -400,7 +403,6 @@ void BloomPass::record(vk::CommandBuffer cb, vk::Image emission,
 			vk::PipelineStageBits::computeShader,
 			{}, {}, {}, {{barrier}});
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, blur_.pipe);
 		for(auto i = 0u; i < levelCount_; ++i) {
 			recordBlur(cb, i, size);
 		}

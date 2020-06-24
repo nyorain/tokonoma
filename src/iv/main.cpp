@@ -44,10 +44,6 @@ public:
 		std::string file;
 	};
 
-	static constexpr float near = 0.05f;
-	static constexpr float far = 25.f;
-	static constexpr float fov = 0.5 * nytl::constants::pi;
-
 public:
 	bool init(nytl::Span<const char*> args) override {
 		Args parsed;
@@ -59,6 +55,8 @@ public:
 		auto& qs = dev.queueSubmitter();
 		auto cb = dev.commandAllocator().get(qs.queue().family());
 		vk::beginCommandBuffer(cb, {});
+
+		camera_.perspectiveFov(0.4 * nytl::constants::pi);
 
 		// load image
 		auto p = tkn::loadImage(parsed.file);
@@ -75,6 +73,7 @@ public:
 		params.view.levelCount = 1u;
 		params.view.layerCount = cubemap_ ? 6u : 1u;
 		params.format = displayFormat(p->format());
+		params.usage = vk::ImageUsageBits::sampled;
 
 		format_ = p->format();
 		layerCount_ = p->layers() / (cubemap_ ? 6u : 1u);
@@ -88,10 +87,9 @@ public:
 
 		auto wb = tkn::WorkBatcher(dev);
 		wb.cb = cb;
-		auto tex = buildTexture(wb, std::move(p), params);
-		auto [img, view] = tex.split();
-		image_ = std::move(img);
-		view_ = std::move(view);
+
+		auto initTex = createTexture(wb, std::move(p), params);
+		std::tie(image_, view_) = initTexture(initTex, wb).split();
 
 		// sampler
 		vk::SamplerCreateInfo sci;
@@ -201,7 +199,7 @@ public:
 			"Don't show a cubemap, interpret faces as layers", 0});
 		parser.definitions.push_back({
 			"tonemap", {"--tonemap"},
-			"Tonemap the image (use pageDown/Up for exposure)", 0});
+			"Tonemap the image (use pageDown/Up for exposure)", 1});
 		return parser;
 	}
 
@@ -218,7 +216,18 @@ public:
 			return false;
 		}
 
-		tonemap_ = result.has_option("tonemap");
+		auto& tonemap = result["tonemap"];
+		if(tonemap) {
+			tonemap_ = true;
+			auto exposure = tonemap.as<const char*>();
+			dlg_assert(exposure);
+
+			char* end;
+			exposure_ = std::strtold(exposure, &end);
+			dlg_assertm(end != exposure, "Couldn't parse given exposure: {}",
+				exposure);
+		}
+
 		out.file = result.pos[0];
 		return true;
 	}
@@ -341,10 +350,12 @@ public:
 			swa_window_set_state(swaWindow(), swa_window_state_fullscreen);
 		} else if(tonemap_ && ev.keycode == swa_key_pageup) {
 			exposure_ *= 1.05;
+			dlg_info("exposure: {}", exposure_);
 			camera_.needsUpdate = true;
 			Base::scheduleRedraw();
 		} else if(tonemap_ && ev.keycode == swa_key_pagedown) {
 			exposure_ /= 1.05;
+			dlg_info("exposure: {}", exposure_);
 			camera_.needsUpdate = true;
 			Base::scheduleRedraw();
 		} else {

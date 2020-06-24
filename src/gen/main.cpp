@@ -3,6 +3,7 @@
 #include <tkn/types.hpp>
 #include <tkn/render.hpp>
 #include <tkn/features.hpp>
+#include <tkn/formats.hpp>
 #include <tkn/image.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/scene/pbr.hpp>
@@ -29,6 +30,7 @@
 #include <shaders/tkn.brdflut.comp.h>
 #include <iostream>
 #include <fstream>
+#include <array>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <tkn/stb_image_write.h>
@@ -51,6 +53,8 @@ void saveConvoluted(const char* cubemap, const char* outfile,
 void saveSHProj(const char* cubemap, const char* outfile,
 	const vpp::Device& dev);
 int saveSkies(float turbidity, const char* outEnv, const char* outData,
+	const vpp::Device& dev);
+void saveGalaxy(const char* inputDir, const char* outfile,
 	const vpp::Device& dev);
 
 int main(int argc, const char** argv) {
@@ -79,6 +83,9 @@ int main(int argc, const char** argv) {
 		"bake-sky", {"--bake-sky"},
 		"Bakes environment maps and irradiance spherical harmonics data for "
 			"hosek-wilkie skies for given turbidity", 1});
+	parser.definitions.push_back({
+		"galaxy", {"--galaxy"},
+		"Bakes Galaxy sky map from E. Bruneton's processed Gaia sky map", 0u});
 
 	auto usage = std::string("Usage: ") + argv[0] + " [options]\n\n";
 	argagg::parser_results result;
@@ -137,8 +144,11 @@ int main(int argc, const char** argv) {
 	} else if(result.has_option("bakesky")) {
 		float turbidity = result["bakesky"].as<float>();
 		auto outEnv = output.value_or("skyEnvs.ktx");
-		auto outData = "skyData.bin"; // TODO
+		auto outData = "skyData.bin"; // TODO: don't hardcode
 		return saveSkies(turbidity, outEnv, outData, dev);
+	} else if(result.has_option("galaxy")) {
+		auto outMap = output.value_or("galaxy.ktx");
+		saveGalaxy(nullptr, outMap, dev);
 	} else {
 		dlg_fatal("No/unsupported command given!");
 		argagg::fmt_ostream help(std::cerr);
@@ -749,4 +759,82 @@ int saveSkies(float turbidity, const char* outSkies, const char* outData,
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
 
 	return 0;
+}
+
+// NOTE: we don't even need the device her (atm)
+// TODO: implement format conversion, we can't rely on ebgr to be supported.
+void saveGalaxy(const char* inputDir, const char* outfile, const vpp::Device& dev) {
+	inputDir = inputDir ? inputDir : "gaia_sky_map";
+
+	auto numTiles = 8u;
+	auto tileSize = 256u;
+
+	// TODO y and z swapped in data i guess (i.e. z is up)
+	auto faces = std::array{
+		"pos-x",
+		"neg-x",
+		"pos-y",
+		"neg-y",
+		"pos-z",
+		"neg-z",
+	};
+
+	auto dimSize = numTiles * tileSize;
+	auto tilePixelCount = tileSize * tileSize;
+	auto facePixelCount = dimSize * dimSize;
+	auto pixelCount = 6u * facePixelCount;
+
+	auto data1 = std::make_unique<u32[]>(pixelCount);
+	auto data2 = std::make_unique<u32[]>(pixelCount);
+
+	auto atOff = [&](auto f, auto x, auto y) {
+		auto res = f * facePixelCount + y * dimSize + x;
+		dlg_assert(res < pixelCount);
+		return res;
+	};
+
+	auto tileData = std::make_unique<u32[]>(2 * tilePixelCount);
+	for(auto f = 0u; f < 6; ++f) {
+		auto face = faces[f];
+		for(auto ty = 0u; ty < numTiles; ++ty) {
+			for(auto tx = 0u; tx < numTiles; ++tx) {
+				auto fname = dlg::format("{}/{}-0-{}-{}.dat", inputDir, face, tx, ty);
+				auto file = tkn::File(fname, "rb");
+				dlg_assert(file);
+
+				auto res = std::fread(tileData.get(), sizeof(u32),
+					2 * tilePixelCount, file);
+				dlg_assertm(res == 2 * tilePixelCount, "{} (expected {})",
+					res, tilePixelCount);
+
+				for(auto y = 0u; y < tileSize; ++y) {
+					for(auto x = 0u; x < tileSize; ++x) {
+						auto off = atOff(f, tx * tileSize + x, ty * tileSize + y);
+						data1[off] = tileData[y * tileSize + x];
+						data2[off] = tileData[tilePixelCount + y * tileSize + x];
+
+						// combined version
+						auto rgb = 0.01f * tkn::e5b9g9r9ToRgb(data1[off]);
+						rgb += tkn::e5b9g9r9ToRgb(data2[off]);
+						data1[off] = tkn::e5b9g9r9FromRgb(rgb);
+					}
+				}
+			}
+		}
+	}
+
+	auto format = vk::Format::e5b9g9r9UfloatPack32;
+	auto ptr1 = reinterpret_cast<const std::byte*>(data1.get());
+	auto span1 = nytl::span{ptr1, pixelCount * sizeof(u32)};
+	auto provider1 = tkn::wrapImage({dimSize, dimSize, 1u}, format,
+		1u, 6u, span1, true);
+	auto res = tkn::writeKtx("galaxy1.ktx", *provider1);
+	dlg_assertm(res == tkn::WriteError::none, (int) res);
+
+	auto ptr2 = reinterpret_cast<const std::byte*>(data2.get());
+	auto span2 = nytl::span{ptr2, pixelCount * sizeof(u32)};
+	auto provider2 = tkn::wrapImage({dimSize, dimSize, 1u}, format,
+		1u, 6u, span2, true);
+	res = tkn::writeKtx("galaxy2.ktx", *provider2);
+	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }

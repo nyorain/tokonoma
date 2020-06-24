@@ -46,10 +46,6 @@ const vk::PipelineColorBlendAttachmentState& disableBlendAttachment();
 // Returns the size of mipmap level 'i' for an image that has size 'full'
 vk::Extent2D mipmapSize(vk::Extent2D full, unsigned i);
 
-// Find a supported depth format (usage: attachment and sampled).
-vk::Format findDepthFormat(const vpp::Device& dev);
-bool isDepthFormat(vk::Format);
-
 // Returns a default SamplerCreateInfo for a (tri-)linear sampler with
 // clampToEdge addressMode.
 vk::SamplerCreateInfo linearSamplerInfo();
@@ -220,7 +216,8 @@ struct RenderPassInfo {
 // Passes contains the ids of the attachments used by the passes.
 // Depending on the format they will be attached as color or depth
 // attachment. Input, preserve attachments or multisampling not
-// supported here.
+// supported here, they can be added manually to the returned description
+// afterwards though.
 RenderPassInfo renderPassInfo(nytl::Span<const vk::Format> formats,
 		nytl::Span<const nytl::Span<const unsigned>> passes);
 

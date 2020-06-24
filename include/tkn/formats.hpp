@@ -1,6 +1,7 @@
 #pragma once
 
 #include <tkn/types.hpp>
+#include <vpp/fwd.hpp>
 #include <nytl/vec.hpp>
 #include <vkpp/fwd.hpp>
 
@@ -8,6 +9,10 @@
 // of formats. Just extend them with whatever is needed.
 
 namespace tkn {
+
+// Find a supported depth format (usage: attachment and sampled).
+vk::Format findDepthFormat(const vpp::Device& dev);
+bool isDepthFormat(vk::Format);
 
 // Returns whether the given format an hold high dynamic range data, i.e.
 // has a float format and can store values >1.0.

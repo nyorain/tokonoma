@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pass.hpp"
+#include "lens.hpp"
 #include <tkn/render.hpp>
 #include <tkn/types.hpp>
 
@@ -110,4 +111,3 @@ protected:
 	vpp::ImageView fullView_;
 	unsigned levelCount_;
 };
-

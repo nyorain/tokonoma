@@ -22,12 +22,13 @@ public:
 	//   (N - 1) / 2. For a 9x9 kernel, hsize = 4. Will always round
 	//   up to the next even hsize, i.e. hsize = 5 and hsize = 6 will
 	//   both result in a 13x13 kernel. Must be smaller than 31.
-	// - fac: factor for how far down in the pascals values
+	// - fac: factor for how far down in pascals triangle values
 	//   should be used to generate the kernel. Can be seen
 	//   as filter sigma normalized to hsize.
 	//   Must be greater or equal to 1. Larger factors mean stronger blur
 	//   but potentially less quality (cutting of the edges of the curve),
-	//   getting closer to a box filter.
+	//   getting closer to a box filter. 1.0 Means a perfect
+	//   gaussian blur.
 	// The operation is not particularly expensive and can be performed
 	// every recording.
 	static Kernel createKernel(unsigned hsize, float fac = 1.5);

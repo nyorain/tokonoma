@@ -1,6 +1,7 @@
 // https://www.khronos.org/opengl/wiki/Template:Cubemap_layer_face_ordering
 // https://www.khronos.org/registry/OpenGL/specs/gl/glspec42.core.pdf
 // section 3.9.10
+// (there is also a vulkan spec section on this stating the same)
 // TODO: fix border conditions
 int cubeFace(vec3 dir, out vec2 suv) {
 	vec3 ad = abs(dir);

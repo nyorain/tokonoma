@@ -196,32 +196,6 @@ void SkyboxRenderer::render(vk::CommandBuffer cb, vk::DescriptorSet ds) {
 	vk::cmdDraw(cb, 14, 1, 0, 0, 0);
 }
 
-// Sky
-// Returns unnormalized direction
-Vec3f faceUVToDir(unsigned face, float u, float v) {
-	u = 2 * u - 1;
-	v = 2 * v - 1;
-
-	constexpr auto x = Vec3f{1.f, 0.f, 0.f};
-	constexpr auto y = Vec3f{0.f, 1.f, 0.f};
-	constexpr auto z = Vec3f{0.f, 0.f, 1.f};
-	constexpr struct {
-		nytl::Vec3f dir;
-		nytl::Vec3f s;
-		nytl::Vec3f t;
-	} faces[] = {
-		{+x, -z, -y},
-		{-x, +z, -y},
-		{+y, +x, +z},
-		{-y, +x, -z},
-		{+z, +x, -y},
-		{-z, -x, -y},
-	};
-
-	auto& data = faces[face];
-	return data.dir + u * data.s + v * data.t;
-}
-
 // Some code taken from MJP's (Matt Pettineo) sample framework, licensed
 // under MIT as well. Copyright (c) 2016 MJP
 // github.com/TheRealMJP/DeferredTexturing/tree/master/SampleFramework12/v1.01
@@ -295,7 +269,7 @@ Sky::Baked Sky::bake(Vec3f sunDir, Vec3f ground, float turbidity) {
 				float u = (x + 0.5f) / faceWidth;
 				float v = (y + 0.5f) / faceHeight;
 
-				auto dir = normalized(faceUVToDir(face, u, v));
+				auto dir = normalized(tkn::cubemap::faceUVToDir(face, u, v));
 				float theta = mangle(dir, up);
 				float gamma = mangle(dir, sunDir);
 

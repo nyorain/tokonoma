@@ -1,10 +1,13 @@
-#include "luminance.hpp"
+#include <tkn/passes/luminance.hpp>
 #include <tkn/f16.hpp>
+#include <tkn/bits.hpp>
 
 #include <vpp/debug.hpp>
 #include <vpp/shader.hpp>
 #include <vpp/formats.hpp>
+#include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
+#include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
 #include <cstdlib>
 
@@ -34,12 +37,14 @@ vpp::ViewableImageCreateInfo targetInfo(vk::Extent2D size, bool compute) {
 			vk::ImageUsageBits::transferDst;
 	}
 
-	return {LuminancePass::format, vk::ImageAspectBits::color, size, usage};
+	return {tkn::LuminancePass::format, vk::ImageAspectBits::color, size, usage};
 }
 } // anon namespace
 
-void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
-	auto& wb = info.wb;
+namespace tkn {
+
+void LuminancePass::create(InitData& data, WorkBatcher& wb, vk::Sampler nearest,
+		vk::ShaderModule fullscreenVertMod) {
 	auto& dev = wb.dev;
 	extract_.rp = {}; // reset
 	extract_.ds = {};
@@ -85,8 +90,7 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		auto extractBindings = std::array {
 			// nearest sampler since we don't interpolate
 			vpp::descriptorBinding( // input light tex
-				vk::DescriptorType::combinedImageSampler,
-				stage, &info.samplers.nearest),
+				vk::DescriptorType::combinedImageSampler, stage, &nearest),
 		};
 
 		extract_.dsLayout.init(dev, extractBindings);
@@ -97,7 +101,7 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 
 		vpp::ShaderModule lumShader(dev, deferred_luminance_frag_data);
 		vpp::GraphicsPipelineInfo gpi {extract_.rp, extract_.pipeLayout, {{{
-			{info.fullscreenVertShader, vk::ShaderStageBits::vertex},
+			{fullscreenVertMod, vk::ShaderStageBits::vertex},
 			{lumShader, vk::ShaderStageBits::fragment},
 		}}}};
 
@@ -110,11 +114,10 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		extract_.pipe = {dev, gpi.info()};
 	} else {
 		auto stage = vk::ShaderStageBits::compute;
-		auto extractBindings = {
+		auto extractBindings = std::array {
 			// nearest sampler since we don't interpolate
 			vpp::descriptorBinding( // input light tex
-				vk::DescriptorType::combinedImageSampler,
-				stage, &info.samplers.nearest),
+				vk::DescriptorType::combinedImageSampler, stage, &nearest),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage, stage),
 		};
 
@@ -147,7 +150,7 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		vpp::nameHandle(mip_.sampler, "LuminancePass:mip_.sampler");
 
 		// mip pipe
-		auto mipBindings = {
+		auto mipBindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				stage, &mip_.sampler.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::storageImage, stage),
@@ -191,7 +194,7 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		vk::BufferUsageBits::transferDst, dev.hostMemoryTypes(), 2u};
 }
 
-void LuminancePass::init(InitData& data, const PassCreateInfo&) {
+void LuminancePass::init(InitData& data) {
 	dstBuffer_.init(data.initDstBuffer);
 	dstBufferMap_ = dstBuffer_.memoryMap();
 
@@ -511,3 +514,5 @@ SyncScope LuminancePass::srcScopeTarget() const {
 	}
 	return scope;
 }
+
+} // namespace tkn

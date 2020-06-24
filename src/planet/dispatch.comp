@@ -16,18 +16,15 @@ struct DispatchIndirectCommand {
 layout(set = 0, binding = 0) buffer Draw {
 	DrawIndirectCommand draw;
 	DispatchIndirectCommand dispatch;
+	// uint _pad;
 } cmds;
 
 layout(set = 0, binding = 1) buffer Keys {
 	uint counter;
 } keys;
 
-layout(set = 0, binding = 2) buffer Culled {
-	uint counter;
-} culled;
-
 void main() {
-	cmds.draw.instanceCount = culled.counter;
+	cmds.draw.instanceCount = keys.counter;
 
 	// NOTE: linked to local_size_x in update.comp
 	uint computeGroupSize = 128;

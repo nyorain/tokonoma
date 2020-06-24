@@ -85,6 +85,8 @@ constexpr struct FormatEntry {
 	{GL_RG32UI, GL_RG_INTEGER, GL_UNSIGNED_INT, vk::Format::r32g32Uint},
 	{GL_RGB32UI, GL_RGB_INTEGER, GL_UNSIGNED_INT, vk::Format::r32g32b32Uint},
 	{GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT, vk::Format::r32g32b32a32Uint},
+
+	{GL_RGB9_E5, GL_RGB, GL_UNSIGNED_INT_5_9_9_9_REV, vk::Format::e5b9g9r9UfloatPack32},
 };
 
 vk::Format vulkanFromGLFormat(GLInternalFormat glFormat) {

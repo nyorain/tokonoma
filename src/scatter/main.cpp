@@ -1,5 +1,5 @@
 #include <tkn/app.hpp>
-#include <tkn/taa.hpp>
+#include <tkn/passes/taa.hpp>
 #include <tkn/color.hpp>
 #include <tkn/render.hpp>
 #include <tkn/image.hpp>

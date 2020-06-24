@@ -253,6 +253,14 @@ shaders_src = {
 	'oscil': [
 		['particle.vert'],
 	],
+	'planet': [
+		['gen.comp'],
+		['model.vert'],
+		['model.frag'],
+		['update.comp'],
+		['dispatch.comp'],
+		['pp.frag'],
+	],
 }
 
 # build them

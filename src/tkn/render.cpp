@@ -1,4 +1,5 @@
 #include <tkn/render.hpp>
+#include <tkn/formats.hpp>
 #include <vpp/vk.hpp>
 
 #include <vpp/vk.hpp>
@@ -275,43 +276,6 @@ SyncScope operator|(SyncScope a, SyncScope b) {
 	return a |= b;
 }
 
-vk::Format findDepthFormat(const vpp::Device& dev) {
-	vk::ImageCreateInfo img; // dummy for property checking
-	img.extent = {1, 1, 1};
-	img.mipLevels = 1;
-	img.arrayLayers = 1;
-	img.imageType = vk::ImageType::e2d;
-	img.sharingMode = vk::SharingMode::exclusive;
-	img.tiling = vk::ImageTiling::optimal;
-	img.samples = vk::SampleCountBits::e1;
-	img.usage = vk::ImageUsageBits::depthStencilAttachment;
-	img.initialLayout = vk::ImageLayout::undefined;
-
-	auto fmts = {
-		vk::Format::d32Sfloat,
-		vk::Format::d32SfloatS8Uint,
-		vk::Format::d24UnormS8Uint,
-		vk::Format::d16Unorm,
-		vk::Format::d16UnormS8Uint,
-	};
-	auto features = vk::FormatFeatureBits::depthStencilAttachment |
-		vk::FormatFeatureBits::sampledImage;
-	return vpp::findSupported(dev, fmts, img, features);
-}
-
-bool isDepthFormat(vk::Format format) {
-	switch(format) {
-		case vk::Format::d32Sfloat:
-		case vk::Format::d32SfloatS8Uint:
-		case vk::Format::d24UnormS8Uint:
-		case vk::Format::d16Unorm:
-		case vk::Format::d16UnormS8Uint:
-			return true;
-		default:
-			return false;
-	}
-}
-
 vk::SamplerCreateInfo linearSamplerInfo() {
 	vk::SamplerCreateInfo sci;
 	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
@@ -348,7 +312,7 @@ RenderPassInfo renderPassInfo(nytl::Span<const vk::Format> formats,
 		for(auto id : pass) {
 			dlg_assert(id < rpi.attachments.size());
 			auto format = formats[id];
-			if(tkn::isDepthFormat(format)) {
+			if(isDepthFormat(format)) {
 				dlg_assertm(!depth, "More than one depth attachment");
 				depth = true;
 				auto& ref = rpi.depthRefs.emplace_back();

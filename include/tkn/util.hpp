@@ -110,7 +110,7 @@ T bit(T value, T bit, bool set) {
 }
 
 // Returns ceil(num / denom), efficiently, only using integer division.
-inline unsigned ceilDivide(unsigned num, unsigned denom) {
+inline constexpr unsigned ceilDivide(unsigned num, unsigned denom) {
 	return (num + denom - 1) / denom;
 }
 

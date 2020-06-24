@@ -97,12 +97,12 @@ void main() {
 
 	// 2: dynamically associate frequency based on distance from
 	// first attactor
-	if(ubo.count > 0) {
-		float dist = distance(pos, ubo.attract[0].xy);
-		int id = int((factors.length() / sqrt(8)) * dist);
-		// mass = factors[(factors.length() - 1 - id) % factors.length()];
-		mass *= factors[id % factors.length()];
-	}
+	// if(ubo.count > 0) {
+	// 	float dist = distance(pos, ubo.attract[0].xy);
+	// 	int id = int((factors.length() / sqrt(8)) * dist);
+	// 	// mass = factors[(factors.length() - 1 - id) % factors.length()];
+	// 	mass *= factors[id % factors.length()];
+	// }
 	
 	// 2b: based on velocity
 	// if(ubo.count > 0) {
@@ -113,13 +113,13 @@ void main() {
 	// }
 	
 	// 3: associate frequency based on angle from first attractor
-	// if(ubo.count > 0) {
-	// 	const float pi = 3.1415; // good enough
-	// 	vec2 diff = pos - ubo.attract[0].xy;
-	// 	float angle = atan(diff.y, diff.x);
-	// 	int id = int((angle + pi) / (2 * pi) * factors.length());
-	// 	mass = factors[id % factors.length()];
-	// }
+	if(ubo.count > 0) {
+		const float pi = 3.1415; // good enough
+		vec2 diff = pos - ubo.attract[0].xy;
+		float angle = atan(diff.y, diff.x);
+		int id = int((angle + pi) / (2 * pi) * factors.length());
+		mass = factors[id % factors.length()];
+	}
 
 	// 4: like 3 but symmetric and interpolated
 	// if(ubo.count > 0) {

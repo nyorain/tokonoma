@@ -90,7 +90,6 @@ dep_rvg = dependency('rvg', fallback: ['rvg', 'rvg_dep'])
 dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
 dep_png = dependency('libpng', fallback: ['png', 'png_dep'])
-dep_ny = dependency('ny', fallback: ['ny', 'ny_dep'])
 dep_swa = dependency('swa', fallback: ['swa', 'swa_dep'])
 
 # turbojpeg is optional, there exists no meson wrap for it.
@@ -343,6 +342,18 @@ oscil = build_target('oscil', [
 		'src/oscil/main.cpp',
 		oscil_shaders,
 	], dependencies: [tkn_dep, tkn_audio_dep, dep_pulse_simple_optional],
+	target_type: exetarget)
+
+planet = build_target('planet', [
+		'src/planet/main.cpp',
+		planet_shaders,
+	], dependencies: [tkn_dep],
+	target_type: exetarget)
+
+planet_gen = build_target('planet_gen', [
+		'src/planet/gen.cpp',
+		planet_shaders,
+	], dependencies: [tkn_dep],
 	target_type: exetarget)
 
 if android

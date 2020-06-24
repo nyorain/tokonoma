@@ -105,8 +105,8 @@ struct SpaceshipCamCon {
 struct SpaceshipCamControls {
 	float rotateFac = 0.0025f;
 	float rotatePow = 1.f;
-	float rollFac = 0.1f;
-	float rollFriction = 0.999f;
+	float rollFac = 25.f; // roll velocity per second
+	float rollFriction = 0.9999f;
 	swa_mouse_button rotateButton = swa_mouse_button_left;
 	swa_key rollLeft = swa_key_z;
 	swa_key rollRight = swa_key_x;

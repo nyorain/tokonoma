@@ -1,0 +1,57 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#include "snoise.glsl"
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+
+layout(push_constant) uniform Face {
+	vec3 x;
+	uint face;
+	vec3 y;
+	float _2; // padding
+	vec3 z; // normal, cube map face
+} dir;
+
+layout(set = 0, binding = 0, rgba16f) uniform writeonly imageCube outCol;
+
+// Returns normalized value in range [0, 1]
+vec4 mfbm(vec3 st) {
+	vec4 sum = vec4(0.f);
+	float lacunarity = 2.0;
+	float gain = 0.5;
+
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	float totalAmp = 0.f;
+	for(int i = 0; i < 10; ++i) {
+		vec3 grad;
+		float tmp = amp * snoise(mod * st, grad);
+		grad = amp * mod * grad;
+		sum += vec4(tmp, grad);
+		totalAmp += amp;
+
+		mod *= lacunarity;
+		amp *= gain;
+	}
+
+	return sum / totalAmp;
+}
+
+void main() {
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	uvec2 size = imageSize(outCol);
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return;
+	}
+
+	vec2 pixelSize = 1.f / size;
+	vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+	uv = 2 * uv - 1;
+
+	vec3 pos = normalize(dir.z + uv.x * dir.x + uv.y * dir.y);
+
+	vec4 h = 0.5 * mfbm(pos);
+	h.x += 0.5;
+	imageStore(outCol, ivec3(pixel, dir.face), h);
+}

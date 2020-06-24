@@ -23,21 +23,33 @@ void main() {
 	vec3 col = texture(inLight, uv).rgb;
 
 	// #1: simple offset + scale
+	// This approach has problems, completely messes up color hue in many
+	// cases due to component-wise clamping to 0
 	// vec3 light = max(ubo.scale * (col + ubo.bias), 0.0);
 	
-	// #2: don't lose color components
+	// #2: don't do it component-wise
 	vec3 light = vec3(0.0);
-	float l = length(col);
+
+	// variations
+	// float l = length(col); // euclid/2- norm
+	// float l = dot(col, vec3(1, 1, 1)); // manhattan/1- norm, color vals >= 0
+	// float l = max(col.r, max(col.g, col.b)); // max/infinity norm
+	float l = dot(col, vec3(0.25, 0.65, 0.1)); // luminance
+
 	if(l >= -ubo.bias) {
 		// light = (col / l) * (l + ubo.bias);
 
-		// TODO: document/continues ideas here
+		// TODO: document/continue ideas here
+		// We could also make
 		// light = (col / l) * pow(l + ubo.bias, 2); // smooth transition
 		light = (col / l) * pow(l + ubo.bias, 0.7); // soften highlights
 		// light = (col / l) * log(2 * pow(l + ubo.bias, 2) + 1); // both?
 	}
 
 	light *= ubo.scale;
+
+	// TODO: we probably shouldn't add this *after* the bias & scaling,
+	// but before? investigate
 	light += texture(inEmission, uv).rgb;
 
 	// store

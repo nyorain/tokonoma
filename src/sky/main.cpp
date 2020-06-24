@@ -187,7 +187,7 @@ public:
 
 private:
 	tkn::ControlledCamera camera_;
-	bool useHosek_ {true};
+	bool useHosek_ {false};
 	HosekWilkieSky hosekSky_;
 	BrunetonSky brunetonSky_;
 	vpp::Sampler sampler_;

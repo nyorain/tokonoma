@@ -15,6 +15,7 @@
 #include <vpp/queue.hpp>
 #include <vpp/submit.hpp>
 #include <vpp/commandAllocator.hpp>
+#include <dlg/dlg.hpp>
 
 // TODO: maybe create separate application? that share a "terrain" class?
 // - create custom renderpass with 2 subpasses
@@ -305,7 +306,7 @@ public:
 
 		gfx_.pipe = {vkDevice(), gpi.info()};
 
-		// wirte pipe
+		// wire pipe
 		gpi.program = {{{
 			{wireVert, vk::ShaderStageBits::vertex},
 			{wireGeom, vk::ShaderStageBits::geometry},
@@ -378,8 +379,11 @@ public:
 			{}, {}, {{barrier0, barrier1, barrierCulled}}, {});
 
 		// run indirect pipe to build commands
-		// TODO: probably easier/better to do this with a simple one-word
-		// buffer copy...
+		// We can't do this with a simple copy since for the dispatch size
+		// we have to divide by the compute gropu size. And running
+		// a compute shader is likely to be faster then reading the
+		// counter value to cpu, computing the division, and writing
+		// it back to the gpu.
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, comp_.indirect.pipe);
 		tkn::cmdBindComputeDescriptors(cb, comp_.indirect.pipeLayout, 0,
 			{comp_.indirect.ds});

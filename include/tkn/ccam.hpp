@@ -76,7 +76,7 @@ public:
 
 	static constexpr auto defaultPerspective = Perspective{
 		defaultNear, defaultFar,
-		1.f, 0.5 * nytl::constants::pi,
+		1.f, 0.42 * nytl::constants::pi,
 		// NOTE: revDepthInf is better but most applications
 		// use this already (and for most applications it does not
 		// really make a difference, anyways)
@@ -167,10 +167,10 @@ public:
 	void flipY(bool);
 
 	// Returns the size of an unprojected unit square (size (1, 1)) at
-	// the given depth. Basically answers: "by how far do i have to move
+	// the given linear depth. Basically answers: "by how far do i have to move
 	// something in pre-projection space so it moves by (1, 1) in projection
 	// space, given its depth".
-	nytl::Vec2f unprojectUnit(float depth) const;
+	nytl::Vec2f unprojectUnit(float linDepth) const;
 
 protected:
 	Camera camera_; // orientation + position

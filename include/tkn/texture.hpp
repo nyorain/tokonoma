@@ -71,58 +71,6 @@ struct TextureCreateParams {
 	unsigned minTypeDim {2};
 };
 
-// Basically just a ViewableImage that allows for deferred uploading.
-// Always allocated on deviceLocal memory.
-/*
-class [[deprecated("Use the standalone functions")]] Texture {
-public:
-	struct InitData {
-		vpp::ViewableImage::InitData initImage {};
-
-		vpp::SubBuffer stageBuf;
-		vpp::SubBuffer::InitData initStageBuf {};
-
-		vpp::Image stageImage;
-		vpp::Image::InitData initStageImage {};
-
-		vk::Format dstFormat;
-		std::unique_ptr<ImageProvider> image;
-		vk::Format dataFormat; // may have toggles srgb
-		unsigned levels {}; // how many levels in total, >0
-		unsigned layers {}; // how many layers/faces in total, >0
-		unsigned fillLevels {}; // how many pre-filled levels, >0
-		bool genLevels {}; // whether to generate remaining levels
-		bool cubemap {}; // whether image is cubemap
-
-		TextureCreateParams::ViewRange view;
-	};
-
-public:
-	Texture() = default;
-	Texture(vpp::ViewableImage&& img) : image_(std::move(img)) {}
-
-	Texture(const vpp::Device& dev, std::unique_ptr<ImageProvider> img,
-		const TextureCreateParams& = {});
-	Texture(const WorkBatcher&, std::unique_ptr<ImageProvider> img,
-		const TextureCreateParams& = {});
-	Texture(InitData&, const WorkBatcher&, std::unique_ptr<ImageProvider> img,
-		const TextureCreateParams& = {});
-
-	void init(InitData&, const WorkBatcher&);
-
-	auto& device() const { return image_.device(); }
-	auto& viewableImage() { return image_; }
-	const auto& viewableImage() const { return image_; }
-	const auto& image() const { return image_.image(); }
-	const auto& imageView() const { return image_.imageView(); }
-	const vk::ImageView& vkImageView() const { return image_.vkImageView(); }
-	const vk::Image& vkImage() const { return image_.vkImage(); }
-
-protected:
-	vpp::ViewableImage image_;
-};
-*/
-
 // new, low-level experimental api
 struct FillData {
 	vpp::Image::InitData initStageImage;

@@ -1,0 +1,100 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#include "subd.glsl"
+
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer OldKeys {
+	uint counter;
+	float _pad;
+	uvec2 keys[];
+} old;
+
+layout(set = 0, binding = 1) buffer NewKeys {
+	uint counter;
+	uint _pad;
+	uvec2 keys[];
+} new;
+
+layout(set = 0, binding = 2, row_major) uniform Scene {
+	mat4 _vp;
+	vec3 pos;
+	uint update;
+} scene;
+
+layout(set = 0, binding = 3) buffer Vertices { vec4 vertices[]; };
+layout(set = 0, binding = 4) buffer Indices { uint indices[]; };
+layout(set = 0, binding = 5) uniform samplerCube heightmap;
+
+vec3 displace(vec3 pos) {
+	return (1 + 0.25 * texture(heightmap, pos).r) * normalize(pos);
+}
+
+// TODO: don't hardcode.
+// clamps to valid range (e.g. < 31)
+float lodFromDistance(float z) {
+	const float fov = 0.42 * 3.141;
+	const float targetPixelSize = 20.f;
+	const float screenResolution = 2000.f; 
+	const float maxLod = 18.f;
+	float s = z * tan(fov / 2);
+	float tmp = s * targetPixelSize / screenResolution;
+
+	// should be 2.0 for all triangles to have equal size
+	// if e.g. you want to have a focus on near triangles
+	//   make it greater than 2.0, otherwise smaller.
+	float fac = 2.0;
+	return clamp(-fac * log2(clamp(tmp, 0.0, 1.0)), 1, maxLod);
+}
+
+float desiredLOD(uint key, uint ini, out vec3 v_out[3]) {
+	vec3 v_in[3] = vec3[3](
+		vertices[indices[3 * ini + 0]].xyz,
+		vertices[indices[3 * ini + 1]].xyz,
+		vertices[indices[3 * ini + 2]].xyz
+	);
+
+	vec3 tri[3];
+	subd(key, v_in, tri);
+	vec3 hyp = 0.5 * (displace(tri[1]) + displace(tri[2]));
+	v_out = tri;
+	return lodFromDistance(distance(scene.pos, hyp));
+}
+
+void main() {
+	uint id = gl_GlobalInvocationID.x;
+	if(id >= old.counter) {
+		return;
+	}
+
+	uvec2 oldkey = old.keys[id];
+	uint key = oldkey.x;
+	uint ini = oldkey.y;
+
+	vec3 v_out[3], dummy[3];
+	uint klod = findMSB(key);
+
+	uint plod = uint(desiredLOD(key == 1u ? key : key >> 1u, ini, v_out));
+	uint dlod = uint(desiredLOD(key, ini, dummy));
+
+	if(scene.update == 0) {
+		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
+		return;
+	}
+
+	if(klod < dlod) {
+		// subdivide
+		uint idx = atomicAdd(new.counter, 2);
+		new.keys[idx + 0] = uvec2((key << 1u) | 0u, ini);
+		new.keys[idx + 1] = uvec2((key << 1u) | 1u, ini);
+	} else if(klod < (plod + 1)) {
+		// just write
+		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
+	} else {  // merge
+		if((key & 1u) == 1u) {
+			key = (key == 1) ? key : key >> 1u; // get parent
+			new.keys[atomicAdd(new.counter, 1u)] = uvec2(key, ini);
+		}
+	}
+}
+

@@ -5,7 +5,7 @@
 // (which the render targets usually are). Might also improve performance.
 // When r8Unorm storage images are not supported we still fall back
 // to automatic mipmap generation.
-// TODO: even when compute shaders aren't available we can make the
+// TODO(bug): even when compute shaders aren't available we can make the
 // luminance calculation using mipmaps correct by simply using
 // a power-of-two luminance target, clearing it with black before
 // rendering (via renderpass, then just use a smaller viewport+scissor) and
@@ -14,9 +14,15 @@
 
 #pragma once
 
-#include "pass.hpp"
 #include <tkn/render.hpp>
+#include <tkn/defer.hpp>
 #include <tkn/types.hpp>
+
+#include <vpp/trackedDescriptor.hpp>
+#include <vpp/sharedBuffer.hpp>
+#include <vpp/image.hpp>
+
+namespace tkn {
 
 /// Gets the average luminance value from the luminance buffer.
 /// If possible, will use a compute shader. Otherwise will use mipmap
@@ -24,7 +30,7 @@
 class LuminancePass {
 public:
 	// log2(luminance) stored before tonemapping
-	// TODO: we could fit that in r8Unorm with a
+	// TODO(perf, low): we could fit that in r8Unorm with a
 	// transformation function. we don't need that high precision
 	// (higher precision near luminance 0 though)
 	// make sure to first invert that transformation function then
@@ -54,8 +60,10 @@ public:
 
 public:
 	LuminancePass() = default;
-	void create(InitData&, const PassCreateInfo&);
-	void init(InitData&, const PassCreateInfo&);
+	void create(InitData&, WorkBatcher& wb, vk::Sampler nearest,
+		vk::ShaderModule fullscreenVertMod);
+	void init(InitData&);
+
 	void createBuffers(InitBufferData&, tkn::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::ImageView light, vk::Extent2D);
 
@@ -108,3 +116,5 @@ protected:
 		float factor {};
 	} mip_;
 };
+
+} // namespace tkn

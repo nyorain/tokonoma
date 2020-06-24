@@ -17,7 +17,6 @@ gltf_dep = declare_dependency(
 tkn_deps = [
 	dep_vpp,
 	dep_swa,
-	dep_ny,
 	dep_nytl,
 	dep_dlg,
 	dep_rvg,
@@ -45,7 +44,6 @@ tkn_src = [
 	'headeronly.cpp',
 	'timeWidget.cpp',
 	'stream.cpp',
-	'taa.cpp',
 	'sky.cpp',
 	'formats.cpp',
 
@@ -55,6 +53,12 @@ tkn_src = [
 	'scene/light.cpp',
 	'scene/environment.cpp',
 	'scene/pbr.cpp',
+
+	'passes/taa.cpp',
+	'passes/blur.cpp',
+	'passes/highlight.cpp',
+	'passes/bloom.cpp',
+	'passes/luminance.cpp',
 
 	'sky/ArHosekSkyModel.c',
 

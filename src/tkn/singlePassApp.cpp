@@ -1,5 +1,6 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/render.hpp>
+#include <tkn/formats.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/formats.hpp>
 #include <dlg/dlg.hpp>
@@ -55,8 +56,7 @@ void SinglePassApp::initBuffers(const vk::Extent2D& size,
 }
 
 void SinglePassApp::record(const RenderBuffer& buf) {
-	const auto width = swapchainInfo().imageExtent.width;
-	const auto height = swapchainInfo().imageExtent.height;
+	const auto [width, height] = swapchainInfo().imageExtent;
 
 	auto cb = buf.commandBuffer;
 	vk::beginCommandBuffer(cb, {});

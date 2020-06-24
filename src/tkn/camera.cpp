@@ -41,13 +41,13 @@ bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 		updated = true;
 	}
 
-	con.rollVel *= std::pow(1.f - controls.rollFriction, dt);
-	if(std::abs(con.rollVel) > -1.0001) {
-		tkn::rotateView(cam, 0.f, 0.f, con.rollVel);
+	if(std::abs(con.rollVel) > 0.0001) {
+		tkn::rotateView(cam, 0.f, 0.f, dt * con.rollVel);
 		cam.update = true;
 		updated = true;
 	}
 
+	con.rollVel *= std::pow(1.f - controls.rollFriction, dt);
 	return updated;
 }
 

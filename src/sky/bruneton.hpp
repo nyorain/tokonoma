@@ -168,6 +168,21 @@ public:
 		genCb_ = dev.commandAllocator().get(qfam,
 			vk::CommandPoolCreateBits::resetCommandBuffer);
 
+		vk::beginCommandBuffer(genCb_, {});
+		auto wb = tkn::WorkBatcher(dev);
+		wb.cb = genCb_;
+
+		tkn::TextureCreateParams params;
+		params.cubemap = true;
+		params.usage = vk::ImageUsageBits::sampled;
+
+		auto starmapProvider = tkn::loadImage("galaxy2.ktx");
+		auto initTex = tkn::createTexture(wb, std::move(starmapProvider), params);
+		starmap_ = tkn::initTexture(initTex, wb);
+
+		vk::endCommandBuffer(genCb_);
+		qs.wait(qs.add(genCb_));
+
 		// init layouts
 		initPreTrans();
 		initPreSingleScat();
@@ -423,6 +438,9 @@ public:
 			// irradiance texture
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, &sampler_),
+			// galaxy
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, &sampler_),
 		};
 
 		render_.dsLayout.init(dev, bindings);
@@ -446,6 +464,7 @@ public:
 		dsuRender.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuRender.imageSampler({{{}, scatTableCombined_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuRender.imageSampler({{{}, irradianceTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.imageSampler({{{}, starmap_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 
 		// debugging, for seeing muli scat textures in renderdoc.
 		// The first three textures are not used for multi-scat-lookup anyways.
@@ -985,7 +1004,9 @@ public:
 				// for(auto i = 0u; i < spectral.samples.size(); ++i) {
 				// 	dlg_info("{}: {}", spectral.wavelength(i), spectral.samples[i]);
 				// }
-				atmos.solarIrradiance = Vec4f(tkn::XYZtoRGB(toXYZ(spectral)));
+				auto xyz = toXYZ(spectral);
+				dlg_info("sun luminance: {}", xyz.y * 100 * 683);
+				atmos.solarIrradiance = Vec4f(tkn::XYZtoRGB(xyz));
 				// dlg_info("solarIrradiance: {}", atmos.solarIrradiance);
 			}
 
@@ -1155,5 +1176,8 @@ private:
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 	} preIrrad_;
+
+	// galaxy cubemap
+	vpp::ViewableImage starmap_;
 };
 

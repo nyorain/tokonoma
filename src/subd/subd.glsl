@@ -334,6 +334,7 @@ vec3 displace_old(vec3 pos, out vec3 normal, out float height) {
 // clamps to valid range (e.g. < 31)
 float distanceToLOD(float z) {
 	// TODO: don't hardcode this stuff
+	//   values here are completely off...
 	const float fov = 0.35 * 3.141;
 	const float targetPixelSize = 1.f;
 	// const float screenResolution = 30.f;

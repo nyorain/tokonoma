@@ -1,11 +1,49 @@
 #include <tkn/formats.hpp>
 #include <tkn/f16.hpp>
 #include <tkn/bits.hpp>
+#include <vpp/formats.hpp>
 #include <vkpp/enums.hpp>
 #include <vkpp/structs.hpp>
 #include <cmath>
 
 namespace tkn {
+
+vk::Format findDepthFormat(const vpp::Device& dev) {
+	vk::ImageCreateInfo img; // dummy for property checking
+	img.extent = {1, 1, 1};
+	img.mipLevels = 1;
+	img.arrayLayers = 1;
+	img.imageType = vk::ImageType::e2d;
+	img.sharingMode = vk::SharingMode::exclusive;
+	img.tiling = vk::ImageTiling::optimal;
+	img.samples = vk::SampleCountBits::e1;
+	img.usage = vk::ImageUsageBits::depthStencilAttachment;
+	img.initialLayout = vk::ImageLayout::undefined;
+
+	auto fmts = {
+		vk::Format::d32Sfloat,
+		vk::Format::d32SfloatS8Uint,
+		vk::Format::d24UnormS8Uint,
+		vk::Format::d16Unorm,
+		vk::Format::d16UnormS8Uint,
+	};
+	auto features = vk::FormatFeatureBits::depthStencilAttachment |
+		vk::FormatFeatureBits::sampledImage;
+	return vpp::findSupported(dev, fmts, img, features);
+}
+
+bool isDepthFormat(vk::Format format) {
+	switch(format) {
+		case vk::Format::d32Sfloat:
+		case vk::Format::d32SfloatS8Uint:
+		case vk::Format::d24UnormS8Uint:
+		case vk::Format::d16Unorm:
+		case vk::Format::d16UnormS8Uint:
+			return true;
+		default:
+			return false;
+	}
+}
 
 bool isHDR(vk::Format format) {
 	// TODO: not sure about scaled formats, what are those?

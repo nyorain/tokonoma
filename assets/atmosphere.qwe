@@ -77,7 +77,7 @@ atmosphere:
 		scattering:
 			use: compute
 			# Bruneton's reference: 1.8402e-6
-			strength: 5.8e-6
+			strength: 4.8e-6
 			# only for use: rgb
 			# From http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
 			# Those values should rather be calculated with a wavelength-dependent
@@ -102,7 +102,7 @@ atmosphere:
 		# dobsonUnit: 2.687e20
 		# maxDensity: 300.0 * dobsonUnit / (peak - start)
 		#  i.e. 5.374e18
-		maxDensity: 20.374e18
+		maxDensity: 5.374e18
 		enable: true
 		scattering:
 			crossSection:

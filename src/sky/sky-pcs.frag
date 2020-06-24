@@ -23,6 +23,7 @@ layout(set = 0, binding = 2) uniform sampler3D scatRayleighTex;
 layout(set = 0, binding = 3) uniform sampler3D scatMieTex;
 layout(set = 0, binding = 4) uniform sampler3D scatCombinedTex;
 layout(set = 0, binding = 5) uniform sampler2D groundTex;
+layout(set = 0, binding = 6) uniform samplerCube starMap;
 
 layout(push_constant) uniform PCR {
 	uint scatOrder;
@@ -38,20 +39,21 @@ float random(vec2 v) {
 	return fract(sin(sn) * a);
 }
 
-void main() {
+vec3 getIn() {
 	vec3 startPos = viewPos;
 	vec3 viewDir = normalize(inCoords);
 
 	float r = length(startPos);
 	float rmu = dot(startPos, viewDir);
 	float distToTop = -rmu - sqrt(rmu * rmu - r * r + atmos.top * atmos.top);
+
+	vec3 bgColor = 1e-5 * texture(starMap, viewDir.xzy).rgb;
 	if(distToTop > 0.0) {
 		startPos += distToTop * viewDir;
 		r = atmos.top;
 		rmu += distToTop;
 	} else if(r > atmos.top) {
-		outColor = vec4(0.0, 0.0, 0.0, 1.0);
-		return;
+		return bgColor;
 	}
 
 	float mu = rmu / r;
@@ -104,7 +106,16 @@ void main() {
 		scat += albedo * vec3(atmos.solarIrradiance) * 
 			transmittanceToSun(atmos, transTex, toSun) *
 			max(dot(normal, sunDir), 0.0);
+	} else {
+		vec3 transToTop = transmittanceToTop(atmos, transTex, ray);
+		scat += bgColor * transToTop;
 	}
+
+	return scat;
+}
+
+void main() {
+	vec3 scat = getIn();
 	
 	float exposure = 4.f;
 	scat = 1.0 - exp(-exposure * scat);

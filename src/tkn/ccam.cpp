@@ -216,12 +216,12 @@ void ControlledCamera::flipY(bool f) {
 	needsUpdate = true;
 }
 
-nytl::Vec2f ControlledCamera::unprojectUnit(float depth) const {
+nytl::Vec2f ControlledCamera::unprojectUnit(float linDepth) const {
 	return std::visit(Visitor{
 		[&](const Perspective& p) {
-			auto f = 1.f / float(std::tan(p.fov / 2.f));
-			float fx = depth * p.aspect / f;
-			float fy = depth / f;
+			auto f = float(std::tan(p.fov / 2.f));
+			float fx = linDepth * p.aspect * f;
+			float fy = linDepth * f;
 			return Vec2f{fx, fy};
 		},
 		[&](const Orthographic& o) {

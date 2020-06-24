@@ -546,4 +546,27 @@ nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
 using Frustum = std::array<nytl::Vec3f, 8>;
 Frustum ndcFrustum(); // frustum in ndc space, i.e. [-1, 1]^3
 
+namespace cubemap {
+
+constexpr auto x = nytl::Vec3f{1.f, 0.f, 0.f};
+constexpr auto y = nytl::Vec3f{0.f, 1.f, 0.f};
+constexpr auto z = nytl::Vec3f{0.f, 0.f, 1.f};
+constexpr struct {
+	nytl::Vec3f dir;
+	nytl::Vec3f s;
+	nytl::Vec3f t;
+} faces[] = {
+	{+x, -z, -y},
+	{-x, +z, -y},
+	{+y, +x, +z},
+	{-y, +x, -z},
+	{+z, +x, -y},
+	{-z, -x, -y},
+};
+
+// Returns unnormalized direction.
+// Expects u, v in range [0, 1]
+nytl::Vec3f faceUVToDir(unsigned face, float u, float v);
+
+} // namespace cubemap
 } // namespace tkn

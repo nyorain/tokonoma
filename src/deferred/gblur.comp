@@ -7,12 +7,12 @@ layout(set = 0, binding = 0) uniform sampler2D inCol;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outCol;
 
 layout(push_constant) uniform Params {
-	// encodes the offsets and weights needed for linear sampling
+	// Encodes the offsets and weights needed for linear sampling
 	// as described here: 
 	// http://rastergrid.com/blog/2010/09/efficient-gaussian-blur-with-linear-sampling/
 	// the x component is the offset
 	// the y component is the weight
-	// Sicne offsetWeights[0].x is always 0.0, uses it to encode extra info:
+	// Since offsetWeights[0].x is always 0.0, uses it to encode extra info:
 	// - if it's > 0 it's an horizontal blur, otherwise vertical
 	// - its absolute value is the blur size, i.e. how many members
 	//   of offsetWeights are valid. Always in [1, 16]
