@@ -29,7 +29,8 @@ layout(set = 0, binding = 0, row_major) uniform UBO {
 #else // LAYERED
 	layout(set = 1, binding = 0) uniform samplerCube cubemap;
 	vec3 sampleCube() {
-		return textureLod(cubemap, inCoords, 0).rgb;
+		// return textureLod(cubemap, inCoords, 0).rgb;
+		return texture(cubemap, inCoords).rgb;
 	}
 #endif // LAYERED
 

@@ -1,4 +1,5 @@
 #include <tkn/passes/blur.hpp>
+#include <tkn/util.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/shader.hpp>
@@ -43,8 +44,7 @@ float roundOdd(float x) {
 namespace tkn {
 
 // GaussianBlur
-GaussianBlur::Kernel GaussianBlur::createKernel(unsigned int hsize,
-		float fac) {
+GaussianBlur::Kernel GaussianBlur::createKernel(unsigned hsize, float fac) {
 	dlg_assert(hsize > 1 && hsize < 31);
 	dlg_assert(fac >= 1.0);
 
@@ -72,13 +72,12 @@ GaussianBlur::Kernel GaussianBlur::createKernel(unsigned int hsize,
 	std::array<Vec2f, 16> kernel;
 	kernel[0] = {float(1 + hsize / 2), prow[start] / sum};
 	auto idx = 0u;
-
 	for(auto i = start + 1; i < start + hsize + 1; i += 2) {
 		auto w1 = prow[i + 0] / sum;
 		auto w2 = prow[i + 1] / sum;
 		auto w = w1 + w2;
-		auto o1 = i - start - 1;
-		auto o2 = i - start;
+		auto o1 = i - start;
+		auto o2 = i - start + 1;
 		float o = (o1 * w1 + o2 * w2) / w;
 		kernel[++idx] = {o, w};
 	}
@@ -157,13 +156,13 @@ void GaussianBlur::record(vk::CommandBuffer cb, const Instance& instance,
 	vpp::DebugLabel(instance.ping.device(), cb, "GaussianBlur");
 
 	// basically ceil(dstSize / float(groupDimSize))
-	auto gx = (dstSize.width + groupDimSize - 1) / groupDimSize;
-	auto gy = (dstSize.height + groupDimSize - 1) / groupDimSize;
+	auto gx = ceilDivide(dstSize.width, groupDimSize);
+	auto gy = ceilDivide(dstSize.height, groupDimSize);
 
 	// horizontal pass
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
 	vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::compute, 0,
-		128, kernel.data());
+		sizeof(kernel), kernel.data());
 	tkn::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {instance.ping});
 	vk::cmdDispatch(cb, gx, gy, 1);
 
@@ -194,9 +193,7 @@ void GaussianBlur::record(vk::CommandBuffer cb, const Instance& instance,
 	// we only have to update the first value of the kernel to signal
 	// that this is the vertical pass
 	float nx = -kernel[0].x;
-	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
-	vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::compute, 0,
-		4, &nx);
+	vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::compute, 0, 4, &nx);
 	tkn::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {instance.pong});
 	vk::cmdDispatch(cb, gx, gy, 1);
 }

@@ -15,6 +15,16 @@ namespace tkn {
 void BloomPass::createBuffers(InitBufferData& data, tkn::WorkBatcher& wb,
 		unsigned levels, vk::Extent2D size, const GaussianBlur& blur) {
 	auto& dev = wb.dev;
+
+	size.width = std::max(size.width >> 1, 1u);
+	size.height = std::max(size.height >> 1, 1u);
+	if(levels > 10u) {
+		dlg_warn("maxLevels is unrealisticly high: {}", levels);
+		levels = 10u;
+	}
+	dlg_assert(levels <= vpp::mipmapLevels(size));
+	levelCount_ = levels;
+
 	auto usage = vk::ImageUsageBits::storage |
 		vk::ImageUsageBits::sampled |
 		vk::ImageUsageBits::transferSrc |
@@ -22,16 +32,7 @@ void BloomPass::createBuffers(InitBufferData& data, tkn::WorkBatcher& wb,
 	auto info = vpp::ViewableImageCreateInfo(format,
 		vk::ImageAspectBits::color, size, usage);
 	dlg_assert(vpp::supported(dev, info.img));
-	if(levels > 10u) {
-		dlg_warn("maxLevels is unrealisticly high: {}", levels);
-		levels = 10u;
-	}
 
-	size.width = std::max(size.width >> 1, 1u);
-	size.height = std::max(size.height >> 1, 1u);
-	dlg_assert(levels <= vpp::mipmapLevels(size));
-
-	info.img.extent.depth = 1;
 	info.img.mipLevels = levelCount_;
 	tmpTarget_ = {data.initTmpTarget, wb.alloc.memDevice, info.img,
 		dev.deviceMemoryTypes()};
@@ -156,7 +157,7 @@ void BloomPass::record(vk::CommandBuffer cb, vk::Image highlight,
 		// so that all levels are consistenly in transferSrcOptimal
 		// layout, even the last one where we never needed it.
 		// Makes handling barriers down the line easier.
-		if(i + 1 > levelCount_) {
+		if(i + 1 >= levelCount_) {
 			break;
 		}
 

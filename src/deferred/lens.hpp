@@ -1,5 +1,7 @@
 #pragma once
 
+// TODO: abolish in favor os passes moved to tkn/passes
+
 #include "pass.hpp"
 
 #include <tkn/render.hpp>

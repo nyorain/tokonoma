@@ -50,7 +50,7 @@ public:
 
 	void createBuffers(InitBufferData& data, WorkBatcher&, vk::Extent2D size);
 	void initBuffers(InitBufferData& data, vk::ImageView lightInput,
-		vk::ImageView emissionInput);
+		vk::ImageView emissionInput = {});
 
 	void record(vk::CommandBuffer cb, vk::Extent2D);
 	void updateDevice();
@@ -70,6 +70,7 @@ protected:
 	vpp::TrDs ds_;
 
 	vpp::ViewableImage target_;
+	bool emission_ {};
 };
 
 } // namespace tkn

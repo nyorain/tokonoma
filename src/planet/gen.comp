@@ -24,7 +24,7 @@ vec4 mfbm(vec3 st) {
 	float amp = 0.5f; // ampliture
 	float mod = 1.f; // modulation
 	float totalAmp = 0.f;
-	for(int i = 0; i < 10; ++i) {
+	for(int i = 0; i < 8; ++i) {
 		vec3 grad;
 		float tmp = amp * snoise(mod * st, grad);
 		grad = amp * mod * grad;
@@ -51,6 +51,7 @@ void main() {
 
 	vec3 pos = normalize(dir.z + uv.x * dir.x + uv.y * dir.y);
 
-	vec4 h = mfbm(pos);
+	vec4 h = mfbm(8 * pos);
+	h.x = 0.5 + h.x;
 	imageStore(outCol, ivec3(pixel, dir.face), h);
 }

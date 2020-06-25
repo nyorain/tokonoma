@@ -32,6 +32,7 @@ FillData createFill(WorkBatcher& wb, const vpp::Image& img, vk::Format dstFormat
 	auto& dev = img.device();
 
 	FillData res;
+	res.dev = &img.device();
 	res.dstFormat = dstFormat;
 	res.target = img;
 	res.source = std::move(provider);
@@ -125,6 +126,9 @@ FillData createFill(WorkBatcher& wb, const vpp::Image& img, vk::Format dstFormat
 void doFill(FillData& data, vk::CommandBuffer cb) {
 	dlg_assert(data.target);
 	dlg_assert(data.source);
+
+	auto& dev = *data.dev;
+	vpp::DebugLabel debugLabel(dev, cb, "tkn::doFill");
 
 	auto levelCount = data.numLevels;
 	auto numFillLevels = std::min(levelCount, data.source->mipLevels());
@@ -235,6 +239,7 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 		dlg_assert(data.stageImage);
 		dlg_assert(!data.cpuConversion);
 		data.stageImage.init(data.initStageImage);
+		vpp::nameHandle(data.stageImage, "doFill:stageImage");
 
 		// TODO(PERF, low): keep memory map view active over this whole time
 		// if we write to stageImage via map.
@@ -258,9 +263,8 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 				// the mapped memory.
 				auto sl = vk::getImageSubresourceLayout(data.stageImage.device(),
 					data.stageImage, {vk::ImageAspectBits::color, m, 0u});
-				if(sl.arrayPitch == lsize) { // tight subresource layout
-					auto mapBegin = vpp::texelAddress(sl, fmtSize, 0u, 0u, 0u, 0u);
-					auto map = data.stageImage.memoryMap(mapBegin, lsize * layerCount);
+				if(false && sl.arrayPitch == lsize) { // tight subresource layout
+					auto map = data.stageImage.memoryMap(sl.offset, lsize * layerCount);
 					auto span = map.span();
 					for(auto l = 0u; l < layerCount; ++l) {
 						auto count = data.source->read(map.span(), m, l);
@@ -289,9 +293,11 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 
 			vk::ImageBlit blit;
 			blit.srcSubresource.aspectMask = vk::ImageAspectBits::color;
+			blit.srcSubresource.baseArrayLayer = 0u;
 			blit.srcSubresource.layerCount = layerCount;
 			blit.srcSubresource.mipLevel = m;
 			blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
+			blit.dstSubresource.baseArrayLayer = 0u;
 			blit.dstSubresource.layerCount = layerCount;
 			blit.dstSubresource.mipLevel = m;
 			blit.srcOffsets[1].x = mwidth;
@@ -346,7 +352,7 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 		target.srcScope.stages = vk::PipelineStageBits::transfer;
 
 		auto count = data.numLevels - numFillLevels;
-		tkn::downscale(cb, target, count);
+		tkn::downscale(dev, cb, target, count);
 
 		b0.oldLayout = vk::ImageLayout::transferSrcOptimal;
 		b0.srcAccessMask = vk::AccessBits::transferWrite |
@@ -363,8 +369,9 @@ void doFill(FillData& data, vk::CommandBuffer cb) {
 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::transfer,
 		data.dstScope.stages, {}, {}, {}, {{b0}});
 
-	// no longer needed
-	data.source = {};
+	// NOTE: we don't do this here so it could be reclaimed by the caller
+	// after this.
+	// data.source = {};
 }
 
 TextureInitData createTexture(WorkBatcher& wb,

@@ -71,6 +71,8 @@ void main() {
 	float mu_s = dot(startPos, sunDir) / r;
 	float nu = dot(viewDir, sunDir);
 	bool rayIntersectsGround = intersectsGround(atmos, ray);
+	// bool rayIntersectsGround = (depth != 1.0);
+	// bool rayIntersectsGround = (ray.mu < 0.0) && (depth != 1.0);
 
 	vec3 scat;
 	vec3 trans;
@@ -79,16 +81,19 @@ void main() {
 		// TODO: depth == 1
 		scat = getSkyRadianceToPoint(atmos, transTex,
 			scatRayleighTex, scatMieTex, startPos, startPos + z * viewDir, 
-			0.0, sunDir, trans);
+			0.0, sunDir, trans, rayIntersectsGround);
 	} else {
 		if(false && depth == 1.f) {
 			scat = getScattering(atmos, scatCombinedTex, scatMieTex,
 				ray, mu_s, nu, rayIntersectsGround);
 			trans = transmittanceToTop(atmos, transTex, ray);
 		} else {
+			// scat = getSkyRadianceToPoint(atmos, transTex,
+			// 	scatRayleighTex, scatMieTex, startPos, startPos + z * viewDir, 
+			// 	0.0, sunDir, trans, rayIntersectsGround);
 			scat = getSkyRadianceToPoint(atmos, transTex,
-				scatRayleighTex, scatMieTex, startPos, startPos + z * viewDir, 
-				0.0, sunDir, trans);
+				scatRayleighTex, scatMieTex, ray, mu_s, nu, rayIntersectsGround,
+				z, trans);
 		}
 	}
 

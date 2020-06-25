@@ -82,6 +82,7 @@ shaders_src = {
 		['shaders/color.frag'],
 		['shaders/shProj.comp'],
 		['shaders/test.frag'], # only for testing included shaders on their own
+		['shaders/highlight.comp']
 	],
 	'smooth_shadow': [
 		['light.vert'],

@@ -1,11 +1,12 @@
 #include <tkn/passes/highlight.hpp>
+#include <tkn/util.hpp>
 #include <vpp/debug.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/shader.hpp>
 #include <vpp/formats.hpp>
 #include <vpp/vk.hpp>
 
-#include <shaders/deferred.highlight.comp.h>
+#include <shaders/tkn.highlight.comp.h>
 
 namespace tkn {
 
@@ -36,7 +37,7 @@ void HighLightPass::create(InitData& data, WorkBatcher& wb, vk::Sampler linear) 
 	vpp::nameHandle(dsLayout_, "HighLightPass:dsLayout");
 	vpp::nameHandle(pipeLayout_, "HighLightPass:pipeLayout");
 
-	vpp::ShaderModule shader(dev, deferred_highlight_comp_data);
+	vpp::ShaderModule shader(dev, tkn_highlight_comp_data);
 
 	vk::ComputePipelineCreateInfo cpi;
 	cpi.layout = pipeLayout_;
@@ -48,7 +49,7 @@ void HighLightPass::create(InitData& data, WorkBatcher& wb, vk::Sampler linear) 
 	vpp::nameHandle(pipe_, "HightLightPass:pipe");
 
 	ds_ = {data.initDs, wb.alloc.ds, dsLayout_};
-	ubo_ = {data.initUbo, wb.alloc.bufHost, sizeof(params),
+	ubo_ = {data.initUbo, wb.alloc.bufHost, sizeof(params) + sizeof(u32),
 		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 }
 
@@ -75,8 +76,8 @@ void HighLightPass::createBuffers(InitBufferData& data,
 	dlg_assert(vpp::supported(dev, info.img));
 
 	dlg_assert(numLevels >= 1);
-	dlg_assert((2u << numLevels) <= size.width ||
-		(2u << numLevels) <= size.height);
+	dlg_assert((1u << numLevels) <= size.width ||
+		(1u << numLevels) <= size.height);
 
 	info.img.extent.depth = 1;
 	info.img.mipLevels = numLevels;
@@ -93,11 +94,13 @@ void HighLightPass::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 	vpp::DescriptorSetUpdate dsu(ds_);
 	dsu.imageSampler({{{}, lightInput,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, emissionInput,
+	dsu.imageSampler({{{}, emissionInput ? emissionInput : lightInput,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.storage({{{}, target_.vkImageView(),
 		vk::ImageLayout::general}});
 	dsu.uniform({{{ubo_}}});
+
+	emission_ = (emissionInput);
 }
 
 void HighLightPass::record(vk::CommandBuffer cb, vk::Extent2D size) {
@@ -113,9 +116,11 @@ void HighLightPass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
 		vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
 
-	auto gx = (std::max(size.width >> 1, 1u) + groupDimSize - 1) / groupDimSize;
-	auto gy = (std::max(size.height >> 1, 1u) + groupDimSize - 1) / groupDimSize;
+	size.width = std::max(size.width >> 1, 1u);
+	size.height = std::max(size.height >> 1, 1u);
 
+	auto gx = ceilDivide(size.width, groupDimSize);
+	auto gy = ceilDivide(size.height, groupDimSize);
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
 	tkn::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {{ds_}});
 	vk::cmdDispatch(cb, gx, gy, 1);
@@ -125,6 +130,7 @@ void HighLightPass::updateDevice() {
 	auto map = ubo_.memoryMap();
 	auto span = map.span();
 	tkn::write(span, params);
+	tkn::write(span, u32(emission_));
 	map.flush();
 }
 

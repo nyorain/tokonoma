@@ -92,8 +92,8 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 	dlg_assert(cb && target.image && target.layerCount);
 	dlg_assert(genLevels > 0);
 
-	// transition mipmap 0 to layout transferSrcOptimal
-	// transition other levels to layout transferDstOptimal
+	// transition base mipmap to layout transferSrcOptimal
+	// transition higher levels to layout transferDstOptimal
 	vk::ImageMemoryBarrier barrier0;
 	barrier0.image = target.image;
 	barrier0.subresourceRange.layerCount = target.layerCount;
@@ -122,13 +122,13 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 		vk::PipelineStageBits::transfer,
 		{}, {}, {}, {{barrier0, barrierRest}});
 
-	for(auto i = target.baseLevel + 1u; i < target.baseLevel + genLevels + 1; ++i) {
+	for(auto i = target.baseLevel; i < target.baseLevel + genLevels; ++i) {
 		// std::max needed for end offsets when the texture is not
 		// quadratic: then we would get 0 there although the mipmap
 		// still has size 1
 		vk::ImageBlit blit;
 		blit.srcSubresource.layerCount = target.layerCount;
-		blit.srcSubresource.mipLevel = i - 1;
+		blit.srcSubresource.mipLevel = i;
 		blit.srcSubresource.aspectMask = vk::ImageAspectBits::color;
 		// NOTE: the '& ~1u' causes the size to be the largest even number
 		// below the real mipmap size. Kind of important for non-power-of-two
@@ -140,29 +140,29 @@ void downscale(vk::CommandBuffer cb, const DownscaleTarget& target,
 		// texture). With this we will at least scale 2x2 from the first
 		// mipmap level to the next one and so only discard the 5 right/bottom
 		// outer pixels. Still somewhat bad though!
-		blit.srcOffsets[1].x = std::max((target.extent.width >> (i - 1)) & ~1u, 1u);
-		blit.srcOffsets[1].y = std::max((target.extent.height >> (i - 1)) & ~1u, 1u);
-		blit.srcOffsets[1].z = std::max((target.extent.depth >> (i - 1)) & ~1u, 1u);
+		blit.srcOffsets[1].x = std::max((target.extent.width >> i) & ~1u, 1u);
+		blit.srcOffsets[1].y = std::max((target.extent.height >> i) & ~1u, 1u);
+		blit.srcOffsets[1].z = std::max((target.extent.depth >> i) & ~1u, 1u);
 
 		blit.dstSubresource.layerCount = target.layerCount;
-		blit.dstSubresource.mipLevel = i;
+		blit.dstSubresource.mipLevel = i + 1;
 		blit.dstSubresource.aspectMask = vk::ImageAspectBits::color;
-		blit.dstOffsets[1].x = std::max(target.extent.width >> i, 1u);
-		blit.dstOffsets[1].y = std::max(target.extent.height >> i, 1u);
-		blit.dstOffsets[1].z = std::max(target.extent.depth >> i, 1u);
+		blit.dstOffsets[1].x = std::max(target.extent.width >> (i + 1), 1u);
+		blit.dstOffsets[1].y = std::max(target.extent.height >> (i + 1), 1u);
+		blit.dstOffsets[1].z = std::max(target.extent.depth >> (i + 1), 1u);
 
 		vk::cmdBlitImage(cb, target.image, vk::ImageLayout::transferSrcOptimal,
 			target.image, vk::ImageLayout::transferDstOptimal, {{blit}},
 			vk::Filter::linear);
 
-		// change layout of current mip level to transferSrc for next mip level
+		// change layout of dst mip level to transferSrc for next mip level
 		// we even do it for the last level so that we have consistent src
 		// scopes for all levels.
 		vk::ImageMemoryBarrier barrieri;
 		barrieri.image = target.image;
-		barrieri.subresourceRange.baseMipLevel = i;
-		barrieri.subresourceRange.layerCount = 1;
-		barrieri.subresourceRange.levelCount = target.layerCount;
+		barrieri.subresourceRange.layerCount = target.layerCount;
+		barrieri.subresourceRange.baseMipLevel = i + 1;
+		barrieri.subresourceRange.levelCount = 1u;
 		barrieri.subresourceRange.aspectMask = vk::ImageAspectBits::color;
 		barrieri.oldLayout = vk::ImageLayout::transferDstOptimal;
 		barrieri.srcAccessMask = vk::AccessBits::transferWrite;

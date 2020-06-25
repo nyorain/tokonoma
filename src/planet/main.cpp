@@ -9,6 +9,9 @@
 #include <tkn/formats.hpp>
 #include <tkn/scene/environment.hpp>
 #include <tkn/scene/shape.hpp>
+#include <tkn/passes/highlight.hpp>
+#include <tkn/passes/bloom.hpp>
+#include <tkn/passes/luminance.hpp>
 
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/bufferOps.hpp>
@@ -20,6 +23,7 @@
 #include <vpp/submit.hpp>
 #include <vpp/queue.hpp>
 #include <vpp/debug.hpp>
+#include <vpp/init.hpp>
 #include <vpp/vk.hpp>
 
 #include <dlg/dlg.hpp>
@@ -40,11 +44,13 @@ class PlanetApp : public tkn::App {
 public:
 	static constexpr auto colorFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto atmosGroupDimSize = 8u;
+	static constexpr auto bloomLevels = 8u;
 
 	struct TerrainUboData {
 		nytl::Mat4f vp;
 		nytl::Vec3f eye;
 		u32 enable;
+		Atmosphere atmosphere;
 	};
 
 	struct AtmosphereUboData {
@@ -70,7 +76,7 @@ public:
 		cam_.near(-5.f);
 		cam_.far(-100000.f);
 		auto& c = **cam_.spaceshipControl();
-		c.controls.move.mult = 10000.f;
+		c.controls.move.mult = 1000.f;
 		c.controls.move.fastMult = 100.f;
 		c.controls.move.slowMult = 0.05f;
 
@@ -95,7 +101,8 @@ public:
 				vk::BufferUsageBits::transferDst, devMem};
 
 		// vertices/indices
-		auto shape = tkn::generateIco(0u);
+		// auto shape = tkn::generateIco(0u);
+		auto shape = tkn::generateUV(tkn::Sphere{}, 8u, 8u);
 		std::vector<nytl::Vec4f> vverts;
 		for(auto& v : shape.positions) {
 			vverts.emplace_back(v);
@@ -165,7 +172,11 @@ public:
 		auto wb = tkn::WorkBatcher(dev);
 		wb.cb = cb;
 		auto img = tkn::loadImage("heightmap.ktx");
-		auto initHeightmap = tkn::createTexture(wb, std::move(img));
+		tkn::TextureCreateParams params;
+		// create full mip chain
+		params.mipLevels = 0;
+		params.fillMipmaps = true;
+		auto initHeightmap = tkn::createTexture(wb, std::move(img), params);
 		heightmap_ = tkn::initTexture(initHeightmap, wb);
 		nameHandle(heightmap_);
 
@@ -176,7 +187,12 @@ public:
 		initRenderPP();
 
 		// starmap & skybox renderer
-		initStars(wb);
+		auto data = initStars(wb);
+
+		tkn::HighLightPass::InitData initHighlight;
+		highlight_.create(initHighlight, wb, sampler_);
+		highlight_.init(initHighlight);
+		blur_.init(dev, sampler_);
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
@@ -184,7 +200,7 @@ public:
 		return true;
 	}
 
-	void initStars(tkn::WorkBatcher& wb) {
+	[[nodiscard]] tkn::TextureInitData initStars(tkn::WorkBatcher& wb) {
 		auto& dev = vkDevice();
 		auto bindings = {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
@@ -210,6 +226,9 @@ public:
 		tkn::TextureCreateParams params;
 		params.cubemap = true;
 		params.usage = vk::ImageUsageBits::sampled;
+		params.mipLevels = 0u; // generate full chain
+		params.fillMipmaps = true;
+		params.format = vk::Format::r16g16b16a16Sfloat;
 		auto initTex = tkn::createTexture(wb, std::move(starmapProvider), params);
 		stars_.map = tkn::initTexture(initTex, wb);
 
@@ -218,6 +237,8 @@ public:
 		dsuMap.imageSampler({{{}, stars_.map.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuMap.apply();
+
+		return initTex;
 	}
 
 	void initUpdateComp() {
@@ -352,22 +373,31 @@ public:
 
 	void updateAtmosphereDs() {
 		auto& sky = atmosphere_.sky;
-		vpp::DescriptorSetUpdate dsuRender(atmosphere_.ds);
-		dsuRender.uniform({{{atmosphere_.ubo}}});
-		dsuRender.imageSampler({{{}, sky.transTable().imageView(),
+		vpp::DescriptorSetUpdate dsuAtmos(atmosphere_.ds);
+		dsuAtmos.uniform({{{atmosphere_.ubo}}});
+		dsuAtmos.imageSampler({{{}, sky.transTable().imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, sky.scatTableRayleigh().imageView(),
+		dsuAtmos.imageSampler({{{}, sky.scatTableRayleigh().imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, sky.scatTableMie().imageView(),
+		dsuAtmos.imageSampler({{{}, sky.scatTableMie().imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, sky.scatTableCombined().imageView(),
+		dsuAtmos.imageSampler({{{}, sky.scatTableCombined().imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 
 		// window-size-dependent buffers
-		dsuRender.imageSampler({{{}, terrain_.depth.imageView(),
+		dsuAtmos.imageSampler({{{}, terrain_.depth.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.storage({{{}, terrain_.color.imageView(),
+		dsuAtmos.storage({{{}, terrain_.color.imageView(),
 			vk::ImageLayout::general}});
+
+		// terrain ds
+		vpp::DescriptorSetUpdate dsuTerrain(terrain_.ds);
+		dsuTerrain.skip(4);
+		dsuTerrain.imageSampler({{{{}, sky.transTable().imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}}});
+		dsuTerrain.imageSampler({{{{}, sky.irradianceTable().imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}}});
+
 	}
 
 	void initRenderTerrain() {
@@ -380,7 +410,7 @@ public:
 
 		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::vertex), // scene data
+				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment), // scene data
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
 				vk::ShaderStageBits::vertex), // vertices
 			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
@@ -389,6 +419,12 @@ public:
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment,
 				&sampler_.vkHandle()),
+			// atmosphere transmittance
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
+			// atmosphere irradiance
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 		};
 
 		terrain_.dsLayout.init(dev, bindings);
@@ -404,6 +440,12 @@ public:
 		dsu.storage({{{vertices_}}});
 		dsu.storage({{{indices_}}});
 		dsu.imageSampler({{{{}, heightmap_.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}}});
+
+		auto& sky = atmosphere_.sky;
+		dsu.imageSampler({{{{}, sky.transTable().imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}}});
+		dsu.imageSampler({{{{}, sky.irradianceTable().imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}}});
 
 		auto vert = vpp::ShaderModule(dev, planet_model_vert_data);
@@ -444,8 +486,12 @@ public:
 		nameHandle(pp_.rp);
 
 		auto bindings = std::array {
+			// color
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler_.vkHandle())
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
+			// bloom
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 		};
 
 		pp_.dsLayout.init(dev, bindings);
@@ -566,7 +612,8 @@ public:
 	}
 
 	void record(const RenderBuffer& rb) override {
-		const auto [width, height] = swapchainInfo().imageExtent;
+		const auto extent = swapchainInfo().imageExtent;
+		const auto [width, height] = extent;
 		auto cb = rb.commandBuffer;
 		vk::beginCommandBuffer(cb, {});
 
@@ -610,6 +657,16 @@ public:
 		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
 			vk::PipelineStageBits::fragmentShader | vk::PipelineStageBits::computeShader,
 			{}, {}, {}, {{barrier}});
+
+		// TODO: make sure barrier above works for highlight pass
+		// highlight & bloom
+		highlight_.record(cb, extent);
+		tkn::barrier(cb, highlight_.target().image(),
+			highlight_.srcScopeTarget(), bloom_.dstScopeHighlight());
+		bloom_.record(cb, highlight_.target().image(), extent, blur_);
+		auto ppBloomScope = tkn::SyncScope::fragmentSampled();
+		tkn::barrier(cb, highlight_.target().image(),
+			bloom_.srcScopeHighlight(), ppBloomScope);
 
 		// post process
 		auto cvpp = std::array {
@@ -658,11 +715,25 @@ public:
 		fbi.pAttachments = atts0.begin();
 		terrain_.fb = {dev, fbi};
 
+		auto wb = tkn::WorkBatcher(dev);
+		highlight_.numLevels = bloomLevels;
+		tkn::HighLightPass::InitBufferData initHighlight;
+		highlight_.createBuffers(initHighlight, wb, size);
+
+		tkn::BloomPass::InitBufferData initBloom;
+		bloom_.createBuffers(initBloom, wb, bloomLevels, size, blur_);
+
+		highlight_.initBuffers(initHighlight, terrain_.color.imageView());
+		bloom_.initBuffers(initBloom, highlight_.target().image(),
+			highlight_.target().imageView(), blur_);
+
 		// update descriptors
 		updateAtmosphereDs();
 
 		vpp::DescriptorSetUpdate dsu(pp_.ds);
 		dsu.imageSampler({{{}, terrain_.color.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.imageSampler({{{}, highlight_.target().imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsu.apply();
 
@@ -696,6 +767,7 @@ public:
 			data.vp = vp;
 			data.eye = cam_.position();
 			data.enable = !frozen_;
+			data.atmosphere = atmosphere_.sky.config_.atmos;
 			tkn::write(span, data);
 			map.flush();
 
@@ -722,6 +794,8 @@ public:
 			tkn::write(span, aud);
 			map.flush();
 		}
+
+		highlight_.updateDevice();
 
 		// TODO: more explicit regeneration...
 		if(atmosphere_.sky.updateDevice()) {
@@ -834,6 +908,11 @@ private:
 
 		vpp::SubBuffer dispatch; // indirect dispatch command
 	} comp_;
+
+	tkn::GaussianBlur blur_;
+	tkn::HighLightPass highlight_;
+	tkn::BloomPass bloom_;
+	tkn::LuminancePass lum_;
 };
 
 int main(int argc, const char** argv) {

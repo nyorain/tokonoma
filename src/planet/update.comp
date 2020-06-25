@@ -27,7 +27,7 @@ layout(set = 0, binding = 4) buffer Indices { uint indices[]; };
 layout(set = 0, binding = 5) uniform samplerCube heightmap;
 
 vec3 displace(vec3 pos) {
-	return 6360 * (1 + 0.1 * texture(heightmap, pos).r) * normalize(pos);
+	return 6360 * (1 + 0.03 * texture(heightmap, pos).r) * normalize(pos);
 }
 
 // TODO: don't hardcode.
@@ -35,9 +35,9 @@ vec3 displace(vec3 pos) {
 // clamps to valid range (e.g. < 31)
 float lodFromDistance(float z) {
 	const float fov = 0.42 * 3.141;
-	const float targetPixelSize = 0.001f;
+	const float targetPixelSize = 0.005f;
 	const float screenResolution = 2000.f; 
-	const float maxLod = 18.f;
+	const float maxLod = 22.f;
 	float s = z * tan(fov / 2);
 	float tmp = s * targetPixelSize / screenResolution;
 

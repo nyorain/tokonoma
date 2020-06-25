@@ -27,7 +27,7 @@ void main() {
 	}
 
 	vec2 unitRange = pixel / (size - 1.f);
-	ARay toSun = rayFromGroundTexUnit(atmosphere, unitRange);
+	ARay toSun = rayFromIrradianceTexUnit(atmosphere, unitRange);
 
 	vec3 irrad;
 	vec4 accum;

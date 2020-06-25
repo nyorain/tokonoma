@@ -7,6 +7,9 @@ layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 fragColor;
 
 layout(set = 0, binding = 0) uniform sampler2D colorTex;
+layout(set = 0, binding = 1) uniform sampler2D bloomTex;
+
+const uint nBloomLevels = 5u; // TODO: make push constant or something
 
 // only used for dithering. Bad function.
 float random(vec2 v) {
@@ -19,9 +22,16 @@ float random(vec2 v) {
 }
 
 void main() {
-	const float exposure = 1.f;
+	const float exposure = 0.0005f;
 
 	vec4 col = texture(colorTex, inUV);
+
+	float bloomFac = 0.5;
+	for(uint i = 0u; i < nBloomLevels; ++i) {
+		col += bloomFac * textureLod(bloomTex, inUV, i);
+		bloomFac *= 0.8;
+	}
+
 	col.rgb = 1 - exp(-exposure * col.rgb);
 	fragColor = col;
 

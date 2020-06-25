@@ -6,7 +6,7 @@
 
 namespace tkn {
 
-/// BloomPass working directly on the multi-level image of a HighlightPass.
+// BloomPass working directly on the multi-level image of a HighlightPass.
 class BloomPass {
 public:
 	static constexpr vk::Format format = vk::Format::r16g16b16a16Sfloat;
@@ -20,16 +20,16 @@ public:
 	};
 
 public:
-	/// Influences how the bloom mipmap levels are generated.
-	/// When true, will first blur, then create mipmaps. That results
-	/// in a somewhat stronger overall blur for higher mipmap levels and
-	/// a stronger bloom effect. When false, will first
-	/// create all mipmap levels, then blur them all (independently).
-	/// Rerecord needed when changed.
+	// Influences how the bloom mipmap levels are generated.
+	// When true, will first blur, then create mipmaps. That results
+	// in a somewhat stronger overall blur for higher mipmap levels and
+	// a stronger bloom effect. When false, will first
+	// create all mipmap levels, then blur them all (independently).
+	// Rerecord needed when changed.
 	bool mipBlurred = true;
 
-	/// Blur kernel parameters, see GaussianBlur::createKernel
-	unsigned blurHSize = 24;
+	// Blur kernel parameters, see GaussianBlur::createKernel
+	unsigned blurHSize = 8u;
 	float blurFac = 1.5;
 
 public:

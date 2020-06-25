@@ -20,7 +20,7 @@ meta:
 	scatter:
 		format: r16g16b16a16Sfloat
 		nuSize: 8
-		muSSize: 32
+		muSSize: 64
 		muSize: 256
 		heightSize: 64
 	irradiance:
@@ -33,8 +33,8 @@ meta:
 atmosphere:
 	# atmosphere boundaries in meters
 	# mini-earth
-	bottom: 6360
-	top: 7520
+	bottom: 6250
+	top: 7120
 	# bottom: 6360000
 	# top: 6420000
 	# bottom: 1.0
@@ -48,12 +48,12 @@ atmosphere:
 	# With a larger atmosphere, the sun might influence the sky more when
 	# on the other side of the planet so this is somewhat dependent on atmosphere
 	# size.
-	minMuS: -0.8
+	minMuS: -0.5
 	# average ground color, rgb. Used for multi scattering
 	groundAlbedo:
-		0.1
-		0.1
-		0.1
+		0.3
+		0.3
+		0.3
 	mie:
 		g: 0.8
 		# ref: 1200
@@ -63,7 +63,7 @@ atmosphere:
 			# compute: generate it manually, physically based. 
 			#   Uses 'alpha', 'beta', 'scatterAlbedo' parameter.
 			# rgb: Just use given rgb parameters
-			use: compute
+			use: rgb
 			# ref: 0.0
 			alpha: 0.0
 			# ref 5.328e-3
@@ -71,24 +71,24 @@ atmosphere:
 			scatterAlbedo: 0.95
 			# only for use: rgb
 			rgb:
-				8.e-5
-				8.e-5
-				8.e-5
+				3.e-4
+				3.e-4
+				3.e-4
 	rayleigh:
 		scattering:
 			use: compute
 			# Bruneton's reference: 1.8402e-6
-			strength: 2.8e-5
+			strength: 3.8e-5
 			# only for use: rgb
 			# From http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
 			# Those values should rather be calculated with a wavelength-dependent
 			# formula
 			rgb:
-				6.95e-5
-				1.18e-4
-				2.44e-4
+				6.95e-4
+				1.18e-3
+				2.44e-3
 		# ref: 7000
-		scaleHeight: 70
+		scaleHeight: 40
 		expScale: 10000.0
 	# absorption particles
 	# https://ozonewatch.gsfc.nasa.gov/facts/SH.html
@@ -160,12 +160,12 @@ atmosphere:
 					1.383e-26
 					7.105e-27
 	solarIrradiance:
-		use: spectral
+		use: rgb
 		# a really crude approximation of rgb values
 		rgb:
-			5.5
-			5.5
-			5.5
+			10000
+			10000
+			10000
 		# spectral values of solar irradiance
 		# taken directly from E. Bruneton's sample implementation:
 		# Source "Reference Solar Spectral Irradiance: ASTM G-173", ETR column,
