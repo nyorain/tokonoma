@@ -262,6 +262,7 @@ shaders_src = {
 		['dispatch.comp'],
 		['pp.frag'],
 		['sky.comp'],
+		['apply.comp'],
 	],
 }
 

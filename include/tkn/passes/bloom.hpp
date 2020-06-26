@@ -29,7 +29,7 @@ public:
 	bool mipBlurred = true;
 
 	// Blur kernel parameters, see GaussianBlur::createKernel
-	unsigned blurHSize = 8u;
+	unsigned blurHSize = 4u;
 	float blurFac = 1.5;
 
 public:

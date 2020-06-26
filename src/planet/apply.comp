@@ -1,0 +1,29 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y_id = 1) in;
+layout(set = 0, binding = 0) uniform UBO {
+	uint nBloomLevels;
+	float strength;
+	float gain;
+} ubo;
+
+layout(set = 0, binding = 1) uniform sampler2D bloomTex;
+layout(set = 0, binding = 2, rgba16f) uniform image2D ioColor;
+
+void main() {
+	uvec2 size = imageSize(ioColor);
+	uvec2 pixel = gl_GlobalInvocationID.xy;
+	if(pixel.x >= size.x || pixel.y >= size.y) {
+		return; // invalid invocation
+	}
+
+	vec2 uv = (pixel + 0.5) / size;
+	vec4 color = imageLoad(ioColor, ivec2(pixel));
+	float bloomFac = ubo.strength;
+	for(uint i = 0u; i < ubo.nBloomLevels; ++i) {
+		color += bloomFac * textureLod(bloomTex, uv, i);
+		bloomFac *= ubo.gain;
+	}
+
+	imageStore(ioColor, ivec2(pixel), color);
+}

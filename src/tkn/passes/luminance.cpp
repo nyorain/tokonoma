@@ -95,7 +95,7 @@ void LuminancePass::create(InitData& data, WorkBatcher& wb, vk::Sampler nearest,
 
 		extract_.dsLayout.init(dev, extractBindings);
 		vk::PushConstantRange pcr;
-		pcr.size = sizeof(nytl::Vec3f);
+		pcr.size = sizeof(nytl::Vec3f) + sizeof(float) * 2;
 		pcr.stageFlags = stage;
 		extract_.pipeLayout = {dev, {{extract_.dsLayout.vkHandle()}}, {{pcr}}};
 
@@ -123,7 +123,7 @@ void LuminancePass::create(InitData& data, WorkBatcher& wb, vk::Sampler nearest,
 
 		extract_.dsLayout.init(dev, extractBindings);
 		vk::PushConstantRange pcr;
-		pcr.size = sizeof(nytl::Vec3f);
+		pcr.size = sizeof(nytl::Vec3f) + sizeof(float) * 2;
 		pcr.stageFlags = stage;
 		extract_.pipeLayout = {dev, {{extract_.dsLayout.vkHandle()}}, {{pcr}}};
 
@@ -312,9 +312,18 @@ void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 	auto width = size.width;
 	auto height = size.height;
 
+	struct {
+		std::array<float, 3> luminance;
+		float min, max;
+	} pcrData = {
+		luminance,
+		minLogLuminance,
+		maxLogLuminance,
+	};
+
 	if(usingCompute()) {
 		vk::cmdPushConstants(cb, extract_.pipeLayout,
-			vk::ShaderStageBits::compute, 0, sizeof(luminance), &luminance);
+			vk::ShaderStageBits::compute, 0, sizeof(pcrData), &pcrData);
 
 		vk::ImageMemoryBarrier barrier;
 		/* TODO: can probably be removed. Remove transferDst usage as well (top)
@@ -418,7 +427,7 @@ void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
 			{}, {}, {}, {{barrierLast}});
 	} else {
 		vk::cmdPushConstants(cb, extract_.pipeLayout,
-			vk::ShaderStageBits::fragment, 0, sizeof(luminance), &luminance);
+			vk::ShaderStageBits::fragment, 0, sizeof(pcrData), &pcrData);
 
 		vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);

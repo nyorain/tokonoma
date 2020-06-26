@@ -35,6 +35,7 @@
 #include <shaders/planet.dispatch.comp.h>
 #include <shaders/planet.pp.frag.h>
 #include <shaders/planet.sky.comp.h>
+#include <shaders/planet.apply.comp.h>
 
 using namespace tkn::types;
 
@@ -44,7 +45,8 @@ class PlanetApp : public tkn::App {
 public:
 	static constexpr auto colorFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto atmosGroupDimSize = 8u;
-	static constexpr auto bloomLevels = 8u;
+	static constexpr auto applyGroupDimSize = 8u;
+	static constexpr auto bloomLevels = 6u;
 
 	struct TerrainUboData {
 		nytl::Mat4f vp;
@@ -63,6 +65,16 @@ public:
 		float camFar;
 		vec3 camUp;
 		float camFov;
+	};
+
+	struct PostParams {
+		float exposure;
+	};
+
+	struct ApplyUboData {
+		u32 nBloomLevels;
+		float strength;
+		float gain;
 	};
 
 public:
@@ -87,7 +99,13 @@ public:
 			return false;
 		}
 
-		sampler_ = vpp::Sampler(dev, tkn::linearSamplerInfo());
+		auto si = tkn::linearSamplerInfo();
+		sampler_ = vpp::Sampler(dev, si);
+
+		si.mipmapMode = vk::SamplerMipmapMode::nearest;
+		si.minFilter = vk::Filter::nearest;
+		si.magFilter = vk::Filter::nearest;
+		nearestSampler_ = vpp::Sampler(dev, si);
 
 		auto devMem = dev.deviceMemoryTypes();
 		ubo_ = {dev.bufferAllocator(), sizeof(TerrainUboData),
@@ -184,6 +202,7 @@ public:
 		initIndirectComp();
 		initAtmosphere();
 		initRenderTerrain();
+		initRenderApply();
 		initRenderPP();
 
 		// starmap & skybox renderer
@@ -191,8 +210,15 @@ public:
 
 		tkn::HighLightPass::InitData initHighlight;
 		highlight_.create(initHighlight, wb, sampler_);
+
+		tkn::LuminancePass::InitData initLum;
+		lum_.create(initLum, wb, nearestSampler_, {}); // TODO: add fullscreen vert mod
+		// lum_.maxLogLuminance = 100.f; // TODO
+		// lum_.minLogLuminance = 2.f; // TODO
+
 		highlight_.init(initHighlight);
 		blur_.init(dev, sampler_);
+		lum_.init(initLum);
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
@@ -202,7 +228,7 @@ public:
 
 	[[nodiscard]] tkn::TextureInitData initStars(tkn::WorkBatcher& wb) {
 		auto& dev = vkDevice();
-		auto bindings = {
+		auto bindings = std::array {
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::vertex),
 		};
@@ -222,6 +248,7 @@ public:
 		skyboxInfo.renderPass = terrain_.rp;
 		stars_.renderer.create(dev, skyboxInfo);
 
+		// auto starmapProvider = tkn::loadImage("galaxy1.ktx");
 		auto starmapProvider = tkn::loadImage("galaxy2.ktx");
 		tkn::TextureCreateParams params;
 		params.cubemap = true;
@@ -477,6 +504,42 @@ public:
 		terrain_.pipe = vpp::Pipeline(vkDevice(), gpi.info());
 	}
 
+	void initRenderApply() {
+		auto& dev = vkDevice();
+		auto bindings = std::array {
+			// ubo
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::compute),
+			// bloom
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
+			// i/o color
+			vpp::descriptorBinding(vk::DescriptorType::storageImage,
+				vk::ShaderStageBits::compute)
+		};
+
+		applyPass_.dsLayout.init(dev, bindings);
+		nameHandle(applyPass_.dsLayout);
+		applyPass_.pipeLayout = {dev, {{applyPass_.dsLayout}}, {}};
+		nameHandle(applyPass_.pipeLayout);
+		applyPass_.ds = {dev.descriptorAllocator(), applyPass_.dsLayout};
+		nameHandle(applyPass_.ds);
+
+		applyPass_.ubo = {dev.bufferAllocator(), sizeof(ApplyUboData),
+			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+
+		auto mod = vpp::ShaderModule(dev, planet_apply_comp_data);
+		auto cgs = tkn::ComputeGroupSizeSpec(applyGroupDimSize, applyGroupDimSize);
+		vk::ComputePipelineCreateInfo cpi;
+		cpi.layout = applyPass_.pipeLayout;
+		cpi.stage.module = mod;
+		cpi.stage.pSpecializationInfo = &cgs.spec;
+		cpi.stage.pName = "main";
+		cpi.stage.stage = vk::ShaderStageBits::compute;
+		applyPass_.pipe = vpp::Pipeline(dev, cpi);
+		nameHandle(applyPass_.pipe);
+	}
+
 	void initRenderPP() {
 		auto& dev = vkDevice();
 		auto pass0 = {0u};
@@ -489,9 +552,9 @@ public:
 			// color
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
-			// bloom
-			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
+			// ubo
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::fragment),
 		};
 
 		pp_.dsLayout.init(dev, bindings);
@@ -500,6 +563,9 @@ public:
 		nameHandle(pp_.pipeLayout);
 		pp_.ds = {dev.descriptorAllocator(), pp_.dsLayout};
 		nameHandle(pp_.ds);
+
+		pp_.ubo = {dev.bufferAllocator(), sizeof(PostParams),
+			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 		auto vert = vpp::ShaderModule(dev, tkn_fullscreen_vert_data);
 		auto frag = vpp::ShaderModule(dev, planet_pp_frag_data);
@@ -647,26 +713,57 @@ public:
 		auto cy = tkn::ceilDivide(height, atmosGroupDimSize);
 		vk::cmdDispatch(cb, cx, cy, 1u);
 
-		vk::ImageMemoryBarrier barrier;
-		barrier.image = terrain_.color.image();
-		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
-		barrier.oldLayout = vk::ImageLayout::general;
-		barrier.srcAccessMask = vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite;
-		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		barrier.dstAccessMask = vk::AccessBits::shaderRead;
-		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
-			vk::PipelineStageBits::fragmentShader | vk::PipelineStageBits::computeShader,
-			{}, {}, {}, {{barrier}});
+		auto srcScopeLight = tkn::SyncScope::computeReadWrite(); // from atmos
+		auto dstScopeLight = highlight_.dstScopeLight();
+		tkn::barrier(cb, terrain_.color.image(), srcScopeLight, dstScopeLight);
 
-		// TODO: make sure barrier above works for highlight pass
-		// highlight & bloom
+		// vk::ImageMemoryBarrier barrier;
+		// barrier.image = terrain_.color.image();
+		// barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+		// barrier.oldLayout = vk::ImageLayout::general;
+		// barrier.srcAccessMask = vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite;
+		// barrier.newLayout = lum_.dstScopeLight().layout;
+		// barrier.dstAccessMask = lum_.dstScopeLight().access;
+		// vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
+		// 	lum_.dstScopeLight().stages, {}, {}, {}, {{barrier}});
+
+		// barrier.oldLayout = barrier.newLayout;
+		// barrier.srcAccessMask = barrier.dstAccessMask;
+		// barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		// barrier.dstAccessMask = vk::AccessBits::shaderRead;
+		// vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
+		// 	vk::PipelineStageBits::fragmentShader | vk::PipelineStageBits::computeShader,
+		// 	{}, {}, {}, {{barrier}});
+
+		// compute bloom
 		highlight_.record(cb, extent);
 		tkn::barrier(cb, highlight_.target().image(),
 			highlight_.srcScopeTarget(), bloom_.dstScopeHighlight());
 		bloom_.record(cb, highlight_.target().image(), extent, blur_);
-		auto ppBloomScope = tkn::SyncScope::fragmentSampled();
-		tkn::barrier(cb, highlight_.target().image(),
-			bloom_.srcScopeHighlight(), ppBloomScope);
+
+		// apply bloom to main image
+		{
+			auto applyBloomScope = tkn::SyncScope::computeSampled();
+			auto applyLightScope = tkn::SyncScope::computeReadWrite();
+			tkn::barrier(cb, highlight_.target().image(),
+				bloom_.srcScopeHighlight(), applyBloomScope);
+			tkn::barrier(cb, terrain_.color.image(),
+				dstScopeLight, applyLightScope);
+
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, applyPass_.pipe);
+			tkn::cmdBindComputeDescriptors(cb, applyPass_.pipeLayout, 0u, {applyPass_.ds});
+			auto cx = tkn::ceilDivide(width, applyGroupDimSize);
+			auto cy = tkn::ceilDivide(height, applyGroupDimSize);
+			vk::cmdDispatch(cb, cx, cy, 1u);
+
+			// make sure it's readable for lum and post-process
+			auto postScopeLight = tkn::SyncScope::fragmentSampled();
+			postScopeLight.stages |= vk::PipelineStageBits::computeShader;
+			tkn::barrier(cb, terrain_.color.image(), applyLightScope, postScopeLight);
+		}
+
+		// compute log-avg luminance
+		lum_.record(cb, extent);
 
 		// post process
 		auto cvpp = std::array {
@@ -723,19 +820,30 @@ public:
 		tkn::BloomPass::InitBufferData initBloom;
 		bloom_.createBuffers(initBloom, wb, bloomLevels, size, blur_);
 
+		tkn::LuminancePass::InitBufferData initLum;
+		lum_.createBuffers(initLum, wb, size);
+
 		highlight_.initBuffers(initHighlight, terrain_.color.imageView());
 		bloom_.initBuffers(initBloom, highlight_.target().image(),
 			highlight_.target().imageView(), blur_);
+		lum_.initBuffers(initLum, terrain_.color.imageView(), size);
 
 		// update descriptors
 		updateAtmosphereDs();
 
-		vpp::DescriptorSetUpdate dsu(pp_.ds);
-		dsu.imageSampler({{{}, terrain_.color.imageView(),
+		vpp::DescriptorSetUpdate dsuApply(applyPass_.ds);
+		dsuApply.uniform({{{applyPass_.ubo}}});
+		dsuApply.imageSampler({{{}, highlight_.target().imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, highlight_.target().imageView(),
+		dsuApply.storage({{{}, terrain_.color.imageView(),
+			vk::ImageLayout::general}});
+
+		vpp::DescriptorSetUpdate dsuPP(pp_.ds);
+		dsuPP.imageSampler({{{}, terrain_.color.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.apply();
+		dsuPP.uniform({{{pp_.ubo}}});
+
+		vpp::apply({{dsuPP, dsuApply}});
 
 		// render buffers for pp
 		fbi.renderPass = pp_.rp;
@@ -751,6 +859,21 @@ public:
 		Base::update(dt);
 		Base::scheduleRedraw();
 		cam_.update(swaDisplay(), dt);
+
+		/*
+		float o;
+		if(dstExposure_ > exposure_) {
+			o = std::log2(0.001 / exposure_);
+		} else {
+			o = 10 * std::log2(exposure_ / 0.001);
+		}
+
+		float ispeed = 0.9 / (1 + std::abs(o));
+		exposure_ += (1 - std::pow(ispeed, dt)) * (dstExposure_ - exposure_);
+		dlg_info("exposure: {}", exposure_);
+		*/
+		highlight_.params.bias = -0.5 * (1 / exposure_);
+		highlight_.params.scale = 1.5f;
 	}
 
 	void updateDevice() override {
@@ -795,7 +918,35 @@ public:
 			map.flush();
 		}
 
+		// update pp ubo
+		{
+			auto map = pp_.ubo.memoryMap();
+			auto span = map.span();
+			PostParams ppp;
+			ppp.exposure = exposure_;
+			tkn::write(span, ppp);
+			map.flush();
+		}
+
+		// update apply ubo
+		{
+			auto map = applyPass_.ubo.memoryMap();
+			auto span = map.span();
+			ApplyUboData data;
+			data.gain = 0.5f;
+			data.strength = 1.f;
+			data.nBloomLevels = bloomLevels;
+			tkn::write(span, data);
+			map.flush();
+		}
+
 		highlight_.updateDevice();
+		auto gavgLum = lum_.updateDevice();
+
+		// dlg_info("avgLum: {}", gavgLum);
+		// solution of (tonemap(dstExposure * gavgLum) = 0.2)
+		// dstExposure_ = std::clamp<float>(-std::log(0.8f) / gavgLum, 0.000001, 0.1f);
+		// dlg_info("dstExposure: {}", dstExposure_);
 
 		// TODO: more explicit regeneration...
 		if(atmosphere_.sky.updateDevice()) {
@@ -838,6 +989,7 @@ private:
 	tkn::ControlledCamera cam_;
 	vpp::ViewableImage heightmap_;
 	vpp::Sampler sampler_;
+	vpp::Sampler nearestSampler_;
 	vk::Format depthFormat_;
 
 	vpp::SubBuffer vertices_;
@@ -847,6 +999,8 @@ private:
 	vpp::SubBuffer keys0_;
 	vpp::SubBuffer keys1_; // temporary buffer we write updates to
 
+	float dstExposure_ {0.0003f};
+	float exposure_ {0.0002f};
 	bool frozen_ {false};
 	nytl::Vec3f toSun_ {0.f, 1.f, 0.f};
 
@@ -882,6 +1036,15 @@ private:
 		BrunetonSky sky;
 	} atmosphere_;
 
+	// pass: apply bloom
+	struct {
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+		vpp::SubBuffer ubo;
+	} applyPass_;
+
 	// render pass: post-process/tonemap
 	struct {
 		vpp::RenderPass rp;
@@ -889,6 +1052,7 @@ private:
 		vpp::PipelineLayout pipeLayout;
 		vpp::Pipeline pipe;
 		vpp::TrDs ds;
+		vpp::SubBuffer ubo;
 	} pp_;
 
 	struct {

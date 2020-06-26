@@ -5,10 +5,9 @@ layout(set = 0, binding = 0) uniform sampler2D lightTex;
 layout(set = 0, binding = 1, r16f) uniform writeonly image2D outLuminance;
 layout(push_constant) uniform PCR {
 	vec3 luminance;
+	float minLum;
+	float maxLum;
 } pcr;
-
-const float minLum = -100.f;
-const float maxLum = 100.f;
 
 void main() {
 	uvec2 size = textureSize(lightTex, 0);
@@ -26,6 +25,6 @@ void main() {
 	// black surfaces or a plain black backgroun) we have -inf here.
 	// But since that value would mess with our geometric mean, we clamp it
 	// instead.
-	luminance = clamp(log2(luminance), minLum, maxLum);
+	luminance = clamp(log2(luminance), pcr.minLum, pcr.maxLum);
 	imageStore(outLuminance, ivec2(pixel), vec4(luminance));
 }

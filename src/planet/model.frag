@@ -59,7 +59,7 @@ void main() {
 
 	vec3 dphi = sph_dphi(1.f, theta, phi);
 	vec3 dtheta = sph_dtheta(1.f, theta, phi);
-	float fac = 0.03;
+	float fac = 0.005;
 	vec3 n = cross(
 		(1 + fac * h.x) * dtheta + dot(dtheta, fac * h.yzw) * pos, 
 		(1 + fac * h.x) * dphi + dot(dphi, fac * h.yzw) * pos);
@@ -81,8 +81,8 @@ void main() {
 	float hlod6 = textureLod(heightmap, pos, lod.x + 6.f).r;
 	float ao = 0.1;
 
-	float f0 = -0.05 * pow(2.0, lod.x);
-	float f1 = 0.01 * pow(2.0, lod.x);
+	float f0 = -0.035 * pow(2.0, lod.x);
+	float f1 = 0.015 * pow(2.0, lod.x);
 	ao += 0.4 * addAO(0.5 * f0, 0.5 * f1, h.x - hlod2);
 	ao += 0.4 * addAO(1 * f0, 1 * f1, h.x - hlod3);
 	ao += 0.8 * addAO(2 * f0, 2 * f1, h.x - hlod4);

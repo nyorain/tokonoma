@@ -30,7 +30,7 @@ void main() {
 	subd(inKey.x, v_in, v_out);
 	vec2 bary = subd_bvecs[vid].xy;
 	vec3 pos = berp(v_out, bary);
-	pos = (1 + 0.03 * texture(heightmap, pos).r) * normalize(pos);
+	pos = (1 + 0.005 * texture(heightmap, pos).r) * normalize(pos);
 	pos = 6360 * pos;
 
 	outPos = pos;

@@ -58,6 +58,10 @@ public:
 	bool compute = true;
 	unsigned mipGroupDimSize = 8u;
 
+	// Changing these requires rerecording.
+	float minLogLuminance = -10.f;
+	float maxLogLuminance = 10.f;
+
 public:
 	LuminancePass() = default;
 	void create(InitData&, WorkBatcher& wb, vk::Sampler nearest,
@@ -67,8 +71,8 @@ public:
 	void createBuffers(InitBufferData&, tkn::WorkBatcher&, vk::Extent2D);
 	void initBuffers(InitBufferData&, vk::ImageView light, vk::Extent2D);
 
-	/// Expects log(luminance) to already be stored in the mip level 0
-	/// of the luminance target. The target must have a full mipmap chain.
+	// Expects log2(luminance) to already be stored in the mip level 0
+	// of the luminance target. The target must have a full mipmap chain.
 	void record(vk::CommandBuffer cb, vk::Extent2D extent);
 	float updateDevice(); // returns the luminance of the last frame
 

@@ -33,13 +33,14 @@ meta:
 atmosphere:
 	# atmosphere boundaries in meters
 	# mini-earth
-	bottom: 6250
-	top: 7120
+	bottom: 6360
+	top: 6420
 	# bottom: 6360000
 	# top: 6420000
 	# bottom: 1.0
 	# top: 2.0
-	sunAngularRadius: 0.004675
+	# ref: 0.004675
+	sunAngularRadius: 0.04675
 	# Minimum mu_s we store in out scattering lookup tables.
 	# A negative mu_s value means that the sun is below the horizon (when
 	# on the ground at least) and we don't need to store extremely
@@ -48,17 +49,17 @@ atmosphere:
 	# With a larger atmosphere, the sun might influence the sky more when
 	# on the other side of the planet so this is somewhat dependent on atmosphere
 	# size.
-	minMuS: -0.5
+	minMuS: -1.0
 	# average ground color, rgb. Used for multi scattering
 	groundAlbedo:
-		0.3
-		0.3
-		0.3
+		0.2
+		0.2
+		0.22
 	mie:
 		g: 0.8
 		# ref: 1200
-		scaleHeight: 12
-		expScale: 10000.0
+		scaleHeight: 1.2
+		expScale: 1000.0
 		scattering:
 			# compute: generate it manually, physically based. 
 			#   Uses 'alpha', 'beta', 'scatterAlbedo' parameter.
@@ -68,13 +69,16 @@ atmosphere:
 			alpha: 0.0
 			# ref 5.328e-3
 			beta: 1.328e-2
-			scatterAlbedo: 0.95
+			scatterAlbedo: 0.9
 			# only for use: rgb
 			rgb:
 				3.e-4
 				3.e-4
 				3.e-4
 	rayleigh:
+		# ref: 7000
+		scaleHeight: 7.0
+		expScale: 1000.0
 		scattering:
 			use: compute
 			# Bruneton's reference: 1.8402e-6
@@ -87,9 +91,6 @@ atmosphere:
 				6.95e-4
 				1.18e-3
 				2.44e-3
-		# ref: 7000
-		scaleHeight: 40
-		expScale: 10000.0
 	# absorption particles
 	# https://ozonewatch.gsfc.nasa.gov/facts/SH.html
 	ozone: 
@@ -163,9 +164,9 @@ atmosphere:
 		use: rgb
 		# a really crude approximation of rgb values
 		rgb:
-			10000
-			10000
-			10000
+			50000
+			50000
+			50000
 		# spectral values of solar irradiance
 		# taken directly from E. Bruneton's sample implementation:
 		# Source "Reference Solar Spectral Irradiance: ASTM G-173", ETR column,
