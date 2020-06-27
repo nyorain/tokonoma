@@ -837,13 +837,14 @@ vec3 getSkyRadianceToPoint(
 		IN(sampler2D) transmittance_texture,
 		IN(sampler3D) scattering_texture,
 		IN(sampler3D) single_mie_scattering_texture,
-		IN(ARay) ray, float mu_s, float nu, bool rayIntersectsGround, float d,
+		ARay ray, float mu_s, float nu, bool rayIntersectsGround, float d,
 		OUT(vec3) transmittance) {
 	float r = ray.height;
 	float mu = ray.mu;
 	if(!rayIntersectsGround){
 		float mu_horiz = -sqrt(max(1.0 - (atmosphere.bottom / r) * (atmosphere.bottom / r), 0.0));
 		mu = max(mu, mu_horiz + 0.004f);
+		ray.mu = mu;
 	}
 
 	transmittance = getTransmittance(atmosphere, transmittance_texture,

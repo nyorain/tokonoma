@@ -45,12 +45,14 @@ using namespace tkn::types;
 class PlanetApp : public tkn::App {
 public:
 	static constexpr auto colorFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto heightFormat = vk::Format::r32Sfloat;
+
 	static constexpr auto atmosGroupDimSize = 8u;
 	static constexpr auto applyGroupDimSize = 8u;
 	static constexpr auto genGroupDimSize = 8u;
 	static constexpr auto bloomLevels = 6u;
 
-	static constexpr auto nTilesPD = 128;
+	static constexpr auto nTilesPD = 512;
 	static constexpr auto maxTileSize = 1024;
 	static constexpr auto heightmapSize = 3 * maxTileSize;
 	static constexpr auto nLods = 10u;
@@ -210,7 +212,7 @@ public:
 			vk::ImageUsageBits::transferDst |
 			vk::ImageUsageBits::storage |
 			vk::ImageUsageBits::sampled;
-		auto info = vpp::ViewableImageCreateInfo(vk::Format::r16g16b16a16Sfloat,
+		auto info = vpp::ViewableImageCreateInfo(heightFormat,
 			vk::ImageAspectBits::color, hsize, husage);
 		info.img.arrayLayers = nLods;
 		info.view.viewType = vk::ImageViewType::e2dArray;

@@ -34,7 +34,7 @@ atmosphere:
 	# atmosphere boundaries in meters
 	# mini-earth
 	bottom: 6360
-	top: 6420
+	top: 7120
 	# bottom: 6360000
 	# top: 6420000
 	# bottom: 1.0
@@ -58,7 +58,7 @@ atmosphere:
 	mie:
 		g: 0.8
 		# ref: 1200
-		scaleHeight: 1.2
+		scaleHeight: 8
 		expScale: 1000.0
 		scattering:
 			# compute: generate it manually, physically based. 
@@ -77,7 +77,7 @@ atmosphere:
 				3.e-4
 	rayleigh:
 		# ref: 7000
-		scaleHeight: 7.0
+		scaleHeight: 20
 		expScale: 1000.0
 		scattering:
 			use: compute

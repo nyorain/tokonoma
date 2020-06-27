@@ -225,6 +225,31 @@ float voronoiNoise(vec3 v) {
 	return sqrt(minDistSqr);
 }
 
+float voronoiNoise2(vec3 v) {
+	vec3 cell = floor(v);
+	vec3 fra = fract(v);
+
+	float minDistSqr = 1000.f;
+	float minDistSqr2 = 1000.f;
+	for(int x = -1; x <= 1; ++x) {
+		for(int y = -1; y <= 1; ++y) {
+			for(int z = -1; z <= 1; ++z) {
+				vec3 off = vec3(x, y, z);
+				vec3 dist = off + random3(cell + off) - fra;
+				float dsqr = dot(dist, dist);
+				if(dsqr < minDistSqr) {
+					minDistSqr2 = minDistSqr;
+					minDistSqr = dsqr;
+				} else if(dsqr < minDistSqr2) {
+					minDistSqr2 = dsqr;
+				}
+			}
+		}
+	}
+
+	return sqrt(minDistSqr2);
+}
+
 // Simple fbm implementation (noise octaves)
 // Rather for reference than useful, you usually want to modify
 // it for the specific usecase to get something interesting

@@ -1,6 +1,6 @@
 // The number of tiles per dimension of a face. The number of tiles per
 // face will be this squared.
-layout(constant_id = 5) const uint nTilesPD = 128;
+layout(constant_id = 5) const uint nTilesPD = 512;
 
 // Number of tiles per face
 const uint nTilesPF = nTilesPD * nTilesPD;
@@ -124,7 +124,8 @@ mat2 flipUVMatrix(uint face0, uint face1, out ivec2 off) {
 	));
 }
 
-vec3 heightmapCoords(vec3 pos, uvec3 centerTile) {
+vec3 heightmapCoords(vec3 pos, uvec3 centerTile, uint lodOff, out bool valid,
+		out vec3 worldS, out vec3 worldT) {
     vec2 tuv;
     uvec3 tpos = tilePos(pos, tuv);
 
@@ -133,6 +134,8 @@ vec3 heightmapCoords(vec3 pos, uvec3 centerTile) {
     if(centerTile.z == tpos.z) {
 		// The easy case: both are on the same face.
         toff = ivec2(tpos.xy) - ivec2(centerTile.xy);
+		worldS = cubeFaces[centerTile.z].s;
+		worldT = cubeFaces[centerTile.z].t;
     } else {
 		// TODO
 		// return vec4(1.0, 0.0, 0.0, 1.0);
@@ -141,7 +144,8 @@ vec3 heightmapCoords(vec3 pos, uvec3 centerTile) {
 		// last lod just for it?
 		if(opposite(tpos.z, centerTile.z)) {
 			// return vec4(0.0, normalize(pos));
-			return vec4(0.0);
+			valid = false;
+			return vec3(0.0);
 		}
 
 		ivec2 off;
@@ -150,11 +154,18 @@ vec3 heightmapCoords(vec3 pos, uvec3 centerTile) {
 		// toff = ivec2(trunc(fm * (tpos.xy + 0.5)) + int(nTilesPD) * off) - ivec2(centerTile.xy);
 		// toff = ivec2(fm * tpos.xy) + int(nTilesPD) * off - ivec2(centerTile.xy);
 		toff = ivec2(trunc(fm * (tpos.xy + 0.5) + int(nTilesPD) * off)) - ivec2(centerTile.xy);
+
+		worldS = 
+			fm[0][0] * cubeFaces[tpos.z].s +
+			fm[1][0] * cubeFaces[tpos.z].t;
+		worldT =
+			fm[0][1] * cubeFaces[tpos.z].s +
+			fm[1][1] * cubeFaces[tpos.z].t;
 	}
 
 	// find lowest mipmap that contains the tile
 	int m = max(abs(toff.x), abs(toff.y));
-	int lod = int(ceil(log2(max(m, 1))));
+	int lod = int(ceil(log2(max(m, 1)))) + int(lodOff);
 
 
 	// TODO
@@ -166,14 +177,26 @@ vec3 heightmapCoords(vec3 pos, uvec3 centerTile) {
 	vec2 suvt = toff + htsuv;
 	vec2 uv = 0.5 + tileSize * suvt;
 	if(uv != fract(uv)) {
-		return vec4(1.0, 0.0, 1.0, 1.0);
+		valid = false;
+		return vec3(0.0);
 	}
 
+	worldT = cross(pos, worldS);
+	worldS = -cross(pos, worldT);
+
+	valid = true;
 	return vec3(uv, lod);
 }
 
 vec4 height(vec3 pos, uvec3 centerTile, sampler2DArray heightmap) {
-	return texture(heightmap, heightmapCoords(pos, centerTile));
+	bool valid;
+	vec3 a, b;
+	vec3 c = heightmapCoords(pos, centerTile, 0, valid, a, b);
+	if(!valid) {
+		return vec4(1, 0, 1, 1);
+	}
+
+	return texture(heightmap, c);
 }
 
 const float displaceStrength = 0.01; // TODO
