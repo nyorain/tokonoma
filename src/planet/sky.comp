@@ -53,6 +53,7 @@ void main() {
 	float z = depthtoz(depth, camNear, camFar);
 	vec3 bgColor = imageLoad(ioColor, ivec2(pixel)).rgb;
 
+	// TODO
 	// imageStore(ioColor, ivec2(pixel), vec4(bgColor, 1.0));
 	// return;
 
@@ -78,10 +79,10 @@ void main() {
 	vec3 trans;
 	// lookup from texture
 	if(scatOrder == 1) {
-		// TODO: depth == 1
-		scat = getSkyRadianceToPoint(atmos, transTex,
-			scatRayleighTex, scatMieTex, startPos, startPos + z * viewDir, 
-			0.0, sunDir, trans, rayIntersectsGround);
+		// TODO:
+		// scat = getSkyRadianceToPoint(atmos, transTex,
+		// 	scatRayleighTex, scatMieTex, startPos, startPos + z * viewDir, 
+		// 	0.0, sunDir, trans, rayIntersectsGround);
 	} else {
 		if(false && depth == 1.f) {
 			scat = getScattering(atmos, scatCombinedTex, scatMieTex,

@@ -43,5 +43,31 @@ nytl::Vec3f faceUVToDir(unsigned face, float u, float v) {
 	return data.dir + u * data.s + v * data.t;
 }
 
+std::pair<unsigned, nytl::Vec2f> face(nytl::Vec3f dir) {
+	using nytl::Vec2f;
+	using nytl::vec::operators::operator/;
+
+	auto ad = nytl::vec::cw::abs(dir);
+	if(ad.x >= ad.y && ad.x >= ad.z) {
+		if(dir.x > 0) {
+			return {0, Vec2f{-dir.z, -dir.y} / ad.x};
+		} else {
+			return {1, Vec2f{dir.z, -dir.y} / ad.x};
+		}
+	} else if(ad.y > ad.x && ad.y >= ad.z) {
+		if(dir.y > 0) {
+			return {2, Vec2f{dir.x, dir.z} / ad.y};
+		} else {
+			return {3, Vec2f{dir.x, -dir.z} / ad.y};
+		}
+	} else { // z is largest
+		if(dir.z > 0) {
+			return {4, Vec2f{dir.x, -dir.y} / ad.z};
+		} else {
+			return {5, Vec2f{-dir.x, -dir.y} / ad.z};
+		}
+	}
+}
+
 } // namespace cubemap
 } // namespace tkn

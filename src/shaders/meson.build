@@ -25,6 +25,10 @@ deferred_glsl = include_glsl + scene_glsl + files(
 	'../deferred/ssaoBlur.glsl',
 )
 
+planet_glsl = include_glsl + scene_glsl + files(
+	'../planet/terrain.glsl',
+)
+
 fluid_glsl = files('../fluids/fluid.glsl')
 scatter_glsl = files('../atmosphere/scatter.glsl')
 
@@ -256,13 +260,14 @@ shaders_src = {
 	],
 	'planet': [
 		['gen.comp'],
-		['model.vert'],
-		['model.frag'],
-		['update.comp'],
+		['model.vert', planet_glsl],
+		['model.frag', planet_glsl],
+		['update.comp', planet_glsl],
 		['dispatch.comp'],
 		['pp.frag'],
 		['sky.comp'],
 		['apply.comp'],
+		['gend.comp', planet_glsl],
 	],
 }
 

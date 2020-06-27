@@ -1,5 +1,7 @@
-// Authored by Ian McEwan and Stefan Gustavson
-// See their https://github.com/ashima/webgl-noise repo, licensed under MIT
+// License : Copyright (C) 2011 Ashima Arts. All rights reserved.
+//  Distributed under the MIT License. See LICENSE file.
+//  https://github.com/ashima/webgl-noise
+//  https://github.com/stegu/webgl-noise
 
 vec3 mod289(vec3 x) {
 	return x - floor(x * (1.0 / 289.0)) * 289.0;

@@ -4,113 +4,70 @@
 #include "snoise.glsl"
 #include "terrain.glsl"
 
-layout(local_size_x_id = 0, local_size_y_id = 1) in;
-
-layout(push_constant) uniform Face {
-	vec3 x;
-	uint face;
-	vec3 y;
-	float _2; // padding
-	vec3 z; // normal, cube map face
-} dir;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform writeonly image2DArray outCol;
+layout(set = 0, binding = 1) uniform UBO {
+	mat4 _vp;
+	vec3 _pos;
+	uint _update;
+	uvec3 centerTile;
+} ubo;
+
+// Returns normalized value in range [0, 1]
+vec4 mfbm(vec3 dir, uint lod) {
+	vec4 sum = vec4(0.f);
+	float lacunarity = 2.0;
+	float gain = 0.52;
+
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	float totalAmp = 0.f;
+	for(int i = 0; i < max(int(6 - 0.0 * lod), 2); ++i) {
+	// for(int i = 0; i < 14; ++i) {
+		vec3 grad;
+		float tmp = amp * snoise(mod * dir, grad);
+		// grad = pow(0.6, max(i - 4, 0)) * amp * mod * grad;
+		grad = amp * mod * grad;
+		// sum += vec4(tmp, i > 10 ? vec3(0.0) : grad);
+		sum += vec4(tmp, grad);
+		totalAmp += amp;
+
+		mod *= lacunarity;
+		amp *= gain;
+	}
+
+	// return sum / totalAmp;
+	return sum;
+}
+
+void main() {
+	const uvec2 pixel = gl_GlobalInvocationID.xy;
+	const uint lod = gl_GlobalInvocationID.z;
+
+	const uvec3 size = imageSize(outCol);
+	if(pixel.x >= size.x || pixel.y >= size.y || lod >= size.z) {
+		return;
+	}
+
+	const vec2 pixelSize = 1.f / size.xy;
+	const vec2 uv = (pixel + vec2(0.5, 0.5)) * pixelSize;
+
+	bool valid;
+	vec3 pos = heightmapPos(ubo.centerTile, uv, lod, valid);
+	vec4 h = vec4(0.0, 0, 0, 1.0); // TODO: which value for invalid section?
+
+	if(valid) {
+		float f = 12.0;
+		h = mfbm(f * pos, lod);		
+		h *= 0.5;
+		h.x += 0.5;
+		h.yzw *= f;
+	}
+
+	// TODO: debugging
+	// h.xyz = 0.5 + 0.5 * pos;
+	// h.xyz = pos;
+
+	imageStore(outCol, ivec3(pixel, lod), h);
+}

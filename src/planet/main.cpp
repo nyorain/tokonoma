@@ -36,6 +36,7 @@
 #include <shaders/planet.pp.frag.h>
 #include <shaders/planet.sky.comp.h>
 #include <shaders/planet.apply.comp.h>
+#include <shaders/planet.gend.comp.h>
 
 using namespace tkn::types;
 
@@ -46,12 +47,20 @@ public:
 	static constexpr auto colorFormat = vk::Format::r16g16b16a16Sfloat;
 	static constexpr auto atmosGroupDimSize = 8u;
 	static constexpr auto applyGroupDimSize = 8u;
+	static constexpr auto genGroupDimSize = 8u;
 	static constexpr auto bloomLevels = 6u;
+
+	static constexpr auto nTilesPD = 128;
+	static constexpr auto maxTileSize = 1024;
+	static constexpr auto heightmapSize = 3 * maxTileSize;
+	static constexpr auto nLods = 10u;
 
 	struct TerrainUboData {
 		nytl::Mat4f vp;
 		nytl::Vec3f eye;
 		u32 enable;
+		nytl::Vec3u32 centerTile;
+		u32 _0;
 		Atmosphere atmosphere;
 	};
 
@@ -77,6 +86,15 @@ public:
 		float gain;
 	};
 
+	static nytl::Vec3u32 tilePos(vec3 dir) {
+		auto [face, suv] = tkn::cubemap::face(dir);
+		auto uv = 0.5f + 0.5f * suv; // range [0, 1]
+		Vec2f tid;
+		std::modf(uv.x * nTilesPD, &tid.x);
+		std::modf(uv.y * nTilesPD, &tid.y);
+		return {u32(tid.x), u32(tid.y), u32(face)};
+	}
+
 public:
 	using Base = tkn::App;
 	bool init(nytl::Span<const char*> args) override {
@@ -85,12 +103,12 @@ public:
 		}
 
 		cam_.useSpaceshipControl();
-		cam_.near(-5.f);
+		cam_.near(-1.f);
 		cam_.far(-100000.f);
 		auto& c = **cam_.spaceshipControl();
-		c.controls.move.mult = 1000.f;
-		c.controls.move.fastMult = 100.f;
-		c.controls.move.slowMult = 0.05f;
+		c.controls.move.mult = 500.f;
+		c.controls.move.fastMult = 20.f;
+		c.controls.move.slowMult = 0.01f;
 
 		auto& dev = vkDevice();
 		depthFormat_ = tkn::findDepthFormat(dev);
@@ -187,17 +205,32 @@ public:
 		auto stage4 = vpp::fillStaging(cb, indices_, inds);
 
 		// heightmap
-		auto wb = tkn::WorkBatcher(dev);
-		wb.cb = cb;
-		auto img = tkn::loadImage("heightmap.ktx");
-		tkn::TextureCreateParams params;
-		// create full mip chain
-		params.mipLevels = 0;
-		params.fillMipmaps = true;
-		auto initHeightmap = tkn::createTexture(wb, std::move(img), params);
-		heightmap_ = tkn::initTexture(initHeightmap, wb);
+		auto hsize = vk::Extent2D{heightmapSize, heightmapSize};
+		auto husage = vk::ImageUsageBits::transferSrc |
+			vk::ImageUsageBits::transferDst |
+			vk::ImageUsageBits::storage |
+			vk::ImageUsageBits::sampled;
+		auto info = vpp::ViewableImageCreateInfo(vk::Format::r16g16b16a16Sfloat,
+			vk::ImageAspectBits::color, hsize, husage);
+		info.img.arrayLayers = nLods;
+		info.view.viewType = vk::ImageViewType::e2dArray;
+		info.view.subresourceRange.layerCount = nLods;
+		heightmap_ = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
 		nameHandle(heightmap_);
 
+		auto wb = tkn::WorkBatcher(dev);
+		wb.cb = cb;
+
+		// auto img = tkn::loadImage("heightmap.ktx");
+		// tkn::TextureCreateParams params;
+		// // create full mip chain
+		// params.mipLevels = 0;
+		// params.fillMipmaps = true;
+		// auto initHeightmap = tkn::createTexture(wb, std::move(img), params);
+		// heightmap_ = tkn::initTexture(initHeightmap, wb);
+		// nameHandle(heightmap_);
+
+		initGenComp();
 		initUpdateComp();
 		initIndirectComp();
 		initAtmosphere();
@@ -341,6 +374,74 @@ public:
 		comp_.indirect.pipe = {dev, cpi};
 	}
 
+	void initGenComp() {
+		auto& dev = vkDevice();
+		auto bindings = std::array {
+			vpp::descriptorBinding(vk::DescriptorType::storageImage,
+				vk::ShaderStageBits::compute), // generated heightmap
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::compute), // centerTile
+		};
+
+		gen_.dsLayout.init(dev, bindings);
+		nameHandle(gen_.dsLayout);
+		gen_.pipeLayout = {dev, {{gen_.dsLayout.vkHandle()}}, {}};
+		nameHandle(gen_.pipeLayout);
+
+		gen_.ds = {dev.descriptorAllocator(), gen_.dsLayout};
+		nameHandle(gen_.ds);
+
+		vpp::DescriptorSetUpdate dsu(gen_.ds);
+		dsu.storage({{{}, heightmap_.imageView(), vk::ImageLayout::general}});
+		dsu.uniform({{{ubo_}}});
+		dsu.apply();
+
+		auto spec = tkn::ComputeGroupSizeSpec(genGroupDimSize, genGroupDimSize, 1u);
+		auto mod = vpp::ShaderModule(dev, planet_gend_comp_data);
+		vk::ComputePipelineCreateInfo cpi;
+		cpi.layout = gen_.pipeLayout;
+		cpi.stage.module = mod;
+		cpi.stage.pName = "main";
+		cpi.stage.stage = vk::ShaderStageBits::compute;
+		cpi.stage.pSpecializationInfo = &spec.spec;
+		gen_.pipe = {dev, cpi};
+		nameHandle(gen_.pipe);
+
+		// gen cb
+		gen_.sem = vpp::Semaphore(dev);
+		gen_.cb = dev.commandAllocator().get(dev.queueSubmitter().queue().family());
+		nameHandle(gen_.cb);
+
+		auto cb = gen_.cb.vkHandle();
+		vk::beginCommandBuffer(cb, {});
+
+		vk::ImageMemoryBarrier b;
+		b.image = heightmap_.image();
+		b.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, nLods};
+		b.oldLayout = vk::ImageLayout::undefined;
+		b.srcAccessMask = {};
+		b.newLayout = vk::ImageLayout::general;
+		b.dstAccessMask = vk::AccessBits::shaderWrite;
+
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
+			vk::PipelineStageBits::computeShader, {}, {}, {}, {{b}});
+
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, gen_.pipe);
+		tkn::cmdBindComputeDescriptors(cb, gen_.pipeLayout, 0, {{gen_.ds}});
+
+		auto gxy = tkn::ceilDivide(heightmapSize, genGroupDimSize);
+		vk::cmdDispatch(cb, gxy, gxy, nLods);
+
+		b.oldLayout = vk::ImageLayout::general;
+		b.srcAccessMask = vk::AccessBits::shaderWrite;
+		b.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		b.dstAccessMask = vk::AccessBits::shaderRead;
+		vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::computeShader,
+			vk::PipelineStageBits::allCommands, {}, {}, {}, {{b}});
+
+		vk::endCommandBuffer(cb);
+	}
+
 	void initAtmosphere() {
 		auto& dev = vkDevice();
 
@@ -430,8 +531,20 @@ public:
 	void initRenderTerrain() {
 		auto& dev = vkDevice();
 		auto pass0 = {0u, 1u};
-		auto rpi = tkn::renderPassInfo({{colorFormat, depthFormat_}}, {{pass0}});
+		auto rpi = tkn::renderPassInfo({{colorFormat, depthFormat_}}, {{{pass0}}});
 		rpi.attachments[0].finalLayout = vk::ImageLayout::general;
+
+		vk::SubpassDependency dep;
+		dep.srcSubpass = 0u;
+		dep.srcAccessMask = vk::AccessBits::colorAttachmentWrite |
+			vk::AccessBits::depthStencilAttachmentWrite;
+		dep.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput |
+			vk::PipelineStageBits::earlyFragmentTests;
+		dep.dstSubpass = vk::subpassExternal;
+		dep.dstAccessMask = vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite;
+		dep.dstStageMask = vk::PipelineStageBits::computeShader;
+		rpi.dependencies.push_back(dep);
+
 		terrain_.rp = {dev, rpi.info()};
 		nameHandle(terrain_.rp);
 
@@ -456,7 +569,7 @@ public:
 
 		terrain_.dsLayout.init(dev, bindings);
 		nameHandle(terrain_.dsLayout);
-		terrain_.pipeLayout = {dev, {{terrain_.dsLayout}}, {}};
+		terrain_.pipeLayout = {dev, {{terrain_.dsLayout.vkHandle()}}, {}};
 		nameHandle(terrain_.pipeLayout);
 
 		terrain_.ds = {dev.descriptorAllocator(), terrain_.dsLayout};
@@ -520,7 +633,7 @@ public:
 
 		applyPass_.dsLayout.init(dev, bindings);
 		nameHandle(applyPass_.dsLayout);
-		applyPass_.pipeLayout = {dev, {{applyPass_.dsLayout}}, {}};
+		applyPass_.pipeLayout = {dev, {{applyPass_.dsLayout.vkHandle()}}, {}};
 		nameHandle(applyPass_.pipeLayout);
 		applyPass_.ds = {dev.descriptorAllocator(), applyPass_.dsLayout};
 		nameHandle(applyPass_.ds);
@@ -543,7 +656,7 @@ public:
 	void initRenderPP() {
 		auto& dev = vkDevice();
 		auto pass0 = {0u};
-		auto rpi = tkn::renderPassInfo({{swapchainInfo().imageFormat}}, {{pass0}});
+		auto rpi = tkn::renderPassInfo({{swapchainInfo().imageFormat}}, {{{pass0}}});
 		rpi.attachments[0].finalLayout = vk::ImageLayout::presentSrcKHR;
 		pp_.rp = {dev, rpi.info()};
 		nameHandle(pp_.rp);
@@ -559,7 +672,7 @@ public:
 
 		pp_.dsLayout.init(dev, bindings);
 		nameHandle(pp_.dsLayout);
-		pp_.pipeLayout = {dev, {{pp_.dsLayout}}, {}};
+		pp_.pipeLayout = {dev, {{pp_.dsLayout.vkHandle()}}, {}};
 		nameHandle(pp_.pipeLayout);
 		pp_.ds = {dev.descriptorAllocator(), pp_.dsLayout};
 		nameHandle(pp_.ds);
@@ -843,7 +956,7 @@ public:
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		dsuPP.uniform({{{pp_.ubo}}});
 
-		vpp::apply({{dsuPP, dsuApply}});
+		vpp::apply({{{dsuPP}, {dsuApply}}});
 
 		// render buffers for pp
 		fbi.renderPass = pp_.rp;
@@ -874,6 +987,29 @@ public:
 		*/
 		highlight_.params.bias = -0.5 * (1 / exposure_);
 		highlight_.params.scale = 1.5f;
+
+		// check center tile
+		if(cam_.needsUpdate) {
+			auto nc = tilePos(cam_.position());
+			if(nc != centerTile_ && !frozen_) {
+				centerTile_ = nc;
+
+				auto& qs = vkDevice().queueSubmitter();
+
+				// TODO: this relies on ubo_ being updated in updateDevice
+				// before the cb starts execution.
+				// Probably not good (although it should always be the case atm)
+				vk::SubmitInfo si;
+				si.commandBufferCount = 1u;
+				si.pCommandBuffers = &gen_.cb.vkHandle();
+				si.signalSemaphoreCount = 1u;
+				si.pSignalSemaphores = &gen_.sem.vkHandle();
+				qs.add(si);
+
+				Base::addSemaphore(gen_.sem, vk::PipelineStageBits::allCommands);
+				dlg_info("update centerTile: {}", centerTile_);
+			}
+		}
 	}
 
 	void updateDevice() override {
@@ -890,6 +1026,7 @@ public:
 			data.vp = vp;
 			data.eye = cam_.position();
 			data.enable = !frozen_;
+			data.centerTile = centerTile_;
 			data.atmosphere = atmosphere_.sky.config_.atmos;
 			tkn::write(span, data);
 			map.flush();
@@ -976,7 +1113,15 @@ public:
 			return true;
 		}
 
-		if(ev.pressed && atmosphere_.sky.key(ev.keycode)) {
+		if(!ev.pressed) {
+			return false;
+		}
+
+		if(ev.keycode == swa_key_f) {
+			cam_.needsUpdate = true; // TODO: hacky
+			frozen_ = !frozen_;
+			return true;
+		} else if(atmosphere_.sky.key(ev.keycode)) {
 			return true;
 		}
 
@@ -1073,10 +1218,21 @@ private:
 		vpp::SubBuffer dispatch; // indirect dispatch command
 	} comp_;
 
+	struct {
+		vpp::PipelineLayout pipeLayout;
+		vpp::Pipeline pipe;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+		vpp::CommandBuffer cb;
+		vpp::Semaphore sem;
+	} gen_;
+
 	tkn::GaussianBlur blur_;
 	tkn::HighLightPass highlight_;
 	tkn::BloomPass bloom_;
 	tkn::LuminancePass lum_;
+
+	nytl::Vec3u32 centerTile_ {10, 0, 0};
 };
 
 int main(int argc, const char** argv) {

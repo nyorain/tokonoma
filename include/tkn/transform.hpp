@@ -568,5 +568,9 @@ constexpr struct {
 // Expects u, v in range [0, 1]
 nytl::Vec3f faceUVToDir(unsigned face, float u, float v);
 
+// Returns (faceID, s, t) of the cube projection for the given direction.
+// faceID in [0, 5], s and t in [-1, 1]
+std::pair<unsigned, nytl::Vec2f> face(nytl::Vec3f dir);
+
 } // namespace cubemap
 } // namespace tkn
