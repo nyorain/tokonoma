@@ -50,21 +50,43 @@ vec3 displace(vec3 pos) {
 	pos = normalize(pos);
 	vec4 h4 = height(pos, scene.centerTile, heightmap);
 	vec3 p = 6360 * (1 + displaceStrength * h4.r) * pos;
-
-	vec2 tp = sph2(pos);
-	float theta = tp[0];
-	float phi = tp[1];
-
-	vec3 dphi = sph_dphi(1.f, theta, phi);
-	vec3 dtheta = sph_dtheta(1.f, theta, phi);
-	float fac = displaceStrength;
-	vec3 n = cross(
-		(1 + fac * h4.x) * dtheta + dot(dtheta, fac * h4.yzw) * pos, 
-		(1 + fac * h4.x) * dphi + dot(dphi, fac * h4.yzw) * pos);
-	outNormal = normalize(n);
-
 	return p;
 }
+
+/*
+vec3 displace2(vec3 pos) {
+	pos = normalize(pos);
+
+	bool valid; // TODO: check
+	vec3 worldS, worldT;
+	vec3 hc = heightmapCoords(pos, scene.centerTile, 0, valid, worldS, worldT);
+	float disp = texture(heightmap, hc).r;
+	float x0 = textureOffset(heightmap, hc, ivec2(-1, 0)).r;
+	float x1 = textureOffset(heightmap, hc, ivec2(1, 0)).r;
+	float y0 = textureOffset(heightmap, hc, ivec2(0, -1)).r;
+	float y1 = textureOffset(heightmap, hc, ivec2(0, 1)).r;
+
+	float lod = hc.z;
+	float nTiles = 1 + 2 * exp2(lod);
+	float numFaces = nTiles / nTilesPD;
+	vec2 pixLength = 2 * numFaces / textureSize(heightmap, 0).xy;	
+
+	float dx = displaceStrength * (x1 - x0) / (2 * pixLength.x);
+	float dy = displaceStrength * (y1 - y0) / (2 * pixLength.y);
+	Face face = cubeFaces[scene.centerTile.z];
+	// vec3 hn = normalize(face.dir + dx * face.t + dy * face.s);
+
+	// TODO: probably not correct
+	// vec3 t = cross(pos, face.s);
+	// vec3 s = -cross(pos, t);
+	// vec3 s = dFdx(hc.xy);
+	// vec3 t = dFdy(pos);
+	float mod = 1024 * 8;
+	outNormal = normalize(pos + dx * worldS + dy * worldT);
+
+	return 6360 * (1 + displaceStrength * disp) * pos;
+}
+*/
 
 void main() {
 	uint idx = inKey.y;
@@ -79,6 +101,7 @@ void main() {
 	subd(inKey.x, v_in, v_out);
 	vec2 bary = subd_bvecs[vid].xy;
 	vec3 pos = berp(v_out, bary);
+	// pos = displace2(pos);
 	pos = displace(pos);
 
 	// https://www.enkisoftware.com/devlogpost-20150131-1-Normal-generation-in-the-pixel-shader

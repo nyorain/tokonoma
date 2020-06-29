@@ -29,12 +29,12 @@ meta:
 		heightSize: 128
 	# maximum multiscattering level. Must be >= 1
 	# table generation time increases linearly with this
-	maxScatterOrder: 3
+	maxScatterOrder: 2
 atmosphere:
 	# atmosphere boundaries in meters
 	# mini-earth
 	bottom: 6360
-	top: 7120
+	top: 6820
 	# bottom: 6360000
 	# top: 6420000
 	# bottom: 1.0
@@ -49,12 +49,12 @@ atmosphere:
 	# With a larger atmosphere, the sun might influence the sky more when
 	# on the other side of the planet so this is somewhat dependent on atmosphere
 	# size.
-	minMuS: -1.0
+	minMuS: -0.4
 	# average ground color, rgb. Used for multi scattering
 	groundAlbedo:
-		0.2
-		0.2
-		0.22
+		0.1
+		0.1
+		0.1
 	mie:
 		g: 0.8
 		# ref: 1200
@@ -72,9 +72,9 @@ atmosphere:
 			scatterAlbedo: 0.9
 			# only for use: rgb
 			rgb:
-				3.e-4
-				3.e-4
-				3.e-4
+				8.e-4
+				8.e-4
+				8.e-4
 	rayleigh:
 		# ref: 7000
 		scaleHeight: 20
@@ -82,7 +82,7 @@ atmosphere:
 		scattering:
 			use: compute
 			# Bruneton's reference: 1.8402e-6
-			strength: 3.8e-5
+			strength: 5.8e-5
 			# only for use: rgb
 			# From http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
 			# Those values should rather be calculated with a wavelength-dependent

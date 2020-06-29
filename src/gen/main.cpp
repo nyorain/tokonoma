@@ -761,9 +761,10 @@ int saveSkies(float turbidity, const char* outSkies, const char* outData,
 	return 0;
 }
 
-// NOTE: we don't even need the device her (atm)
+// NOTE: we don't even need the device here (atm)
 // TODO: implement format conversion, we can't rely on ebgr to be supported.
 void saveGalaxy(const char* inputDir, const char* outfile, const vpp::Device& dev) {
+	// clone from https://github.com/ebruneton/gaia_sky_map
 	inputDir = inputDir ? inputDir : "gaia_sky_map";
 
 	auto numTiles = 8u;
@@ -823,6 +824,7 @@ void saveGalaxy(const char* inputDir, const char* outfile, const vpp::Device& de
 		}
 	}
 
+	// TODO: use outfile
 	auto format = vk::Format::e5b9g9r9UfloatPack32;
 	auto ptr1 = reinterpret_cast<const std::byte*>(data1.get());
 	auto span1 = nytl::span{ptr1, pixelCount * sizeof(u32)};

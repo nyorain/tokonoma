@@ -39,7 +39,7 @@ float lodFromDistance(float z) {
 	const float fov = 0.42 * 3.141;
 	const float targetPixelSize = 0.01f;
 	const float screenResolution = 2000.f; 
-	const float maxLod = 28.f;
+	const float maxLod = 26.f;
 	// const float maxLod = 10.f;
 	float s = z * tan(fov / 2);
 	float tmp = s * targetPixelSize / screenResolution;

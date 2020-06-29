@@ -256,6 +256,12 @@ executable('gen', [
 		tkn_shaders,
 	], dependencies: tkn_dep)
 
+executable('gen_ltc', [
+		'src/gen/fitLTC/fit.cpp',
+		tkn_shaders,
+	], dependencies: tkn_dep,
+	cpp_args: ['-O3', '-march=native'])
+
 executable('iv',
 	'src/iv/main.cpp',
 	dependencies: tkn_dep)

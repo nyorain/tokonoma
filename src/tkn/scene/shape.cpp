@@ -152,6 +152,8 @@ std::vector<Vec3f> areaSmoothNormals(nytl::Span<const Vec3f> positions,
 	return normals;
 }
 
+// TODO: fix this for subd, i.e. fix triangle vertex numbering
+// such that hypoth (between vert b and c) of neighbors is the same.
 Shape generateIco(unsigned subdiv) {
 	// step 1: base ico
 	constexpr auto hStep = float(nytl::radians(72));
@@ -214,11 +216,11 @@ Shape generateIco(unsigned subdiv) {
 			auto c = verts[ic];
 
 			/*       a
-			//      / \
-			//  m1 *---* m3
-			//    / \ / \
-			//   b---*---c
-			//       m2      */
+			 *      / \
+			 *  m1 *---* m3
+			 *    / \ / \
+			 *   b---*---c
+			 *       m2      */
 			auto m1 = normalized(0.5f * (a + b));
 			auto m2 = normalized(0.5f * (b + c));
 			auto m3 = normalized(0.5f * (c + a));
@@ -240,5 +242,21 @@ Shape generateIco(unsigned subdiv) {
 	return {verts, verts, inds};
 }
 
+Shape generateQuad(nytl::Vec3f center, nytl::Vec3f x, nytl::Vec3f y) {
+	Shape ret;
+
+	ret.positions.reserve(4);
+	ret.positions.push_back(center - x - y);
+	ret.positions.push_back(center + x - y);
+	ret.positions.push_back(center + x + y);
+	ret.positions.push_back(center - x + y);
+
+	ret.indices = {0, 1, 2, 0, 2, 3};
+
+	auto normal = normalized(cross(x, y));
+	ret.normals = {normal, normal, normal, normal};
+
+	return ret;
+}
 
 } // namespace tkn

@@ -43,7 +43,7 @@
 #include <tinygltf.hpp>
 
 #include <shaders/br.model.vert.h>
-#include <shaders/br.model.frag.h>
+#include <shaders/dm.model.frag.h>
 
 #include <optional>
 #include <vector>
@@ -87,6 +87,11 @@ public:
 	// ortho
 	static constexpr float orthoSize = 20.f;
 
+	// area light
+	static constexpr auto alCenter = Vec3f{0.f, 0.f, 0.f};
+	static constexpr auto alX = Vec3f{0.2f, 0.0f, 0.f};
+	static constexpr auto alY = Vec3f{0.0f, 0.2f, 0.f};
+
 public:
 	bool init(nytl::Span<const char*> cargs) override {
 		Args args;
@@ -126,10 +131,11 @@ public:
 			return false;
 		}
 
-		// auto initBrdfLut = tkn::createTexture(batch, tkn::read(std::move(brdflutFile)));
-		// brdfLut_ = tkn::initTexture(initBrdfLut, batch);
+		auto initBrdfLut = tkn::createTexture(wb, tkn::loadImage(std::move(brdflutFile)));
+		auto initLtcLut = tkn::createTexture(wb, tkn::loadImage(openAsset("ltc.ktx")));
 
-		brdfLut_ = tkn::buildTexture(dev, tkn::loadImage(std::move(brdflutFile)));
+		brdfLut_ = tkn::initTexture(initBrdfLut, wb);
+		areaLight_.ltcLUT = tkn::initTexture(initLtcLut, wb);
 
 		// tex sampler
 		vk::SamplerCreateInfo sci {};
@@ -203,26 +209,6 @@ public:
 
 		cameraDsLayout_.init(dev, cameraBindings);
 
-		/*
-		tkn::Environment::InitData initEnv;
-		auto convFile = openAsset("convolution.ktx");
-		auto irrFile = openAsset("irradiance.ktx");
-		if(!convFile) {
-			dlg_error("Coulnd't find convolution.ktx. Use the pbr program to generate it");
-			return false;
-		}
-		if(!irrFile) {
-			dlg_error("Coulnd't find irradiance.ktx. Use the pbr program to generate it");
-			return false;
-		}
-
-		env_.create(initEnv, batch,
-			tkn::read(std::move(convFile)),
-			tkn::read(std::move(irrFile)), sampler_);
-		env_.createPipe(vkDevice(), cameraDsLayout_, renderPass(), 0u, samples());
-		env_.init(initEnv, batch);
-		*/
-
 		tkn::SkyboxRenderer::PipeInfo pi;
 		pi.renderPass = renderPass();
 		pi.samples = samples();
@@ -237,10 +223,10 @@ public:
 				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
-			// vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			// 	vk::ShaderStageBits::fragment, -1, 1, &sampler_.vkHandle()),
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
 		};
 
 		aoDsLayout_.init(dev, aoBindings);
@@ -256,7 +242,7 @@ public:
 		}}, {}};
 
 		vpp::ShaderModule vertShader(dev, br_model_vert_data);
-		vpp::ShaderModule fragShader(dev, br_model_frag_data);
+		vpp::ShaderModule fragShader(dev, dm_model_frag_data);
 		vpp::GraphicsPipelineInfo gpi {renderPass(), pipeLayout_, {{{
 			{vertShader, vk::ShaderStageBits::vertex},
 			{fragShader, vk::ShaderStageBits::fragment},
@@ -325,7 +311,8 @@ public:
 			skyGroundAlbedo, turbidity_};
 		dirLight_.data.color = tkn::f16Scale * sky_.sunIrradiance();
 
-		auto aoUboSize = sizeof(tkn::SH9<Vec4f>) + 3 * 4u;
+		auto aoUboSize = sizeof(tkn::SH9<Vec4f>) + 4 * 4u
+			+ (sizeof(Vec4f)) * 4;
 		aoUbo_ = {dev.bufferAllocator(), aoUboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 		aoDs_ = {dev.descriptorAllocator(), aoDsLayout_};
@@ -349,6 +336,8 @@ public:
 		// adsu.imageSampler({{{}, env_.irradiance().imageView(),
 		// 	vk::ImageLayout::shaderReadOnlyOptimal}});
 		adsu.uniform({{{aoUbo_}}});
+		adsu.imageSampler({{{}, areaLight_.ltcLUT.imageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
 		adsu.apply();
 
 		// PERF: do this in scene initialization to avoid additional
@@ -388,6 +377,18 @@ public:
 		pointLight_.materialID = scene_.addMaterial(lmat);
 		pointLight_.instanceID = scene_.addInstance(spherePrimitiveID_,
 			pointLightObjMatrix(), pointLight_.materialID);
+
+		// area light
+		auto areaLightColor = nytl::Vec3f{1.f, 0.5f, 0.5f};
+		shape = tkn::generateQuad(alCenter, alX, alY);
+		areaLight_.primitiveID = scene_.addPrimitive(std::move(shape.positions),
+			std::move(shape.normals), std::move(shape.indices));
+		lmat.emissionFac = areaLightColor;
+		lmat.albedoFac = {};
+		lmat.flags |= tkn::Material::Bit::doubleSided;
+		areaLight_.materialID = scene_.addMaterial(lmat);
+		areaLight_.instanceID = scene_.addInstance(areaLight_.primitiveID,
+			nytl::identity<4, float>(), areaLight_.materialID);
 
 #ifdef BR_AUDIO
 		if(!args.noaudio) {
@@ -436,11 +437,11 @@ public:
 #endif // BR_AUDIO
 
 
-		auto id = 0u;
-		auto& ini = scene_.instances()[id];
+		// auto id = 0u;
+		// auto& ini = scene_.instances()[id];
 		// ini.matrix = tkn::lookAt(tkn::Quaternion {}) * ini.matrix;
-		ini.matrix = tkn::toMat<4>(tkn::Quaternion {}) * ini.matrix;
-		scene_.updatedInstance(id);
+		// ini.matrix = tkn::toMat<4>(tkn::Quaternion {}) * ini.matrix;
+		// scene_.updatedInstance(id);
 
 		// tkn::init(touch_, camera_, rvgContext());
 		return true;
@@ -636,6 +637,11 @@ public:
 			updateLight_ = true;
 		}
 
+		// area light
+		auto& ini = scene_.instances()[areaLight_.instanceID];
+		ini.matrix = tkn::translateMat(areaLight_.center) * tkn::toMat<4, float>(areaLight_.orient);
+		scene_.updatedInstance(areaLight_.instanceID);
+
 		Base::scheduleRedraw();
 	}
 
@@ -655,6 +661,35 @@ public:
 			return false;
 		}
 
+		auto mods = swa_display_active_keyboard_mods(swaDisplay());
+		bool shift = mods & swa_keyboard_mod_shift;
+		if(shift) {
+			switch(ev.keycode) {
+				case swa_key_i:
+					areaLight_.center.z += 0.01;
+					return true;
+				case swa_key_o:
+					areaLight_.center.z -= 0.01;
+					return true;
+				case swa_key_k:
+					areaLight_.center.y += 0.01;
+					return true;
+				case swa_key_j:
+					areaLight_.center.y -= 0.01;
+					return true;
+				case swa_key_h:
+					areaLight_.center.x -= 0.01;
+					return true;
+				case swa_key_l:
+					areaLight_.center.x += 0.01;
+					return true;
+				default:
+					break;
+			}
+		}
+
+		auto rotf = 0.025f;
+		auto& alo = areaLight_.orient;
 		switch(ev.keycode) {
 #ifdef BR_AUDIO
 			case swa_key_i: // toggle indirect audio
@@ -798,6 +833,15 @@ public:
 					dlg_info(">> done!");
 				}
 				break;
+			case swa_key_x:
+				alo = tkn::Quaternion::yxz(0, shift ? rotf : -rotf, 0) * alo;
+				break;
+			case swa_key_y:
+				alo = tkn::Quaternion::yxz(shift ? rotf : -rotf, 0, 0) * alo;
+				break;
+			case swa_key_z:
+				alo = tkn::Quaternion::yxz(0, 0, shift ? rotf : -rotf) * alo;
+				break;
 			default:
 				break;
 		}
@@ -900,7 +944,6 @@ public:
 			cam_.needsUpdate = false;
 		}
 
-		// auto semaphore = scene_.updateDevice(cameraVP());
 		auto semaphore = scene_.updateDevice(cam_.viewProjectionMatrix());
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
@@ -919,7 +962,8 @@ public:
 			updateLight_ = false;
 		}
 
-		if(updateAOParams_) {
+		// always update them for area light
+		if(true || updateAOParams_) {
 			updateAOParams_ = false;
 			auto map = aoUbo_.memoryMap();
 			auto span = map.span();
@@ -932,8 +976,15 @@ public:
 
 			tkn::write(span, mode_);
 			tkn::write(span, aoFac_);
-			// tkn::write(span, u32(env_.convolutionMipmaps()));
-			tkn::write(span, u32(1));
+			tkn::write(span, u32(1)); // envLods
+			tkn::skip(span, sizeof(float)); // pad
+
+			auto& ini = scene_.instances()[areaLight_.instanceID];
+			auto& prim = scene_.primitives()[areaLight_.primitiveID];
+			for(auto p : prim.positions) {
+				tkn::write(span, Vec4f(tkn::multPos(ini.matrix, p)));
+			}
+
 			map.flush();
 		}
 	}
@@ -1057,6 +1108,16 @@ protected:
 
 	// args
 	// tkn::TouchCameraController touch_;
+
+	struct {
+		vpp::ViewableImage ltcLUT;
+		u32 instanceID;
+		u32 materialID;
+		u32 primitiveID;
+
+		nytl::Vec3f center {};
+		tkn::Quaternion orient {};
+	} areaLight_;
 
 #ifdef BR_AUDIO
 	class AudioPlayer : public tkn::AudioPlayer {

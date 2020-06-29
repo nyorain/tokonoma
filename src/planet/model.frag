@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "precoscat.hpp"
 #include "terrain.glsl"
+#include "snoise.glsl"
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
 	mat4 _vp;
@@ -15,7 +16,7 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inVPos;
-layout(location = 2) in vec3 inNormal;
+// layout(location = 2) in vec3 inNormal;
 
 layout(location = 0) out vec4 fragColor;
 
@@ -51,6 +52,25 @@ float addAO(float f0, float f1, float x) {
 	// f0 = clamp(f0, -1.f, 0.f);
 	// f1 = clamp(f0, 0.f, 1.f);
 	return smoothstep(f0, f1, x);
+}
+
+vec3 detailNormal(vec3 pos, float lod) {
+	vec3 sum = vec3(0.f);
+	float lacunarity = 2.0;
+	float gain = 0.65;
+
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	for(int i = 0; i < max(3 - 2 * lod, 0.0); ++i) {
+		vec3 grad;
+		snoise(mod * pos, grad);
+		sum += amp * mod * grad;
+
+		mod *= lacunarity;
+		amp *= gain;
+	}
+
+	return sum;
 }
 
 void main() {
@@ -98,27 +118,14 @@ void main() {
 	// vec3 s = -cross(pos, t);
 	// vec3 s = dFdx(hc.xy);
 	// vec3 t = dFdy(pos);
-	vec3 hn = normalize(pos + dx * worldS + dy * worldT);
-	/*
-	vec3 n = cross(
-		(1 + fac * disp) * dtheta + dot(dtheta, fac * hn) * pos, 
-		(1 + fac * disp) * dphi + dot(dphi, fac * hn) * pos);
-	*/
-	vec3 n = hn;
+	float mod = 1024 * 8;
+	// vec3 n = normalize(pos + dx * worldS + dy * worldT + 
+	// 	0.02 * detailNormal(mod * pos, lod));
+	vec3 n = normalize(pos + dx * worldS + dy * worldT + 
+		0.02 * detailNormal(mod * pos, lod));
 
-	// float fac = 0.05;
-	// vec3 n = cross(
-	// 	6360 * (1 + fac * h.x) * dtheta + dot(dtheta, fac * h.yzw) * inPos, 
-	// 	6360 * (1 + fac * h.x) * dphi + dot(dphi, fac * h.yzw) * inPos);
-	// vec3 n = cross(
-	// 	(1 + fac * h.x) * dtheta + dot(dtheta, fac * h.yzw) * pos, 
-	// 	(1 + fac * h.x) * dphi + dot(dphi, fac * h.yzw) * pos);
-	// n = normalize(n);
-
-	// TODO
-	// n = 0.5 + 0.5 * n;
-	// fragColor = vec4(1000 * n, 1);
-	// return;
+	// float mod = 1024 * 16;
+	// vec3 n = normalize(inNormal + 0.05 * detailNormal(mod * pos, 0));
 
 	const vec3 toSun = vec3(0, 1, 0);
 	// naive lighting
@@ -162,6 +169,5 @@ void main() {
 	// vec3 albedo = vec3(0.3, 0.3, 0.3);
 	vec3 refl = (1 / pi) * albedo * (skyIrradiance + sunIrradiance);
 	fragColor = vec4(refl, 1);
-	// fragColor = vec4(vec3(10000 * ao), 1);
 }
 

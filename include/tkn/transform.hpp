@@ -538,7 +538,7 @@ nytl::SquareMat<D, P> lookAt(const nytl::Vec3<P>& z, const nytl::Vec3<P>& up) {
 // Returns the view projection matrix to render a cubemap from position 'pos'
 // for face 'i'. Aspect is assumed to be 1.
 nytl::Mat4f cubeProjectionVP(nytl::Vec3f pos, unsigned face,
-	float near = 0.01f, float far = 30.f);
+	float near = -0.01f, float far = -30.f);
 
 // order:
 // front/near (topleft, topright, bottomleft, bottomright)

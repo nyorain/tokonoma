@@ -52,8 +52,8 @@ public:
 	static constexpr auto genGroupDimSize = 8u;
 	static constexpr auto bloomLevels = 6u;
 
-	static constexpr auto nTilesPD = 512;
-	static constexpr auto maxTileSize = 1024;
+	static constexpr auto nTilesPD = 256;
+	static constexpr auto maxTileSize = 256;
 	static constexpr auto heightmapSize = 3 * maxTileSize;
 	static constexpr auto nLods = 10u;
 

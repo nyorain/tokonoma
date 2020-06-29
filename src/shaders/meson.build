@@ -27,6 +27,7 @@ deferred_glsl = include_glsl + scene_glsl + files(
 
 planet_glsl = include_glsl + scene_glsl + files(
 	'../planet/terrain.glsl',
+	'../planet/precoscat.hpp',
 )
 
 fluid_glsl = files('../fluids/fluid.glsl')
@@ -265,9 +266,12 @@ shaders_src = {
 		['update.comp', planet_glsl],
 		['dispatch.comp'],
 		['pp.frag'],
-		['sky.comp'],
+		['sky.comp', planet_glsl],
 		['apply.comp'],
 		['gend.comp', planet_glsl],
+	],
+	'dm': [
+		['model.frag'],
 	],
 }
 

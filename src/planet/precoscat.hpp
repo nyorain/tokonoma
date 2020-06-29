@@ -273,7 +273,7 @@ ARay rayFromTransTexUnit(IN(Atmosphere) atmos, IN(vec2) range) {
 }
 
 // lookup
-const float tGamma = 1;
+const float tGamma = 16;
 vec3 transmittanceToTop(IN(Atmosphere) atmos, IN(sampler2D) transTex, IN(ARay) ray) {
 	assert(ray.height >= atmos.bottom && ray.height <= atmos.top);
 	assert(ray.mu >= -1.f && ray.mu <= 1.f);

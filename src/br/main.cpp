@@ -309,11 +309,6 @@ public:
 		pointLight_.instanceID = scene_.addInstance(spherePrimitiveID_,
 			pointLightObjMatrix(), pointLight_.materialID);
 
-		// auto id = 0u;
-		// auto& ini = scene_.instances()[id];
-		// ini.matrix = tkn::toMat<4>(tkn::Quaternion {}) * ini.matrix;
-		// scene_.updatedInstance(id);
-
 		return true;
 	}
 

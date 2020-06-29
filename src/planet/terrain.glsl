@@ -1,6 +1,6 @@
 // The number of tiles per dimension of a face. The number of tiles per
 // face will be this squared.
-layout(constant_id = 5) const uint nTilesPD = 512;
+layout(constant_id = 5) const uint nTilesPD = 256;
 
 // Number of tiles per face
 const uint nTilesPF = nTilesPD * nTilesPD;
@@ -57,14 +57,6 @@ uint cubeFace(vec3 dir, out vec2 suv) {
 	}
 }
 
-// float modtrunc(float x, float y) {
-// 	return x - y * trunc(x / y);
-// }
-
-// vec2 modtrunc(vec2 x, vec2 y) {
-// 	return x - y * trunc(x / y);
-// }
-
 // Returns whether the two faces are opposite to each other.
 bool opposite(uint face1, uint face2) {
 	return ((face1 & 1u) == 0u) ? face1 + 1 == face2 : face2 + 1 == face1;
@@ -82,7 +74,6 @@ uvec3 tilePos(vec3 dir, out vec2 tuv) {
 }
 
 // For flipping uv coordinates on face1 to uv coordinates on face0
-// TODO: extend to return complete offset?
 mat2 flipUVMatrix(uint face0, uint face1, out ivec2 off) {
 	// all of these values are in {-1, 0, 1}
 	Face f0 = cubeFaces[face0];
@@ -104,7 +95,7 @@ mat2 flipUVMatrix(uint face0, uint face1, out ivec2 off) {
 	float dtdt = d0t1 * d1t0;
 	float dtds = d0t1 * d1s0;
 
-	// TODO: might be possible to further optimize this
+	// NOTE: might be possible to further optimize this
 	// off values are one of {-1, 0, 1, 2}
 	off = ivec2(0, 0);
 	off.x += int(abs(dsds) * (int(d0s1 == d1s0) + d1s0));
@@ -119,8 +110,6 @@ mat2 flipUVMatrix(uint face0, uint face1, out ivec2 off) {
 	return transpose(mat2(
 		ss - dsds, st - dtds,
 		ts - dsdt, tt - dtdt
-		// ss - dsds, ts - dtds,
-		// st - dsdt, tt - dtdt
 	));
 }
 
@@ -137,10 +126,7 @@ vec3 heightmapCoords(vec3 pos, uvec3 centerTile, uint lodOff, out bool valid,
 		worldS = cubeFaces[centerTile.z].s;
 		worldT = cubeFaces[centerTile.z].t;
     } else {
-		// TODO
-		// return vec4(1.0, 0.0, 0.0, 1.0);
-
-		// TODO: not really sure how to store it. Maybe an extra
+		// TODO: not really sure how to store opposite face. Maybe an extra
 		// last lod just for it?
 		if(opposite(tpos.z, centerTile.z)) {
 			// return vec4(0.0, normalize(pos));
@@ -150,9 +136,7 @@ vec3 heightmapCoords(vec3 pos, uvec3 centerTile, uint lodOff, out bool valid,
 
 		ivec2 off;
 		mat2 fm = flipUVMatrix(centerTile.z, tpos.z, off);
-		tuv = fract(fm * tuv); // TODO: use modified off here?
-		// toff = ivec2(trunc(fm * (tpos.xy + 0.5)) + int(nTilesPD) * off) - ivec2(centerTile.xy);
-		// toff = ivec2(fm * tpos.xy) + int(nTilesPD) * off - ivec2(centerTile.xy);
+		tuv = fract(fm * tuv); // TODO: not sure if correct. Use modified off?
 		toff = ivec2(trunc(fm * (tpos.xy + 0.5) + int(nTilesPD) * off)) - ivec2(centerTile.xy);
 
 		worldS = 
@@ -167,9 +151,6 @@ vec3 heightmapCoords(vec3 pos, uvec3 centerTile, uint lodOff, out bool valid,
 	int m = max(abs(toff.x), abs(toff.y));
 	int lod = int(ceil(log2(max(m, 1)))) + int(lodOff);
 
-
-	// TODO
-	// lod = 0;
 	// TODO: linear interpolation (between lod and lod + 1 then, though)
 
 	float tileSize = 1.f / (1 + 2 * exp2(lod));
@@ -199,50 +180,66 @@ vec4 height(vec3 pos, uvec3 centerTile, sampler2DArray heightmap) {
 	return texture(heightmap, c);
 }
 
-const float displaceStrength = 0.01; // TODO
+const float displaceStrength = 0.01;
 vec3 displace(vec3 pos, uvec3 centerTile, sampler2DArray heightmap) {
 	pos = normalize(pos);
 	float h = height(pos, centerTile, heightmap).r;
 	return 6360 * (1 + displaceStrength * h) * pos;
 }
 
-// inverse
+// Given a base unit vector (positive or negative), returns the
+// associated cubemap face ID. Returns an invalid value otherwise.
 int faceFromDir(vec3 dir) {
-	float dx = dot(dir, d_x);
-	float dy = dot(dir, d_y);
-	float dz = dot(dir, d_z);
+	// #1
+	// int sum = int(dir.x + 2 * dir.y + 3 * dir.z);
 
-	if(dx == 1) return 0;
-	if(dx == -1) return 1;
-	if(dy == 1) return 2;
-	if(dy == -1) return 3;
-	if(dz == 1) return 4;
-	if(dz == -1) return 5;
+	// #1a. Problem: potential out of range access for invalid dirs
+	// const int table[] = {5, 3, 1, 0, 2, 4};
+	// return table[3 + sum]
+
+	// #1b
+	// return int(-1.5 + 2 * abs(sum) - 0.5 * sign(sum));
+
+	// #1c
+	// switch(sum) {
+	// 	case 1: return 0;
+	// 	case -1: return 1;
+	// 	case 2: return 2;
+	// 	case -2: return 3;
+	// 	case 3: return 4;
+	// 	case -3: return 5;
+	// 	default: return -1;
+	// }
+
+	// #2: easiest to read
+	if(dir.x == 1) return 0;
+	if(dir.x == -1) return 1;
+	if(dir.y == 1) return 2;
+	if(dir.y == -1) return 3;
+	if(dir.z == 1) return 4;
+	if(dir.z == -1) return 5;
 	return -1;
 
-	// return int((dx != 0.0) ? 0.5 + 0.5 * dx :
-	// 	(dy != 0.0) ? 2.5 + 0.5 * dy :
-	// 	(dz != 0.0) ? 4.5 + 0.5 * dz : -1.0);
+	// #3
+	// return int((dx != 0.0) ? 0.5 - 0.5 * dx :
+	// 	(dy != 0.0) ? 2.5 - 0.5 * dy :
+	// 	(dz != 0.0) ? 4.5 - 0.5 * dz : -1.0);
 }
 
 vec3 heightmapPos(uvec3 centerTile, vec2 uv, uint lod, out bool valid) {
-	int nhTiles = int(exp2(lod));
-	int nTiles = 1 + 2 * nhTiles;
-	float tileSize = 1.0 / nTiles;
+	int nhTiles = int(exp2(lod)); // number of tiles on either size
+	int nTiles = 1 + 2 * nhTiles; // total number of tiles in lod
 
-	vec2 suv = -1 + 2 * uv;
-	// suv = sign(suv) * (0.5 * tileSize + (1 - 0.5 * tileSize) * abs(suv));
-	// suv = sign(suv) * mix(vec2(tileSize), vec2(1), abs(suv));
+	vec2 tid;
+	vec2 tuv = modf(uv * nTiles, tid);
+	ivec2 fid = ivec2(centerTile.xy) + ivec2(tid) - nhTiles;
 
-	// vec2 tid;
-	// vec2 hstuv = modf(suv * nhTiles + 0.5
-	// // vec2 tuv = 0.5 + hstuv;
-
-	vec2 scaled = 0.5 * suv * nTiles;
-	vec2 tid = round(scaled);
-	vec2 tuv = 0.5 + scaled - tid;
-
-	ivec2 fid = ivec2(centerTile.xy) + ivec2(tid);
+	// should be equivalent
+	// vec2 suv = -1 + 2 * uv;
+	// vec2 scaled = 0.5 * suv * nTiles;
+	// vec2 tid = round(scaled);
+	// vec2 tuv = 0.5 + scaled - tid;
+	// ivec2 fid = ivec2(centerTile.xy) + ivec2(tid);
 
 	// -1: out of range along the negative axis
 	//  0: valid range, i.e. not out of face
@@ -273,16 +270,10 @@ vec3 heightmapPos(uvec3 centerTile, vec2 uv, uint lod, out bool valid) {
 
 		ivec2 toff;
 		mat2 fm = flipUVMatrix(faceID, centerTile.z, toff);
-		// mat2 fm = inverse(flipUVMatrix(centerTile.z, faceID, toff));
-		// tuv = fm * tuv + toff;
-		tuv = fract(fm * tuv); // TODO: use toff?
-		// fid = ivec2(trunc(fm * (fid + 0.5))) - int(nTilesPD) * toff;
-		// fid = ivec2(fm * (fid - int(nTilesPD) * toff));
-		// fid = ivec2(fm * (fid + int(nTilesPD) * toff));
+		tuv = fract(fm * tuv); // TODO: not sure if correct, use modified toff?
 		fid = ivec2(trunc(fm * (fid + 0.5) + int(nTilesPD) * toff));
 	}
 
-	// TODO
 	// We must be inside the face now. Otherwise we are on the backside
 	// of the cube (from centerTile), can't compute that.
 	x = int((step(0, fid.x) - 1) + step(nTilesPD, fid.x));
@@ -295,10 +286,5 @@ vec3 heightmapPos(uvec3 centerTile, vec2 uv, uint lod, out bool valid) {
 
 	valid = true;
 	vec2 fuv = -1 + 2 * ((fid + tuv) / float(nTilesPD));
-	// vec2 fuv = -1.0 + 2.0 * (fid / float(nTilesPD));
 	return normalize(face.dir + fuv.x * face.s + fuv.y * face.t);
-
-	// vec2 ffid = fract(fid + tuv);
-	// return vec3(0.5 + 0.5 * fuv.x, 0.5 + 0.5 * fuv.y, 
-	// 	(min(ffid.x, ffid.y) < 0.05 || max(ffid.x, ffid.y) > 0.95 ? 1.0 : 0.0));
 }

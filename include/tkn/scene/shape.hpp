@@ -27,11 +27,15 @@ Shape generate(const Cube& cube);
 Shape generateUV(const Sphere& sphere, unsigned stackCount = 64,
 	unsigned sectorCount = 64);
 
+Shape generateQuad(nytl::Vec3f center, nytl::Vec3f x, nytl::Vec3f y);
+
 // TODO: allows position and radius as well
 Shape generateIco(unsigned subdiv);
 
 // generate smooth normals weighted by triangle area
 std::vector<Vec3f> areaSmoothNormals(nytl::Span<const Vec3f> positions,
 	nytl::Span<const u32> indices);
+
+// TODO: add (dual-)cube marching. See tkn/volume
 
 } // namespace tkn

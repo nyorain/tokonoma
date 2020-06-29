@@ -19,15 +19,15 @@ layout(set = 0, binding = 1) uniform UBO {
 // Returns normalized value in range [0, 1]
 vec4 mfbm(vec3 dir, uint lod) {
 	vec4 sum = vec4(0.f);
-	float lacunarity = 2.0;
-	float gain = 0.6;
+	float lacunarity = 2.05;
+	float gain = 0.525;
 
 	float amp = 0.5f; // ampliture
 	float mod = 1.f; // modulation
 	float totalAmp = 0.f;
 	// for(int i = 0; i < max(int(3 - 1.0 * lod), 2); ++i) {
 	// for(int i = 0; i < max(8 - int(lod), 0); ++i) {
-	for(int i = 0; i < 6; ++i) {
+	for(int i = 0; i < 7; ++i) {
 	// for(int i = 0; i < 14; ++i) {
 		// vec3 grad;
 		// float tmp = amp * snoise(mod * dir, grad);
@@ -54,8 +54,8 @@ float vfbm(vec3 pos) {
 	float mod = 1.f;
 	for(int i = 0; i < 3; ++i) {
 		s += amp * voronoiNoise2(mod * pos);
-		amp *= 0.5;
-		mod *= 2.0;
+		amp *= 0.8;
+		mod *= 1.6;
 	}
 
 	return s;
@@ -84,8 +84,8 @@ void main() {
 		h *= 0.4;
 		h.x += 0.5;
 
-		f *= 128;
-		h.x += 0.01 * vfbm(f * pos);
+		f *= 64;
+		h += 0.015 * vfbm(f * pos);
 
 		// h.yzw *= f;
 	}

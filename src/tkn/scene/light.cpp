@@ -549,8 +549,9 @@ void PointLight::updateDevice() {
 	auto span = map.span();
 	tkn::write(span, this->data);
 
-	auto np = 0.1f;
-	auto fp = this->data.radius;
+	// TODO: don't hardcode near and far planes.
+	auto np = -0.1f;
+	auto fp = -this->data.radius;
 	for(auto i = 0u; i < 6u; ++i) {
 		auto mat = tkn::cubeProjectionVP(this->data.position, i, np, fp);
 		tkn::write(span, mat);
