@@ -121,7 +121,7 @@ std::unique_ptr<ImageProvider> loadImage(std::unique_ptr<Stream>&& stream,
 std::unique_ptr<ImageProvider> loadImage(nytl::StringParam path) {
 	auto file = File(path, "rb");
 	if(!file) {
-		dlg_debug("fopen: {}", std::strerror(errno));
+		dlg_debug("fopen('{}'): {}", path, std::strerror(errno));
 		return {};
 	}
 

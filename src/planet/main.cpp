@@ -468,7 +468,7 @@ public:
 				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
 			// in depth
 			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
+				vk::ShaderStageBits::compute, &nearestSampler_.vkHandle()),
 			// in,out color
 			vpp::descriptorBinding(vk::DescriptorType::storageImage,
 				vk::ShaderStageBits::compute),
