@@ -2,7 +2,6 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "math.glsl"
-
 #include "geometry.glsl"
 #include "noise.glsl"
 #include "snoise.glsl"

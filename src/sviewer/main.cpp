@@ -91,7 +91,7 @@ public:
 		pipeLayout_ = {dev, {{dsLayout_.vkHandle()}}, {{pcr}}};
 		vertShader_ = {dev, tkn_fullscreen_vert_data};
 
-		cache_ = {dev, cacheFile};
+		pcache_ = {dev, cacheFile};
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
 		{
 			vpp::DescriptorSetUpdate update(ds_);
@@ -198,9 +198,11 @@ public:
 	bool initPipe(std::string_view shaderFile, vk::RenderPass rp,
 			vpp::Pipeline& out) {
 		auto spv = shaderFile.find(".spv");
+		vk::ShaderModule mod {};
 		if(spv == shaderFile.length() - 4) {
 			try {
 				fragShader_ = vpp::ShaderModule(vkDevice(), shaderFile);
+				mod = fragShader_;
 			} catch(const std::exception& error) {
 				dlg_error("Failed loading SPIR-V shader: {}", error.what());
 				return false;
@@ -211,19 +213,17 @@ public:
 				name = "sviewer/shaders/" + std::string(shaderFile);
 				name += ".frag";
 			}
-			auto mod = tkn::loadShader(vkDevice(), name);
+			mod = tkn::ShaderCache::instance().loadShader(vkDevice(), name);
 			if(!mod) {
 				return false;
 			}
-
-			fragShader_ = std::move(*mod);
 		}
 
-		initPipe(fragShader_, rp, out);
+		initPipe(mod, rp, out);
 		return true;
 	}
 
-	void initPipe(const vpp::ShaderModule& frag, vk::RenderPass rp,
+	void initPipe(vk::ShaderModule frag, vk::RenderPass rp,
 			vpp::Pipeline& out) {
 		auto& dev = vkDevice();
 		vpp::GraphicsPipelineInfo pipeInfo(rp, pipeLayout_, {{{
@@ -231,8 +231,8 @@ public:
 			{frag, vk::ShaderStageBits::fragment}
 		}}});
 
-		out = {dev, pipeInfo.info(), cache_};
-		vpp::save(dev, cache_, cacheFile);
+		out = {dev, pipeInfo.info(), pcache_};
+		vpp::save(dev, pcache_, cacheFile);
 	}
 
 	argagg::parser argParser() const override {
@@ -422,7 +422,7 @@ protected:
 	vpp::PipelineLayout pipeLayout_;
 	vpp::TrDsLayout dsLayout_;
 	vpp::TrDs ds_;
-	vpp::PipelineCache cache_;
+	vpp::PipelineCache pcache_;
 	tkn::ControlledCamera cam_;
 
 	struct {

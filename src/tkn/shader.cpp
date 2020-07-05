@@ -4,10 +4,6 @@
 #include <filesystem>
 #include <fstream>
 
-using FsTimePoint = fs::file_time_type;
-using FsDuration = FsTimePoint::duration;
-using FsClock = FsTimePoint::clock;
-
 namespace tkn {
 
 // TODO: don't use std::system for this. Instead use a proper
@@ -20,16 +16,20 @@ namespace tkn {
 //   to complete, that's insane honestly) would be pretty neat
 // https://github.com/benman64/subprocess looks quite promising.
 
+// TODO: add tracking to automatically reload shaders when they change.
+//   https://github.com/emcrisostomo/fswatch looks like a good cross-platform
+//   solution. Not sure if here is the right place for this, though.
+//   Combinding it with ShaderCache sounds like a good idea though.
+
 std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 		std::string_view glslPath, nytl::StringParam args) {
 	return compileShader(dev, glslPath, args);
 }
 
 std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
-		std::string_view glslPath, nytl::StringParam args) {
-	static const auto spv = "live.frag.spv";
+		std::string_view glslPath, nytl::StringParam args, fs::path spvOutput) {
 	std::string cmd = "glslangValidator -V -o ";
-	cmd += spv;
+	cmd += spvOutput;
 
 	// include dirs
 	cmd += " -I";
@@ -71,69 +71,49 @@ std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
 		return {};
 	}
 
-	return {{dev, spv}};
+	return {{dev, spvOutput.c_str()}};
 }
 
 // ShaderCache
-vk::ShaderModule ShaderCache::tryFindShaderOnDisk(const vpp::Device& dev,
-		std::string_view shader, nytl::StringParam args) {
-	auto spvName = std::string(cacheDir) + std::string(shader);
-	for(auto& c : spvName) {
-		if(c == '/' || c == '\\') {
-			c = '.';
-		}
-	}
-	spvName += std::hash<std::string_view>{}(args);
-	spvName += ".spv";
-
-	auto spvPath = fs::path(spvName);
-	if(!fs::exists(spvPath)) {
-		return {};
-	}
-
+ShaderCache& ShaderCache::instance() {
+	static ShaderCache shaderCache;
+	return shaderCache;
 }
 
 vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
-		std::string_view shader, nytl::StringParam args) {
+		std::string_view shader, const std::string& args,
+		nytl::Span<const char* const> extraIncludePaths) {
 	auto shaderPath = fs::path(shader);
 	auto shaderStr = std::string(shader);
 
 	// Check if shader is known
-	auto knownIt = known_.find(shaderStr);
-
-	vk::ShaderModule compiledMod;
+	vk::ShaderModule compiledMod {};
 	FsTimePoint compiledTime;
 	fs::path compiledPath;
 
-	auto argsStr = std::string(args);
-	if(knownIt != known_.end()) {
-		auto& known = knownIt->second;
-
-		// Check we have already compiled this shader with the given arguments.
-		auto compiledIt = known.modules.find(argsStr);
-		if(compiledIt != known.modules.end()) {
-			auto& compiled = compiledIt->second;
-			compiledMod = compiled.mod;
-			compiledTime = compiled.lastCompiled;
-		}
-	} else {
-		// try to find a compiled version on disk
-		auto spvName = std::string(cacheDir) + std::string(shader);
-		for(auto& c : spvName) {
-			if(c == '/' || c == '\\') {
-				c = '.';
+	{
+		auto sharedLock = std::shared_lock(mutex_);
+		auto knownIt = known_.find(shaderStr);
+		if(knownIt != known_.end()) {
+			// Check we have already compiled this shader with the given arguments.
+			auto& known = knownIt->second;
+			auto compiledIt = known.modules.find(args);
+			if(compiledIt != known.modules.end()) {
+				auto& compiled = compiledIt->second;
+				compiledMod = compiled.mod;
+				compiledTime = compiled.lastCompiled;
 			}
-		}
-		spvName += std::hash<std::string_view>{}(args);
-		spvName += ".spv";
+		} else {
+			auto spvPath = cachePathForShader(shader, args);
+			if(!fs::exists(spvPath)) {
+				return {};
+			}
 
-		auto spvPath = fs::path(spvName);
-		if(!fs::exists(spvPath)) {
-			return {};
+			compiledTime = fs::last_write_time(spvPath);
+			compiledPath = std::move(spvPath);
 		}
 
-		compiledTime = fs::last_write_time(spvPath);
-		compiledPath = std::move(spvPath);
+		sharedLock.unlock();
 	}
 
 	// recheck includes, recursively (via a worklist).
@@ -155,6 +135,17 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 			}
 
 			if(!found) {
+				for(auto& incPath : extraIncludePaths) {
+					auto absPath = fs::path(incPath) / workPath;
+					if(fs::exists(absPath)) {
+						workPath = absPath;
+						found = true;
+						break;
+					}
+				}
+			}
+
+			if(!found) {
 				dlg_error("Could not find include file {}", workPath);
 				return {};
 			}
@@ -165,29 +156,34 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 
 		auto lastChanged = fs::last_write_time(workPath);
 		if(lastChanged > compiledTime) {
+			dlg_info("Can't use {} from cache since {} is out of date",
+				shader, workPath);
 			return {};
 		}
 
-		// If it did not exist previously, we just insert it.
-		// Maybe it's older than the compiler shader module anyways.
-		auto& known = known_[work];
-		if(known.includesLastChecked > lastChanged) {
-			// in this case, the currently handled file was not
-			// changed since we last updated its includes.
-			// But one of the include files might have changed,
-			// we have to add it to the worklist.
-			for(auto& inc : known.includes) {
-				worklist.push_back(inc);
-			}
+		{
+			auto sharedLock = std::shared_lock(mutex_);
+			if(auto knownIt = known_.find(work); knownIt != known_.end()) {
+				auto& known = knownIt->second;
+				if(known.includesLastChecked > lastChanged) {
 
-			// We don't have to update known.includesLastChecked since
-			// we already know the file wasn't updated since then.
-			continue;
+					// in this case, the currently handled file was not
+					// changed since we last updated its includes.
+					// But one of the include files might have changed,
+					// we have to add it to the worklist.
+					worklist.insert(worklist.end(), known.includes.begin(),
+						known.includes.end());
+					continue;
+				}
+			}
 		}
 
-		// Recheck the included files for the current work item.
-		known.includes.clear();
-		std::ifstream in(work, std::ios_base::in);
+		// Recheck includes for the currnet work file.
+		dlg_info("rechecking includes of {}", work);
+		std::vector<std::string> newIncludes;
+		auto preCheckTime = FsClock::now();
+
+		std::ifstream in(workPath, std::ios_base::in);
 		if(!in.is_open()) {
 			dlg_error("Can't open {}", shader);
 			return {};
@@ -210,10 +206,16 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 
 			// At this point, we have found an include file.
 			auto incFile = lineView.substr(0, delim);
+			dlg_info("include: {} -> {}", work, incFile);
 			worklist.push_back(std::string(incFile));
+			newIncludes.push_back(std::string(incFile));
 		}
 
-		known.includesLastChecked = FsClock::now();
+		// If the file didn't exist, we insert it.
+		auto lockGuard = std::lock_guard(mutex_);
+		auto& known = known_[work];
+		known.includesLastChecked = preCheckTime;
+		known.includes = std::move(newIncludes);
 	}
 
 	// We know that the compiled mod (whether on disk or already loaded)
@@ -223,9 +225,10 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 	}
 
 	// Load from disk.
-	knownIt = known_.find(shaderStr);
+	auto lockGuard = std::lock_guard(mutex_);
+	auto knownIt = known_.find(shaderStr);
 	dlg_assert(knownIt != known_.end());
-	auto& compiled = knownIt->second.modules[argsStr];
+	auto& compiled = knownIt->second.modules[args];
 	compiled.mod = {dev, compiledPath.c_str()};
 	compiled.lastCompiled = compiledTime;
 
@@ -233,22 +236,77 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 }
 
 vk::ShaderModule ShaderCache::loadShader(const vpp::Device& dev,
-		std::string_view glslPath, nytl::StringParam args) {
-	auto mod = tryFindShader(dev, glslPath, args);
+		std::string_view shader, nytl::StringParam args,
+		nytl::Span<const char* const> extraIncludePaths) {
+	auto argsStr = std::string(args);
+	for(auto& inc : extraIncludePaths) {
+		argsStr += " ";
+		argsStr += "-I";
+		argsStr += inc;
+	}
+
+	auto mod = tryFindShader(dev, shader, argsStr);
 	if(mod) {
+		dlg_info("Loading '{}' (args: '{}') from cache", shader, argsStr);
 		return mod;
 	}
 
-	dlg_info("Couldn't find {} (args: {}) in cache, compiling it", glslPath, args);
-	auto optMod = tkn::loadShader(dev, glslPath, args);
+	dlg_info("Couldn't find '{}' (args: '{}') in cache, compiling it", shader, argsStr);
+	auto spvPath = cachePathForShader(shader, argsStr);
+
+	// Make sure to store (in memory and on disk) the time *before* compilation
+	// as last write time. This way, if the shader is modified during
+	// compilation, the cache will be immediately out of date (even though
+	// we return a version without the new change here). This guarantees
+	// that we (later on) will never return a module that doesn't match
+	// the current code.
+	auto preCompileTime = FsClock::now();
+	auto optMod = tkn::compileShader(dev, shader, argsStr, spvPath);
 	if(!optMod) {
 		return {};
 	}
 
-	auto& knownEntry = known_[std::string(glslPath)].modules[std::string(args)];
-	knownEntry.mod = std::move(*optMod);
-	knownEntry.lastCompiled = FsClock::now();
-	return knownEntry.mod;
+	vk::ShaderModule ret;
+	{
+		auto lockGuard = std::lock_guard(mutex_);
+		auto& knownEntry = known_[std::string(shader)].modules[std::string(argsStr)];
+		knownEntry.mod = std::move(*optMod);
+		knownEntry.lastCompiled = preCompileTime;
+		ret = knownEntry.mod;
+	}
+
+	fs::last_write_time(spvPath, preCompileTime);
+	return ret;
+}
+
+void ShaderCache::clear() {
+	auto lockGuard = std::lock_guard(mutex_);
+	known_.clear();
+}
+
+fs::path ShaderCache::cachePathForShader(std::string_view glslPath,
+		std::string_view args) {
+	auto spvName = std::string(glslPath);
+	for(auto& c : spvName) {
+		if(c == '/' || c == '\\') {
+			c = '.';
+		}
+	}
+
+	if(!args.empty()) {
+		auto argsStr = std::string(args);
+		for(auto& c : argsStr) {
+			if(!std::isalnum(c)) {
+				c = '.';
+			}
+		}
+
+		spvName += ".";
+		spvName += argsStr;
+	}
+
+	spvName += ".spv";
+	return cacheDir / fs::path(spvName);
 }
 
 } // namespace tkn

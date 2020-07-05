@@ -1,3 +1,6 @@
+#ifndef INC_MATH_GLSL_
+#define INC_MATH_GLSL_
+
 const float pi = 3.1415926535897932;
 const float sqrtpi = 1.7724538509055160;
 
@@ -59,7 +62,7 @@ float interp(float low, float high, float x) {
 	return 0.5 * ((high + low) + (high - low) * tanh(x));
 }
 
-// NOTE: all following ripped from
+// NOTE: all following are (in essence) from
 // http://iquilezles.org/www/articles/functions/functions.htm
 
 // [0, inf] -> [0, 1]; with 0 -> 0
@@ -136,3 +139,5 @@ float expstep(float k, float n, float x) {
 float sincn(float k, float x) {
 	return sinc(pi * (k * x - 1.0));
 }
+
+#endif // INC_MATH_GLSL_

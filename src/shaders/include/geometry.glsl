@@ -1,5 +1,7 @@
 // TODO: most of the things here really belong to a new file, e.g. light.glsl
 
+#include "math.glsl"
+
 struct Line {
 	vec2 point;
 	vec2 dir;
