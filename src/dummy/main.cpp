@@ -1,4 +1,5 @@
 #include <tkn/singlePassApp.hpp>
+#include <dlg/dlg.hpp>
 
 class DummyApp : public tkn::SinglePassApp {
 public:
@@ -7,6 +8,8 @@ public:
 		if(!Base::init(args)) {
 			return false;
 		}
+
+		dlg_error("Error!");
 
 		return true;
 	}

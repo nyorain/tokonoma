@@ -68,6 +68,7 @@ tkn_src = [
 	'image/exr.cpp',
 
 	'kissfft/kiss_fft.c',
+	'spirv_reflect.c',
 
 	tkn_shaders,
 ]

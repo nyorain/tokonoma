@@ -55,6 +55,7 @@
 // - change the way we store transmittance. Bruneton needs a 32-bit floating
 //   point texture, since we need great precision near tramission ~ 0 for rays
 //   with mu ~ 0, i.e. near the horizon. We get away with 16-bit by gamma-mapping it.
+//   NOTE: nvm this does not seem too effective.
 
 // NOTE: some calculations currently use (0, 0, 1) as zenith internally.
 //   Although this does not match the orientation we usually use, it does not
@@ -273,7 +274,7 @@ ARay rayFromTransTexUnit(IN(Atmosphere) atmos, IN(vec2) range) {
 }
 
 // lookup
-const float tGamma = 16;
+const float tGamma = 1.0;
 vec3 transmittanceToTop(IN(Atmosphere) atmos, IN(sampler2D) transTex, IN(ARay) ray) {
 	assert(ray.height >= atmos.bottom && ray.height <= atmos.top);
 	assert(ray.mu >= -1.f && ray.mu <= 1.f);
@@ -370,7 +371,7 @@ void singleScattering(IN(Atmosphere) atmos, IN(sampler2D) transTex,
 	assert(mu_s >= -1.0 && mu_s <= 1.0);
 	assert(nu >= -1.0 && nu <= 1.0);
 
-	const uint sampleCount = 50;
+	const uint sampleCount = 200;
 	float dt = distanceToNearestBoundary(atmos, ray, rayIntersectsGround) / sampleCount;
 
 	rayleigh = vec3(0.f, 0.f, 0.f);

@@ -12,8 +12,8 @@ meta:
 	groupDimSize3D: 4
 	# texture sizes and formats
 	transmission:
-		format: r32g32b32a32Sfloat
-		# format: r16g16b16a16Sfloat
+		# format: r32g32b32a32Sfloat
+		format: r16g16b16a16Sfloat
 		# format: r8g8b8a8Unorm
 		muSize: 512
 		heightSize: 128

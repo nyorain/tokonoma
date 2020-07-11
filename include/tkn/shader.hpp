@@ -33,6 +33,8 @@ std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
 // TODO: allow adding, removing, retrieving already compiled modules as well
 // TODO: maybe also cache included files per file in the cache, to avoid
 //   actually reading shader files as often as possible?
+// TODO: fix vpp::Device used for ShaderCache, eliminate parameters
+// from load/find?
 class ShaderCache {
 public:
 	// TODO: replace this with some platform-specific shader cache dir
@@ -65,7 +67,7 @@ public:
 	// cache dir for a compiled spv shader and load that.
 	// If any shader file (the shader itself or any of its includes) are
 	// newer than a found cache, aborts.
-	vk::ShaderModule tryFindShader(const vpp::Device& dev,
+	vk::ShaderModule find(const vpp::Device& dev,
 		std::string_view glslPath, const std::string& args,
 		nytl::Span<const char* const> extraIncludePaths = {});
 
@@ -74,7 +76,7 @@ public:
 	// Adds default include paths (src/shaders/{., include})
 	// Returns nullopt on failure. glslPath should be given relative to "src/",
 	// so e.g. be just "particles/particles.comp"
-	vk::ShaderModule loadShader(const vpp::Device& dev,
+	vk::ShaderModule load(const vpp::Device& dev,
 		std::string_view glslPath, nytl::StringParam args = {},
 		nytl::Span<const char* const> extraIncludePaths = {});
 

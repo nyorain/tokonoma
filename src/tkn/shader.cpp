@@ -80,7 +80,7 @@ ShaderCache& ShaderCache::instance() {
 	return shaderCache;
 }
 
-vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
+vk::ShaderModule ShaderCache::find(const vpp::Device& dev,
 		std::string_view shader, const std::string& args,
 		nytl::Span<const char* const> extraIncludePaths) {
 	auto shaderPath = fs::path(shader);
@@ -117,24 +117,42 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 	}
 
 	// recheck includes, recursively (via a worklist).
-	std::vector<std::string> worklist = {shaderStr};
+	// TODO: might be a better idea to resolve includes already
+	// when they are added to worklist.
+	struct Include {
+		std::string file;
+		fs::path fromDir;
+	};
+	std::vector<Include> worklist = {{shaderStr, shaderPath.parent_path()}};
 	while(!worklist.empty()) {
-		auto work = worklist.back();
+		auto [work, includedFromDir] = worklist.back();
 		worklist.pop_back();
 
 		auto workPath = fs::path(work);
 		if(workPath.is_relative()) {
-			bool found = true;
-			for(auto& incPath : includePaths) {
-				auto absPath = fs::path(incPath) / workPath;
-				if(fs::exists(absPath)) {
-					workPath = absPath;
-					found = true;
-					break;
+			bool found = false;
+
+			// check own directory
+			auto absPath = includedFromDir / work;
+			if(fs::exists(absPath)) {
+				workPath = absPath;
+				found = true;
+			}
+
+			// check default include paths
+			if(!found) {
+				for(auto& incPath : includePaths) {
+					auto absPath = fs::path(incPath) / workPath;
+					if(fs::exists(absPath)) {
+						workPath = absPath;
+						found = true;
+						break;
+					}
 				}
 			}
 
 			if(!found) {
+				// check custom include paths
 				for(auto& incPath : extraIncludePaths) {
 					auto absPath = fs::path(incPath) / workPath;
 					if(fs::exists(absPath)) {
@@ -149,7 +167,7 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 				dlg_error("Could not find include file {}", workPath);
 				return {};
 			}
-		} else if(fs::exists(workPath)) {
+		} else if(!fs::exists(workPath)) {
 			dlg_error("Absolute include {} does not exist", workPath);
 			return {};
 		}
@@ -161,6 +179,8 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 			return {};
 		}
 
+		auto parentPath = workPath.parent_path();
+
 		{
 			auto sharedLock = std::shared_lock(mutex_);
 			if(auto knownIt = known_.find(work); knownIt != known_.end()) {
@@ -171,8 +191,11 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 					// changed since we last updated its includes.
 					// But one of the include files might have changed,
 					// we have to add it to the worklist.
-					worklist.insert(worklist.end(), known.includes.begin(),
-						known.includes.end());
+					worklist.reserve(worklist.size() + known.includes.size());
+					for(auto& inc : known.includes) {
+						worklist.push_back({inc, parentPath});
+					}
+
 					continue;
 				}
 			}
@@ -207,7 +230,7 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 			// At this point, we have found an include file.
 			auto incFile = lineView.substr(0, delim);
 			dlg_info("include: {} -> {}", work, incFile);
-			worklist.push_back(std::string(incFile));
+			worklist.push_back({std::string(incFile), parentPath});
 			newIncludes.push_back(std::string(incFile));
 		}
 
@@ -235,7 +258,7 @@ vk::ShaderModule ShaderCache::tryFindShader(const vpp::Device& dev,
 	return compiled.mod;
 }
 
-vk::ShaderModule ShaderCache::loadShader(const vpp::Device& dev,
+vk::ShaderModule ShaderCache::load(const vpp::Device& dev,
 		std::string_view shader, nytl::StringParam args,
 		nytl::Span<const char* const> extraIncludePaths) {
 	auto argsStr = std::string(args);
@@ -245,7 +268,7 @@ vk::ShaderModule ShaderCache::loadShader(const vpp::Device& dev,
 		argsStr += inc;
 	}
 
-	auto mod = tryFindShader(dev, shader, argsStr);
+	auto mod = find(dev, shader, argsStr);
 	if(mod) {
 		dlg_info("Loading '{}' (args: '{}') from cache", shader, argsStr);
 		return mod;

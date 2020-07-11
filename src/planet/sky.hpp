@@ -454,11 +454,12 @@ public:
 		auto& dev = device();
 		reloadGenPipes_ = false;
 
-		auto preTrans = tkn::loadShader(dev, "planet/preTrans.comp");
-		auto preSingleScat = tkn::loadShader(dev, "planet/preSingleScat.comp");
-		auto preMultiScat = tkn::loadShader(dev, "planet/preMultiScat.comp");
-		auto preInScat = tkn::loadShader(dev, "planet/preInScat.comp");
-		auto preIrradiance = tkn::loadShader(dev, "planet/preIrradiance.comp");
+		auto& sc = tkn::ShaderCache::instance();
+		auto preTrans = sc.load(dev, "planet/preTrans.comp");
+		auto preSingleScat = sc.load(dev, "planet/preSingleScat.comp");
+		auto preMultiScat = sc.load(dev, "planet/preMultiScat.comp");
+		auto preInScat = sc.load(dev, "planet/preInScat.comp");
+		auto preIrradiance = sc.load(dev, "planet/preIrradiance.comp");
 		if(!preTrans || !preSingleScat || !preMultiScat) {
 			dlg_error("Failed to reload/compile pcs computation shaders");
 			return false;
@@ -471,28 +472,28 @@ public:
 		// 2D
 		tkn::ComputeGroupSizeSpec specTrans(config_.groupDimSize2D, config_.groupDimSize2D);
 		cpi.layout = preTrans_.pipeLayout;
-		cpi.stage.module = *preTrans;
+		cpi.stage.module = preTrans;
 		cpi.stage.pSpecializationInfo = &specTrans.spec;
 		preTrans_.pipe = {dev, cpi};
 
 		cpi.layout = preIrrad_.pipeLayout;
-		cpi.stage.module = *preIrradiance;
+		cpi.stage.module = preIrradiance;
 		preIrrad_.pipe = {dev, cpi};
 
 		// 3D
 		auto sgds = config_.groupDimSize3D;
 		tkn::ComputeGroupSizeSpec specScat(sgds, sgds, sgds);
 		cpi.layout = preSingleScat_.pipeLayout;
-		cpi.stage.module = *preSingleScat;
+		cpi.stage.module = preSingleScat;
 		cpi.stage.pSpecializationInfo = &specScat.spec;
 		preSingleScat_.pipe = {dev, cpi};
 
 		cpi.layout = preMultiScat_.pipeLayout;
-		cpi.stage.module = *preMultiScat;
+		cpi.stage.module = preMultiScat;
 		preMultiScat_.pipe = {dev, cpi};
 
 		cpi.layout = preInScat_.pipeLayout;
-		cpi.stage.module = *preInScat;
+		cpi.stage.module = preInScat;
 		preInScat_.pipe = {dev, cpi};
 
 		return true;
