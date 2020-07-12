@@ -176,9 +176,6 @@ protected:
 	virtual void surfaceDestroyed();
 	virtual void surfaceCreated();
 
-	virtual void popupClose();
-	virtual void popupDraw();
-
 	// stuff needed for own implementation
 	std::optional<std::uint64_t> submitFrame();
 	void dispatch();

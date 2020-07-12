@@ -3,11 +3,6 @@
 // file is directly taken from tkn/sky/bruneton.hpp.
 // Those two should be merged at some point and moved to libtkn.
 
-// TODO: separate generation and rendering.
-// 	Applications usually won't have custom requirements for generation
-// 	of the tables (as they can already fully set the config) but
-// 	might want to render differently.
-
 // only needed for Atmosphere declaration
 #include "precoscat.hpp"
 

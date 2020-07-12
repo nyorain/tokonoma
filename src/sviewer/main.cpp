@@ -7,6 +7,7 @@
 #include <tkn/shader.hpp>
 #include <tkn/image.hpp>
 #include <tkn/util.hpp>
+#include <tkn/fswatch.hpp>
 #include <argagg.hpp>
 
 #include <vpp/device.hpp>
@@ -98,9 +99,22 @@ public:
 			update.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 		}
 
+		// convert shaderFile_ to absolute path
+		auto name = std::string(shaderFile_);
+		auto absPath = name;
+		if(shaderFile_[0] != '/' && shaderFile_[0] != '.') {
+			name = "sviewer/shaders/" + std::string(shaderFile_);
+			name += ".frag";
+
+			absPath = TKN_BASE_DIR "/src/" + name;
+		}
+		shaderFile_ = name;
+
 		if(!initPipe(shaderFile_, renderPass(), pipeline_)) {
 			return false;
 		}
+
+		fsWatchShader_ = fsWatcher_.registerPath(absPath);
 
 		return true;
 	}
@@ -145,9 +159,17 @@ public:
 	}
 
 	void update(double dt) override {
+		Base::update(dt);
+
 		time_ += dt;
 		cam_.update(swaDisplay(), dt);
-		Base::update(dt);
+
+		fsWatcher_.update();
+		if(fsWatcher_.check(fsWatchShader_)) {
+			dlg_info("shader file changed, will reload pipeline");
+			reload_ = true;
+		}
+
 		Base::scheduleRedraw(); // we always redraw; shaders are assumed dynamic
 	}
 
@@ -208,12 +230,7 @@ public:
 				return false;
 			}
 		} else {
-			auto name = std::string(shaderFile);
-			if(shaderFile[0] != '/' && shaderFile[0] != '.') {
-				name = "sviewer/shaders/" + std::string(shaderFile);
-				name += ".frag";
-			}
-			mod = tkn::ShaderCache::instance().loadShader(vkDevice(), name);
+			mod = tkn::ShaderCache::instance().load(vkDevice(), shaderFile_);
 			if(!mod) {
 				return false;
 			}
@@ -407,7 +424,7 @@ public:
 	bool needsDepth() const override { return false; }
 
 protected:
-	const char* shaderFile_ = "dummy";
+	std::string shaderFile_ = "dummy";
 	bool reload_ {};
 
 	// glsl ubo vars
@@ -440,6 +457,10 @@ protected:
 		std::atomic<bool> writing {};
 		std::thread writer;
 	} screenshot_;
+
+	// TODO: does not belong here. WIP
+	tkn::FileWatcher fsWatcher_;
+	std::uint64_t fsWatchShader_;
 };
 
 int main(int argc, const char** argv) {

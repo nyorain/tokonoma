@@ -177,14 +177,6 @@ struct App::Callbacks {
 			app->dlgHandler(origin, string);
 		}
 	}
-
-	static void popupClose(struct swa_window* w) {
-		((App*) swa_window_get_userdata(w))->popupClose();
-	}
-
-	static void popupDraw(struct swa_window* w) {
-		((App*) swa_window_get_userdata(w))->popupDraw();
-	}
 };
 
 struct App::DebugMessenger : public vpp::DebugMessenger {
@@ -220,11 +212,9 @@ struct App::Impl {
 	std::unique_ptr<swa_display, SwaDisplayDeleter> dpy;
 	vpp::Instance instance;
 	std::unique_ptr<swa_window, SwaWindowDeleter> win;
-	std::unique_ptr<swa_window, SwaWindowDeleter> popup;
 	std::optional<DebugMessenger> messenger;
 	std::optional<vpp::Device> dev;
 	const vpp::Queue* presentq {};
-	bool handlingDlg {};
 
 	std::vector<vpp::StageSemaphore> nextFrameWait;
 	vk::SwapchainCreateInfoKHR swapchainInfo;
@@ -1067,25 +1057,6 @@ void App::surfaceCreated() {
 	impl_->swapchainInfo.surface = (vk::SurfaceKHR) surf;
 	impl_->renderer.init(swapchainInfo(), *impl_->presentq);
 }
-void App::popupClose() {
-	impl_->popup.reset();
-}
-void App::popupDraw() {
-	dlg_assert(impl_->popup);
-
-	swa_image img;
-	auto success = swa_window_get_buffer(impl_->popup.get(), &img);
-	dlg_assert(success);
-	if(!success) {
-		return;
-	}
-
-	dlg_info("popup draw: {} {}", img.width, img.height);
-
-	dlg_assert(img.format = swa_image_format_rgba32);
-	std::memset(img.data, 0xFF, img.stride * img.height);
-	swa_window_apply_buffer(impl_->popup.get());
-}
 bool App::hasSurface() const {
 	return swapchainInfo().surface;
 }
@@ -1148,31 +1119,8 @@ const vpp::Renderer& App::renderer() const {
 }
 
 void App::dlgHandler(const struct dlg_origin* origin, const char* string) {
-	if(impl_->handlingDlg) {
-		// TODO: we could handle this more gracefully
-		std::cout << "dlg handler called from within itself\n";
-		return;
-	}
-
-	impl_->handlingDlg = true;
-	auto handlingDlgGuard = nytl::ScopeGuard([&]{ impl_->handlingDlg = false; });
-
 	if(origin->level == dlg_level_error) {
 		++impl_->dlg.errors;
-
-		static struct swa_window_listener wl;
-		wl.close = &Callbacks::popupClose;
-		wl.draw = &Callbacks::popupDraw;
-
-		swa_window_settings winSettings;
-		swa_window_settings_default(&winSettings);
-		winSettings.surface = swa_surface_buffer;
-		winSettings.listener = &wl;
-		winSettings.width = 500;
-		winSettings.height = 200;
-		winSettings.title = "tkn popup";
-		impl_->popup.reset(swa_display_create_window(swaDisplay(), &winSettings));
-		swa_window_set_userdata(impl_->popup.get(), this);
 	} else if(origin->level == dlg_level_warn) {
 		++impl_->dlg.warnings;
 	}

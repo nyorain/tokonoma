@@ -26,6 +26,7 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 	return compileShader(dev, glslPath, args);
 }
 
+// TODO: allow absolute paths.
 std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
 		std::string_view glslPath, nytl::StringParam args, fs::path spvOutput) {
 	std::string cmd = "glslangValidator -V -o ";

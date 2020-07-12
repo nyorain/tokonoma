@@ -18,7 +18,7 @@
 #include <nytl/approx.hpp>
 #include <dlg/dlg.hpp>
 
-// Included elsewhere
+// definitions included elsewhere, we just need the extern fwd-decls below
 // #include <tkn/sky/ArHosekSkyModelData_CIEXYZ.h>
 
 extern const double datasetXYZ1[2][10][6][9];

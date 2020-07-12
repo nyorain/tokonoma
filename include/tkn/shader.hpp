@@ -30,6 +30,7 @@ std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
 	std::string_view glslPath, nytl::StringParam args = {},
 	fs::path spvOutput = "live.spv");
 
+// TODO: fix use of hashing
 // TODO: allow adding, removing, retrieving already compiled modules as well
 // TODO: maybe also cache included files per file in the cache, to avoid
 //   actually reading shader files as often as possible?
@@ -100,6 +101,10 @@ private:
 		std::vector<std::string> includes;
 		// When includes were last checked.
 		fs::file_time_type includesLastChecked {FsTimePoint::min()};
+
+		// TODO: support multiple versions via hashes.
+		// SHA-1 hash of source code and include hashes.
+		// std::array<char, 42> hash;
 
 		// TODO(optimization)
 		// Timestamp of when the file was last changed (or at least, the value

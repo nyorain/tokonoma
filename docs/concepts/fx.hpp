@@ -10,15 +10,37 @@
 
 namespace tkn {
 
-struct Pass {
+struct PipelineState {
 	std::vector<vpp::TrDsLayout> dsLayouts;
 	vpp::PipelineLayout pipeLayout;
 	vpp::Pipeline pipe;
 	std::vector<vpp::TrDs> dss;
 };
 
-Pass createComputePass(nytl::Span<const u32> spv);
-Pass createGraphicsPass(nytl::Span<const u32> vert,
+class ComputePipelineState : public PipelineState {
+public:
+	void reload();
+	void update();
+	bool updateDevice();
+
+protected:
+	std::string shaderPath_;
+};
+
+class GraphicsPipelineState : public PipelineState {
+public:
+	void reload();
+	void update();
+	bool updateDevice();
+
+protected:
+	std::function<void(vpp::GraphicsPipelineInfo&)> infoHandler_;
+	std::string vertShaderPath_;
+	std::string fragShaderPath_;
+};
+
+PipelineState createComputePass(nytl::Span<const u32> spv);
+PipelineState createGraphicsPass(nytl::Span<const u32> vert,
 	nytl::Span<const u32> frag, std::function<void(vpp::GraphicsPipelineInfo&)>);
 
 } // namespace tkn

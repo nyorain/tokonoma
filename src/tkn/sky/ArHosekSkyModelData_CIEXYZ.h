@@ -94,14 +94,13 @@ an updated version of this code has been published!
 
 
 /*
-
 This file contains the coefficient data for the XYZ colour space version of
 the model.
-
 */
 
-// Uses Sep 9 pattern / Aug 23 mean dataset
+#pragma once
 
+// Uses Sep 9 pattern / Aug 23 mean dataset
 const double datasetXYZ1[2][10][6][9] = {
 	// albedo 0, turbidity 1
 	-1.117001e+000,

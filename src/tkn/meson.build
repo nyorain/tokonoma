@@ -80,11 +80,19 @@ if dep_b2d.found()
 	tkn_deps += dep_b2d
 endif
 
+# jpeg reader implementation
 if dep_turbojpeg.found()
 	tkn_src += 'image/jpeg_turbo.cpp'
 	tkn_deps += dep_turbojpeg
 else
 	tkn_src += 'image/jpeg_dummy.cpp'
+endif
+
+# fswatch implementation
+if cc.has_header('sys/inotify.h')
+	tkn_src += 'fswatch_inotify.cpp'
+else
+	# TODO
 endif
 
 tkn_lib = library('tkn',
