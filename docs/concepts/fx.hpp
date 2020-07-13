@@ -1,12 +1,15 @@
 #pragma once
 
 #include <tkn/types.hpp>
+#include <tkn/fswatch.hpp>
 #include <nytl/span.hpp>
 
 #include <vpp/fwd.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vector>
+#include <future>
+#include <array>
 
 namespace tkn {
 
@@ -17,31 +20,60 @@ struct PipelineState {
 	std::vector<vpp::TrDs> dss;
 };
 
-class ComputePipelineState : public PipelineState {
-public:
+struct ReloadableGraphicsPipeline {
+	using InfoHandler = std::function<void(vpp::GraphicsPipelineInfo&)>;
+	struct Shader {
+		std::string path;
+		std::uint64_t fileWatcherID;
+	};
+
+
+	vpp::Pipeline pipe;
+	Shader vert;
+	Shader frag;
+	tkn::FileWatcher* watcher;
+	std::future<vpp::Pipeline> future;
+	InfoHandler infoHandler;
+
 	void reload();
 	void update();
 	bool updateDevice();
-
-protected:
-	std::string shaderPath_;
 };
 
-class GraphicsPipelineState : public PipelineState {
-public:
-	void reload();
-	void update();
-	bool updateDevice();
-
-protected:
-	std::function<void(vpp::GraphicsPipelineInfo&)> infoHandler_;
-	std::string vertShaderPath_;
-	std::string fragShaderPath_;
+struct ReloadableComputePipeline {
+	using InfoHandler = std::function<void(vk::ComputePipelineCreateInfo&)>;
 };
 
 PipelineState createComputePass(nytl::Span<const u32> spv);
 PipelineState createGraphicsPass(nytl::Span<const u32> vert,
 	nytl::Span<const u32> frag, std::function<void(vpp::GraphicsPipelineInfo&)>);
+
+class ComputePipelineState : public PipelineState {
+public:
+	ComputePipelineState(std::string shaderPath, tkn::FileWatcher* fw);
+	void reload();
+	void update();
+	bool updateDevice();
+
+protected:
+	tkn::FileWatcher* fileWatcher_;
+	std::string shaderPath_;
+};
+
+class GraphicsPipelineState : public PipelineState {
+public:
+	using InfoHandler = std::function<void(vpp::GraphicsPipelineInfo&)>;
+
+public:
+	void reload();
+	void update();
+	bool updateDevice();
+
+protected:
+	InfoHandler infoHandler_;
+	std::string vertShaderPath_;
+	std::string fragShaderPath_;
+};
 
 } // namespace tkn
 

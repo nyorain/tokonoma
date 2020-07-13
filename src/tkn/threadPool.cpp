@@ -7,6 +7,11 @@ namespace tkn {
 // many short tasks) mainly from https://vorbrodt.blog/2019/02/27/advanced-thread-pool,
 // see BSD-0 licensed code at https://github.com/mvorbrodt/blog
 
+ThreadPool& ThreadPool::instance() {
+	static ThreadPool ini{std::thread::hardware_concurrency()};
+	return ini;
+}
+
 ThreadPool::ThreadPool(unsigned nThreads) {
 	workers_.resize(nThreads);
 	for(auto i = 0u; i < nThreads; ++i) {

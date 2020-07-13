@@ -16,6 +16,10 @@ namespace tkn {
 // to minimize the number of locks.
 class ThreadPool {
 public:
+	// ThreadPool is threadsafe, any thread can queue new tasks.
+	static ThreadPool& instance();
+
+public:
 	ThreadPool() = default;
 	explicit ThreadPool(unsigned nThreads);
 
