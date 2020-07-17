@@ -3,3 +3,4 @@ subprojects/*/
 .vscode
 external/include/asio/*
 compile_commands.json
+.clangd
