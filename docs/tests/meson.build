@@ -18,3 +18,6 @@ test('sh', tsh)
 
 tmisc = executable('misc', 'misc.cpp', dependencies: tkn_dep)
 test('misc', tmisc)
+
+tfunction = executable('function', 'function.cpp', dependencies: tkn_dep)
+test('function', tfunction)

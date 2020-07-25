@@ -11,6 +11,8 @@
 #include <shaders/deferred.highlight.comp.h>
 #include <shaders/deferred.lens.comp.h>
 
+using tkn::GaussianBlur;
+
 // HighLightPass
 void HighLightPass::create(InitData& data, const PassCreateInfo& pci) {
 	auto& dev = pci.wb.dev;

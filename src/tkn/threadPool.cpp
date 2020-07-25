@@ -1,38 +1,52 @@
 #include <tkn/threadPool.hpp>
+#include <dlg/dlg.hpp>
 #include <iostream>
 
 namespace tkn {
+namespace {
+
+std::atomic<ThreadPool*> threadPoolInstance = nullptr;
+
+} // anon namespace
 
 // The idea for using multiple queues for better scheduling (relevent for
 // many short tasks) mainly from https://vorbrodt.blog/2019/02/27/advanced-thread-pool,
 // see BSD-0 licensed code at https://github.com/mvorbrodt/blog
 
+// Optimized for 'force = true' that is the usual case.
+// On that path we won't use an atomic and only write it when
+// called for the first time.
+ThreadPool* ThreadPool::instanceIfExisting() {
+	return threadPoolInstance.load();
+}
+
 ThreadPool& ThreadPool::instance() {
-	static ThreadPool ini{std::thread::hardware_concurrency()};
+	static ThreadPool ini(std::thread::hardware_concurrency(), threadPoolInstance);
 	return ini;
 }
 
-ThreadPool::ThreadPool(unsigned nThreads) {
-	workers_.resize(nThreads);
-	for(auto i = 0u; i < nThreads; ++i) {
-		workers_[i].thread = std::thread([this, i]{ this->workerMain(i); });
-	}
+ThreadPool::ThreadPool(unsigned nThreads, std::atomic<ThreadPool*>& storeIn) {
+	init(nThreads);
+	storeIn.store(this);
 }
 
 ThreadPool::~ThreadPool() {
-	stop_.store(true);
-	for(auto& worker : workers_) {
-		worker.cv.notify_one();
-	}
+	destroy();
+}
 
-	for(auto& worker : workers_) {
-		if(worker.thread.joinable()) {
-			worker.thread.join();
-		}
+void ThreadPool::init(unsigned nThreads) {
+	dlg_assert(workers_.empty());
+	workers_ = std::vector<Worker>(nThreads);
+	stop_.store(false);
+	for(auto i = 0u; i < nThreads; ++i) {
+		auto& worker = workers_[i];
+		worker.thread = std::thread{[this, i]{ this->workerMain(i); }};
 	}
 }
 
-void ThreadPool::add(std::function<void()> func) {
+void ThreadPool::addExplicit(Function<void()> func) {
+	dlg_assert(!workers_.empty());
+
 	// Note how we can increment lastPushed atomically but couldn't
 	// easily (without locking or custom compare-swap logic) store
 	// the modulo version, so we just keep incrementing it.
@@ -47,6 +61,9 @@ void ThreadPool::add(std::function<void()> func) {
 		auto lock = std::unique_lock(worker.mutex, std::try_to_lock);
 		if(lock.owns_lock()) {
 			worker.tasks.push_back(std::move(func));
+
+			lock.unlock();
+			worker.cv.notify_one();
 			return;
 		}
 	}
@@ -57,15 +74,16 @@ void ThreadPool::add(std::function<void()> func) {
 	auto& worker = workers_[index % numWorkers()];
 	auto lock = std::unique_lock(worker.mutex);
 	worker.tasks.push_back(std::move(func));
+
+	lock.unlock();
 	worker.cv.notify_one();
 }
 
 void ThreadPool::workerMain(unsigned i) {
 	auto& queue = workers_[i];
 	auto nWorkers = numWorkers();
-	auto lock = std::unique_lock(queue.mutex);
-	while(!stop_) {
-		std::function<void()> task;
+	while(!stop_.load()) {
+		Function<void()> task;
 
 		// Check if there is a queue from which we can pop a task.
 		for(auto j = 0u; j < nWorkers; ++j) {
@@ -78,13 +96,17 @@ void ThreadPool::workerMain(unsigned i) {
 			}
 		}
 
+		if(stop_.load()) {
+			break;
+		}
+
 		// If we couldn't pop a task anywhere, we have to wait - either
 		// for the mutex to become unlocked or for a task to be
 		// placed in our own queue.
 		if(!task) {
 			auto lock = std::unique_lock(queue.mutex);
 			queue.cv.wait(lock, [&]{
-				return queue.tasks.empty() || stop_.load();
+				return !queue.tasks.empty() || stop_.load();
 			});
 
 			if(stop_) {
@@ -92,8 +114,6 @@ void ThreadPool::workerMain(unsigned i) {
 			}
 			task = std::move(queue.tasks.front());
 			queue.tasks.pop_front();
-		} else if(stop_) {
-			break;
 		}
 
 		// We don't want to allow tasks to terminate this worker thread.
@@ -104,6 +124,24 @@ void ThreadPool::workerMain(unsigned i) {
 		} catch(...) {
 			std::cerr << "Non-exception object thrown from ThreadPool task\n";
 		}
+	}
+}
+
+void ThreadPool::destroy() {
+	stop_.store(true);
+	for(auto& worker : workers_) {
+		worker.cv.notify_one();
+	}
+
+	for(auto& worker : workers_) {
+		if(worker.thread.joinable()) {
+			worker.thread.join();
+		}
+	}
+
+	workers_.clear();
+	if(this == threadPoolInstance.load()) {
+		threadPoolInstance.store(nullptr);
 	}
 }
 

@@ -3,6 +3,7 @@
 #include <tkn/app.hpp>
 #include <tkn/render.hpp>
 #include <tkn/features.hpp>
+#include <tkn/formats.hpp>
 #include <tkn/transform.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>

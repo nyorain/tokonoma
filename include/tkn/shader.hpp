@@ -4,6 +4,7 @@
 #include <vpp/fwd.hpp>
 #include <vpp/shader.hpp>
 #include <nytl/stringParam.hpp>
+#include <tkn/types.hpp>
 
 #include <vector>
 #include <unordered_map>
@@ -14,7 +15,7 @@ namespace fs = std::filesystem;
 
 namespace tkn {
 
-// Forward to compileShader. This one is just badly named.
+// Renamed to compileShader. This one is just badly named.
 [[deprecated("Use ShaderCache or 'compileShader' instead")]]
 std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 	std::string_view glslPath, nytl::StringParam args = {});
@@ -28,14 +29,15 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 // on disk and in memory.
 std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
 	std::string_view glslPath, nytl::StringParam args = {},
-	fs::path spvOutput = "live.spv");
+	fs::path spvOutput = "live.spv", std::vector<u32>* outSpv = nullptr);
 
+// TODO: synchonization surely has some bugs still.
+// TODO: more efficient (yet still threadsafe) returning of spv and
+//   included. Allow callers to hold shared read lock?
 // TODO: fix use of hashing
 // TODO: allow adding, removing, retrieving already compiled modules as well
-// TODO: maybe also cache included files per file in the cache, to avoid
+// TODO: maybe also cache included files per file in the disk cache, to avoid
 //   actually reading shader files as often as possible?
-// TODO: fix vpp::Device used for ShaderCache, eliminate parameters
-// from load/find?
 class ShaderCache {
 public:
 	// TODO: replace this with some platform-specific shader cache dir
@@ -47,7 +49,7 @@ public:
 	// being compiled in both threads).
 	// TODO: move owneship to app? not sure what is cleaner.
 	// App has to clear it atm before it destroy the vulkan device.
-	static ShaderCache& instance();
+	static ShaderCache& instance(const vpp::Device& dev);
 	static fs::path cachePathForShader(std::string_view glslPath,
 		std::string_view params);
 
@@ -55,35 +57,6 @@ public:
 	using FsDuration = FsTimePoint::duration;
 	using FsClock = FsTimePoint::clock;
 
-public:
-	std::vector<std::string> includePaths = {
-		TKN_BASE_DIR "/src/",
-		TKN_BASE_DIR "/src/shaders/include/",
-	};
-
-public:
-	// Tries to find an already compiled/cached version of the given
-	// shader, compiled with the given args. Will search the in-memory
-	// cache of shader modules as well as (if not found in memory) the
-	// cache dir for a compiled spv shader and load that.
-	// If any shader file (the shader itself or any of its includes) are
-	// newer than a found cache, aborts.
-	vk::ShaderModule find(const vpp::Device& dev,
-		std::string_view glslPath, const std::string& args,
-		nytl::Span<const char* const> extraIncludePaths = {});
-
-	// Utility function that compiles a shader using glslangValidator
-	// Useful for live shader reloading/switching
-	// Adds default include paths (src/shaders/{., include})
-	// Returns nullopt on failure. glslPath should be given relative to "src/",
-	// so e.g. be just "particles/particles.comp"
-	vk::ShaderModule load(const vpp::Device& dev,
-		std::string_view glslPath, nytl::StringParam args = {},
-		nytl::Span<const char* const> extraIncludePaths = {});
-
-	void clear();
-
-private:
 	struct CompiledShader {
 		// The last loaded version of this Shader
 		// Might be null.
@@ -91,6 +64,8 @@ private:
 		// Timestamp of when we last compiled this shader module.
 		// Only valid/relevant when mod isn't null.
 		fs::file_time_type lastCompiled;
+		// Compiled SPIR-V.
+		std::vector<u32> spv;
 	};
 
 	struct FileInfo {
@@ -113,6 +88,53 @@ private:
 		// std::uint64_t lastChanged;
 	};
 
+
+public:
+	std::vector<std::string> includePaths = {
+		TKN_BASE_DIR "/src/",
+		TKN_BASE_DIR "/src/shaders/include/",
+	};
+
+public:
+	ShaderCache(const vpp::Device& dev) : dev_(dev) {}
+
+	// Tries to find an already compiled/cached version of the given
+	// shader, compiled with the given args. Will search the in-memory
+	// cache of shader modules as well as (if not found in memory) the
+	// cache dir for a compiled spv shader and load that.
+	// If any shader file (the shader itself or any of its includes) are
+	// newer than a found cache, aborts.
+	vk::ShaderModule find(std::string_view glslPath, const std::string& args,
+		nytl::Span<const char* const> extraIncludePaths = {},
+		std::vector<std::string>* outIncluded = nullptr,
+		std::vector<u32>* outSpv = nullptr);
+
+	// Utility function that compiles a shader using glslangValidator
+	// Useful for live shader reloading/switching
+	// Adds default include paths (src/shaders/{., include})
+	// Returns nullopt on failure. glslPath should be given relative to "src/",
+	// so e.g. be just "particles/particles.comp"
+	vk::ShaderModule load(std::string_view glslPath, nytl::StringParam args = {},
+		nytl::Span<const char* const> extraIncludePaths = {},
+		std::vector<std::string>* outIncluded = nullptr,
+		std::vector<u32>* outSpv = nullptr);
+
+	// Returns whether up-to-date
+	bool checkIncludes(std::string_view shader,
+		FsTimePoint* compare = nullptr,
+		nytl::Span<const char* const> extraIncludePaths = {},
+		std::vector<std::string>* outIncluded = nullptr);
+
+	fs::path resolve(std::string_view shader,
+		fs::path includedFromDir = {},
+		nytl::Span<const char* const> extraIncludePaths = {});
+
+	void clear();
+
+	const vpp::Device& device() const { return dev_; }
+
+private:
+	const vpp::Device& dev_;
 	std::unordered_map<std::string, FileInfo> known_;
 	std::shared_mutex mutex_;
 };

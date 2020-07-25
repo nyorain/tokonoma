@@ -16,7 +16,6 @@ namespace tkn {
 struct PipelineState {
 	std::vector<vpp::TrDsLayout> dsLayouts;
 	vpp::PipelineLayout pipeLayout;
-	vpp::Pipeline pipe;
 	std::vector<vpp::TrDs> dss;
 };
 
@@ -26,7 +25,6 @@ struct ReloadableGraphicsPipeline {
 		std::string path;
 		std::uint64_t fileWatcherID;
 	};
-
 
 	vpp::Pipeline pipe;
 	Shader vert;
@@ -42,15 +40,27 @@ struct ReloadableGraphicsPipeline {
 
 struct ReloadableComputePipeline {
 	using InfoHandler = std::function<void(vk::ComputePipelineCreateInfo&)>;
+
+	std::string shaderPath;
+	std::uint64_t fileWatcherID;
+	vpp::Pipeline pipe;
+	tkn::FileWatcher* watcher;
+	std::future<vpp::Pipeline> future;
+	InfoHandler infoHandler;
+
+	void reload();
+	void update();
+	bool updateDevice();
 };
 
-PipelineState createComputePass(nytl::Span<const u32> spv);
-PipelineState createGraphicsPass(nytl::Span<const u32> vert,
+PipelineState inferComputeState(nytl::Span<const u32> spv);
+PipelineState inferGraphicsState(nytl::Span<const u32> vert,
 	nytl::Span<const u32> frag, std::function<void(vpp::GraphicsPipelineInfo&)>);
 
 class ComputePipelineState : public PipelineState {
 public:
 	ComputePipelineState(std::string shaderPath, tkn::FileWatcher* fw);
+
 	void reload();
 	void update();
 	bool updateDevice();
@@ -58,6 +68,7 @@ public:
 protected:
 	tkn::FileWatcher* fileWatcher_;
 	std::string shaderPath_;
+	ReloadableComputePipeline pipe_;
 };
 
 class GraphicsPipelineState : public PipelineState {
@@ -73,6 +84,7 @@ protected:
 	InfoHandler infoHandler_;
 	std::string vertShaderPath_;
 	std::string fragShaderPath_;
+	ReloadableGraphicsPipeline pipe_;
 };
 
 } // namespace tkn
@@ -109,7 +121,7 @@ void resizeAtLeast(V& vec, std::size_t size) {
 // Meh, i guess doing it here doesn't give us anything. If it's done
 // correctly, it's pre-checked anyways and otherwise the layers
 // catch it.
-Pass createComputePass(vpp::Device& dev, nytl::Span<const u32> spv) {
+PipelineState inferComputeState(vpp::Device& dev, nytl::Span<const u32> spv) {
 	const char* entryPointName = "main";
 
 	SpvReflectShaderModule reflMod;
@@ -120,7 +132,7 @@ Pass createComputePass(vpp::Device& dev, nytl::Span<const u32> spv) {
 		spvReflectDestroyShaderModule(&reflMod);
 	});
 
-	Pass pass;
+	PipelineState state;
 
 	// descriptor set layouts
 	std::vector<vk::DescriptorSetLayout> dsLayouts;
@@ -145,10 +157,10 @@ Pass createComputePass(vpp::Device& dev, nytl::Span<const u32> spv) {
 		ci.bindingCount = set.binding_count;
 		ci.pBindings = bindings.data();
 
-		resizeAtLeast(pass.dsLayouts, set.set);
+		resizeAtLeast(state.dsLayouts, set.set);
 		resizeAtLeast(dsLayouts, set.set);
-		pass.dsLayouts[set.set].init(dev, ci);
-		dsLayouts[set.set] = pass.dsLayouts[set.set];
+		state.dsLayouts[set.set].init(dev, ci);
+		dsLayouts[set.set] = state.dsLayouts[set.set];
 	}
 
 	// pipeline layout
@@ -170,30 +182,28 @@ Pass createComputePass(vpp::Device& dev, nytl::Span<const u32> spv) {
 		plci.pPushConstantRanges = &pcr;
 	}
 
-	pass.pipeLayout = {dev, plci};
+	state.pipeLayout = {dev, plci};
 
 	// pipeline
 	vpp::ShaderModule mod(dev, spv);
 
 	vk::ComputePipelineCreateInfo cpi;
-	cpi.layout = pass.pipeLayout;
+	cpi.layout = state.pipeLayout;
 	cpi.stage.module = mod;
 	cpi.stage.pName = entryPointName;
 	// TODO: allow specialization
 
-	pass.pipe = {dev, cpi};
-
-	pass.dss.reserve(pass.dsLayouts.size());
-	for(auto& dsLayout : pass.dsLayouts) {
+	state.dss.reserve(state.dsLayouts.size());
+	for(auto& dsLayout : state.dsLayouts) {
 		if(!dsLayout.vkHandle()) {
-			pass.dss.push_back({});
+			state.dss.push_back({});
 			continue;
 		}
 
-		pass.dss.emplace_back(dev.descriptorAllocator(), dsLayout);
+		state.dss.emplace_back(dev.descriptorAllocator(), dsLayout);
 	}
 
-	return pass;
+	return state;
 }
 
 } // namespace tkn

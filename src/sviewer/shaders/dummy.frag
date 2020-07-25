@@ -47,7 +47,7 @@ float vfbm(vec2 st) {
 	float amp = 0.5f; // ampliture
 	float mod = 1.f; // modulation
 	for(int i = 0; i < FBM_OCTAVES; ++i) {
-		sum += amp * voronoiNoise(mod * st);
+		sum += amp * (1 - voronoiNoise(mod * st));
 		mod *= lacunarity;
 		amp *= gain;
 		st = lacunarity * st;

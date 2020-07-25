@@ -4,6 +4,7 @@
 #include <tkn/render.hpp>
 #include <tkn/image.hpp>
 #include <tkn/features.hpp>
+#include <tkn/formats.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/shader.hpp>
 #include <tkn/ccam.hpp>

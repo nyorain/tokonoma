@@ -2,6 +2,7 @@
 #include <tkn/transform.hpp>
 #include <tkn/features.hpp>
 #include <tkn/shader.hpp>
+#include <tkn/threadPool.hpp>
 #include <dlg/dlg.hpp>
 #include <dlg/output.h>
 #include <vpp/vk.hpp>
@@ -238,7 +239,17 @@ struct App::Impl {
 
 App::App() = default;
 App::~App() {
-	tkn::ShaderCache::instance().clear();
+	// Make sure all jobs have finished.
+	if(auto threadPoolPtr = ThreadPool::instanceIfExisting(); threadPoolPtr) {
+		threadPoolPtr->destroy();
+	}
+
+	if(impl_->dev) {
+		// make sure all shader modules are destroyed before
+		// the device is destroyed.
+		tkn::ShaderCache::instance(*impl_->dev).clear();
+	}
+
 	if(impl_ && impl_->dlg.oldHandler) {
 		dlg_set_handler(impl_->dlg.oldHandler, impl_->dlg.oldData);
 	}

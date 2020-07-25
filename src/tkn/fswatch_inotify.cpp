@@ -32,7 +32,8 @@ FileWatcher::FileWatcher() {
 
 FileWatcher::~FileWatcher() = default;
 
-std::uint64_t FileWatcher::registerPath(nytl::StringParam path) {
+// TODO: check if already existent, add dummy alias id.
+std::uint64_t FileWatcher::watch(nytl::StringParam path) {
 	if(!impl_ || !impl_->inotify) {
 		dlg_warn("inotify not initialized");
 		return 0u;
@@ -40,7 +41,7 @@ std::uint64_t FileWatcher::registerPath(nytl::StringParam path) {
 
 	int wd = inotify_add_watch(impl_->inotify, path.c_str(), inotifyMask);
 	if(wd < 0) {
-		dlg_error("Failed to add inotify watcher for '{}': {} ({})\n",
+		dlg_error("Failed to add inotify watcher for '{}': {} ({})",
 			path, std::strerror(errno), errno);
 		return 0u;
 	}
@@ -101,7 +102,7 @@ void FileWatcher::update() {
 			if(ev->mask & IN_IGNORED) {
 				int wd = inotify_add_watch(impl_->inotify, entry.path.c_str(), inotifyMask);
 				if(wd < 0) {
-					dlg_error("Failed to (re-)add inotify watcher for '{}': {} ({})\n",
+					dlg_error("Failed to (re-)add inotify watcher for '{}': {} ({})",
 						ev->name, std::strerror(errno), errno);
 					continue;
 				}

@@ -3,6 +3,7 @@
 #include <tkn/formats.hpp>
 #include <tkn/render.hpp>
 #include <tkn/ccam.hpp>
+#include <tkn/shaderReload.hpp>
 #include <tkn/types.hpp>
 #include <tkn/shader.hpp>
 #include <tkn/image.hpp>
@@ -29,7 +30,7 @@
 #include <thread>
 #include <atomic>
 
-#include <shaders/tkn.fullscreen.vert.h>
+// #include <shaders/tkn.fullscreen.vert.h>
 
 // #define STB_IMAGE_WRITE_IMPLEMENTATION
 // #include <tkn/stb_image_write.h>
@@ -63,9 +64,11 @@ public:
 	static constexpr auto cacheFile = "sviewer.cache";
 
 	~ViewerApp() {
+		/*
 		if(screenshot_.writer.joinable()) {
 			screenshot_.writer.join();
 		}
+		*/
 	}
 
 	bool init(nytl::Span<const char*> args) override {
@@ -78,6 +81,7 @@ public:
 		ubo_ = {dev.bufferAllocator(), sizeof(ShaderData),
 			vk::BufferUsageBits::uniformBuffer, mem};
 
+		/*
 		auto renderBindings = std::array{
 			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
 				vk::ShaderStageBits::fragment),
@@ -98,6 +102,7 @@ public:
 			vpp::DescriptorSetUpdate update(ds_);
 			update.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
 		}
+		*/
 
 		// convert shaderFile_ to absolute path
 		auto name = std::string(shaderFile_);
@@ -110,11 +115,24 @@ public:
 		}
 		shaderFile_ = name;
 
+		auto handler = [rp = renderPass()](auto& gpi) {
+			gpi.renderPass(rp);
+		};
+
+		pipe_.init(dev, "tkn/shaders/fullscreen.vert", name, handler, fsWatcher_);
+
+		{
+			vpp::DescriptorSetUpdate update(pipe_.pipeState().dss[0]);
+			update.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+		}
+
+		/*
 		if(!initPipe(shaderFile_, renderPass(), pipeline_)) {
 			return false;
 		}
 
 		fsWatchShader_ = fsWatcher_.registerPath(absPath);
+		*/
 
 		return true;
 	}
@@ -132,10 +150,12 @@ public:
 				--effect_;
 				dlg_info("Effect: {}", effect_);
 			} else if(ev.keycode == swa_key_r) {
+				/*
 				reload_ = true;
 				screenshot_.reloadPipe = true;
+				*/
 			} else if(ev.keycode == swa_key_p) {
-				screenshot();
+				// screenshot();
 			} else if(ev.utf8) {
 				// check if its a number
 				unsigned num;
@@ -165,10 +185,15 @@ public:
 		cam_.update(swaDisplay(), dt);
 
 		fsWatcher_.update();
+		pipe_.update();
+
+		/*
+		fsWatcher_.update();
 		if(fsWatcher_.check(fsWatchShader_)) {
 			dlg_info("shader file changed, will reload pipeline");
 			reload_ = true;
 		}
+		*/
 
 		Base::scheduleRedraw(); // we always redraw; shaders are assumed dynamic
 	}
@@ -188,26 +213,41 @@ public:
 
 		tkn::write(span, data);
 
+		if(pipe_.updateDevice()) {
+			Base::scheduleRerecord();
+		}
+
+		/*
 		if(reload_) {
 			initPipe(shaderFile_, renderPass(), pipeline_);
 			Base::scheduleRerecord();
 			reload_ = false;
 		}
+		*/
 	}
 
 	void render(vk::CommandBuffer cb, vk::Pipeline pipe, const ShaderPCR& pcr) {
-		vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::fragment,
+		// vk::cmdPushConstants(cb, pipeLayout_, vk::ShaderStageBits::fragment,
+		// 	0, sizeof(pcr), &pcr);
+		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe);
+		// vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
+		// 	pipeLayout_, 0, {{ds_.vkHandle()}}, {});
+
+		// TODO
+		/*
+		vk::cmdPushConstants(cb, pipe_.pipeLayout(), vk::ShaderStageBits::fragment,
 			0, sizeof(pcr), &pcr);
+		*/
+
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe);
-		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {{ds_.vkHandle()}}, {});
+		tkn::cmdBindGraphics(cb, pipe_.pipeState());
 		vk::cmdDraw(cb, 6, 1, 0, 0);
 	}
 
 	void render(vk::CommandBuffer cb) override {
 		ShaderPCR pcr;
 		pcr.tonemap = false; // TODO: support hdr swapchain formats and color spaces
-		render(cb, pipeline_, pcr);
+		render(cb, pipe_.pipe(), pcr);
 	}
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
@@ -217,6 +257,7 @@ public:
 		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
+	/*
 	bool initPipe(std::string_view shaderFile, vk::RenderPass rp,
 			vpp::Pipeline& out) {
 		auto spv = shaderFile.find(".spv");
@@ -230,7 +271,7 @@ public:
 				return false;
 			}
 		} else {
-			mod = tkn::ShaderCache::instance().load(vkDevice(), shaderFile_);
+			mod = tkn::ShaderCache::instance(vkDevice()).load(shaderFile_);
 			if(!mod) {
 				return false;
 			}
@@ -239,7 +280,9 @@ public:
 		initPipe(mod, rp, out);
 		return true;
 	}
+	*/
 
+	/*
 	void initPipe(vk::ShaderModule frag, vk::RenderPass rp,
 			vpp::Pipeline& out) {
 		auto& dev = vkDevice();
@@ -251,6 +294,7 @@ public:
 		out = {dev, pipeInfo.info(), pcache_};
 		vpp::save(dev, pcache_, cacheFile);
 	}
+	*/
 
 	argagg::parser argParser() const override {
 		auto parser = Base::argParser();
@@ -284,6 +328,7 @@ public:
 		return true;
 	}
 
+	/*
 	// TODO: refactor this out to general screenshot functionality
 	// (in app class?). allow to just use the swapchain image if it supports
 	// the needed usages, the format is okay and size is ok/irrelevant.
@@ -360,7 +405,9 @@ public:
 
 		vk::endCommandBuffer(cb);
 	}
+	*/
 
+	/*
 	void screenshot() {
 		if(screenshot_.writing.load()) {
 			dlg_warn("Still writing screenshot");
@@ -419,6 +466,7 @@ public:
 			dlg_info("done writing screenshot");
 		});
 	}
+	*/
 
 	const char* name() const override { return "Shader Viewer"; }
 	bool needsDepth() const override { return false; }
@@ -432,16 +480,21 @@ protected:
 	float time_ {}; // in seconds
 	std::uint32_t effect_ {};
 
-	vpp::ShaderModule vertShader_;
-	vpp::ShaderModule fragShader_;
+	// vpp::ShaderModule vertShader_;
+	// vpp::ShaderModule fragShader_;
 	vpp::SubBuffer ubo_;
-	vpp::Pipeline pipeline_;
-	vpp::PipelineLayout pipeLayout_;
-	vpp::TrDsLayout dsLayout_;
-	vpp::TrDs ds_;
+
+	// vpp::Pipeline pipeline_;
+	// vpp::PipelineLayout pipeLayout_;
+	// vpp::TrDsLayout dsLayout_;
+	// vpp::TrDs ds_;
+
+	tkn::GraphicsPipelineState pipe_;
+
 	vpp::PipelineCache pcache_;
 	tkn::ControlledCamera cam_;
 
+	/*
 	struct {
 		bool reloadPipe {true};
 		vpp::RenderPass rp;
@@ -457,10 +510,10 @@ protected:
 		std::atomic<bool> writing {};
 		std::thread writer;
 	} screenshot_;
+	*/
 
 	// TODO: does not belong here. WIP
 	tkn::FileWatcher fsWatcher_;
-	std::uint64_t fsWatchShader_;
 };
 
 int main(int argc, const char** argv) {

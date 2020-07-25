@@ -43,8 +43,10 @@ tkn_src = [
 	'util.cpp',
 	'headeronly.cpp',
 	'timeWidget.cpp',
+	'threadPool.cpp',
 	'stream.cpp',
 	'sky.cpp',
+	'shaderReload.cpp',
 	'formats.cpp',
 
 	'scene/scene.cpp',

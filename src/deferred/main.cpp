@@ -11,6 +11,7 @@
 #include "graph.hpp"
 
 #include <tkn/timeWidget.hpp>
+#include <tkn/formats.hpp>
 #include <tkn/app.hpp>
 #include <tkn/f16.hpp>
 #include <tkn/render.hpp>
@@ -188,7 +189,7 @@ protected:
 	} selected_;
 	vui::dat::Panel* vuiPanel_ {};
 
-	GaussianBlur blur_;
+	tkn::GaussianBlur blur_;
 
 	FrameGraph frameGraph_;
 	FrameTarget* frameTargetBloom_ {};

@@ -1273,7 +1273,7 @@ SpvReflectResult spvReflectChangeOutputVariableLocation(
 const char* spvReflectSourceLanguage(SpvSourceLanguage source_lang);
 
 #if defined(__cplusplus)
-};
+}
 #endif
 
 #endif // SPIRV_REFLECT_H
