@@ -36,8 +36,6 @@
 #include <qwe/util.hpp>
 #include <array>
 
-#include <shaders/tkn.fullscreen.vert.h>
-
 using std::move;
 using nytl::constants::pi;
 using namespace tkn::types;
@@ -144,10 +142,13 @@ public:
 		Atmosphere atmos {};
 	} config_;
 
+	static constexpr auto pipeCachePath = "planet.sky.pipecache";
+
 public:
 	BrunetonSky() = default;
 	bool init(vpp::Device& dev, vk::Sampler sampler) {
 		sampler_ = sampler;
+		pipeCache_ = {dev, pipeCachePath};
 
 		auto initUbo = vpp::Init<vpp::SubBuffer>(dev.bufferAllocator(),
 			sizeof(Atmosphere), vk::BufferUsageBits::uniformBuffer,
@@ -449,12 +450,12 @@ public:
 		auto& dev = device();
 		reloadGenPipes_ = false;
 
-		auto& sc = tkn::ShaderCache::instance();
-		auto preTrans = sc.load(dev, "planet/preTrans.comp");
-		auto preSingleScat = sc.load(dev, "planet/preSingleScat.comp");
-		auto preMultiScat = sc.load(dev, "planet/preMultiScat.comp");
-		auto preInScat = sc.load(dev, "planet/preInScat.comp");
-		auto preIrradiance = sc.load(dev, "planet/preIrradiance.comp");
+		auto& sc = tkn::ShaderCache::instance(dev);
+		auto preTrans = sc.load("planet/preTrans.comp");
+		auto preSingleScat = sc.load("planet/preSingleScat.comp");
+		auto preMultiScat = sc.load("planet/preMultiScat.comp");
+		auto preInScat = sc.load("planet/preInScat.comp");
+		auto preIrradiance = sc.load("planet/preIrradiance.comp");
 		if(!preTrans || !preSingleScat || !preMultiScat) {
 			dlg_error("Failed to reload/compile pcs computation shaders");
 			return false;
@@ -469,11 +470,11 @@ public:
 		cpi.layout = preTrans_.pipeLayout;
 		cpi.stage.module = preTrans;
 		cpi.stage.pSpecializationInfo = &specTrans.spec;
-		preTrans_.pipe = {dev, cpi};
+		preTrans_.pipe = {dev, cpi, pipeCache_};
 
 		cpi.layout = preIrrad_.pipeLayout;
 		cpi.stage.module = preIrradiance;
-		preIrrad_.pipe = {dev, cpi};
+		preIrrad_.pipe = {dev, cpi, pipeCache_};
 
 		// 3D
 		auto sgds = config_.groupDimSize3D;
@@ -481,15 +482,17 @@ public:
 		cpi.layout = preSingleScat_.pipeLayout;
 		cpi.stage.module = preSingleScat;
 		cpi.stage.pSpecializationInfo = &specScat.spec;
-		preSingleScat_.pipe = {dev, cpi};
+		preSingleScat_.pipe = {dev, cpi, pipeCache_};
 
 		cpi.layout = preMultiScat_.pipeLayout;
 		cpi.stage.module = preMultiScat;
-		preMultiScat_.pipe = {dev, cpi};
+		preMultiScat_.pipe = {dev, cpi, pipeCache_};
 
 		cpi.layout = preInScat_.pipeLayout;
 		cpi.stage.module = preInScat;
-		preInScat_.pipe = {dev, cpi};
+		preInScat_.pipe = {dev, cpi, pipeCache_};
+
+		vpp::save(pipeCache_, pipeCachePath);
 
 		return true;
 	}
@@ -1005,8 +1008,8 @@ public:
 
 private:
 	vk::Sampler sampler_;
-	vk::RenderPass rp_;
 	vpp::SubBuffer ubo_;
+	vpp::PipelineCache pipeCache_;
 
 	bool reloadGenPipes_ {}; // whether to recreate gen pipes on updateDevice
 	bool regen_ {true}; // whether to regen on updateDevice

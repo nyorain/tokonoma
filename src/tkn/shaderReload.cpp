@@ -350,17 +350,18 @@ bool ReloadableComputePipeline::updateDevice() {
 CreatedPipelineInfo recreate(const vpp::Device& dev, ReloadableGraphicsPipeline& pipe) {
 	auto& shaderCache = ShaderCache::instance(dev);
 
-	std::vector<std::string> vertIncluded;
-	auto vertMod = shaderCache.load(pipe.vert, {}, {}, &vertIncluded);
+	auto vertMod = shaderCache.load(pipe.vert);
 	if(!vertMod) {
 		return {};
 	}
 
-	std::vector<std::string> fragIncluded;
-	auto fragMod = shaderCache.load(pipe.frag, {}, {}, &fragIncluded);
+	auto fragMod = shaderCache.load(pipe.frag);
 	if(!fragMod) {
 		return {};
 	}
+
+	std::vector<std::string> vertIncluded = shaderCache.includes(pipe.vert);
+	std::vector<std::string> fragIncluded = shaderCache.includes(pipe.frag);
 
 	// pipeline
 	vpp::GraphicsPipelineInfo gpi;
@@ -373,6 +374,9 @@ CreatedPipelineInfo recreate(const vpp::Device& dev, ReloadableGraphicsPipeline&
 
 	auto included = std::move(vertIncluded);
 	included.insert(included.end(), fragIncluded.begin(), fragIncluded.end());
+	included.push_back(shaderCache.resolve(pipe.vert).string());
+	included.push_back(shaderCache.resolve(pipe.frag).string());
+
 	return {vpp::Pipeline(dev, gpi.info()), std::move(included)};
 }
 
@@ -428,6 +432,7 @@ void ReloadableGraphicsPipeline::update() {
 		if(watcher) {
 			for(auto watch : fileWatches) {
 				if(watcher->check(watch)) {
+					// TODO: separate vertex/fragment shader reloading?
 					reload();
 				}
 			}
@@ -552,19 +557,20 @@ void GraphicsPipelineState::init(const vpp::Device& dev,
 
 	auto& shaderCache = ShaderCache::instance(dev);
 
-	std::vector<std::string> vertIncluded;
 	std::vector<u32> vertSpv;
-	auto vertMod = shaderCache.load(pipe_.vert, {}, {}, &vertIncluded, &vertSpv);
+	auto vertMod = shaderCache.load(pipe_.vert, {}, &vertSpv);
 	if(!vertMod) {
 		throw std::runtime_error("Can't load shader");
 	}
 
-	std::vector<std::string> fragIncluded;
 	std::vector<u32> fragSpv;
-	auto fragMod = shaderCache.load(pipe_.frag, {}, {}, &fragIncluded, &fragSpv);
+	auto fragMod = shaderCache.load(pipe_.frag, {}, &fragSpv);
 	if(!fragMod) {
 		throw std::runtime_error("Can't load shader");
 	}
+
+	std::vector<std::string> vertIncluded = shaderCache.includes(pipe_.vert);
+	std::vector<std::string> fragIncluded = shaderCache.includes(pipe_.frag);
 
 	state_ = inferGraphicsState(dev, vertSpv, fragSpv);
 
@@ -579,6 +585,9 @@ void GraphicsPipelineState::init(const vpp::Device& dev,
 
 	auto included = std::move(vertIncluded);
 	included.insert(included.end(), fragIncluded.begin(), fragIncluded.end());
+	included.push_back(shaderCache.resolve(pipe_.vert).string());
+	included.push_back(shaderCache.resolve(pipe_.frag).string());
+
 	pipe_.pipe = vpp::Pipeline(dev, gpi.info());
 
 	// pipe_.fileWatches.push_back(watcher.watch(pipe_.vert));

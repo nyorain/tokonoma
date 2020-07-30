@@ -277,6 +277,13 @@ shaders_src = {
 
 # build them
 shader_inc_dir = meson.current_source_dir() + '/include'
+
+# TODO: don't strictly require glslangValidator to be installed.
+# We build it from source anyways, could build standalone there
+# as well. We can't completely abolish this system here since on
+# some platforms (mainly android) we probably want to bundle the
+# compiled spirv shaders instead of recompiling/loading from disk cache
+# at application start.
 glslang = find_program('glslangValidator')
 foreach group, sources : shaders_src
 	shaders = get_variable(group + '_shaders', [])

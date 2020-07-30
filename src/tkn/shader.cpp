@@ -1,9 +1,18 @@
 #include <tkn/shader.hpp>
+#include <tkn/util.hpp>
+#include <tkn/bits.hpp>
 #include <dlg/dlg.hpp>
 #include <vpp/shader.hpp>
+#include <vpp/util/file.hpp>
+#include <vkpp/enums.hpp>
 #include <filesystem>
 #include <fstream>
 #include <unordered_set>
+#include <sha1.hpp>
+
+#include <glslang/Public/ShaderLang.h>
+#include <SPIRV/GlslangToSpv.h>
+#include <SPIRV/Logger.h>
 
 namespace tkn {
 
@@ -22,13 +31,29 @@ namespace tkn {
 //   solution. Not sure if here is the right place for this, though.
 //   Combinding it with ShaderCache sounds like a good idea though.
 
-std::vector<u32> readFile32(std::string_view filename, bool binary = true) {
+inline std::string readFilePath(const fs::path& path) {
+	auto openmode = std::ios::ate;
+	std::ifstream ifs(path, openmode);
+	ifs.exceptions(std::ostream::failbit | std::ostream::badbit);
+
+	auto size = ifs.tellg();
+	ifs.seekg(0, std::ios::beg);
+
+	std::string buffer;
+	buffer.resize(size);
+	auto data = reinterpret_cast<char*>(buffer.data());
+	ifs.read(data, size);
+
+	return buffer;
+}
+
+std::vector<u32> readFilePath32(const fs::path& path, bool binary = true) {
 	auto openmode = std::ios::ate;
 	if(binary) {
 		openmode |= std::ios::binary;
 	}
 
-	std::ifstream ifs(std::string{filename}, openmode);
+	std::ifstream ifs(path, openmode);
 	ifs.exceptions(std::ostream::failbit | std::ostream::badbit);
 
 	auto size = ifs.tellg();
@@ -44,7 +69,6 @@ std::vector<u32> readFile32(std::string_view filename, bool binary = true) {
 
 	return buffer;
 }
-
 
 std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 		std::string_view glslPath, nytl::StringParam args) {
@@ -98,7 +122,7 @@ std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
 		return {};
 	}
 
-	auto data = readFile32(spvOutput.c_str());
+	auto data = readFilePath32(spvOutput);
 	auto mod = vpp::ShaderModule(dev, data);
 	if(outSpv) {
 		*outSpv = std::move(data);
@@ -107,138 +131,549 @@ std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
 	return mod;
 }
 
+// new api, using glslang directly as library
+bool initGlslang() {
+	bool ret = (ShInitialize()) || glslang::InitializeProcess();
+	if(!ret) {
+		dlg_error("Failed to initialize glslang");
+	}
+
+	return ret;
+}
+
+// Default include class for normal include convention of search backward
+// through the stack of active include paths (for nested includes).
+// Can be overridden to customize.
+class DirStackFileIncluder : public glslang::TShader::Includer {
+public:
+    DirStackFileIncluder() : externalLocalDirectoryCount(0) { }
+
+    virtual IncludeResult* includeLocal(const char* headerName,
+            const char* includerName, size_t inclusionDepth) override {
+        return readLocalPath(headerName, includerName, (int)inclusionDepth);
+    }
+
+    virtual IncludeResult* includeSystem(const char* headerName,
+            const char*, size_t ) override {
+        return readSystemPath(headerName);
+    }
+
+    // Externally set directories. E.g., from a command-line -I<dir>.
+    //  - Most-recently pushed are checked first.
+    //  - All these are checked after the parse-time stack of local directories
+    //    is checked.
+    //  - This only applies to the "local" form of #include.
+    //  - Makes its own copy of the path.
+    virtual void pushLocalDirs(nytl::Span<const char*> dirs) {
+        directoryStack.insert(directoryStack.end(), dirs.begin(), dirs.end());
+        externalLocalDirectoryCount += dirs.size();
+    }
+
+    virtual void releaseInclude(IncludeResult* result) override {
+        if (result != nullptr) {
+            delete [] static_cast<char*>(result->userData);
+            delete result;
+        }
+    }
+
+protected:
+    std::vector<std::string> directoryStack;
+    int externalLocalDirectoryCount;
+
+    // Search for a valid "local" path based on combining the stack of include
+    // directories and the nominal name of the header.
+    virtual IncludeResult* readLocalPath(const char* headerName,
+			const char* includerName, int depth) {
+        // Discard popped include directories, and
+        // initialize when at parse-time first level.
+        directoryStack.resize(depth + externalLocalDirectoryCount);
+        if (depth == 1)
+            directoryStack.back() = getDirectory(includerName);
+
+        // Find a directory that works, using a reverse search of the include stack.
+        for (auto it = directoryStack.rbegin(); it != directoryStack.rend(); ++it) {
+            std::string path = *it + '/' + headerName;
+            std::replace(path.begin(), path.end(), '\\', '/');
+            std::ifstream file(path, std::ios_base::binary | std::ios_base::ate);
+            if (file) {
+                directoryStack.push_back(getDirectory(path));
+                return newIncludeResult(path, file, (int)file.tellg());
+            }
+        }
+
+        return nullptr;
+    }
+
+    // Search for a valid <system> path.
+    // Not implemented yet; returning nullptr signals failure to find.
+    virtual IncludeResult* readSystemPath(const char*) const {
+        return nullptr;
+    }
+
+    // Do actual reading of the file, filling in a new include result.
+    virtual IncludeResult* newIncludeResult(const std::string& path,
+			std::ifstream& file, int length) const {
+        char* content = new char[length];
+        file.seekg(0, file.beg);
+        file.read(content, length);
+        return new IncludeResult(path, content, length, content);
+    }
+
+    // If no path markers, return current working directory.
+    // Otherwise, strip file name and return path leading up to it.
+    virtual std::string getDirectory(const std::string path) const {
+        size_t last = path.find_last_of("/\\");
+        return last == std::string::npos ? "." : path.substr(0, last);
+    }
+};
+
+const TBuiltInResource defaultTBuiltInResource = {
+    /* .MaxLights = */ 32,
+    /* .MaxClipPlanes = */ 6,
+    /* .MaxTextureUnits = */ 32,
+    /* .MaxTextureCoords = */ 32,
+    /* .MaxVertexAttribs = */ 64,
+    /* .MaxVertexUniformComponents = */ 4096,
+    /* .MaxVaryingFloats = */ 64,
+    /* .MaxVertexTextureImageUnits = */ 32,
+    /* .MaxCombinedTextureImageUnits = */ 80,
+    /* .MaxTextureImageUnits = */ 32,
+    /* .MaxFragmentUniformComponents = */ 4096,
+    /* .MaxDrawBuffers = */ 32,
+    /* .MaxVertexUniformVectors = */ 128,
+    /* .MaxVaryingVectors = */ 8,
+    /* .MaxFragmentUniformVectors = */ 16,
+    /* .MaxVertexOutputVectors = */ 16,
+    /* .MaxFragmentInputVectors = */ 15,
+    /* .MinProgramTexelOffset = */ -8,
+    /* .MaxProgramTexelOffset = */ 7,
+    /* .MaxClipDistances = */ 8,
+    /* .MaxComputeWorkGroupCountX = */ 65535,
+    /* .MaxComputeWorkGroupCountY = */ 65535,
+    /* .MaxComputeWorkGroupCountZ = */ 65535,
+    /* .MaxComputeWorkGroupSizeX = */ 1024,
+    /* .MaxComputeWorkGroupSizeY = */ 1024,
+    /* .MaxComputeWorkGroupSizeZ = */ 64,
+    /* .MaxComputeUniformComponents = */ 1024,
+    /* .MaxComputeTextureImageUnits = */ 16,
+    /* .MaxComputeImageUniforms = */ 8,
+    /* .MaxComputeAtomicCounters = */ 8,
+    /* .MaxComputeAtomicCounterBuffers = */ 1,
+    /* .MaxVaryingComponents = */ 60,
+    /* .MaxVertexOutputComponents = */ 64,
+    /* .MaxGeometryInputComponents = */ 64,
+    /* .MaxGeometryOutputComponents = */ 128,
+    /* .MaxFragmentInputComponents = */ 128,
+    /* .MaxImageUnits = */ 8,
+    /* .MaxCombinedImageUnitsAndFragmentOutputs = */ 8,
+    /* .MaxCombinedShaderOutputResources = */ 8,
+    /* .MaxImageSamples = */ 0,
+    /* .MaxVertexImageUniforms = */ 0,
+    /* .MaxTessControlImageUniforms = */ 0,
+    /* .MaxTessEvaluationImageUniforms = */ 0,
+    /* .MaxGeometryImageUniforms = */ 0,
+    /* .MaxFragmentImageUniforms = */ 8,
+    /* .MaxCombinedImageUniforms = */ 8,
+    /* .MaxGeometryTextureImageUnits = */ 16,
+    /* .MaxGeometryOutputVertices = */ 256,
+    /* .MaxGeometryTotalOutputComponents = */ 1024,
+    /* .MaxGeometryUniformComponents = */ 1024,
+    /* .MaxGeometryVaryingComponents = */ 64,
+    /* .MaxTessControlInputComponents = */ 128,
+    /* .MaxTessControlOutputComponents = */ 128,
+    /* .MaxTessControlTextureImageUnits = */ 16,
+    /* .MaxTessControlUniformComponents = */ 1024,
+    /* .MaxTessControlTotalOutputComponents = */ 4096,
+    /* .MaxTessEvaluationInputComponents = */ 128,
+    /* .MaxTessEvaluationOutputComponents = */ 128,
+    /* .MaxTessEvaluationTextureImageUnits = */ 16,
+    /* .MaxTessEvaluationUniformComponents = */ 1024,
+    /* .MaxTessPatchComponents = */ 120,
+    /* .MaxPatchVertices = */ 32,
+    /* .MaxTessGenLevel = */ 64,
+    /* .MaxViewports = */ 16,
+    /* .MaxVertexAtomicCounters = */ 0,
+    /* .MaxTessControlAtomicCounters = */ 0,
+    /* .MaxTessEvaluationAtomicCounters = */ 0,
+    /* .MaxGeometryAtomicCounters = */ 0,
+    /* .MaxFragmentAtomicCounters = */ 8,
+    /* .MaxCombinedAtomicCounters = */ 8,
+    /* .MaxAtomicCounterBindings = */ 1,
+    /* .MaxVertexAtomicCounterBuffers = */ 0,
+    /* .MaxTessControlAtomicCounterBuffers = */ 0,
+    /* .MaxTessEvaluationAtomicCounterBuffers = */ 0,
+    /* .MaxGeometryAtomicCounterBuffers = */ 0,
+    /* .MaxFragmentAtomicCounterBuffers = */ 1,
+    /* .MaxCombinedAtomicCounterBuffers = */ 1,
+    /* .MaxAtomicCounterBufferSize = */ 16384,
+    /* .MaxTransformFeedbackBuffers = */ 4,
+    /* .MaxTransformFeedbackInterleavedComponents = */ 64,
+    /* .MaxCullDistances = */ 8,
+    /* .MaxCombinedClipAndCullDistances = */ 8,
+    /* .MaxSamples = */ 4,
+    /* .maxMeshOutputVerticesNV = */ 256,
+    /* .maxMeshOutputPrimitivesNV = */ 512,
+    /* .maxMeshWorkGroupSizeX_NV = */ 32,
+    /* .maxMeshWorkGroupSizeY_NV = */ 1,
+    /* .maxMeshWorkGroupSizeZ_NV = */ 1,
+    /* .maxTaskWorkGroupSizeX_NV = */ 32,
+    /* .maxTaskWorkGroupSizeY_NV = */ 1,
+    /* .maxTaskWorkGroupSizeZ_NV = */ 1,
+    /* .maxMeshViewCountNV = */ 4,
+    /* .maxDualSourceDrawBuffersEXT = */ 1,
+
+    /* .limits = */ {
+        /* .nonInductiveForLoops = */ 1,
+        /* .whileLoops = */ 1,
+        /* .doWhileLoops = */ 1,
+        /* .generalUniformIndexing = */ 1,
+        /* .generalAttributeMatrixVectorIndexing = */ 1,
+        /* .generalVaryingIndexing = */ 1,
+        /* .generalSamplerIndexing = */ 1,
+        /* .generalVariableIndexing = */ 1,
+        /* .generalConstantMatrixVectorIndexing = */ 1,
+    }};
+
+std::vector<u32> compileShader(
+		nytl::StringParam glslSource,
+		EShLanguage shlang,
+		nytl::StringParam sourcePath,
+		nytl::StringParam preamble,
+		nytl::Span<const char*> includeDirs) {
+	static bool glslangInit = initGlslang();
+	if(!glslangInit) {
+		return {};
+	}
+
+	using namespace glslang;
+	auto str = glslSource.c_str();
+	auto strName = sourcePath.c_str();
+	auto strLen = int(glslSource.length());
+
+	auto shader = TShader(shlang);
+	shader.setStringsWithLengthsAndNames(&str, &strLen, &strName, 1);
+	shader.setEnvInput(EShSourceGlsl, shlang, EShClientVulkan, 100);
+	shader.setEnvClient(EShClientVulkan, EShTargetVulkan_1_0);
+	shader.setEnvTarget(EShTargetSpv, EShTargetSpv_1_0);
+	if(!preamble.empty()) {
+		shader.setPreamble(preamble.c_str());
+	}
+
+    DirStackFileIncluder includer;
+	includer.pushLocalDirs(includeDirs);
+
+	// TODO: expose default resources
+    auto messages = EShMessages(EShMsgDefault | EShMsgSpvRules | EShMsgVulkanRules);
+	if(!shader.parse(&defaultTBuiltInResource, 450, ENoProfile,
+			false, false, messages, includer)) {
+		dlg_error("Compiling shader '{}' failed: {}", sourcePath, shader.getInfoLog());
+		return {};
+	}
+
+	auto log = shader.getInfoLog();
+	if(log && *log != '\0') {
+		dlg_info("Shader '{}', compilation info: {}", sourcePath, log);
+	}
+
+	log = shader.getInfoDebugLog();
+	if(log && *log != '\0') {
+		dlg_debug("Shader '{}', debug compilation info: {}", sourcePath, log);
+	}
+
+	auto intermed = shader.getIntermediate();
+	dlg_assert(intermed);
+
+    auto logger = spv::SpvBuildLogger{};
+	auto options = SpvOptions{};
+	options.generateDebugInfo = true;
+	// options.disableOptimizer = false;
+
+	TProgram program;
+	program.addShader(&shader);
+	if(!program.link(messages)) {
+		dlg_error("Linking shader '{}' failed: {}", sourcePath, program.getInfoLog());
+		return {};
+	}
+
+	log = program.getInfoLog();
+	if(log && *log != '\0') {
+		dlg_info("Shader '{}', link info: {}", sourcePath, log);
+	}
+
+	log = program.getInfoDebugLog();
+	if(log && *log != '\0') {
+		dlg_debug("Shader '{}', debug link info: {}", sourcePath, log);
+	}
+
+	program.mapIO();
+
+	// TODO: use this instead of spirv-reflect?
+	// program.buildReflection();
+
+	// This assumption is made by glslang spirv.
+	// If it ever causes a problem, should be changed in glslang.
+	static_assert(sizeof(unsigned) == sizeof(u32));
+	std::vector<unsigned> spirv;
+	GlslangToSpv(*program.getIntermediate(shlang), spirv, &logger, &options);
+
+	auto spvLog = logger.getAllMessages();
+	if(!spvLog.empty()) {
+		dlg_info("SPV logger: {}", spvLog);
+	}
+
+	if constexpr(std::is_same_v<u32, unsigned>) {
+		return spirv;
+	} else {
+		dlg_warn("Need to copy spirv since glslang assumes u32 == unsigned");
+		return {std::vector<u32>(spirv.begin(), spirv.end())};
+	}
+}
+
+bool deduceShaderStage(nytl::StringParam glslPath, EShLanguage& outStage) {
+	if(hasSuffixCI(glslPath, ".frag")) {
+		// outStage = vk::ShaderStageBits::fragment;
+		outStage = EShLangFragment;
+		return true;
+	} else if(hasSuffixCI(glslPath, ".vert")) {
+		// outStage = vk::ShaderStageBits::vertex;
+		outStage = EShLangVertex;
+		return true;
+	} else if(hasSuffixCI(glslPath, ".comp")) {
+		// outStage = vk::ShaderStageBits::compute;
+		outStage = EShLangCompute;
+		return true;
+	}
+
+	return false;
+}
+
+std::vector<u32> compileShader(const fs::path& glslPath,
+		nytl::StringParam preamble,
+		nytl::Span<const char*> includeDirs) {
+	EShLanguage lang;
+	if(!deduceShaderStage(glslPath.c_str(), lang)) {
+		dlg_warn("Can't deduce shader type of {}", glslPath);
+		return {};
+	}
+
+	std::string source = readFilePath(glslPath);
+	return compileShader(source, lang, glslPath.c_str(), preamble, includeDirs);
+}
+
 // ShaderCache
 ShaderCache& ShaderCache::instance(const vpp::Device& dev) {
 	static ShaderCache shaderCache(dev);
 	return shaderCache;
 }
 
-vk::ShaderModule ShaderCache::find(
-		std::string_view shader, const std::string& args,
-		nytl::Span<const char* const> extraIncludePaths,
-		std::vector<std::string>* outIncluded,
-		std::vector<u32>* outSpv) {
-	auto shaderPath = fs::path(shader);
-	auto shaderStr = std::string(shader);
+bool ShaderCache::reparse(std::string_view source,
+		std::vector<std::string>& outIncluded, Hash& outHash) {
+	Sha1 sha;
 
-	// Check if shader is known
-	FsTimePoint compiledTime;
-	fs::path compiledPath;
-	bool foundInCache = false;
+	for(auto rest = source; !rest.empty(); source = rest) {
+		auto nline = source.find("\n");
+		std::string_view line;
+		std::tie(line, rest) = splitIf(source, nline);
+
+		const auto commentStr = std::string_view("//");
+		if(line.substr(0, commentStr.size()) == commentStr) {
+			continue;
+		}
+
+		sha.add(line.data(), line.size());
+		const auto incStr = std::string_view("#include \"");
+		if(line.substr(0, incStr.size()) != incStr) {
+			continue;
+		}
+
+		line = line.substr(incStr.size());
+		auto delim = line.find('"');
+		if(delim == line.npos) {
+			dlg_error("unterminated quote in include");
+			return false;
+		}
+
+		// At this point, we have found an include file.
+		auto incFile = line.substr(0, delim);
+		outIncluded.push_back(std::string(incFile));
+	}
+
+	sha.finalize();
+	sha.print_hex(outHash.data(), true);
+	return true;
+}
+
+bool ShaderCache::buildCurrentHash(fs::path shaderPath, Hash& outHash) {
+	Sha1 sha;
+	std::unordered_set<std::string> done;
+	std::vector<fs::path> worklist {shaderPath};
+
+	while(!worklist.empty()) {
+		auto item = worklist.back();
+		auto itemString = item.string();
+		worklist.pop_back();
+		done.insert(item.string());
+
+		{
+			auto sharedLock = std::shared_lock(mutex_);
+			auto knownIt = known_.find(itemString);
+			if(knownIt != known_.end()) {
+				auto& known = knownIt->second;
+				auto sourceLastWritten = fs::last_write_time(item);
+				if(sourceLastWritten < known.lastParsed) {
+					auto& hash = known.hash;
+					sha.add(hash.data(), hash.size());
+					worklist.insert(worklist.end(),
+						known.includes.begin(), known.includes.end());
+					continue;
+				}
+			}
+		}
+
+		// parsed file is out-of-date or not known at all.
+		// reparse it
+		std::vector<std::string> included;
+		Hash hash;
+		auto timeBeforeParsed = FsClock::now();
+		auto source = readFilePath(itemString);
+		dlg_debug("reparsing {}", item);
+		if(!reparse(source, included, hash)) {
+			// parsing failed for some reason
+			return false;
+		}
+
+		std::vector<fs::path> includedPaths;
+		includedPaths.reserve(included.size());
+		for(auto& incStr : included) {
+			auto path = resolve(incStr, item.parent_path());
+			if(path.empty()) {
+				// could not resolve shader include
+				dlg_warn("Could not resolve shader {}", incStr);
+				return false;
+			}
+
+			dlg_debug(" {} -> {}", item, path);
+			includedPaths.push_back(path);
+		}
+
+		worklist.insert(worklist.end(), includedPaths.begin(),
+			includedPaths.end());
+		sha.add(hash.data(), hash.size());
+
+		{
+			auto lock = std::lock_guard(mutex_);
+			auto& known = known_[itemString];
+			known.includes = std::move(includedPaths);
+			known.hash = hash;
+			known.lastParsed = timeBeforeParsed;
+		}
+	}
+
+	sha.finalize();
+	sha.print_hex(outHash.data(), true);
+	return true;
+}
+
+vk::ShaderModule ShaderCache::find(
+		const std::string& fullPathStr, const Hash& hash,
+		std::vector<u32>* outSpv) {
 
 	{
 		auto sharedLock = std::shared_lock(mutex_);
-		auto knownIt = known_.find(shaderStr);
+		auto knownIt = known_.find(fullPathStr);
+		dlg_assertm(knownIt != known_.end(),
+			"There must be an entry for this shader, we generated a hash!");
+
 		if(knownIt != known_.end()) {
-			// Check we have already compiled this shader with the given arguments.
 			auto& known = knownIt->second;
-			auto compiledIt = known.modules.find(args);
-			if(compiledIt != known.modules.end()) {
-				auto& compiled = compiledIt->second;
-				compiledTime = compiled.lastCompiled;
-				foundInCache = true;
-			}
-		}
-
-		if(!foundInCache) {
-			auto spvPath = cachePathForShader(shader, args);
-			if(!fs::exists(spvPath)) {
-				return {};
-			}
-
-			compiledTime = fs::last_write_time(spvPath);
-			compiledPath = std::move(spvPath);
-		}
-	}
-
-	if(!checkIncludes(shaderStr, &compiledTime, extraIncludePaths, outIncluded)) {
-		return {};
-	}
-
-	if(foundInCache) {
-		auto sharedLock = std::shared_lock(mutex_);
-		auto knownIt = known_.find(shaderStr);
-		if(knownIt != known_.end()) {
-			// Check we have already compiled this shader with the given arguments.
-			auto& known = knownIt->second;
-			auto compiledIt = known.modules.find(args);
-			if(compiledIt != known.modules.end()) {
-				auto& compiled = compiledIt->second;
+			auto shaderIt = known.modules.find(hash);
+			if(shaderIt != known.modules.end()) {
 				if(outSpv) {
-					*outSpv = compiled.spv;
+					*outSpv = shaderIt->second.spv;
 				}
-
-				return compiled.mod;
+				return shaderIt->second.mod;
 			}
 		}
-
-		// This case is weird, we checked the same above.
-		dlg_warn("Shader cache module was removed while rechecking");
-		return {};
 	}
 
-	auto spvPath = cachePathForShader(shader, args);
+	// check if it exists on disk
+	auto spvPath = cachePathForShader(hash);
 	if(!fs::exists(spvPath)) {
-		// This case is weird. We checked the same above.
-		dlg_warn("Shader cache file was removed while rechecking");
+		// potential disk cache does not exist
 		return {};
-	}
-
-	std::vector<u32> data;
-	try {
-		data = readFile32(compiledPath.c_str());
-	} catch(const std::exception& err) {
-		dlg_warn("Error reading shader cache file from disk at '{}': {}",
-			compiledPath, err.what());
-		return {};
-	}
-
-	if(outSpv) {
-		*outSpv = data;
-	}
-
-	auto newMod = vpp::ShaderModule{device(), data};
-
-	auto lockGuard = std::lock_guard(mutex_);
-	auto knownIt = known_.find(shaderStr);
-	dlg_assert(knownIt != known_.end());
-	auto& compiled = knownIt->second.modules[args];
-	compiled.mod = std::move(newMod);
-	compiled.lastCompiled = compiledTime;
-	compiled.spv = std::move(data);
-
-	return compiled.mod;
-}
-
-vk::ShaderModule ShaderCache::load(
-		std::string_view shader, nytl::StringParam args,
-		nytl::Span<const char* const> extraIncludePaths,
-		std::vector<std::string>* outIncluded,
-		std::vector<u32>* outSpv) {
-	auto argsStr = std::string(args);
-	auto mod = find(shader, argsStr, extraIncludePaths, outIncluded, outSpv);
-	if(mod) {
-		dlg_info("Loading '{}' (args: '{}') from cache", shader, argsStr);
-		return mod;
-	}
-
-	for(auto& inc : extraIncludePaths) {
-		argsStr += " ";
-		argsStr += "-I";
-		argsStr += inc;
-	}
-
-	dlg_info("Couldn't find '{}' (args: '{}') in cache, compiling it", shader, argsStr);
-	auto spvPath = cachePathForShader(shader, argsStr);
-
-	if(outIncluded) {
-		// needed since 'find' might have written into it (even if not
-		// succesful).
-		outIncluded->clear();
-		checkIncludes(shader, nullptr, extraIncludePaths, outIncluded);
 	}
 
 	std::vector<u32> spv;
+	try {
+		spv = readFilePath32(spvPath);
+	} catch(const std::exception& err) {
+		dlg_warn("Error reading shader cache file from disk at {}: {}",
+			spvPath, err.what());
+		return {};
+	}
+
+	auto newMod = vpp::ShaderModule{device(), spv};
+
+	auto lockGuard = std::lock_guard(mutex_);
+	auto knownIt = known_.find(fullPathStr);
+	dlg_assertm(knownIt != known_.end(),
+		"There must be an entry for this shader, we generated a hash!");
+
+	if(outSpv) {
+		*outSpv = spv;
+	}
+
+
+	auto ret = newMod.vkHandle();
+	auto compiled = CompiledShader{std::move(newMod), std::move(spv)};
+	auto [it, emplaced] = knownIt->second.modules.try_emplace(hash, std::move(compiled));
+	dlg_assertm(emplaced, "Overwrote existing cache");
+
+	return ret;
+}
+
+vk::ShaderModule ShaderCache::load(
+		std::string_view glslPath, nytl::StringParam preamble,
+		std::vector<u32>* outSpv) {
+
+	// rough idea of shader loading
+	// - retrieve hash of requested shader
+	//   check for shader and all includes if file hash is still up to date
+	//   if not: reparse the file
+	//   while doing so, build up hash. Make sure to include the preamble in the hash
+	// - check if compiled version of hash is present
+	//   if so: return it
+	//   otherwise: compile shader from scratch
+
+	auto fullPath = resolve(glslPath);
+	if(fullPath.empty()) {
+		dlg_error("Could not resolve shader path {}", glslPath);
+		return {};
+	}
+
+	// check if shader is already known
+	Hash sourceHash;
+	if(!buildCurrentHash(fullPath, sourceHash)) {
+		// Some error during parsing the files
+		return {};
+	}
+
+	Sha1 sha;
+	sha.add(sourceHash.data(), sourceHash.size());
+	sha.add(preamble.data(), preamble.size());
+	sha.finalize();
+
+	Hash hash;
+	sha.print_hex(hash.data(), true);
+
+	auto fullPathStr = fullPath.string();
+	auto mod = find(fullPathStr, hash, outSpv);
+	if(mod) {
+		dlg_debug("Loading {} (hash: '{}') from cache", fullPath, hash.data());
+		return mod;
+	}
+
+	dlg_debug("recompiling {}", fullPath);
 
 	// Make sure to store (in memory and on disk) the time *before* compilation
 	// as last write time. This way, if the shader is modified during
@@ -247,8 +682,8 @@ vk::ShaderModule ShaderCache::load(
 	// that we (later on) will never return a module that doesn't match
 	// the current code.
 	auto preCompileTime = FsClock::now();
-	auto optMod = tkn::compileShader(device(), shader, argsStr, spvPath, &spv);
-	if(!optMod) {
+	auto spv = tkn::compileShader(fullPathStr, preamble, includePaths);
+	if(spv.empty()) {
 		return {};
 	}
 
@@ -256,17 +691,21 @@ vk::ShaderModule ShaderCache::load(
 		*outSpv = spv;
 	}
 
+	auto spvPath = cachePathForShader(hash);
+	vpp::writeFile(spvPath.c_str(), tkn::bytes(spv), true);
+	fs::last_write_time(spvPath, preCompileTime);
+
 	vk::ShaderModule ret;
 	{
 		auto lockGuard = std::lock_guard(mutex_);
-		auto& knownEntry = known_[std::string(shader)].modules[std::string(argsStr)];
-		knownEntry.mod = std::move(*optMod);
-		knownEntry.lastCompiled = preCompileTime;
-		knownEntry.spv = std::move(spv);
-		ret = knownEntry.mod;
+		auto& fileEntry = known_[fullPathStr];
+
+		auto& modEntry = fileEntry.modules[hash];
+		modEntry.mod = {device(), spv};
+		modEntry.spv = std::move(spv);
+		ret = modEntry.mod;
 	}
 
-	fs::last_write_time(spvPath, preCompileTime);
 	return ret;
 }
 
@@ -275,151 +714,14 @@ void ShaderCache::clear() {
 	known_.clear();
 }
 
-fs::path ShaderCache::cachePathForShader(std::string_view glslPath,
-		std::string_view args) {
-	auto spvName = std::string(glslPath);
-	for(auto& c : spvName) {
-		if(c == '/' || c == '\\') {
-			c = '.';
-		}
-	}
-
-	if(!args.empty()) {
-		auto argsStr = std::string(args);
-		for(auto& c : argsStr) {
-			if(!std::isalnum(c)) {
-				c = '.';
-			}
-		}
-
-		spvName += ".";
-		spvName += argsStr;
-	}
-
+fs::path ShaderCache::cachePathForShader(const Hash& hash) {
+	auto spvName = std::string(hash.data(), hash.size() - 1);
 	spvName += ".spv";
 	return cacheDir / fs::path(spvName);
 }
 
-bool ShaderCache::checkIncludes(std::string_view shaderStr,
-		FsTimePoint* compare,
-		nytl::Span<const char* const> extraIncludePaths,
-		std::vector<std::string>* outIncluded) {
-	auto shaderPath = fs::path(shaderStr);
-
-	// recheck includes, recursively (via a worklist).
-	// TODO: might be a better idea to resolve includes already
-	// when they are added to worklist.
-	struct Include {
-		std::string file;
-		fs::path fromDir;
-	};
-	std::vector<Include> worklist = {{std::string(shaderStr), shaderPath.parent_path()}};
-	std::unordered_set<std::string> done;
-
-	while(!worklist.empty()) {
-		auto [work, includedFromDir] = worklist.back();
-		worklist.pop_back();
-
-		auto workPath = resolve(work, includedFromDir, extraIncludePaths);
-		if(workPath.empty()) {
-			dlg_error("Could not resolve shader file {}", workPath);
-			return false;
-		}
-
-		auto workPathStr = workPath.string();
-		if(!done.insert(workPathStr).second) {
-			// Already checked this header
-			continue;
-		}
-
-		if(outIncluded) {
-			outIncluded->push_back(workPathStr);
-		}
-
-		auto lastChanged = fs::last_write_time(workPath);
-		if(compare && lastChanged > *compare) {
-			dlg_info("Can't use {} from cache since {} is out of date",
-				shaderStr, workPath);
-			return false;
-		}
-
-		auto parentPath = workPath.parent_path();
-
-		{
-			auto sharedLock = std::shared_lock(mutex_);
-			if(auto knownIt = known_.find(work); knownIt != known_.end()) {
-				auto& known = knownIt->second;
-				if(known.includesLastChecked > lastChanged) {
-
-					// in this case, the currently handled file was not
-					// changed since we last updated its includes.
-					// But one of the include files might have changed,
-					// we have to add it to the worklist.
-					worklist.reserve(worklist.size() + known.includes.size());
-					for(auto& inc : known.includes) {
-						worklist.push_back({inc, parentPath});
-					}
-
-					// if(outIncluded) {
-					// 	outIncluded->insert(outIncluded->end(),
-					// 		known.includes.begin(), known.includes.end());
-					// }
-					continue;
-				}
-			}
-		}
-
-		// Recheck includes for the currnet work file.
-		dlg_info("rechecking includes of {}", work);
-		std::vector<std::string> newIncludes;
-		auto preCheckTime = FsClock::now();
-
-		std::ifstream in(workPath, std::ios_base::in);
-		if(!in.is_open()) {
-			dlg_error("Can't open {}", shaderStr);
-			return false;
-		}
-
-		// TODO: allow all include forms, with whitespace and stuff
-		auto incStr = std::string_view("#include \"");
-		for(std::string line; std::getline(in, line);) {
-			auto lineView = std::string_view(line);
-			if(lineView.substr(0, incStr.size()) != incStr) {
-				continue;
-			}
-
-			lineView = lineView.substr(incStr.size());
-			auto delim = lineView.find('"');
-			if(delim == lineView.npos) {
-				dlg_error("unterminated quote in include in {}", shaderStr);
-				return false;
-			}
-
-			// At this point, we have found an include file.
-			auto incFile = lineView.substr(0, delim);
-			dlg_info("include: {} -> {}", work, incFile);
-			worklist.push_back({std::string(incFile), parentPath});
-			newIncludes.push_back(std::string(incFile));
-		}
-
-		// if(outIncluded) {
-		// 	outIncluded->insert(outIncluded->end(),
-		// 		newIncludes.begin(), newIncludes.end());
-		// }
-
-		// If the file didn't exist, we insert it.
-		auto lockGuard = std::lock_guard(mutex_);
-		auto& known = known_[work];
-		known.includesLastChecked = preCheckTime;
-		known.includes = std::move(newIncludes);
-	}
-
-	return true;
-}
-
 fs::path ShaderCache::resolve(std::string_view shader,
-		fs::path includedFromDir,
-		nytl::Span<const char* const> extraIncludePaths) {
+		const fs::path& includedFromDir) {
 	auto shaderPath = fs::path(shader);
 	if(shaderPath.is_absolute()) {
 		if(!fs::exists(shaderPath)) {
@@ -444,16 +746,39 @@ fs::path ShaderCache::resolve(std::string_view shader,
 		}
 	}
 
-	// check custom include paths
-	for(auto& incPath : extraIncludePaths) {
-		auto absPath = fs::path(incPath) / shaderPath;
-		if(fs::exists(absPath)) {
-			return absPath;
-		}
-	}
-
 	dlg_debug("Could not resolve shader file {}", shaderPath);
 	return {};
+}
+
+std::vector<std::string> ShaderCache::includes(std::string_view shader) {
+	auto lock = std::shared_lock(mutex_);
+
+	auto shaderPath = resolve(shader);
+	if(shaderPath.empty()) {
+		dlg_warn("Failed to resolve shader '{}'", shader);
+		return {};
+	}
+
+	std::vector<std::string> ret = {};
+	std::vector<fs::path> worklist = {std::move(shaderPath)};
+	std::unordered_set<std::string> seen;
+	while(!worklist.empty()) {
+		auto item = worklist.back();
+		worklist.pop_back();
+		seen.insert(item);
+
+		auto known = known_.find(item.string());
+		if(known == known_.end()) {
+			dlg_warn("Could not find {} in shader cache", item);
+			continue;
+		}
+
+		auto& included = known->second.includes;
+		worklist.insert(worklist.end(), included.begin(), included.end());
+		ret.insert(ret.end(), included.begin(), included.end());
+	}
+
+	return ret;
 }
 
 } // namespace tkn

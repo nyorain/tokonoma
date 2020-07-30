@@ -12,13 +12,14 @@ constexpr auto inotifyMask = IN_MODIFY | IN_MOVED_FROM;
 
 struct FileWatcher::Impl {
 	struct Entry {
-		std::uint64_t id;
 		std::string path;
+		std::unordered_set<std::uint64_t> ids;
 	};
 
 	int inotify;
 	std::unordered_set<std::uint64_t> changed;
 	std::unordered_map<unsigned, Entry> entries;
+	std::uint64_t lastID {};
 };
 
 FileWatcher::FileWatcher() {
@@ -46,8 +47,11 @@ std::uint64_t FileWatcher::watch(nytl::StringParam path) {
 		return 0u;
 	}
 
-	impl_->entries[wd] = {std::uint64_t(wd), std::string(path)};
-	return wd;
+	auto newID = ++impl_->lastID;
+	auto& entry = impl_->entries[wd];
+	entry.ids.insert(newID);
+	entry.path = path;
+	return newID;
 }
 
 void FileWatcher::unregsiter(std::uint64_t id) {
@@ -57,18 +61,24 @@ void FileWatcher::unregsiter(std::uint64_t id) {
 
 	// TODO: this is really inefficient
 	for(auto it = impl_->entries.begin(); it != impl_->entries.end(); ++it) {
-		if(it->second.id == id) {
-			auto changedIt = impl_->changed.find(it->second.id);
+		auto& ids = it->second.ids;
+		if(auto idIt = ids.find(id); idIt != ids.end()) {
+			auto changedIt = impl_->changed.find(id);
 			if(changedIt != impl_->changed.end()) {
 				impl_->changed.erase(changedIt);
 			}
 
-			impl_->entries.erase(it);
+			ids.erase(idIt);
+			if(ids.empty()) {
+				inotify_rm_watch(impl_->inotify, it->first);
+				impl_->entries.erase(it);
+			}
+
 			return;
 		}
 	}
 
-	dlg_warn("Could not unregsiter FileSystemWatcher, invalid id");
+	dlg_warn("Could not unregsiter FileSystemWatcher, invalid id {}", id);
 }
 
 void FileWatcher::update() {
@@ -89,12 +99,16 @@ void FileWatcher::update() {
 				// This might happen when there were pending events
 				// after it got destroyed. Just ignoring it should not
 				// give any trouble.
-				dlg_info("Receieved inotify event for unknown watchdog");
+				// When the mask is only IGNORED, it just means that
+				// this watchdog was removed, this is a normal case.
+				if(ev->mask != IN_IGNORED) {
+					dlg_info("Receieved inotify event for unknown watchdog");
+				}
 				continue;
 			}
 
 			auto& entry = it->second;
-			impl_->changed.emplace(entry.id);
+			impl_->changed.insert(entry.ids.begin(), entry.ids.end());
 
 			// Some editors delete the file instead of just writing it.
 			// In that case our watch got destroyed and we have to recreate it.
@@ -107,9 +121,10 @@ void FileWatcher::update() {
 					continue;
 				}
 
-				if(wd != int(entry.id)) {
-					impl_->entries[wd] = std::move(entry);
+				if(wd != int(it->first)) {
+					auto mentry = std::move(entry);
 					impl_->entries.erase(it);
+					impl_->entries[wd] = std::move(mentry);
 				}
 			}
 		}

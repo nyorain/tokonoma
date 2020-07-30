@@ -83,6 +83,7 @@ add_project_arguments(flag_dlg, language: 'cpp')
 add_project_arguments('-DASIO_STANDALONE', language: 'cpp')
 
 # required dependencies
+# TODO: remove ugly MASTER hacks that prevent installed version to be found
 dep_vpp = dependency('vpp', fallback: ['vpp', 'vpp_dep'])
 dep_nytl = dependency('nytl MASTER', fallback: ['nytl', 'nytl_dep'])
 dep_dlg = dependency('dlg MASTER', fallback: ['dlg', 'dlg_dep'])
@@ -91,6 +92,7 @@ dep_vui = dependency('vui', fallback: ['vui', 'vui_dep'])
 dep_vulkan = dependency('vulkan')
 dep_png = dependency('libpng', fallback: ['png', 'png_dep'])
 dep_swa = dependency('swa', fallback: ['swa', 'swa_dep'])
+dep_glslang = dependency('glslang', fallback: ['glslang', 'glslang_dep'])
 
 # turbojpeg is optional, there exists no meson wrap for it.
 # if we can't find it, we just fall back to the stbi loader, i.e. make

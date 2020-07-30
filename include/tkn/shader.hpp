@@ -11,12 +11,13 @@
 #include <array>
 #include <shared_mutex>
 #include <filesystem>
+#include <cstring>
 namespace fs = std::filesystem;
 
 namespace tkn {
 
 // Renamed to compileShader. This one is just badly named.
-[[deprecated("Use ShaderCache or 'compileShader' instead")]]
+[[deprecated("Use ShaderCache or other overloads instead")]]
 std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 	std::string_view glslPath, nytl::StringParam args = {});
 
@@ -27,17 +28,32 @@ std::optional<vpp::ShaderModule> loadShader(const vpp::Device& dev,
 // so e.g. be just "particles/particles.comp"
 // Prefer using ShaderCache which holds a cache of compiled shader modules
 // on disk and in memory.
+[[deprecated("Use ShaderCache or overloads below")]]
 std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
 	std::string_view glslPath, nytl::StringParam args = {},
 	fs::path spvOutput = "live.spv", std::vector<u32>* outSpv = nullptr);
 
+// TODO: re-add!
+// std::vector<u32> compileShader(
+// 	nytl::StringParam glslSource,
+// 	vk::ShaderStageBits stage,
+// 	nytl::StringParam sourcePath,
+// 	nytl::StringParam preamble,
+// 	nytl::Span<const char*> includeDirs);
+
+std::vector<u32> compileShader(const fs::path& glslPath,
+	nytl::StringParam preamble,
+	nytl::Span<const char*> includeDirs);
+
 // TODO: synchonization surely has some bugs still.
+// TODO: add more fine-grained per file or per compiled module mutexes?
+//   mainly for point below.
 // TODO: more efficient (yet still threadsafe) returning of spv and
-//   included. Allow callers to hold shared read lock?
+//   'included'. Allow callers to hold shared read lock?
 // TODO: fix use of hashing
-// TODO: allow adding, removing, retrieving already compiled modules as well
-// TODO: maybe also cache included files per file in the disk cache, to avoid
-//   actually reading shader files as often as possible?
+// TODO: allow adding & retrieving already compiled modules as well
+// TODO: maybe also cache included files (& hash) per file in the disk cache,
+//   to avoid actually reading shader files as often as possible?
 class ShaderCache {
 public:
 	// TODO: replace this with some platform-specific shader cache dir
@@ -50,47 +66,49 @@ public:
 	// TODO: move owneship to app? not sure what is cleaner.
 	// App has to clear it atm before it destroy the vulkan device.
 	static ShaderCache& instance(const vpp::Device& dev);
-	static fs::path cachePathForShader(std::string_view glslPath,
-		std::string_view params);
 
 	using FsTimePoint = fs::file_time_type;
 	using FsDuration = FsTimePoint::duration;
 	using FsClock = FsTimePoint::clock;
+	using Hash = std::array<char, 41>; // hex sha1, nullterminated
+
+	struct HashHasher {
+		std::size_t operator()(const Hash& hash) const {
+			std::size_t ret {};
+			for(auto i = 0u; i < hash.size() / 8u; ++i) {
+				std::uint64_t dst;
+				std::memcpy(&dst, &hash[8 * i], 8);
+				ret ^= std::hash<std::uint64_t>{}(dst);
+			}
+
+			return ret;
+		}
+	};
 
 	struct CompiledShader {
 		// The last loaded version of this Shader
 		// Might be null.
 		vpp::ShaderModule mod;
-		// Timestamp of when we last compiled this shader module.
-		// Only valid/relevant when mod isn't null.
-		fs::file_time_type lastCompiled;
 		// Compiled SPIR-V.
 		std::vector<u32> spv;
 	};
 
 	struct FileInfo {
-		// Maps from the arguments to the last compiled shader versions.
-		std::unordered_map<std::string, CompiledShader> modules;
+		// Maps from the preamble to the last compiled shader versions.
+		std::unordered_map<Hash, CompiledShader, HashHasher> modules;
 		// All files (absolute paths) this file includes.
 		// Only direct includes.
-		std::vector<std::string> includes;
-		// When includes were last checked.
-		fs::file_time_type includesLastChecked {FsTimePoint::min()};
-
-		// TODO: support multiple versions via hashes.
-		// SHA-1 hash of source code and include hashes.
-		// std::array<char, 42> hash;
-
-		// TODO(optimization)
-		// Timestamp of when the file was last changed (or at least, the value
-		// we read the last time we checked. Might be any value greater
-		// than that now).
-		// std::uint64_t lastChanged;
+		std::vector<fs::path> includes;
+		// SHA-1 base64 of source code and include hashes.
+		Hash hash;
+		// When includes were last checked and the hash was generated.
+		fs::file_time_type lastParsed {FsTimePoint::min()};
 	};
 
-
 public:
-	std::vector<std::string> includePaths = {
+	// TODO: synchronization.
+	// Should probably be private and have its own mutex.
+	std::vector<const char*> includePaths = {
 		TKN_BASE_DIR "/src/",
 		TKN_BASE_DIR "/src/shaders/include/",
 	};
@@ -104,9 +122,7 @@ public:
 	// cache dir for a compiled spv shader and load that.
 	// If any shader file (the shader itself or any of its includes) are
 	// newer than a found cache, aborts.
-	vk::ShaderModule find(std::string_view glslPath, const std::string& args,
-		nytl::Span<const char* const> extraIncludePaths = {},
-		std::vector<std::string>* outIncluded = nullptr,
+	vk::ShaderModule find(const std::string& fullPathStr, const Hash& hash,
 		std::vector<u32>* outSpv = nullptr);
 
 	// Utility function that compiles a shader using glslangValidator
@@ -114,26 +130,26 @@ public:
 	// Adds default include paths (src/shaders/{., include})
 	// Returns nullopt on failure. glslPath should be given relative to "src/",
 	// so e.g. be just "particles/particles.comp"
-	vk::ShaderModule load(std::string_view glslPath, nytl::StringParam args = {},
-		nytl::Span<const char* const> extraIncludePaths = {},
-		std::vector<std::string>* outIncluded = nullptr,
+	vk::ShaderModule load(std::string_view glslPath,
+		nytl::StringParam preamble = {},
 		std::vector<u32>* outSpv = nullptr);
 
-	// Returns whether up-to-date
-	bool checkIncludes(std::string_view shader,
-		FsTimePoint* compare = nullptr,
-		nytl::Span<const char* const> extraIncludePaths = {},
-		std::vector<std::string>* outIncluded = nullptr);
-
+	/// Only returns data already present, never updates anything.
+	std::vector<std::string> includes(std::string_view shader);
 	fs::path resolve(std::string_view shader,
-		fs::path includedFromDir = {},
-		nytl::Span<const char* const> extraIncludePaths = {});
-
-	void clear();
+		const fs::path& includedFromDir = {});
 
 	const vpp::Device& device() const { return dev_; }
+	void clear(); // NOTE: not really threadsafe
 
 private:
+	bool buildCurrentHash(fs::path shaderPath, Hash& outHash);
+
+	static bool reparse(std::string_view sourceString,
+		std::vector<std::string>& outIncluded,
+		Hash& outHash);
+	static fs::path cachePathForShader(const Hash& hash);
+
 	const vpp::Device& dev_;
 	std::unordered_map<std::string, FileInfo> known_;
 	std::shared_mutex mutex_;

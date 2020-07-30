@@ -103,6 +103,11 @@ inline std::pair<std::string_view, std::string_view> split(
 	return {first, second};
 }
 
+inline std::pair<std::string_view, std::string_view> splitIf(
+		std::string_view src, std::string_view::size_type pos) {
+	return (pos == src.npos) ? std::pair{src, std::string_view{}} : split(src, pos);
+}
+
 /// Sets/Unsets the given bit in the given bitfield.
 template<typename T>
 T bit(T value, T bit, bool set) {
@@ -114,9 +119,9 @@ inline constexpr unsigned ceilDivide(unsigned num, unsigned denom) {
 	return (num + denom - 1) / denom;
 }
 
-inline std::string readFile(std::string_view filename) {
+inline std::string readFile(nytl::StringParam filename) {
 	auto openmode = std::ios::ate;
-	std::ifstream ifs(std::string{filename}, openmode);
+	std::ifstream ifs(filename.c_str(), openmode);
 	ifs.exceptions(std::ostream::failbit | std::ostream::badbit);
 
 	auto size = ifs.tellg();

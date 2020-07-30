@@ -7,7 +7,7 @@
 #define SHA1_HEX_SIZE (40 + 1)
 #define SHA1_BASE64_SIZE (28 + 1)
 
-class sha1 {
+class Sha1 {
 private:
 
     void add_byte_dont_count_bits(uint8_t x){
@@ -156,7 +156,7 @@ public:
     uint32_t i;
     uint64_t n_bits;
 
-    sha1(const char *text = NULL): i(0), n_bits(0){
+    Sha1(const char *text = NULL): i(0), n_bits(0){
         state[0] = 0x67452301;
         state[1] = 0xEFCDAB89;
         state[2] = 0x98BADCFE;
@@ -165,17 +165,17 @@ public:
         if (text) add(text);
     }
 
-    sha1& add(uint8_t x){
+    Sha1& add(uint8_t x){
         add_byte_dont_count_bits(x);
         n_bits += 8;
         return *this;
     }
 
-    sha1& add(char c){
+    Sha1& add(char c){
         return add(*(uint8_t*)&c);
     }
 
-    sha1& add(const void *data, uint32_t n){
+    Sha1& add(const void *data, uint32_t n){
         if (!data) return *this;
 
         const uint8_t *ptr = (const uint8_t*)data;
@@ -196,12 +196,12 @@ public:
         return *this;
     }
 
-    sha1& add(const char *text){
+    Sha1& add(const char *text){
         if (!text) return *this;
         return add(text, strlen(text));
     }
 
-    sha1& finalize(){
+    Sha1& finalize(){
         // hashed text ends with 0x80, some padding 0x00 and the length in bits
         add_byte_dont_count_bits(0x80);
         while (i % 64 != 56) add_byte_dont_count_bits(0x00);
@@ -210,7 +210,7 @@ public:
         return *this;
     }
 
-    const sha1& print_hex(
+    const Sha1& print_hex(
         char *hex,
         bool zero_terminate = true,
         const char *alphabet = "0123456789abcdef"
@@ -226,7 +226,7 @@ public:
         return *this;
     }
 
-    const sha1& print_base64(char *base64, bool zero_terminate = true) const {
+    const Sha1& print_base64(char *base64, bool zero_terminate = true) const {
         static const uint8_t *table = (const uint8_t*)
             "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
             "abcdefghijklmnopqrstuvwxyz"

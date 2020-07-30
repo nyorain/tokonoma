@@ -23,6 +23,7 @@ tkn_deps = [
 	dep_vui,
 	dep_vulkan,
 	dep_png,
+	dep_glslang,
 	gltf_dep,
 ]
 
