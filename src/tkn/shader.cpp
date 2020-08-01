@@ -1,3 +1,6 @@
+#undef DLG_DEFAULT_TAGS
+#define DLG_DEFAULT_TAGS "tkn", "shader"
+
 #include <tkn/shader.hpp>
 #include <tkn/util.hpp>
 #include <tkn/bits.hpp>
@@ -227,6 +230,11 @@ protected:
     }
 };
 
+// NOTE: we could fill this with limits from the vulkan device. And
+// completely disable legacy stuff such as MaxLights. The layers already
+// catch this but limit violations are something we might want to
+// report even in a production environment (where layers are disabled),
+// e.g. it would be really useful to include them in crash reports.
 const TBuiltInResource defaultTBuiltInResource = {
     /* .MaxLights = */ 32,
     /* .MaxClipPlanes = */ 6,
@@ -362,7 +370,6 @@ std::vector<u32> compileShader(
     DirStackFileIncluder includer;
 	includer.pushLocalDirs(includeDirs);
 
-	// TODO: expose default resources
     auto messages = EShMessages(EShMsgDefault | EShMsgSpvRules | EShMsgVulkanRules);
 	if(!shader.parse(&defaultTBuiltInResource, 450, ENoProfile,
 			false, false, messages, includer)) {
@@ -407,7 +414,7 @@ std::vector<u32> compileShader(
 
 	program.mapIO();
 
-	// TODO: use this instead of spirv-reflect?
+	// NOTE: we could use this instead of spirv-reflect
 	// program.buildReflection();
 
 	// This assumption is made by glslang spirv.
@@ -475,6 +482,7 @@ bool ShaderCache::reparse(std::string_view source,
 		std::string_view line;
 		std::tie(line, rest) = splitIf(source, nline);
 
+		line = skipWhitespace(line);
 		const auto commentStr = std::string_view("//");
 		if(line.substr(0, commentStr.size()) == commentStr) {
 			continue;
@@ -574,9 +582,8 @@ bool ShaderCache::buildCurrentHash(fs::path shaderPath, Hash& outHash) {
 	return true;
 }
 
-vk::ShaderModule ShaderCache::find(
-		const std::string& fullPathStr, const Hash& hash,
-		std::vector<u32>* outSpv) {
+ShaderCache::CompiledShaderView ShaderCache::find(
+		const std::string& fullPathStr, const Hash& hash) {
 
 	{
 		auto sharedLock = std::shared_lock(mutex_);
@@ -588,10 +595,7 @@ vk::ShaderModule ShaderCache::find(
 			auto& known = knownIt->second;
 			auto shaderIt = known.modules.find(hash);
 			if(shaderIt != known.modules.end()) {
-				if(outSpv) {
-					*outSpv = shaderIt->second.spv;
-				}
-				return shaderIt->second.mod;
+				return {shaderIt->second.mod, shaderIt->second.spv};
 			}
 		}
 	}
@@ -619,22 +623,17 @@ vk::ShaderModule ShaderCache::find(
 	dlg_assertm(knownIt != known_.end(),
 		"There must be an entry for this shader, we generated a hash!");
 
-	if(outSpv) {
-		*outSpv = spv;
-	}
-
-
-	auto ret = newMod.vkHandle();
 	auto compiled = CompiledShader{std::move(newMod), std::move(spv)};
 	auto [it, emplaced] = knownIt->second.modules.try_emplace(hash, std::move(compiled));
-	dlg_assertm(emplaced, "Overwrote existing cache");
+	dlg_assertm(emplaced, "Could not insert compiled shader module since it "
+		"already existed. Either this is a sha1 collision or another thread "
+		"compiled and inserted it at the same time as this one");
 
-	return ret;
+	return {it->second.mod, it->second.spv};
 }
 
-vk::ShaderModule ShaderCache::load(
-		std::string_view glslPath, nytl::StringParam preamble,
-		std::vector<u32>* outSpv) {
+ShaderCache::CompiledShaderView ShaderCache::load(
+		std::string_view shaderPath, nytl::StringParam preamble) {
 
 	// rough idea of shader loading
 	// - retrieve hash of requested shader
@@ -645,10 +644,57 @@ vk::ShaderModule ShaderCache::load(
 	//   if so: return it
 	//   otherwise: compile shader from scratch
 
-	auto fullPath = resolve(glslPath);
+	auto fullPath = resolve(shaderPath);
 	if(fullPath.empty()) {
-		dlg_error("Could not resolve shader path {}", glslPath);
+		dlg_error("Could not resolve shader path {}", shaderPath);
 		return {};
+	}
+
+	auto fullPathStr = fullPath.string();
+
+	// check if it's a plain spirv shader
+	if(!fullPath.has_extension() || fullPath.extension() == ".spv") {
+		dlg_debug("Interpreting shader {} as spirv", fullPath);
+		dlg_assertm(preamble.empty(), "Can't use preamble for precompiled shaders");
+
+		auto lastWritten = fs::last_write_time(fullPath);
+
+		{
+			auto lock = std::shared_lock(mutex_);
+			auto knownIt = known_.find(fullPathStr);
+			if(knownIt != known_.end()) {
+				auto& known = knownIt->second;
+				if(known.lastParsed > lastWritten) {
+					auto modIt = known.modules.find(known.hash);
+					if(modIt != known.modules.end()) {
+						return {modIt->second.mod, modIt->second.spv};
+					}
+				}
+			}
+		}
+
+		// not found/not up to date. We have to reload it.
+		auto timeBeforeRead = FsClock::now();
+		auto spv = readFilePath32(fullPath);
+
+		Sha1 sha;
+		sha.add(spv.data(), spv.size() * sizeof(spv[0]));
+		sha.finalize();
+
+		auto lock = std::lock_guard(mutex_);
+		auto& known = known_[fullPathStr];
+		known.includes.clear();
+		known.lastParsed = timeBeforeRead;
+		sha.print_hex(known.hash.data());
+
+		auto newMod = vpp::ShaderModule(device(), spv);
+		auto compiled = CompiledShader{std::move(newMod), std::move(spv)};
+		auto [it, emplaced] = known.modules.try_emplace(known.hash, std::move(compiled));
+		dlg_assertm(emplaced, "Could not insert compiled shader module since it "
+			"already existed. Either this is a sha1 collision or another thread "
+			"compiled and inserted it at the same time as this one");
+
+		return {it->second.mod, it->second.spv};
 	}
 
 	// check if shader is already known
@@ -666,9 +712,8 @@ vk::ShaderModule ShaderCache::load(
 	Hash hash;
 	sha.print_hex(hash.data(), true);
 
-	auto fullPathStr = fullPath.string();
-	auto mod = find(fullPathStr, hash, outSpv);
-	if(mod) {
+	auto mod = find(fullPathStr, hash);
+	if(mod.mod) {
 		dlg_debug("Loading {} (hash: '{}') from cache", fullPath, hash.data());
 		return mod;
 	}
@@ -687,26 +732,26 @@ vk::ShaderModule ShaderCache::load(
 		return {};
 	}
 
-	if(outSpv) {
-		*outSpv = spv;
+	auto spvPath = cachePathForShader(hash);
+	auto spvPathParent = spvPath.parent_path();
+	if(!fs::exists(spvPathParent)) {
+		fs::create_directories(spvPathParent);
 	}
 
-	auto spvPath = cachePathForShader(hash);
 	vpp::writeFile(spvPath.c_str(), tkn::bytes(spv), true);
 	fs::last_write_time(spvPath, preCompileTime);
 
-	vk::ShaderModule ret;
-	{
-		auto lockGuard = std::lock_guard(mutex_);
-		auto& fileEntry = known_[fullPathStr];
+	auto lockGuard = std::lock_guard(mutex_);
+	auto& known = known_[fullPathStr];
 
-		auto& modEntry = fileEntry.modules[hash];
-		modEntry.mod = {device(), spv};
-		modEntry.spv = std::move(spv);
-		ret = modEntry.mod;
-	}
+	auto newMod = vpp::ShaderModule(device(), spv);
+	auto compiled = CompiledShader{std::move(newMod), std::move(spv)};
+	auto [it, emplaced] = known.modules.try_emplace(known.hash, std::move(compiled));
+	dlg_assertm(emplaced, "Could not insert compiled shader module since it "
+		"already existed. Either this is a sha1 collision or another thread "
+		"compiled and inserted it at the same time as this one");
 
-	return ret;
+	return {it->second.mod, it->second.spv};
 }
 
 void ShaderCache::clear() {
@@ -750,15 +795,18 @@ fs::path ShaderCache::resolve(std::string_view shader,
 	return {};
 }
 
-std::vector<std::string> ShaderCache::includes(std::string_view shader) {
-	auto lock = std::shared_lock(mutex_);
-
+std::vector<std::string> ShaderCache::resolveIncludes(std::string_view shader) {
 	auto shaderPath = resolve(shader);
 	if(shaderPath.empty()) {
 		dlg_warn("Failed to resolve shader '{}'", shader);
 		return {};
 	}
 
+	return includes(shaderPath);
+}
+
+std::vector<std::string> ShaderCache::includes(const fs::path& shaderPath) {
+	auto lock = std::shared_lock(mutex_);
 	std::vector<std::string> ret = {};
 	std::vector<fs::path> worklist = {std::move(shaderPath)};
 	std::unordered_set<std::string> seen;
@@ -770,7 +818,7 @@ std::vector<std::string> ShaderCache::includes(std::string_view shader) {
 		auto known = known_.find(item.string());
 		if(known == known_.end()) {
 			dlg_warn("Could not find {} in shader cache", item);
-			continue;
+			return {};
 		}
 
 		auto& included = known->second.includes;
@@ -779,6 +827,18 @@ std::vector<std::string> ShaderCache::includes(std::string_view shader) {
 	}
 
 	return ret;
+}
+
+vk::ShaderModule ShaderCache::insertSpv(const std::string& fullPathStr,
+		FsTimePoint lastParsed, const Hash& hash, CompiledShader compiled) {
+	auto lock = std::shared_lock(mutex_);
+	auto& known = known_[fullPathStr];
+	known.lastParsed = lastParsed;
+	known.hash = hash;
+
+	auto [it, emplaced] = known.modules.try_emplace(hash, std::move(compiled));
+	dlg_assertm(emplaced, "Compiled modules already existed in shader cache");
+	return it->second.mod;
 }
 
 } // namespace tkn

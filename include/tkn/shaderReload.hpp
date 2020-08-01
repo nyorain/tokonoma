@@ -2,6 +2,7 @@
 
 #include <tkn/types.hpp>
 #include <tkn/fswatch.hpp>
+#include <tkn/shader.hpp>
 #include <nytl/span.hpp>
 
 #include <vpp/fwd.hpp>
@@ -14,6 +15,82 @@
 
 namespace tkn {
 
+class ReloadablePipeline {
+public:
+	struct Stage {
+		vk::ShaderStageBits stage;
+		std::string file;
+		std::string preamble;
+	};
+
+	struct CompiledStage {
+		Stage stage;
+		ShaderCache::CompiledShaderView module;
+	};
+
+	// Function that creates the pipeline from the set of loaded shader
+	// stages. Note that this function might be called from a different
+	// thread. In case of error, this function can simply throw.
+	using Creator = std::function<vpp::Pipeline(const vpp::Device& dev,
+		nytl::Span<const CompiledStage> stages)>;
+
+public:
+	ReloadablePipeline() = default;
+	ReloadablePipeline(const vpp::Device& dev, std::vector<Stage> stages,
+		Creator creator, FileWatcher&, bool async = true);
+	~ReloadablePipeline();
+
+	ReloadablePipeline(ReloadablePipeline&& rhs) = default;
+	ReloadablePipeline& operator=(ReloadablePipeline&& rhs) = default;
+
+	// Immediately starts a pipeline reloading.
+	// The function does not wait for it to complete, the shader will be
+	// loaded and the pipeline be created in a different thread.
+	// If a reload job is already pending, this has no effect.
+	void reload();
+
+	// Should be called every frame (or at least every now and then). Does
+	// cpu-work related to pipeline creation such as checking for file
+	// change or completed creation jobs.
+	void update();
+
+	// Will update the used pipeline and potentially destroy the old one
+	// when a job has finished. Returns whether the pipeline changed,
+	// in which case no pipeline handle previously obtained from this
+	// must be used anymore (i.e. command buffers be rerecorded).
+	bool updateDevice();
+
+	vk::Pipeline pipe() const { return pipe_; }
+	const std::vector<Stage>& stages() const { return stages_; }
+
+private:
+	struct CreateInfo {
+		vpp::Pipeline pipe;
+		std::vector<std::string> included;
+	};
+
+	struct Watch {
+		std::uint64_t id;
+		std::string path;
+	};
+
+	void updateWatches(std::vector<std::string> newIncludes);
+	static CreateInfo recreate(const vpp::Device& dev,
+		nytl::Span<const Stage> stages, const Creator& creator);
+
+private:
+	const vpp::Device* dev_; // need to store explicitly for async init
+	std::unique_ptr<Creator> creator_;
+	vpp::Pipeline pipe_;
+	vpp::Pipeline newPipe_;
+
+	std::vector<Stage> stages_;
+	std::vector<Watch> fileWatches_;
+	tkn::FileWatcher* fileWatcher_;
+	std::future<CreateInfo> future_;
+};
+
+
 constexpr auto shaderEntryPointName = "main";
 
 struct PipelineState {
@@ -24,11 +101,6 @@ struct PipelineState {
 
 void cmdBindGraphics(vk::CommandBuffer cb, const PipelineState& state);
 void cmdBindCompute(vk::CommandBuffer, const PipelineState& state);
-
-struct CreatedPipelineInfo {
-	vpp::Pipeline pipe;
-	std::vector<std::string> included;
-};
 
 // TODO: classes are currently not movable. That kinda sucks, might be useful.
 // TODO: stop watching in constructor. These should be full classes, not structs

@@ -287,8 +287,7 @@ void ReloadableComputePipeline::reload() {
 	future = tp.addPromised([this, &dev = pipe.device()]{
 		auto& shaderCache = ShaderCache::instance(dev);
 
-		std::vector<std::string> included;
-		auto mod = shaderCache.load(this->shaderPath, {}, {}, &included);
+		auto mod = shaderCache.load(this->shaderPath);
 		if(!mod) {
 			return vpp::Pipeline {};
 		}
@@ -484,43 +483,6 @@ bool ReloadableGraphicsPipeline::updateDevice() {
 }
 
 // GraphicsPipelineState
-
-// ComputePipelineState
-/*
-ComputePipelineState::ComputePipelineState(const vpp::Device& dev,
-		std::string shader, FileWatcher& watcher) {
-	auto& shaderCache = ShaderCache::instance(dev);
-
-	std::vector<std::string> included;
-	std::vector<u32> spv;
-	auto mod = shaderCache.load(shader, {}, {}, &included, &spv);
-
-	state_ = inferComputeState(spv);
-
-	// pipeline
-	vk::ComputePipelineCreateInfo cpi;
-	cpi.layout = pipeLayout();
-	cpi.stage.module = mod;
-	cpi.stage.pName = shaderEntryPointName;
-	// TODO: allow specialization
-	pipe_.pipe = {dev, cpi};
-
-	pipe_.shaderPath = shader;
-	pipe_.watcher = &watcher;
-	pipe_.infoHandler = [layout = this->pipeLayout()]
-			(vk::ComputePipelineCreateInfo& cpi){
-		cpi.layout = layout;
-		cpi.stage.pName = shaderEntryPointName;
-	};
-
-	pipe_.fileWatches.reserve(included.size() + 1);
-	pipe_.fileWatches.push_back(watcher.watch(shader));
-	for(auto& inc : included) {
-		pipe_.fileWatches.push_back(watcher.watch(inc));
-	}
-}
-*/
-
 GraphicsPipelineState::GraphicsPipelineState(const vpp::Device& dev,
 		std::string vertPath, std::string fragPath, InfoHandler handler,
 		tkn::FileWatcher& watcher) {
@@ -541,19 +503,6 @@ void GraphicsPipelineState::init(const vpp::Device& dev,
 
 	pipe_.vert = std::move(vertPath);
 	pipe_.frag = std::move(fragPath);
-
-	// auto& sc = ShaderCache::instance(dev);
-	// pipe_.vert = sc.resolve(vertPath);
-	// if(pipe_.vert.empty()) {
-	// 	dlg_error("Can't find shader {}", vertPath);
-	// 	throw std::runtime_error("Can't find shader");
-	// }
-//
-	// pipe_.frag = sc.resolve(fragPath);
-	// if(pipe_.frag.empty()) {
-	// 	dlg_error("Can't find shader {}", fragPath);
-	// 	throw std::runtime_error("Can't find shader");
-	// }
 
 	auto& shaderCache = ShaderCache::instance(dev);
 
@@ -595,6 +544,175 @@ void GraphicsPipelineState::init(const vpp::Device& dev,
 	for(auto& inc : included) {
 		pipe_.fileWatches.push_back(watcher.watch(inc));
 	}
+}
+
+// ComputePipelineState
+/*
+ComputePipelineState::ComputePipelineState(const vpp::Device& dev,
+		std::string shader, FileWatcher& watcher) {
+	auto& shaderCache = ShaderCache::instance(dev);
+
+	std::vector<std::string> included;
+	std::vector<u32> spv;
+	auto mod = shaderCache.load(shader, {}, {}, &included, &spv);
+
+	state_ = inferComputeState(spv);
+
+	// pipeline
+	vk::ComputePipelineCreateInfo cpi;
+	cpi.layout = pipeLayout();
+	cpi.stage.module = mod;
+	cpi.stage.pName = shaderEntryPointName;
+	// TODO: allow specialization
+	pipe_.pipe = {dev, cpi};
+
+	pipe_.shaderPath = shader;
+	pipe_.watcher = &watcher;
+	pipe_.infoHandler = [layout = this->pipeLayout()]
+			(vk::ComputePipelineCreateInfo& cpi){
+		cpi.layout = layout;
+		cpi.stage.pName = shaderEntryPointName;
+	};
+
+	pipe_.fileWatches.reserve(included.size() + 1);
+	pipe_.fileWatches.push_back(watcher.watch(shader));
+	for(auto& inc : included) {
+		pipe_.fileWatches.push_back(watcher.watch(inc));
+	}
+}
+*/
+
+// ReloadablePipeline
+ReloadablePipeline::ReloadablePipeline(const vpp::Device& dev,
+	std::vector<Stage> stages, Creator creator, FileWatcher& fswatch, bool async) :
+		dev_(&dev), stages_(std::move(stages)), fileWatcher_(&fswatch) {
+
+	creator_ = std::make_unique<Creator>(std::move(creator));
+	fileWatches_.reserve(stages.size());
+	for(auto& stage : stages_) {
+		fileWatches_.push_back({fileWatcher_->watch(stage.file), stage.file});
+	}
+
+	if(!async) {
+		auto info = recreate(dev, stages_, *creator_);
+		pipe_ = std::move(info.pipe);
+		updateWatches(std::move(info.included));
+	} else {
+		reload();
+	}
+}
+
+ReloadablePipeline::~ReloadablePipeline() {
+	for(auto& watch : fileWatches_) {
+		fileWatcher_->unregsiter(watch.id);
+	}
+}
+
+void ReloadablePipeline::reload() {
+	// NOTE: because of this, we might miss changes when `reload` is
+	// triggered while a reload job is till pending. This isn't really
+	// a case we are too interested in though. We could set a flag here
+	// to instantly start another reload job when the current is ready.
+	// We could also just start multiple jobs (i.e. abandon the current
+	// future) but ShaderCache was not really designed for it (would
+	// probably expose some bugs).
+	if(future_.valid()) {
+		return;
+	}
+
+	auto& tp = ThreadPool::instance();
+
+	// NOTE: we have to make sure that all resources we pass to `recreate`
+	// stay valid even if *this is moved.
+	future_ = tp.addPromised(&ReloadablePipeline::recreate,
+		*dev_, stages_, *creator_);
+}
+
+void ReloadablePipeline::update() {
+	if(!future_.valid()) {
+		if(fileWatcher_) {
+			for(auto watch : fileWatches_) {
+				if(fileWatcher_->check(watch.id)) {
+					reload();
+				}
+			}
+		}
+
+		return;
+	}
+
+	// check if future is available
+	auto res = future_.wait_for(std::chrono::seconds(0));
+	if(res != std::future_status::ready) {
+		return;
+	}
+
+	try {
+		auto [newPipe, newInc] = future_.get(); // this might throw when task threw
+		if(!newPipe) {
+			return;
+		}
+
+		newPipe_ = std::move(newPipe);
+		updateWatches(std::move(newInc));
+	} catch(const std::exception& err) {
+		dlg_warn("Exception thrown from pipeline creation task: {}", err.what());
+	}
+}
+
+bool ReloadablePipeline::updateDevice() {
+	if(newPipe_) {
+		pipe_ = std::move(newPipe_);
+		return true;
+	}
+
+	return false;
+}
+
+void ReloadablePipeline::updateWatches(std::vector<std::string> newIncludes) {
+	auto itOld = fileWatches_.begin() + stages_.size();
+	for(auto& inc : newIncludes) {
+		Watch* newWatch;
+		if(itOld != fileWatches_.end()) {
+			if(itOld->path == inc) {
+				++itOld;
+				continue;
+			}
+
+			fileWatcher_->unregsiter(itOld->id);
+			newWatch = &*itOld;
+			++itOld;
+		} else {
+			newWatch = &fileWatches_.emplace_back();
+			itOld = fileWatches_.end();
+		}
+
+		newWatch->id = fileWatcher_->watch(inc);
+		newWatch->path = std::move(inc);
+	}
+}
+
+ReloadablePipeline::CreateInfo ReloadablePipeline::recreate(const vpp::Device& dev,
+		nytl::Span<const Stage> stages, const Creator& creator) {
+	CreateInfo ret;
+
+	auto& sc = ShaderCache::instance(dev);
+	std::vector<CompiledStage> cstages;
+	cstages.reserve(stages.size());
+
+	for(auto& stage : stages) {
+		auto& cstage = cstages.emplace_back();
+		cstage.module = sc.load(stage.file, stage.preamble);
+		if(!cstage.module.mod) {
+			return {};
+		}
+
+		auto includes = sc.resolveIncludes(stage.file);
+		ret.included.insert(ret.included.end(), includes.begin(), includes.end());
+	}
+
+	ret.pipe = creator(dev, cstages);
+	return ret;
 }
 
 } // namespace tkn

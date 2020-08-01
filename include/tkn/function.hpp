@@ -3,31 +3,51 @@
 #include <utility>
 #include <cstdlib>
 #include <cstdint>
+#include <cstring>
 #include <type_traits>
 #include <functional>
+#include <memory>
 #include <nytl/functionTraits.hpp>
 
 namespace tkn {
 
+// Function
 template<typename Sig> class Function;
+constexpr struct NoAllocTag {} noAlloc;
 
 // Differences to std::function:
-// - Does never allocate memory on the heap. Generates compile-time
-//   error if constructed from object that doesn't fit in stack storage.
+// - Offers more memory for the small-object optimization, trying to avoid
+//   as many allocations as possible.
+//   Does not allocate memory on the heap when constructed with `noAlloc`,
+//   will result in a compile time error if the function object
+//   is too large instead. This is useful to allow using Function even
+//   in performance critical contexts.
 // - Is not copyable, only movable. This allows move-only functors
 //   to be stored and passed around in this.
+//   NOTE: should the need ever arise for this to be copyable in some
+//   context, we could instead offer copy constructors that simply
+//   throw when the function object does not allow copying.
 template<typename Ret, typename... Args>
 class Function<Ret(Args...)> {
 public:
 	static constexpr auto maxSize = 8 * sizeof(std::uintptr_t);
 	using Storage = std::aligned_storage_t<maxSize>;
-	using Impl = Ret(*)(Storage&, Args...);
 
 public:
 	Function() = default;
 
 	template<typename F, typename = std::enable_if_t<std::is_invocable_r_v<Ret, F, Args...>>>
 	Function(F obj) {
+		impl_ = &impl<F>;
+		if constexpr(sizeof(F) <= maxSize) {
+			new(&storage_) F(std::move(obj));
+		} else {
+			new(&storage_) F*(new F(std::move(obj)));
+		}
+	}
+
+	template<typename F, typename = std::enable_if_t<std::is_invocable_r_v<Ret, F, Args...>>>
+	Function(NoAllocTag, F obj) {
 		static_assert(sizeof(F) <= maxSize, "Callable object is too large for Function");
 		impl_ = &impl<F>;
 		new(&storage_) F(std::move(obj));
@@ -39,9 +59,25 @@ public:
 		}
 	}
 
-	Function(Function&& rhs) { swap(*this, rhs); }
-	Function& operator=(Function rhs) {
-		swap(*this, rhs);
+	Function(Function&& rhs) {
+		if(rhs.impl_) {
+			impl_ = rhs.impl_;
+			impl_->moveDestroy(rhs.storage_, storage_);
+			rhs.impl_ = {};
+		}
+	}
+
+	Function& operator=(Function&& rhs) {
+		if(impl_) {
+			impl_->destroy(storage_);
+		}
+
+		impl_ = rhs.impl_;
+		if(rhs.impl_) {
+			rhs.impl_->moveDestroy(rhs.storage_, storage_);
+			rhs.impl_ = {};
+		}
+
 		return *this;
 	}
 
@@ -58,25 +94,67 @@ public:
 	}
 
 	friend void swap(Function& a, Function& b) {
+		Storage tmp;
+		if(a.impl_) {
+			a.impl_->moveDestroy(a.storage_, tmp);
+		}
+
+		if(b.impl_) {
+			b.impl_->moveDestroy(b.storage_, a.storage_);
+		}
+
+		if(a.impl_) {
+			a.impl_->moveDestroy(tmp, b.storage_);
+		}
 		std::swap(a.impl_, b.impl_);
-		std::swap(a.storage_, b.storage_);
 	}
 
 protected:
 	struct FunctionImpl {
 		void (*destroy)(Storage&);
 		Ret (*call)(Storage&, Args... args);
+
+		// moves from it's own implementation storage 'src' into
+		// a new, object-free storage `dst` and destroys the
+		// own object in src.
+		void (*moveDestroy)(Storage& src, Storage& dst);
 	};
 
 	template<typename F>
+	static F& getImpl(Storage& storage) {
+		if constexpr(sizeof(F) <= maxSize) {
+			return *std::launder(reinterpret_cast<F*>(&storage));
+		} else {
+			return **std::launder(reinterpret_cast<F**>(&storage));
+		}
+	}
+
+	template<typename F>
 	static void destroyImpl(Storage& storage) {
-		std::launder(reinterpret_cast<F*>(&storage))->~F();
+		if constexpr(sizeof(F) <= maxSize) {
+			std::launder(reinterpret_cast<F*>(&storage))->~F();
+		} else {
+			delete *std::launder(reinterpret_cast<F**>(&storage));
+		}
 	}
 
 	template<typename F>
 	static Ret callImpl(Storage& storage, Args... args) {
-		return std::invoke(*std::launder(reinterpret_cast<F*>(&storage)),
-			std::forward<Args>(args)...);
+		return std::invoke(getImpl<F>(storage), std::forward<Args>(args)...);
+	}
+
+	template<typename F>
+	static void moveDestroy(Storage& src, Storage& dst) {
+		if constexpr(sizeof(F) <= maxSize) {
+			new(&dst) F(std::move(getImpl(src)));
+			destroyImpl<F>(src);
+		} else {
+			new (&dst) F*(&getImpl(src));
+			// this is not strictly needed.
+			// We just store a pointer in storage, don't have to call its
+			// destructor
+			// std::memset(&src, 0x0, sizeof(src));
+		}
 	}
 
 	template<typename F>

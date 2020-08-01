@@ -135,4 +135,14 @@ inline std::string readFile(nytl::StringParam filename) {
 	return buffer;
 }
 
+std::string_view skipWhitespace(std::string_view source) {
+	constexpr auto whitespace = "\n\t\f\r\v "; // as by std::isspace
+	auto fnws = source.find_first_not_of(whitespace);
+	if(fnws == source.npos) {
+		return {};
+	}
+
+	return source.substr(fnws);
+}
+
 } // namespace tkn
