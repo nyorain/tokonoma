@@ -358,9 +358,15 @@ planet = build_target('planet', [
 	], dependencies: [tkn_dep],
 	target_type: exetarget)
 
+# TODO: no longer needed
 planet_gen = build_target('planet_gen', [
 		'src/planet/gen.cpp',
 		planet_shaders,
+	], dependencies: [tkn_dep],
+	target_type: exetarget)
+
+terrain = build_target('terrain', [
+		'src/terrain/main.cpp',
 	], dependencies: [tkn_dep],
 	target_type: exetarget)
 

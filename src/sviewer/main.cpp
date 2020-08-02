@@ -3,7 +3,7 @@
 #include <tkn/formats.hpp>
 #include <tkn/render.hpp>
 #include <tkn/ccam.hpp>
-#include <tkn/shaderReload.hpp>
+#include <tkn/pipeline.hpp>
 #include <tkn/types.hpp>
 #include <tkn/shader.hpp>
 #include <tkn/image.hpp>

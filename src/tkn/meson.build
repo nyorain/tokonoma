@@ -47,7 +47,7 @@ tkn_src = [
 	'threadPool.cpp',
 	'stream.cpp',
 	'sky.cpp',
-	'shaderReload.cpp',
+	'pipeline.cpp',
 	'formats.cpp',
 
 	'scene/scene.cpp',

@@ -651,7 +651,7 @@ ShaderCache::CompiledShaderView ShaderCache::load(
 
 	auto fullPath = resolve(shaderPath);
 	if(fullPath.empty()) {
-		dlg_error("Could not resolve shader path {}", shaderPath);
+		dlg_error("Can't load {}, could not resolve path", shaderPath);
 		return {};
 	}
 

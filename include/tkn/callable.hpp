@@ -140,6 +140,7 @@ private:
 template<typename F>
 CallableImpl(F) -> CallableImpl<typename nytl::FunctionTraits<F>::Signature, F>;
 
+// TODO: make this a small wrapper class that just internally allocates.
 template<typename Sig> using UniqueCallable = std::unique_ptr<Callable<Sig>>;
 
 template<typename Sig, typename F>

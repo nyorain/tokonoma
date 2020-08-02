@@ -1,7 +1,8 @@
-#include <tkn/shaderReload.hpp>
+#include <tkn/pipeline.hpp>
 #include <tkn/threadPool.hpp>
 #include <tkn/shader.hpp>
 #include <vpp/vk.hpp>
+#include <vpp/debug.hpp>
 #include <dlg/dlg.hpp>
 #include <nytl/scope.hpp>
 #include <spirv_reflect.h>
@@ -276,19 +277,29 @@ PipelineState inferGraphicsState(const vpp::Device& dev, nytl::Span<const u32> v
 // ReloadablePipeline
 ReloadablePipeline::ReloadablePipeline(const vpp::Device& dev,
 	std::vector<Stage> stages, std::unique_ptr<Creator> creator,
-	FileWatcher& fswatch, bool async) :
+	FileWatcher& fswatch, std::string name, bool async) :
 		dev_(&dev), creator_(std::move(creator)),
-		stages_(std::move(stages)), fileWatcher_(&fswatch) {
+		stages_(std::move(stages)), fileWatcher_(&fswatch),
+		name_(std::move(name)) {
 
 	fileWatches_.reserve(stages.size());
 	for(auto& stage : stages_) {
 		auto resolved = ShaderCache::instance(dev).resolve(stage.file);
+		if(resolved.empty()) {
+			auto msg = dlg::format("Can't find shader '{}'", stage.file);
+			throw std::runtime_error(msg);
+		}
+
 		fileWatches_.push_back({fileWatcher_->watch(resolved.c_str()), stage.file});
 	}
 
 	if(!async) {
-		auto info = recreate(dev, stages_, *creator_);
+		auto info = recreate(dev, nytl::Span<const Stage>(stages_), *creator_);
 		pipe_ = std::move(info.pipe);
+		if(!name_.empty()) {
+			vpp::nameHandle(pipe_, name_.c_str());
+		}
+
 		updateWatches(std::move(info.included));
 	} else {
 		reload();
@@ -318,7 +329,7 @@ void ReloadablePipeline::reload() {
 	// NOTE: we have to make sure that all resources we pass to `recreate`
 	// stay valid even if *this is moved.
 	future_ = tp.addPromised(&ReloadablePipeline::recreate,
-		*dev_, stages_, *creator_);
+		*dev_, nytl::Span<const Stage>(stages_), *creator_);
 }
 
 void ReloadablePipeline::update() {
@@ -344,6 +355,10 @@ void ReloadablePipeline::update() {
 		auto [newPipe, newInc] = future_.get(); // this might throw when task threw
 		if(!newPipe) {
 			return;
+		}
+
+		if(!name_.empty()) {
+			vpp::nameHandle(newPipe_, name_.c_str());
 		}
 
 		newPipe_ = std::move(newPipe);
@@ -389,6 +404,8 @@ ReloadablePipeline::CreateInfo ReloadablePipeline::recreate(const vpp::Device& d
 		nytl::Span<const Stage> stages, const Creator& creator) {
 	CreateInfo ret;
 
+	dlg_assert(!stages.empty());
+
 	auto& sc = ShaderCache::instance(dev);
 	std::vector<CompiledStage> cstages;
 	cstages.reserve(stages.size());
@@ -412,8 +429,8 @@ ReloadablePipeline::CreateInfo ReloadablePipeline::recreate(const vpp::Device& d
 // ComputePipelineState
 ComputePipelineState::ComputePipelineState(const vpp::Device& dev,
 		std::string shaderPath, tkn::FileWatcher& fswatch,
-		std::string preamble, bool async,
-		std::unique_ptr<InfoHandler> infoHandler) {
+		std::string preamble, std::unique_ptr<InfoHandler> infoHandler,
+		bool async) {
 	ReloadablePipeline::Stage stage = {
 		vk::ShaderStageBits::compute,
 		std::move(shaderPath),
@@ -428,7 +445,7 @@ ComputePipelineState::ComputePipelineState(const vpp::Device& dev,
 			nytl::Span<const ReloadablePipeline::CompiledStage> stages) {
 		return recreate(dev, stages, state, infoHandler);
 	};
-	pipe_ = {dev, {stage}, makeUniqueCallable(creatorFunc), fswatch, async};
+	pipe_ = {dev, {stage}, makeUniqueCallable(creatorFunc), fswatch, {}, async};
 }
 
 vpp::Pipeline ComputePipelineState::recreate(const vpp::Device& dev,
@@ -486,7 +503,8 @@ GraphicsPipelineState::GraphicsPipelineState(const vpp::Device& dev,
 			nytl::Span<const ReloadablePipeline::CompiledStage> stages) {
 		return recreate(dev, stages, state, infoHandler);
 	};
-	pipe_ = {dev, std::move(stages), makeUniqueCallable(creatorFunc), fswatch, async};
+	pipe_ = {dev, std::move(stages), makeUniqueCallable(creatorFunc), fswatch,
+		{}, async};
 }
 
 vpp::Pipeline GraphicsPipelineState::recreate(const vpp::Device& dev,

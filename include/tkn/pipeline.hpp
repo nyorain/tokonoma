@@ -15,7 +15,10 @@
 #include <array>
 
 // IDEA: make descriptor updating easier, automatically applied
-// in updateDevice or the PipelineState classes.
+// 	in updateDevice or the PipelineState classes.
+// TODO: add mechanism for descriptor sharing
+// TODO: add general mechnism for callbacks executed when a new pipe is
+//   loaded?
 
 namespace tkn {
 
@@ -46,7 +49,8 @@ public:
 public:
 	ReloadablePipeline() = default;
 	ReloadablePipeline(const vpp::Device& dev, std::vector<Stage> stages,
-		std::unique_ptr<Creator> creator, FileWatcher&, bool async = true);
+		std::unique_ptr<Creator> creator, FileWatcher&,
+		std::string name = {}, bool async = true);
 	~ReloadablePipeline();
 
 	ReloadablePipeline(ReloadablePipeline&& rhs) = default;
@@ -71,6 +75,13 @@ public:
 
 	vk::Pipeline pipe() const { return pipe_; }
 	const std::vector<Stage>& stages() const { return stages_; }
+	bool updatePending() const { return newPipe_; }
+
+	// TODO: allow changing name later on. It must be done in main thread
+	// anyways since string can't be referenced through a move.
+	// Add a general free-func `nameHandle` overload?
+	// remove name parameter from constructor?
+	const std::string& name() const { return name_; }
 
 private:
 	struct CreateInfo {
@@ -97,6 +108,8 @@ private:
 	std::vector<Watch> fileWatches_;
 	tkn::FileWatcher* fileWatcher_;
 	std::future<CreateInfo> future_;
+
+	std::string name_;
 };
 
 struct PipelineState {
@@ -114,6 +127,7 @@ PipelineState inferGraphicsState(const vpp::Device& dev, nytl::Span<const u32> v
 void cmdBindGraphics(vk::CommandBuffer cb, const PipelineState& state);
 void cmdBindCompute(vk::CommandBuffer, const PipelineState& state);
 
+// TODO: add name parameters
 class ComputePipelineState {
 public:
 	using InfoHandler = Callable<void(vk::ComputePipelineCreateInfo&) const>;
@@ -121,8 +135,8 @@ public:
 public:
 	ComputePipelineState() = default;
 	ComputePipelineState(const vpp::Device&, std::string shaderPath,
-		tkn::FileWatcher&, std::string preamble = {}, bool async = true,
-		std::unique_ptr<InfoHandler> infoHandler = {});
+		tkn::FileWatcher&, std::string preamble = {},
+		std::unique_ptr<InfoHandler> infoHandler = {}, bool async = true);
 
 	void reload() { pipe_.reload(); }
 	void update() { pipe_.update(); }
