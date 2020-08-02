@@ -115,11 +115,12 @@ public:
 		}
 		shaderFile_ = name;
 
-		auto handler = [rp = renderPass()](auto& gpi) {
+		auto handler = [rp = renderPass()](vpp::GraphicsPipelineInfo& gpi) {
 			gpi.renderPass(rp);
 		};
 
-		pipe_.init(dev, "tkn/shaders/fullscreen.vert", name, handler, fsWatcher_);
+		pipe_ = tkn::GraphicsPipelineState{dev, {"tkn/shaders/fullscreen.vert"},
+			{name}, fsWatcher_, tkn::makeUniqueCallable(handler), false};
 
 		{
 			vpp::DescriptorSetUpdate update(pipe_.pipeState().dss[0]);
@@ -239,8 +240,9 @@ public:
 			0, sizeof(pcr), &pcr);
 		*/
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe);
-		tkn::cmdBindGraphics(cb, pipe_.pipeState());
+		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe);
+		// tkn::cmdBindGraphics(cb, pipe_.pipeState());
+		tkn::cmdBind(cb, pipe_);
 		vk::cmdDraw(cb, 6, 1, 0, 0);
 	}
 
@@ -490,8 +492,6 @@ protected:
 	// vpp::TrDs ds_;
 
 	tkn::GraphicsPipelineState pipe_;
-
-	vpp::PipelineCache pcache_;
 	tkn::ControlledCamera cam_;
 
 	/*

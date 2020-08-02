@@ -248,6 +248,7 @@ App::~App() {
 		// make sure all shader modules are destroyed before
 		// the device is destroyed.
 		tkn::ShaderCache::instance(*impl_->dev).clear();
+		tkn::PipelineCache::finishInstance();
 	}
 
 	if(impl_ && impl_->dlg.oldHandler) {

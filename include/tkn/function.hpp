@@ -7,12 +7,15 @@
 #include <type_traits>
 #include <functional>
 #include <memory>
+
 #include <nytl/functionTraits.hpp>
+#include <dlg/dlg.hpp>
+
+// Good post on possible design choices:
+// https://quuxplusone.github.io/blog/2019/03/27/design-space-for-std-function/
 
 namespace tkn {
 
-// Function
-template<typename Sig> class Function;
 constexpr struct NoAllocTag {} noAlloc;
 
 // Differences to std::function:
@@ -21,23 +24,31 @@ constexpr struct NoAllocTag {} noAlloc;
 //   Does not allocate memory on the heap when constructed with `noAlloc`,
 //   will result in a compile time error if the function object
 //   is too large instead. This is useful to allow using Function even
-//   in performance critical contexts.
+//   in highly performance critical contexts where allocating would be
+//   a problem.
 // - Is not copyable, only movable. This allows move-only functors
 //   to be stored and passed around in this.
 //   NOTE: should the need ever arise for this to be copyable in some
 //   context, we could instead offer copy constructors that simply
-//   throw when the function object does not allow copying.
-template<typename Ret, typename... Args>
-class Function<Ret(Args...)> {
+//   throw when the function object does not allow copying. Arguably worse though.
+// - Offers const-correctness. If the Function has to be const-callable, just
+//   add a const to the signature like `Ret(Args...) const` (which will
+//   then e.g. not work with mutable lambdas or only non-const callables).
+//   Otherwise, offers no const call operator.
+template<typename Sig> class Function;
+
+template<bool ConstSig, typename Ret, typename... Args>
+class FunctionBase {
 public:
-	static constexpr auto maxSize = 8 * sizeof(std::uintptr_t);
+	static constexpr auto maxSize = 4 * sizeof(std::uintptr_t);
 	using Storage = std::aligned_storage_t<maxSize>;
+	using CallStorage = std::conditional_t<ConstSig, const Storage, Storage>;
 
 public:
-	Function() = default;
+	FunctionBase() = default;
 
 	template<typename F, typename = std::enable_if_t<std::is_invocable_r_v<Ret, F, Args...>>>
-	Function(F obj) {
+	FunctionBase(F obj) {
 		impl_ = &impl<F>;
 		if constexpr(sizeof(F) <= maxSize) {
 			new(&storage_) F(std::move(obj));
@@ -47,19 +58,19 @@ public:
 	}
 
 	template<typename F, typename = std::enable_if_t<std::is_invocable_r_v<Ret, F, Args...>>>
-	Function(NoAllocTag, F obj) {
+	FunctionBase(NoAllocTag, F obj) {
 		static_assert(sizeof(F) <= maxSize, "Callable object is too large for Function");
 		impl_ = &impl<F>;
 		new(&storage_) F(std::move(obj));
 	}
 
-	~Function() {
+	~FunctionBase() {
 		if(impl_) {
 			impl_->destroy(storage_);
 		}
 	}
 
-	Function(Function&& rhs) {
+	FunctionBase(FunctionBase&& rhs) {
 		if(rhs.impl_) {
 			impl_ = rhs.impl_;
 			impl_->moveDestroy(rhs.storage_, storage_);
@@ -67,7 +78,7 @@ public:
 		}
 	}
 
-	Function& operator=(Function&& rhs) {
+	FunctionBase& operator=(FunctionBase&& rhs) {
 		if(impl_) {
 			impl_->destroy(storage_);
 		}
@@ -81,19 +92,11 @@ public:
 		return *this;
 	}
 
-	Ret operator()(Args... args) {
-		if(!impl_) {
-			throw std::bad_function_call();
-		}
-
-		return impl_->call(storage_, std::forward<Args>(args)...);
-	}
-
 	operator bool() const {
 		return impl_ != nullptr;
 	}
 
-	friend void swap(Function& a, Function& b) {
+	friend void swap(FunctionBase& a, FunctionBase& b) {
 		Storage tmp;
 		if(a.impl_) {
 			a.impl_->moveDestroy(a.storage_, tmp);
@@ -112,22 +115,13 @@ public:
 protected:
 	struct FunctionImpl {
 		void (*destroy)(Storage&);
-		Ret (*call)(Storage&, Args... args);
+		Ret (*call)(CallStorage&, Args... args);
 
 		// moves from it's own implementation storage 'src' into
 		// a new, object-free storage `dst` and destroys the
 		// own object in src.
 		void (*moveDestroy)(Storage& src, Storage& dst);
 	};
-
-	template<typename F>
-	static F& getImpl(Storage& storage) {
-		if constexpr(sizeof(F) <= maxSize) {
-			return *std::launder(reinterpret_cast<F*>(&storage));
-		} else {
-			return **std::launder(reinterpret_cast<F**>(&storage));
-		}
-	}
 
 	template<typename F>
 	static void destroyImpl(Storage& storage) {
@@ -139,17 +133,27 @@ protected:
 	}
 
 	template<typename F>
-	static Ret callImpl(Storage& storage, Args... args) {
-		return std::invoke(getImpl<F>(storage), std::forward<Args>(args)...);
+	static Ret callImpl(CallStorage& storage, Args... args) {
+		using CallF = std::conditional_t<ConstSig, const F, F>;
+		CallF* func;
+		if constexpr(sizeof(F) <= maxSize) {
+			func = std::launder(reinterpret_cast<CallF*>(&storage));
+		} else {
+			func = *std::launder(reinterpret_cast<CallF**>(&storage));
+		}
+
+		return std::invoke(*func, std::forward<Args>(args)...);
 	}
 
 	template<typename F>
 	static void moveDestroy(Storage& src, Storage& dst) {
 		if constexpr(sizeof(F) <= maxSize) {
-			new(&dst) F(std::move(getImpl(src)));
-			destroyImpl<F>(src);
+			auto& impl = *std::launder(reinterpret_cast<F*>(&src));
+			new(&dst) F(std::move(impl));
+			impl.~F();
 		} else {
-			new (&dst) F*(&getImpl(src));
+			auto* pimpl = *std::launder(reinterpret_cast<F**>(&src));
+			new (&dst) F*(pimpl);
 			// this is not strictly needed.
 			// We just store a pointer in storage, don't have to call its
 			// destructor
@@ -161,6 +165,7 @@ protected:
 	static const FunctionImpl impl = {
 		&destroyImpl<F>,
 		&callImpl<F>,
+		&moveDestroy<F>
 	};
 
 protected:
@@ -169,11 +174,45 @@ protected:
 };
 
 template<typename Ret, typename... Args>
-template<typename F>
-const typename Function<Ret(Args...)>::FunctionImpl Function<Ret(Args...)>::impl;
+class Function<Ret(Args...)> : public FunctionBase<false, Ret, Args...> {
+public:
+	using FunctionBase<false, Ret, Args...>::FunctionBase;
+
+	// Calling this on an empty function is undefined behavior, unlike
+	// std::function, which throws std::bad_function_call.
+	// Reasoning: if somebody wants to call a potentially empty function
+	// object, they should just check it beforehand and not use the
+	// exception mechanism. If otoh a contract for instance defines that
+	// a function must not be empty and it is called without checking,
+	// a thrown exception could not be handled by anyone anyways since
+	// it's a logical programming error.
+	// But omitting the potential throw here makes it more likely that
+	// the function call is inlined (at least in release builds without
+	// the assert), avoiding additional overhead.
+	Ret operator()(Args... args) {
+		dlg_assert(this->impl_);
+		return this->impl_->call(this->storage_, std::forward<Args>(args)...);
+	}
+};
 
 template<typename Ret, typename... Args>
-Function(Ret (*)(Args...)) -> Function<Ret(Args...)>;
+class Function<Ret(Args...) const> : public FunctionBase<true, Ret, Args...> {
+public:
+	using FunctionBase<true, Ret, Args...>::FunctionBase;
+
+	Ret operator()(Args... args) const {
+		dlg_assert(this->impl_);
+		return this->impl_->call(this->storage_, std::forward<Args>(args)...);
+	}
+};
+
+template<bool ConstSig, typename Ret, typename... Args>
+template<typename F> const typename
+FunctionBase<ConstSig, Ret, Args...>::FunctionImpl
+FunctionBase<ConstSig, Ret, Args...>::impl;
+
+template<typename Ret, typename... Args>
+Function(Ret (*)(Args...)) -> Function<Ret(Args...) const>;
 
 template<typename F>
 Function(F obj) -> Function<typename nytl::FunctionTraits<F>::Signature>;
@@ -207,10 +246,7 @@ public:
 	}
 
 	Ret operator()(Args... args) {
-		if(!impl_) {
-			throw std::bad_function_call();
-		}
-
+		dlg_assert(impl_);
 		return std::invoke(*impl_, storage_, std::forward<Args>(args)...);
 	}
 

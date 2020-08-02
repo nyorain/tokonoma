@@ -3,10 +3,12 @@
 #include <optional>
 #include <vpp/fwd.hpp>
 #include <vpp/shader.hpp>
+#include <vpp/handles.hpp>
 #include <nytl/stringParam.hpp>
 #include <tkn/types.hpp>
 #include <tkn/function.hpp>
 
+#include <thread>
 #include <vector>
 #include <unordered_map>
 #include <array>
@@ -61,10 +63,7 @@ public:
 	// TODO: replace this with some platform-specific shader cache dir
 	static constexpr auto cacheDir = "shadercache/";
 
-	// NOTE: even though the instance is thread safe, compiling the
-	// same shader (with the same args) from multiple threads isn't
-	// serializable and might deliver unexpected results (e.g. the shader
-	// being compiled in both threads).
+	// NOTE: Does not support multiple shader caches for multiple devices.
 	// TODO: move owneship to app? not sure what is cleaner.
 	// App has to clear it atm before it destroys the vulkan device.
 	static ShaderCache& instance(const vpp::Device& dev);
@@ -170,6 +169,29 @@ private:
 	const vpp::Device& dev_;
 	std::unordered_map<std::string, FileInfo> known_;
 	std::shared_mutex mutex_;
+};
+
+class PipelineCache {
+public:
+	// Returns a thread-specific pipeline cache instance.
+	// NOTE: Does not support multiple caches for multiple devices.
+	static vk::PipelineCache instance(const vpp::Device& dev);
+	static void finishInstance();
+
+	// TODO: as with the shader cache path, move this to platform-specific
+	// global cache dir.
+	static constexpr auto path = ".pipelinecache";
+
+protected:
+	PipelineCache(const vpp::Device& dev);
+	~PipelineCache();
+	void finish();
+
+	struct ThreadInstance;
+
+	const vpp::Device& device_;
+	vpp::PipelineCache mainCache_;
+	std::unordered_map<std::thread::id, vpp::PipelineCache> caches_;
 };
 
 } // namespace tkn

@@ -273,324 +273,17 @@ PipelineState inferGraphicsState(const vpp::Device& dev, nytl::Span<const u32> v
 	return state;
 }
 
-// ReloadableComputePipeline
-/*
-void ReloadableComputePipeline::reload() {
-	// TODO: already schedule a new reload in this case?
-	// abandon the current future? but we probably should not do it
-	// while we are reloading it.
-	if(future.valid()) {
-		return;
-	}
-
-	auto& tp = ThreadPool::instance();
-	future = tp.addPromised([this, &dev = pipe.device()]{
-		auto& shaderCache = ShaderCache::instance(dev);
-
-		auto mod = shaderCache.load(this->shaderPath);
-		if(!mod) {
-			return vpp::Pipeline {};
-		}
-
-		// pipeline
-		vk::ComputePipelineCreateInfo cpi;
-		cpi.stage.module = mod;
-		cpi.stage.stage = vk::ShaderStageBits::compute;
-		this->infoHandler(cpi);
-
-		// TODO: add new includes, remove old ones.
-		// We can't do this here (since it's run in a different thread),
-		// should return this information to the main thread and
-		// do it there (in update/updateDevice).
-
-		return vpp::Pipeline(dev, cpi);
-	});
-}
-
-void ReloadableComputePipeline::update() {
-	if(!watcher || future.valid()) {
-		return;
-	}
-
-	for(auto watch : fileWatches) {
-		if(watcher->check(watch)) {
-			reload();
-		}
-	}
-}
-
-bool ReloadableComputePipeline::updateDevice() {
-	if(!future.valid()) {
-		return false;
-	}
-
-	auto res = future.wait_for(std::chrono::seconds(0));
-	if(res != std::future_status::ready) {
-		return false;
-	}
-
-	try {
-		auto newPipe = future.get(); // this might throw when task threw
-		if(newPipe) {
-			this->pipe = std::move(newPipe);
-			return true;
-		}
-	} catch(const std::exception& err) {
-		dlg_warn("Exception thrown from pipeline creation task: {}", err.what());
-	}
-
-	return false;
-}
-*/
-
-// ReloadableGraphicsPipeline
-// TODO: we make assumptions that certain members of 'pipe' are immtuable here
-// (to allow this function in another thread)
-CreatedPipelineInfo recreate(const vpp::Device& dev, ReloadableGraphicsPipeline& pipe) {
-	auto& shaderCache = ShaderCache::instance(dev);
-
-	auto vertMod = shaderCache.load(pipe.vert);
-	if(!vertMod) {
-		return {};
-	}
-
-	auto fragMod = shaderCache.load(pipe.frag);
-	if(!fragMod) {
-		return {};
-	}
-
-	std::vector<std::string> vertIncluded = shaderCache.includes(pipe.vert);
-	std::vector<std::string> fragIncluded = shaderCache.includes(pipe.frag);
-
-	// pipeline
-	vpp::GraphicsPipelineInfo gpi;
-	gpi.program = vpp::ShaderProgram{{{
-		{vertMod, vk::ShaderStageBits::vertex},
-		{fragMod, vk::ShaderStageBits::fragment},
-	}}};
-
-	pipe.infoHandler(gpi);
-
-	auto included = std::move(vertIncluded);
-	included.insert(included.end(), fragIncluded.begin(), fragIncluded.end());
-	included.push_back(shaderCache.resolve(pipe.vert).string());
-	included.push_back(shaderCache.resolve(pipe.frag).string());
-
-	return {vpp::Pipeline(dev, gpi.info()), std::move(included)};
-}
-
-void ReloadableGraphicsPipeline::init(const vpp::Device& dev, std::string vert,
-		std::string frag, InfoHandler infoHandler, FileWatcher& fileWatcher) {
-	// auto& sc = ShaderCache::instance(dev);
-
-	this->watcher = &fileWatcher;
-	this->infoHandler = infoHandler;
-
-	this->vert = std::move(vert);
-	this->frag = std::move(frag);
-
-	// this->vert = sc.resolve(vert);
-	// if(this->vert.empty()) {
-	// 	dlg_error("Can't find shader {}", vert);
-	// 	throw std::runtime_error("Can't find shader");
-	// }
-
-	// this->frag = sc.resolve(frag);
-	// if(this->frag.empty()) {
-	// 	dlg_error("Can't find shader {}", frag);
-	// 	throw std::runtime_error("Can't find shader");
-	// }
-
-	// TODO: make that async as well?
-	auto [pipe, included] = recreate(dev, *this);
-	this->pipe = std::move(pipe);
-
-	// already in included.
-	// fileWatches.push_back(fileWatcher.watch(this->vert));
-	// fileWatches.push_back(fileWatcher.watch(this->frag));
-
-	for(auto& inc : included) {
-		fileWatches.push_back(fileWatcher.watch(inc));
-	}
-}
-
-void ReloadableGraphicsPipeline::reload() {
-	// TODO: already schedule a new reload in this case?
-	// abandon the current future? but we probably should not do it
-	// while we are reloading it.
-	if(future.valid()) {
-		return;
-	}
-
-	auto& tp = ThreadPool::instance();
-	future = tp.addPromised(&recreate, pipe.device(), *this);
-}
-
-void ReloadableGraphicsPipeline::update() {
-	if(!future.valid()) {
-		if(watcher) {
-			for(auto watch : fileWatches) {
-				if(watcher->check(watch)) {
-					// TODO: separate vertex/fragment shader reloading?
-					reload();
-				}
-			}
-		}
-
-		return;
-	}
-
-	// check if future is available
-	auto res = future.wait_for(std::chrono::seconds(0));
-	if(res != std::future_status::ready) {
-		return;
-	}
-
-	try {
-		auto [newPipe, newInc] = future.get(); // this might throw when task threw
-		if(!newPipe) {
-			return;
-		}
-
-		this->newPipe = std::move(newPipe);
-
-		// TODO(opt): don't always unregister and re-register.
-		// Check first if something really has changed.
-		for(auto i = 0u; i < fileWatches.size(); ++i) {
-			watcher->unregsiter(fileWatches[i]);
-		}
-
-		// fileWatches.resize(2);
-		// fileWatches.reserve(2 + newInc.size());
-		fileWatches.clear();
-		fileWatches.reserve(newInc.size());
-		for(auto& inc : newInc) {
-			fileWatches.push_back(watcher->watch(inc));
-		}
-
-	} catch(const std::exception& err) {
-		dlg_warn("Exception thrown from pipeline creation task: {}", err.what());
-	}
-}
-
-bool ReloadableGraphicsPipeline::updateDevice() {
-	if(newPipe) {
-		this->pipe = std::move(newPipe);
-		return true;
-	}
-
-	return false;
-}
-
-// GraphicsPipelineState
-GraphicsPipelineState::GraphicsPipelineState(const vpp::Device& dev,
-		std::string vertPath, std::string fragPath, InfoHandler handler,
-		tkn::FileWatcher& watcher) {
-	init(dev, vertPath, fragPath, handler, watcher);
-}
-
-void GraphicsPipelineState::init(const vpp::Device& dev,
-		std::string vertPath, std::string fragPath, InfoHandler handler,
-		tkn::FileWatcher& watcher) {
-
-	// TODO: bad code duplication with ReloadableGraphicsPipeline::init
-	pipe_.watcher = &watcher;
-	pipe_.infoHandler = [this, handler = std::move(handler)]
-			(vpp::GraphicsPipelineInfo& gpi) {
-		gpi.layout(state_.pipeLayout);
-		handler(gpi);
-	};
-
-	pipe_.vert = std::move(vertPath);
-	pipe_.frag = std::move(fragPath);
-
-	auto& shaderCache = ShaderCache::instance(dev);
-
-	std::vector<u32> vertSpv;
-	auto vertMod = shaderCache.load(pipe_.vert, {}, &vertSpv);
-	if(!vertMod) {
-		throw std::runtime_error("Can't load shader");
-	}
-
-	std::vector<u32> fragSpv;
-	auto fragMod = shaderCache.load(pipe_.frag, {}, &fragSpv);
-	if(!fragMod) {
-		throw std::runtime_error("Can't load shader");
-	}
-
-	std::vector<std::string> vertIncluded = shaderCache.includes(pipe_.vert);
-	std::vector<std::string> fragIncluded = shaderCache.includes(pipe_.frag);
-
-	state_ = inferGraphicsState(dev, vertSpv, fragSpv);
-
-	// pipeline
-	vpp::GraphicsPipelineInfo gpi;
-	gpi.program = vpp::ShaderProgram{{{
-		{vertMod, vk::ShaderStageBits::vertex},
-		{fragMod, vk::ShaderStageBits::fragment},
-	}}};
-
-	pipe_.infoHandler(gpi);
-
-	auto included = std::move(vertIncluded);
-	included.insert(included.end(), fragIncluded.begin(), fragIncluded.end());
-	included.push_back(shaderCache.resolve(pipe_.vert).string());
-	included.push_back(shaderCache.resolve(pipe_.frag).string());
-
-	pipe_.pipe = vpp::Pipeline(dev, gpi.info());
-
-	// pipe_.fileWatches.push_back(watcher.watch(pipe_.vert));
-	// pipe_.fileWatches.push_back(watcher.watch(pipe_.frag));
-	for(auto& inc : included) {
-		pipe_.fileWatches.push_back(watcher.watch(inc));
-	}
-}
-
-// ComputePipelineState
-/*
-ComputePipelineState::ComputePipelineState(const vpp::Device& dev,
-		std::string shader, FileWatcher& watcher) {
-	auto& shaderCache = ShaderCache::instance(dev);
-
-	std::vector<std::string> included;
-	std::vector<u32> spv;
-	auto mod = shaderCache.load(shader, {}, {}, &included, &spv);
-
-	state_ = inferComputeState(spv);
-
-	// pipeline
-	vk::ComputePipelineCreateInfo cpi;
-	cpi.layout = pipeLayout();
-	cpi.stage.module = mod;
-	cpi.stage.pName = shaderEntryPointName;
-	// TODO: allow specialization
-	pipe_.pipe = {dev, cpi};
-
-	pipe_.shaderPath = shader;
-	pipe_.watcher = &watcher;
-	pipe_.infoHandler = [layout = this->pipeLayout()]
-			(vk::ComputePipelineCreateInfo& cpi){
-		cpi.layout = layout;
-		cpi.stage.pName = shaderEntryPointName;
-	};
-
-	pipe_.fileWatches.reserve(included.size() + 1);
-	pipe_.fileWatches.push_back(watcher.watch(shader));
-	for(auto& inc : included) {
-		pipe_.fileWatches.push_back(watcher.watch(inc));
-	}
-}
-*/
-
 // ReloadablePipeline
 ReloadablePipeline::ReloadablePipeline(const vpp::Device& dev,
-	std::vector<Stage> stages, Creator creator, FileWatcher& fswatch, bool async) :
-		dev_(&dev), stages_(std::move(stages)), fileWatcher_(&fswatch) {
+	std::vector<Stage> stages, std::unique_ptr<Creator> creator,
+	FileWatcher& fswatch, bool async) :
+		dev_(&dev), creator_(std::move(creator)),
+		stages_(std::move(stages)), fileWatcher_(&fswatch) {
 
-	creator_ = std::make_unique<Creator>(std::move(creator));
 	fileWatches_.reserve(stages.size());
 	for(auto& stage : stages_) {
-		fileWatches_.push_back({fileWatcher_->watch(stage.file), stage.file});
+		auto resolved = ShaderCache::instance(dev).resolve(stage.file);
+		fileWatches_.push_back({fileWatcher_->watch(resolved.c_str()), stage.file});
 	}
 
 	if(!async) {
@@ -702,6 +395,7 @@ ReloadablePipeline::CreateInfo ReloadablePipeline::recreate(const vpp::Device& d
 
 	for(auto& stage : stages) {
 		auto& cstage = cstages.emplace_back();
+		cstage.stage = stage;
 		cstage.module = sc.load(stage.file, stage.preamble);
 		if(!cstage.module.mod) {
 			return {};
@@ -713,6 +407,129 @@ ReloadablePipeline::CreateInfo ReloadablePipeline::recreate(const vpp::Device& d
 
 	ret.pipe = creator(dev, cstages);
 	return ret;
+}
+
+// ComputePipelineState
+ComputePipelineState::ComputePipelineState(const vpp::Device& dev,
+		std::string shaderPath, tkn::FileWatcher& fswatch,
+		std::string preamble, bool async,
+		std::unique_ptr<InfoHandler> infoHandler) {
+	ReloadablePipeline::Stage stage = {
+		vk::ShaderStageBits::compute,
+		std::move(shaderPath),
+		std::move(preamble),
+	};
+
+	infoHandler_ = std::move(infoHandler);
+	state_ = std::make_unique<PipelineState>();
+
+	auto creatorFunc = [&state = *state_, infoHandler = infoHandler_.get()] (
+			const vpp::Device& dev,
+			nytl::Span<const ReloadablePipeline::CompiledStage> stages) {
+		return recreate(dev, stages, state, infoHandler);
+	};
+	pipe_ = {dev, {stage}, makeUniqueCallable(creatorFunc), fswatch, async};
+}
+
+vpp::Pipeline ComputePipelineState::recreate(const vpp::Device& dev,
+		nytl::Span<const ReloadablePipeline::CompiledStage> stages,
+		PipelineState& state, const InfoHandler* infoHandler) {
+	dlg_assert(stages.size() == 1);
+	auto& stage = stages[0];
+	dlg_assert(stage.stage.stage == vk::ShaderStageBits::compute);
+
+	if(!state.pipeLayout) {
+		state = inferComputeState(dev, stage.module.spv);
+	}
+
+	vk::ComputePipelineCreateInfo cpi;
+	cpi.layout = state.pipeLayout;
+	cpi.stage.stage = vk::ShaderStageBits::compute;
+	cpi.stage.pName = shaderEntryPointName;
+	cpi.stage.module = stage.module.mod;
+	if(infoHandler) {
+		(*infoHandler)(cpi);
+	}
+
+	auto cache = PipelineCache::instance(dev);
+	return vpp::Pipeline(dev, cpi, cache);
+}
+
+void cmdBind(vk::CommandBuffer cb, const ComputePipelineState& state) {
+	dlg_assert(cb);
+	dlg_assert(state.pipe());
+
+	cmdBindCompute(cb, state.pipeState());
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, state.pipe());
+}
+
+// GraphicsPipelineState
+GraphicsPipelineState::GraphicsPipelineState(const vpp::Device& dev,
+		StageInfo vert, StageInfo frag, tkn::FileWatcher& fswatch,
+		std::unique_ptr<InfoHandler> infoHandler, bool async) {
+	std::vector<ReloadablePipeline::Stage> stages = {{
+		vk::ShaderStageBits::vertex,
+		std::move(vert.path),
+		std::move(vert.preamble),
+	}, {
+		vk::ShaderStageBits::fragment,
+		std::move(frag.path),
+		std::move(frag.preamble),
+	}};
+
+	dlg_assert(infoHandler);
+	infoHandler_ = std::move(infoHandler);
+	state_ = std::make_unique<PipelineState>();
+
+	auto creatorFunc = [&state = *state_, &infoHandler = *infoHandler_.get()] (
+			const vpp::Device& dev,
+			nytl::Span<const ReloadablePipeline::CompiledStage> stages) {
+		return recreate(dev, stages, state, infoHandler);
+	};
+	pipe_ = {dev, std::move(stages), makeUniqueCallable(creatorFunc), fswatch, async};
+}
+
+vpp::Pipeline GraphicsPipelineState::recreate(const vpp::Device& dev,
+		nytl::Span<const ReloadablePipeline::CompiledStage> stages,
+		PipelineState& state, const InfoHandler& infoHandler) {
+	vpp::ShaderProgram program;
+	nytl::Span<const u32> vertSpv;
+	nytl::Span<const u32> fragSpv;
+	for(auto& stage : stages) {
+		program.stage({stage.module.mod, stage.stage.stage});
+
+		if(stage.stage.stage == vk::ShaderStageBits::vertex) {
+			vertSpv = stage.module.spv;
+		} else if(stage.stage.stage == vk::ShaderStageBits::fragment) {
+			fragSpv = stage.module.spv;
+		} else {
+			dlg_error("Unexpected shader stage {}", (unsigned) stage.stage.stage);
+			return {};
+		}
+	}
+
+	dlg_assert(!vertSpv.empty());
+	dlg_assert(!fragSpv.empty());
+
+	if(!state.pipeLayout) {
+		state = inferGraphicsState(dev, vertSpv, fragSpv);
+	}
+
+	vpp::GraphicsPipelineInfo gpi;
+	gpi.layout(state.pipeLayout);
+	gpi.program = std::move(program);
+	infoHandler(gpi);
+
+	auto cache = PipelineCache::instance(dev);
+	return vpp::Pipeline(dev, gpi.info(), cache);
+}
+
+void cmdBind(vk::CommandBuffer cb, const GraphicsPipelineState& state) {
+	dlg_assert(cb);
+	dlg_assert(state.pipe());
+
+	cmdBindGraphics(cb, state.pipeState());
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, state.pipe());
 }
 
 } // namespace tkn

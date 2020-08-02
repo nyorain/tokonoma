@@ -6,10 +6,14 @@
 #include <tkn/bits.hpp>
 #include <dlg/dlg.hpp>
 #include <vpp/shader.hpp>
+#include <vpp/pipeline.hpp>
 #include <vpp/util/file.hpp>
 #include <vkpp/enums.hpp>
+#include <vkpp/functions.hpp>
+#include <nytl/scope.hpp>
 #include <filesystem>
 #include <fstream>
+#include <atomic>
 #include <unordered_set>
 #include <sha1.hpp>
 
@@ -470,6 +474,7 @@ std::vector<u32> compileShader(const fs::path& glslPath,
 // ShaderCache
 ShaderCache& ShaderCache::instance(const vpp::Device& dev) {
 	static ShaderCache shaderCache(dev);
+	dlg_assert(&shaderCache.device() == &dev);
 	return shaderCache;
 }
 
@@ -839,6 +844,77 @@ vk::ShaderModule ShaderCache::insertSpv(const std::string& fullPathStr,
 	auto [it, emplaced] = known.modules.try_emplace(hash, std::move(compiled));
 	dlg_assertm(emplaced, "Compiled modules already existed in shader cache");
 	return it->second.mod;
+}
+
+// PipelineCache
+static PipelineCache* gPipelineCache {};
+std::mutex& pipelineCacheMutex() {
+	static std::mutex ret;
+	return ret;
+}
+
+vk::PipelineCache PipelineCache::instance(const vpp::Device& dev) {
+	static PipelineCache cache(dev);
+
+	auto lock = std::lock_guard(pipelineCacheMutex());
+	dlg_assert(gPipelineCache);
+	dlg_assert(gPipelineCache == &cache);
+	if(!gPipelineCache) {
+		dlg_error("Pipeline cache was already finished");
+		return {};
+	}
+
+	auto it = cache.caches_.try_emplace(std::this_thread::get_id(), dev).first;
+
+	static thread_local auto threadGuard = nytl::ScopeGuard{[]{
+		auto lock = std::lock_guard(pipelineCacheMutex());
+		auto* pc = gPipelineCache;
+		if(pc) {
+			auto it = pc->caches_.find(std::this_thread::get_id());
+			if(it == pc->caches_.end()) {
+				dlg_warn("Could not find thread is caches");
+				return;
+			}
+
+			vk::mergePipelineCaches(pc->device_, pc->mainCache_, {{it->second.vkHandle()}});
+			pc->caches_.erase(it);
+		}
+	}};
+
+	return it->second;
+}
+
+void PipelineCache::finishInstance() {
+	auto lock = std::lock_guard(pipelineCacheMutex());
+	if(gPipelineCache) {
+		gPipelineCache->finish();
+	}
+}
+
+PipelineCache::PipelineCache(const vpp::Device& dev) : device_(dev), mainCache_(dev, path) {
+	auto lock = std::lock_guard(pipelineCacheMutex());
+	gPipelineCache = this;
+}
+
+PipelineCache::~PipelineCache() {
+	auto lock = std::lock_guard(pipelineCacheMutex());
+	if(gPipelineCache == this) {
+		finish();
+	}
+}
+
+void PipelineCache::finish() {
+	gPipelineCache = nullptr;
+	std::vector<vk::PipelineCache> srcCaches;
+	for(auto& cache : caches_) {
+		srcCaches.push_back(cache.second);
+	}
+
+	vk::mergePipelineCaches(device_, mainCache_, srcCaches);
+	vpp::save(mainCache_, path);
+
+	caches_.clear();
+	mainCache_ = {};
 }
 
 } // namespace tkn

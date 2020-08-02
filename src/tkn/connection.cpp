@@ -1,5 +1,5 @@
 #undef DLG_DEFAULT_TAGS
-#define DLG_DEFAULT_TAGS "tkn", "network",
+#define DLG_DEFAULT_TAGS "tkn", "network"
 
 #include <tkn/connection.hpp>
 #include <tkn/recvBuf.hpp>

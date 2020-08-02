@@ -95,7 +95,7 @@ void main() {
 	} else if(ubo.effect == counter++) {
 		d = vfbm(uv);
 	} else if(ubo.effect == counter++) {
-		float v1 = fbm(uv);
+		float v1 = fbm(uv - vec2(cos(ubo.time), sin(ubo.time)));
 		float v2 = fbm(v1 + uv);
 		d = v2;
 		rgb.r = v1;
