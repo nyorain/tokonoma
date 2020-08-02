@@ -283,7 +283,7 @@ public:
 		vpp::GraphicsPipelineInfo gpi(renderPass(), gfx_.pipeLayout, {{{
 			{modelVert, vk::ShaderStageBits::vertex},
 			{modelFrag, vk::ShaderStageBits::fragment},
-		}}});
+		}}}, 0u, samples());
 
 		gpi.depthStencil.depthTestEnable = true;
 		gpi.depthStencil.depthWriteEnable = true;
