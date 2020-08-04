@@ -2,6 +2,7 @@
 #include <tkn/transform.hpp>
 #include <tkn/features.hpp>
 #include <tkn/shader.hpp>
+#include <tkn/pipeline.hpp>
 #include <tkn/threadPool.hpp>
 #include <dlg/dlg.hpp>
 #include <dlg/output.h>
@@ -249,6 +250,7 @@ App::~App() {
 		// the device is destroyed.
 		tkn::ShaderCache::instance(*impl_->dev).clear();
 		tkn::PipelineCache::finishInstance();
+		tkn::ThreadState::finishInstance();
 	}
 
 	if(impl_ && impl_->dlg.oldHandler) {

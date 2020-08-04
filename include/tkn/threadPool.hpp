@@ -41,8 +41,8 @@ public:
 	void add(F&& func, Args&&... args) {
 		addExplicit([
 				func = std::forward<F>(func),
-				args = std::make_tuple(std::forward<Args>(args)...)]{
-			std::apply(func, std::move(args));
+				args = std::tuple<Args...>(std::forward<Args>(args)...)]{
+			std::apply(func, args);
 		});
 	}
 
@@ -57,14 +57,14 @@ public:
 		auto future = promise.get_future();
 		addExplicit([
 				func = std::forward<F>(func),
-				args = std::forward_as_tuple(std::forward<Args>(args)...),
+				args = std::tuple<Args...>(std::forward<Args>(args)...),
 				promise = std::move(promise)]() mutable {
 			try {
 				if constexpr(std::is_void_v<R>) {
-					std::apply(std::forward<F>(func), std::move(args));
+					std::apply(std::forward<F>(func), args);
 					promise.set_value();
 				} else {
-					promise.set_value(std::apply(std::forward<F>(func), std::move(args)));
+					promise.set_value(std::apply(std::forward<F>(func), args));
 				}
 			} catch(...) {
 				promise.set_exception(std::current_exception());
@@ -74,31 +74,33 @@ public:
 		return future;
 	}
 
-	template<typename F, typename... Args>
-	auto addPromised(F&& func) {
-		using R = decltype(std::forward<F>(func)());
-		std::promise<R> promise;
-		auto future = promise.get_future();
-		addExplicit([
-				func = std::forward<F>(func),
-				promise = std::move(promise)]() mutable {
-			try {
-				if constexpr(std::is_void_v<R>) {
-					std::forward<F>(func)();
-					promise.set_value();
-				} else {
-					promise.set_value(std::forward<F>(func)());
-				}
-			} catch(...) {
-				promise.set_exception(std::current_exception());
-			}
-		});
-
-		return future;
-	}
+	// TODO: probably not needed
+	// template<typename F, typename... Args>
+	// auto addPromised(F&& func) {
+	// 	using R = decltype(std::forward<F>(func)());
+	// 	std::promise<R> promise;
+	// 	auto future = promise.get_future();
+	// 	addExplicit([
+	// 			func = std::forward<F>(func),
+	// 			promise = std::move(promise)]() mutable {
+	// 		try {
+	// 			if constexpr(std::is_void_v<R>) {
+	// 				std::forward<F>(func)();
+	// 				promise.set_value();
+	// 			} else {
+	// 				promise.set_value(std::forward<F>(func)());
+	// 			}
+	// 		} catch(...) {
+	// 			promise.set_exception(std::current_exception());
+	// 		}
+	// 	});
+	//
+	// 	return future;
+	// }
 
 	// Signals all workers to quit and wait until all pending tasks are
 	// completed. Automatically called from destructor.
+	// ThreadPool must not be used afterwards.
 	void destroy();
 
 protected:

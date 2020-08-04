@@ -14,6 +14,7 @@ mat3 bitToMat(in bool bit) {
 	float s = (bit ? 0.5f : -0.5f);
 	vec3 c1 = vec3(-0.5, -s, 0);
 	vec3 c2 = vec3(s, -0.5, 0);
+	// original
 	// vec3 c1 = vec3(s, -0.5, 0);
 	// vec3 c2 = vec3(-0.5, -s, 0);
 	vec3 c3 = vec3(0.5, 0.5, 1);
@@ -60,4 +61,30 @@ void subd(in uint key, in vec3 v_in[3], out vec3 v_out[3]) {
 vec3 subd(in uint key, in vec3 v_in[3], in uint vid) {
 	mat3 xf = keyToMat(key);
 	return berp(v_in, (xf * subd_bvecs[vid]).xy);
+}
+
+// This function must be implemented by includer
+vec3 displace(vec3 pos);
+
+float lodFromDistance(float z, float triangleSize) {
+	const float fov = 0.42 * 3.141;
+	const float targetPixelSize = 15.f;
+	const float screenResolution = 2000.f; 
+	const float maxLod = 26.f;
+
+	const float s = z * tan(fov / 2);
+	const float tmp = s * targetPixelSize / (screenResolution * triangleSize);
+
+	// should be 2.0 for all triangles to have equal size
+	// if e.g. you want to have a focus on near triangles
+	//   make it greater than 2.0, otherwise smaller.
+	const float fac = 2.0;
+	return clamp(-fac * log2(clamp(tmp, 0.0, 1.0)), 1, maxLod);
+}
+
+float desiredLOD(vec3 viewPos, vec3 v_in[3], uint key, uint ini, out vec3 v_out[3]) {
+	float triSize = 0.5 * length(cross(v_in[1] - v_in[0], v_in[2] - v_in[0]));
+	subd(key, v_in, v_out);
+	vec3 hyp = 0.5 * (displace(v_out[1]) + displace(v_out[2]));
+	return lodFromDistance(distance(viewPos, hyp), triSize);
 }

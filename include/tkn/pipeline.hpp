@@ -9,6 +9,9 @@
 #include <vpp/fwd.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/trackedDescriptor.hpp>
+#include <vpp/commandAllocator.hpp>
+#include <vpp/devMemAllocator.hpp>
+#include <vpp/sharedBuffer.hpp>
 #include <vector>
 #include <future>
 #include <deque>
@@ -99,7 +102,7 @@ private:
 		nytl::Span<const Stage> stages, const Creator& creator);
 
 private:
-	const vpp::Device* dev_; // need to store explicitly for async init
+	const vpp::Device* dev_ {}; // need to store explicitly for async init
 	std::unique_ptr<Creator> creator_;
 	vpp::Pipeline pipe_;
 	vpp::Pipeline newPipe_;
@@ -197,6 +200,27 @@ protected:
 
 void cmdBind(vk::CommandBuffer cb, const ComputePipelineState&);
 void cmdBind(vk::CommandBuffer cb, const GraphicsPipelineState&);
+
+class ThreadStateManager;
+class ThreadState {
+public:
+	static ThreadState& instance(const vpp::Device& dev);
+	static void finishInstance();
+
+public:
+	vpp::DescriptorAllocator& dsAlloc() { return *dsAlloc_; }
+
+private:
+	friend class ThreadStateManager;
+	ThreadState(const vpp::Device& dev, ThreadStateManager&);
+	~ThreadState();
+
+	void destroy() {
+		dsAlloc_.reset();
+	}
+
+	std::optional<vpp::DescriptorAllocator> dsAlloc_;
+};
 
 } // namespace tkn
 

@@ -251,7 +251,10 @@ Shape generateQuad(nytl::Vec3f center, nytl::Vec3f x, nytl::Vec3f y) {
 	ret.positions.push_back(center + x + y);
 	ret.positions.push_back(center - x + y);
 
-	ret.indices = {0, 1, 2, 0, 2, 3};
+	ret.indices = {
+		1, 2, 0,
+		3, 0, 2
+	};
 
 	auto normal = normalized(cross(x, y));
 	ret.normals = {normal, normal, normal, normal};

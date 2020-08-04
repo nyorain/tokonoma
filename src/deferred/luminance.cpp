@@ -162,13 +162,13 @@ void LuminancePass::create(InitData& data, const PassCreateInfo& info) {
 		dlg_assertm((mipGroupDimSize & (mipGroupDimSize - 1)) == 0,
 			"mipGroupDimSize must be a power of 2");
 		vpp::ShaderModule mipShader(dev, deferred_luminanceMip_comp_data);
-		groupSizeSpec = {mipGroupDimSize, mipGroupDimSize};
+		ComputeGroupSizeSpec groupSizeSpecMip(mipGroupDimSize, mipGroupDimSize);
 
 		cpi.layout = mip_.pipeLayout;
 		cpi.stage.module = mipShader;
 		cpi.stage.stage = vk::ShaderStageBits::compute;
 		cpi.stage.pName = "main";
-		cpi.stage.pSpecializationInfo = &groupSizeSpec.spec;
+		cpi.stage.pSpecializationInfo = &groupSizeSpecMip.spec;
 		mip_.pipe = {dev, cpi};
 		vpp::nameHandle(mip_.pipe, "LuminancePass:mip_.pipe");
 

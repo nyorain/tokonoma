@@ -1,5 +1,6 @@
 #include <tkn/function.hpp>
 #include <tkn/threadPool.hpp>
+#include <nytl/span.hpp>
 #include <ostream>
 #include <array>
 #include <future>
@@ -39,10 +40,9 @@ TEST(function) {
 		auto f4 = std::move(f3);
 		EXPECT(f4(), 72);
 		EXPECT(f3, false);
-		ERROR(f3(), std::bad_function_call);
 	}
 
-	EXPECT(callableDestructorCalled, 2);
+	EXPECT(callableDestructorCalled, 3);
 
 	// This should not compile since the function object is too large
 	// auto largeArray = std::array<float, 32>{};
@@ -78,7 +78,7 @@ TEST(functionView) {
 
 	callableDestructorCalled = 0u;
 	Callable c {};
-	EXPECT(callableDestructorCalled, 0); // from temporary
+	EXPECT(callableDestructorCalled, 0);
 
 	{
 		auto fv = tkn::FunctionView(c);
@@ -86,10 +86,57 @@ TEST(functionView) {
 		EXPECT(fv, true);
 	}
 
-	EXPECT(callableDestructorCalled, 0); // from temporary
+	EXPECT(callableDestructorCalled, 0);
 	EXPECT((tkn::FunctionView<void()>{}), false);
 }
 
+TEST(functionLifetime) {
+	callableDestructorCalled = 0u;
+	auto ptr = std::make_unique<Callable>();
+	EXPECT(callableDestructorCalled, 0);
+
+	{
+		auto f = tkn::Function([p = std::move(ptr)]{ return 1; });
+		EXPECT(callableDestructorCalled, 0);
+		EXPECT(f(), 1);
+		EXPECT(callableDestructorCalled, 0);
+	}
+
+	EXPECT(callableDestructorCalled, 1);
+}
+
 TEST(threadPool) {
+	tkn::ThreadPool tp(4u);
+	auto promise = tp.addPromised([]{ return 4u; });
+	EXPECT(promise.get(), 4u);
+
+	{
+		auto vec = std::vector<int>(64);
+		auto func = [&](std::vector<int>& values) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			values[3] = 2;
+			return values[7];
+		};
+
+		vec[7] = 42;
+		auto promise2 = tp.addPromised(func, vec);
+
+		auto vec2 = std::vector<int>(1024, -24);
+		auto func2 = [&](nytl::Span<const int> values) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			return values[1023];
+		};
+
+		auto promise3 = tp.addPromised(func2, nytl::Span<const int>(vec2));
+
+		EXPECT(promise2.get(), 42);
+		EXPECT(vec[3], 2);
+
+		EXPECT(promise3.get(), -24);
+
+	}
+}
+
+TEST(callable) {
 	// TODO
 }

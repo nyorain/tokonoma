@@ -137,7 +137,8 @@ PipelineState inferComputeState(const vpp::Device& dev, nytl::Span<const u32> sp
 			continue;
 		}
 
-		state.dss.emplace_back(dev.descriptorAllocator(), dsLayout);
+		auto& dsAlloc = ThreadState::instance(dev).dsAlloc();
+		state.dss.emplace_back(dsAlloc, dsLayout);
 	}
 
 	return state;
@@ -163,7 +164,7 @@ PipelineState inferGraphicsState(const vpp::Device& dev, nytl::Span<const u32> v
 	// descriptor set layouts
 	std::vector<std::vector<vk::DescriptorSetLayoutBinding>> bindings;
 	for(auto i = 0u; i < reflVert.descriptor_set_count; ++i) {
-		auto& set = reflFrag.descriptor_sets[i];
+		auto& set = reflVert.descriptor_sets[i];
 		resizeAtLeast(bindings, set.set + 1);
 
 		for(auto i = 0u; i < set.binding_count; ++i) {
@@ -192,7 +193,8 @@ PipelineState inferGraphicsState(const vpp::Device& dev, nytl::Span<const u32> v
 
 			resizeAtLeast(bindings[set.set], binding.binding + 1);
 			auto& info = bindings[set.set][binding.binding];
-			if(info.binding != 0u) {
+			if(info.stageFlags) { // was already seen before
+				dlg_assert(info.binding == binding.binding);
 				info.descriptorCount = std::max(info.descriptorCount, binding.count);
 				info.stageFlags |= vk::ShaderStageBits::fragment;
 				if(info.descriptorType != toVk(binding.descriptor_type)) {
@@ -282,6 +284,7 @@ ReloadablePipeline::ReloadablePipeline(const vpp::Device& dev,
 		stages_(std::move(stages)), fileWatcher_(&fswatch),
 		name_(std::move(name)) {
 
+	dlg_assert(!stages_.empty());
 	fileWatches_.reserve(stages.size());
 	for(auto& stage : stages_) {
 		auto resolved = ShaderCache::instance(dev).resolve(stage.file);
@@ -455,6 +458,8 @@ vpp::Pipeline ComputePipelineState::recreate(const vpp::Device& dev,
 	auto& stage = stages[0];
 	dlg_assert(stage.stage.stage == vk::ShaderStageBits::compute);
 
+	// NOTE: this is not threadsafe! First (async) creation must not overlap
+	// with a reload
 	if(!state.pipeLayout) {
 		state = inferComputeState(dev, stage.module.spv);
 	}
@@ -466,6 +471,7 @@ vpp::Pipeline ComputePipelineState::recreate(const vpp::Device& dev,
 	cpi.stage.module = stage.module.mod;
 	if(infoHandler) {
 		(*infoHandler)(cpi);
+		dlg_info("compHandler: {}", *(unsigned*) cpi.stage.pSpecializationInfo->pData);
 	}
 
 	auto cache = PipelineCache::instance(dev);
@@ -516,9 +522,14 @@ vpp::Pipeline GraphicsPipelineState::recreate(const vpp::Device& dev,
 	for(auto& stage : stages) {
 		program.stage({stage.module.mod, stage.stage.stage});
 
+		// TODO: support other stages here and in inferGraphicsState
 		if(stage.stage.stage == vk::ShaderStageBits::vertex) {
+			dlg_assert(vertSpv.empty());
+			dlg_assert(!stage.module.spv.empty());
 			vertSpv = stage.module.spv;
 		} else if(stage.stage.stage == vk::ShaderStageBits::fragment) {
+			dlg_assert(fragSpv.empty());
+			dlg_assert(!stage.module.spv.empty());
 			fragSpv = stage.module.spv;
 		} else {
 			dlg_error("Unexpected shader stage {}", (unsigned) stage.stage.stage);
@@ -529,6 +540,8 @@ vpp::Pipeline GraphicsPipelineState::recreate(const vpp::Device& dev,
 	dlg_assert(!vertSpv.empty());
 	dlg_assert(!fragSpv.empty());
 
+	// NOTE: this is not threadsafe! First (async) creation must not overlap
+	// with a reload
 	if(!state.pipeLayout) {
 		state = inferGraphicsState(dev, vertSpv, fragSpv);
 	}
@@ -548,6 +561,52 @@ void cmdBind(vk::CommandBuffer cb, const GraphicsPipelineState& state) {
 
 	cmdBindGraphics(cb, state.pipeState());
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, state.pipe());
+}
+
+// ThreadState
+class ThreadStateManager {
+public:
+	std::mutex mutex;
+	std::unordered_map<std::thread::id, ThreadState*> states;
+
+	static ThreadStateManager& instance() {
+		static ThreadStateManager ini;
+		return ini;
+	}
+};
+
+ThreadState& ThreadState::instance(const vpp::Device& dev) {
+	static thread_local ThreadState ini(dev, ThreadStateManager::instance());
+	return ini;
+}
+
+void ThreadState::finishInstance() {
+	auto& mgr = ThreadStateManager::instance();
+	auto lock = std::lock_guard(mgr.mutex);
+	for(auto& cache : mgr.states) {
+		cache.second->destroy();
+	}
+
+	mgr.states.clear();
+}
+
+ThreadState::ThreadState(const vpp::Device& dev, ThreadStateManager& mgr) :
+		dsAlloc_(dev) {
+	auto lock = std::lock_guard(mgr.mutex);
+	auto [it, emplaced] = mgr.states.try_emplace(std::this_thread::get_id(), this);
+	dlg_assert(emplaced);
+}
+
+ThreadState::~ThreadState() {
+	auto& mgr = ThreadStateManager::instance();
+	auto lock = std::lock_guard(mgr.mutex);
+	auto it = mgr.states.find(std::this_thread::get_id());
+	if(it == mgr.states.end()) {
+		dlg_error("~ThreadState: not present in manager list");
+		return;
+	}
+
+	mgr.states.erase(it);
 }
 
 } // namespace tkn

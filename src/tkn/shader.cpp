@@ -751,7 +751,7 @@ ShaderCache::CompiledShaderView ShaderCache::load(
 
 	auto newMod = vpp::ShaderModule(device(), spv);
 	auto compiled = CompiledShader{std::move(newMod), std::move(spv)};
-	auto [it, emplaced] = known.modules.try_emplace(known.hash, std::move(compiled));
+	auto [it, emplaced] = known.modules.try_emplace(hash, std::move(compiled));
 	dlg_assertm(emplaced, "Could not insert compiled shader module since it "
 		"already existed. Either this is a sha1 collision or another thread "
 		"compiled and inserted it at the same time as this one");
@@ -910,7 +910,9 @@ void PipelineCache::finish() {
 		srcCaches.push_back(cache.second);
 	}
 
-	vk::mergePipelineCaches(device_, mainCache_, srcCaches);
+	if(!srcCaches.empty()) {
+		vk::mergePipelineCaches(device_, mainCache_, srcCaches);
+	}
 	vpp::save(mainCache_, path);
 
 	caches_.clear();

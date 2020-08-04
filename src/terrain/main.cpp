@@ -5,6 +5,7 @@
 #include <tkn/render.hpp>
 #include <tkn/fswatch.hpp>
 #include <tkn/bits.hpp>
+#include <tkn/util.hpp>
 #include <tkn/scene/shape.hpp>
 
 #include <vpp/commandAllocator.hpp>
@@ -48,8 +49,9 @@ public:
 
 		// indirect write pipe
 		auto infoHandler = [](vk::ComputePipelineCreateInfo& cpi) {
-			static auto spec = tkn::ComputeGroupSizeSpec(maxTriCount);
+			static tkn::ComputeGroupSizeSpec spec(updateWorkGroupSize);
 			cpi.stage.pSpecializationInfo = &spec.spec;
+			dlg_info("compHandler0: {}", *(unsigned*) cpi.stage.pSpecializationInfo->pData);
 		};
 
 		indirectWritePipe_ = {dev, "terrain/writeIndirect.comp", fswatch,
@@ -92,7 +94,7 @@ public:
 		cmds.draw.firstVertex = 0;
 		cmds.draw.instanceCount = numTris;
 		cmds.draw.vertexCount = 3; // triangle (list)
-		cmds.dispatch.x = numTris;
+		cmds.dispatch.x = tkn::ceilDivide(numTris, updateWorkGroupSize);;
 		cmds.dispatch.y = 1;
 		cmds.dispatch.z = 1;
 
@@ -132,6 +134,8 @@ public:
 		barrier0.dstAccessMask = vk::AccessBits::transferWrite;
 
 		vk::BufferMemoryBarrier barrier1;
+		barrier1.buffer = keys1_.buffer();
+		barrier1.offset = keys1_.offset();
 		barrier1.size = keys1_.size();
 		barrier1.srcAccessMask = vk::AccessBits::shaderRead |
 			vk::AccessBits::shaderWrite;
@@ -160,14 +164,19 @@ public:
 		// we could alternatively use ping-ponging and do 2 steps per
 		// frame or just use 2 completely independent command buffers.
 		// May be more efficient but harder to sync.
-		auto keys1 = vpp::BufferSpan(keys1_.buffer(), keys1_.size(), keys1_.offset());
-		tkn::cmdCopyBuffer(cb, keys1, keys0_);
+		tkn::cmdCopyBuffer(cb, keys1_, keys0_);
 
 		vk::BufferMemoryBarrier barrier0;
+		barrier0.buffer = keys0_.buffer();
+		barrier0.offset = keys0_.offset();
+		barrier0.size = keys0_.size();
 		barrier0.srcAccessMask = vk::AccessBits::transferWrite;
 		barrier0.dstAccessMask = vk::AccessBits::shaderRead;
 
 		vk::BufferMemoryBarrier barrier1;
+		barrier1.buffer = keys1_.buffer();
+		barrier1.offset = keys1_.offset();
+		barrier1.size = keys1_.size();
 		barrier1.srcAccessMask = vk::AccessBits::transferRead;
 		barrier1.dstAccessMask = vk::AccessBits::shaderWrite;
 
@@ -190,6 +199,8 @@ public:
 
 	// Expects the drawing graphics pipeline to be bound
 	void draw(vk::CommandBuffer cb) {
+		vk::cmdBindVertexBuffers(cb, 0, {{keys0_.buffer().vkHandle()}},
+			{{keys0_.offset() + 8}}); // skip counter and padding
 		vk::cmdDrawIndirect(cb, dispatchBuf_.buffer(), dispatchBuf_.offset(), 1, 0);
 	}
 
@@ -198,7 +209,15 @@ public:
 	}
 
 	bool updateDevice() {
-		return indirectWritePipe_.updateDevice();
+		if(indirectWritePipe_.updateDevice()) {
+			// TODO: only do this the first time
+			vpp::DescriptorSetUpdate dsu(indirectWritePipe_.pipeState().dss[0]);
+			dsu.storage({{{dispatchBuf_}}});
+			dsu.storage({{{keys1_}}});
+			return true;
+		}
+
+		return false;
 	}
 
 	bool loaded() const {
@@ -261,7 +280,8 @@ public:
 			gpi.depthStencil.depthTestEnable = true;
 			gpi.depthStencil.depthWriteEnable = true;
 			gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
-			gpi.rasterization.cullMode = vk::CullModeBits::back;
+			// gpi.rasterization.cullMode = vk::CullModeBits::back;
+			gpi.rasterization.cullMode = vk::CullModeBits::none;
 			gpi.rasterization.polygonMode = vk::PolygonMode::fill;
 			gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
 			gpi.vertex = Subdivider::vertexInfo();
@@ -274,6 +294,7 @@ public:
 		auto compHandler = [](vk::ComputePipelineCreateInfo& cpi) {
 			static tkn::ComputeGroupSizeSpec spec(Subdivider::updateWorkGroupSize);
 			cpi.stage.pSpecializationInfo = &spec.spec;
+			dlg_info("compHandler0: {}", *(unsigned*) cpi.stage.pSpecializationInfo->pData);
 		};
 
 		updatePipe_ = {dev, "terrain/update.comp", fileWatcher_, {},
@@ -324,7 +345,10 @@ public:
 		Base::update(dt);
 
 		cam_.update(swaDisplay(), dt);
+
+		fileWatcher_.update();
 		renderPipe_.update();
+		updatePipe_.update();
 		subd_.update();
 
 		Base::scheduleRedraw();
@@ -344,8 +368,9 @@ public:
 		if(renderPipe_.updateDevice() ||
 				updatePipe_.updateDevice() ||
 				subd_.updateDevice()) {
-			// don't bother if not all pipes are loaded yet
+
 			if(pipesLoaded()) {
+				dlg_info("update dss");
 				Base::scheduleRerecord();
 
 				// TODO: only do this the first time.
@@ -363,6 +388,8 @@ public:
 				dsuUpdate.storage({{{indices_}}});
 				dsuUpdate.storage({{{subd_.keys0()}}});
 				dsuUpdate.storage({{{subd_.keys1()}}});
+
+				vpp::apply({{dsuRender, dsuUpdate}});
 			}
 		}
 	}
@@ -379,7 +406,7 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		if(!renderPipe_.pipe() || !subd_.loaded()) {
+		if(!pipesLoaded()) {
 			return;
 		}
 

@@ -171,6 +171,9 @@ struct ComputeGroupSizeSpec {
 	ComputeGroupSizeSpec(Args&&... args)
 		: ComputeGroupSizeSpec({u32(args)...}, iotaArray(0)) {}
 
+	ComputeGroupSizeSpec(ComputeGroupSizeSpec&&) = delete;
+	ComputeGroupSizeSpec& operator=(ComputeGroupSizeSpec&&) = delete;
+
 	vk::SpecializationInfo spec;
 
 	// private

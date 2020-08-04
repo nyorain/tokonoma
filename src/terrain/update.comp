@@ -1,0 +1,71 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : require
+#include "subd.glsl"
+#include "displace.glsl"
+
+layout(local_size_x_id = 0) in;
+
+layout(set = 0, binding = 0, row_major) uniform Scene {
+	mat4 _vp;
+	vec3 pos;
+} scene;
+
+layout(set = 0, binding = 1) buffer Vertices { vec4 vertices[]; };
+layout(set = 0, binding = 2) buffer Indices { uint indices[]; };
+
+layout(set = 0, binding = 3) readonly buffer OldKeys {
+	uint counter;
+	float _pad;
+	uvec2 keys[];
+} old;
+
+layout(set = 0, binding = 4) buffer NewKeys {
+	uint counter;
+	uint _pad;
+	uvec2 keys[];
+} new;
+
+void main() {
+	uint id = gl_GlobalInvocationID.x;
+	if(id >= old.counter) {
+		return;
+	}
+
+	uvec2 oldkey = old.keys[id];
+	uint key = oldkey.x;
+	uint ini = oldkey.y;
+
+	uint klod = findMSB(key);
+
+	vec3 v_out[3];
+	vec3 v_in[3] = vec3[3](
+		vertices[indices[3 * ini + 0]].xyz,
+		vertices[indices[3 * ini + 1]].xyz,
+		vertices[indices[3 * ini + 2]].xyz
+	);
+
+	uint dlod = uint(desiredLOD(scene.pos, v_in, key, ini, v_out));
+	uint plod = key == 1u ? dlod : uint(desiredLOD(scene.pos,
+		v_in, key >> 1, ini, v_out));
+
+	// if(scene.update == 0) {
+	// new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
+	// return;
+	// }
+
+	if(klod < dlod) {
+		// subdivide
+		uint idx = atomicAdd(new.counter, 2);
+		new.keys[idx + 0] = uvec2((key << 1u) | 0u, ini);
+		new.keys[idx + 1] = uvec2((key << 1u) | 1u, ini);
+	} else if(klod < (plod + 1)) {
+		// just write
+		new.keys[atomicAdd(new.counter, 1)] = uvec2(key, ini);
+	} else {  // merge
+		if((key & 1u) == 1u) {
+			key = (key == 1) ? key : key >> 1u; // get parent
+			new.keys[atomicAdd(new.counter, 1u)] = uvec2(key, ini);
+		}
+	}
+}
