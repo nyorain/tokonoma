@@ -471,7 +471,6 @@ vpp::Pipeline ComputePipelineState::recreate(const vpp::Device& dev,
 	cpi.stage.module = stage.module.mod;
 	if(infoHandler) {
 		(*infoHandler)(cpi);
-		dlg_info("compHandler: {}", *(unsigned*) cpi.stage.pSpecializationInfo->pData);
 	}
 
 	auto cache = PipelineCache::instance(dev);

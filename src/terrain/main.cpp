@@ -15,6 +15,7 @@
 #include <vpp/image.hpp>
 #include <vpp/bufferOps.hpp>
 #include <vpp/sharedBuffer.hpp>
+#include <vpp/formats.hpp>
 #include <vpp/pipeline.hpp>
 #include <vpp/vk.hpp>
 
@@ -51,7 +52,6 @@ public:
 		auto infoHandler = [](vk::ComputePipelineCreateInfo& cpi) {
 			static tkn::ComputeGroupSizeSpec spec(updateWorkGroupSize);
 			cpi.stage.pSpecializationInfo = &spec.spec;
-			dlg_info("compHandler0: {}", *(unsigned*) cpi.stage.pSpecializationInfo->pData);
 		};
 
 		indirectWritePipe_ = {dev, "terrain/writeIndirect.comp", fswatch,
@@ -266,6 +266,8 @@ public:
 		nytl::Vec3f viewPos;
 	};
 
+	static constexpr vk::Extent2D heightmapSize = {2048, 2048};
+
 public:
 	bool init(nytl::Span<const char*> args) override {
 		if(!Base::init(args)) {
@@ -290,17 +292,31 @@ public:
 		renderPipe_ = {dev, {"terrain/terrain.vert"}, {"terrain/terrain.frag"},
 			fileWatcher_, tkn::makeUniqueCallable(gfxHandler)};
 
-		// compute pipeline
-		auto compHandler = [](vk::ComputePipelineCreateInfo& cpi) {
+		// update pipeline
+		auto updatePipeHandler = [](vk::ComputePipelineCreateInfo& cpi) {
 			static tkn::ComputeGroupSizeSpec spec(Subdivider::updateWorkGroupSize);
 			cpi.stage.pSpecializationInfo = &spec.spec;
-			dlg_info("compHandler0: {}", *(unsigned*) cpi.stage.pSpecializationInfo->pData);
 		};
 
 		updatePipe_ = {dev, "terrain/update.comp", fileWatcher_, {},
-			tkn::makeUniqueCallable(compHandler)};
+			tkn::makeUniqueCallable(updatePipeHandler)};
 
-		// data
+		// generation pipeline
+		genSem_ = vpp::Semaphore{dev};
+		genCb_ = dev.commandAllocator().get(dev.queueSubmitter().queue().family(),
+			vk::CommandPoolCreateBits::resetCommandBuffer);
+		genPipe_ = {dev, "terrain/gen.comp", fileWatcher_};
+
+		// heightmap
+		auto heightmapInfo = vpp::ViewableImageCreateInfo(
+			vk::Format::r32Sfloat,
+			vk::ImageAspectBits::color, heightmapSize,
+			vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled);
+
+		heightmap_ = {dev.devMemAllocator(), heightmapInfo, dev.deviceMemoryTypes()};
+		linearSampler_ = {dev, tkn::linearSamplerInfo()};
+
+		// vertex & index data
 		auto shape = tkn::generateQuad(
 			{0.f, 0.f, 0.f},
 			{1.f, 0.f, 0.f},
@@ -349,6 +365,7 @@ public:
 		fileWatcher_.update();
 		renderPipe_.update();
 		updatePipe_.update();
+		genPipe_.update();
 		subd_.update();
 
 		Base::scheduleRedraw();
@@ -381,16 +398,31 @@ public:
 				dsuRender.uniform({{{ubo_}}});
 				dsuRender.storage({{{vertices_}}});
 				dsuRender.storage({{{indices_}}});
+				dsuRender.imageSampler({{linearSampler_.vkHandle(),
+					heightmap_.imageView(),
+					vk::ImageLayout::shaderReadOnlyOptimal}});
 
 				vpp::DescriptorSetUpdate dsuUpdate(updatePipe_.pipeState().dss[0]);
 				dsuUpdate.uniform({{{ubo_}}});
 				dsuUpdate.storage({{{vertices_}}});
 				dsuUpdate.storage({{{indices_}}});
+				dsuUpdate.imageSampler({{linearSampler_.vkHandle(),
+					heightmap_.imageView(),
+					vk::ImageLayout::shaderReadOnlyOptimal}});
 				dsuUpdate.storage({{{subd_.keys0()}}});
 				dsuUpdate.storage({{{subd_.keys1()}}});
 
 				vpp::apply({{dsuRender, dsuUpdate}});
 			}
+		}
+
+		if(genPipe_.updateDevice()) {
+			// TODO: only do this first time
+			vpp::DescriptorSetUpdate dsuGen(genPipe_.pipeState().dss[0]);
+			dsuGen.storage({{{}, heightmap_.imageView(), vk::ImageLayout::general}});
+			dsuGen.apply();
+
+			generateHeightmap();
 		}
 	}
 
@@ -417,6 +449,7 @@ public:
 	bool pipesLoaded() const {
 		return bool(renderPipe_.pipe()) &&
 			bool(updatePipe_.pipe()) &&
+			bool(genPipe_.pipe()) &&
 			subd_.loaded();
 	}
 
@@ -428,6 +461,51 @@ public:
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
 		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
+	}
+
+	void generateHeightmap() {
+		// record
+		vk::beginCommandBuffer(genCb_, {});
+
+		vk::ImageMemoryBarrier barrier;
+		barrier.image = heightmap_.image();
+		barrier.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+		barrier.oldLayout = vk::ImageLayout::undefined;
+		barrier.newLayout = vk::ImageLayout::general;
+		barrier.srcAccessMask = {};
+		barrier.dstAccessMask = vk::AccessBits::shaderWrite;
+
+		vk::cmdPipelineBarrier(genCb_, vk::PipelineStageBits::topOfPipe,
+			vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
+
+		tkn::cmdBind(genCb_, genPipe_);
+		auto dx = tkn::ceilDivide(heightmapSize.width, 8);
+		auto dy = tkn::ceilDivide(heightmapSize.height, 8);
+		vk::cmdDispatch(genCb_, dx, dy, 1);
+
+		barrier.oldLayout = vk::ImageLayout::general;
+		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+		barrier.srcAccessMask = vk::AccessBits::shaderWrite;
+		barrier.dstAccessMask = vk::AccessBits::shaderRead;
+
+		vk::cmdPipelineBarrier(genCb_, vk::PipelineStageBits::computeShader,
+			vk::PipelineStageBits::allCommands, {}, {}, {}, {{barrier}});
+
+		vk::endCommandBuffer(genCb_);
+
+		// submit work
+		vk::SubmitInfo si;
+		si.pCommandBuffers = &genCb_.vkHandle();
+		si.commandBufferCount = 1u;
+		si.signalSemaphoreCount = 1u;
+		si.pSignalSemaphores = &genSem_.vkHandle();;
+
+		auto& qs = vkDevice().queueSubmitter();
+		qs.add(si);
+
+		addSemaphore(genSem_, vk::PipelineStageBits::computeShader |
+			vk::PipelineStageBits::vertexShader |
+			vk::PipelineStageBits::fragmentShader);
 	}
 
 	const char* name() const override { return "terrain"; }
@@ -445,7 +523,12 @@ protected:
 	vpp::SubBuffer indices_;
 
 	vpp::MemoryMapView uboMap_;
-	// vpp::ViewableImage heightmap_; // TODO
+
+	vpp::Sampler linearSampler_;
+	vpp::ViewableImage heightmap_;
+	tkn::ComputePipelineState genPipe_;
+	vpp::CommandBuffer genCb_;
+	vpp::Semaphore genSem_;
 
 	Subdivider subd_;
 };

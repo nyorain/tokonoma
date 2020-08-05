@@ -2,7 +2,6 @@
 
 #extension GL_GOOGLE_include_directive : require
 #include "subd.glsl"
-#include "displace.glsl"
 
 layout(location = 0) in uvec2 inKey;
 layout(location = 0) out vec3 outPos;
@@ -15,6 +14,9 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 
 layout(set = 0, binding = 1) buffer Vertices { vec4 vertices[]; };
 layout(set = 0, binding = 2) buffer Indices { uint indices[]; };
+
+layout(set = 0, binding = 3) uniform sampler2D heightmap;
+#include "displace.glsl"
 
 void main() {
 	uint idx = inKey.y;

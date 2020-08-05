@@ -1,0 +1,53 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+#include "noise.glsl"
+#include "snoise.glsl"
+
+layout(set = 0, binding = 0, r32f) writeonly uniform image2D heightmap;
+
+float vfbm(vec2 st) {
+	const float lacunarity = 1.65;
+	const float gain = 0.25;
+
+	float sum = 0.f;
+	float ampSum = 0.f;
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	for(int i = 0; i < 5; ++i) {
+		sum += amp * voronoiNoise(5 * i + mod * st);
+		// sum += amp * (voronoiNoise2(mod * st)) * gradientNoise(2 * mod * st);
+		// sum += amp * gradientNoise( mod * st);
+	
+		ampSum += amp;
+		mod *= lacunarity;
+		amp *= gain;
+		st = lacunarity * st;
+	}
+
+	return sum / ampSum;
+}
+
+float smootherstep(float edge0, float edge1, float x) {
+	x = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+	return x * x * x * (x * (x * 6 - 15) + 10);
+}
+
+void main() {
+	const uvec2 id = gl_GlobalInvocationID.xy;
+	const ivec2 size = imageSize(heightmap);
+	if(id.x >= size.x || id.y >= size.y) {
+		return;
+	}
+
+	vec2 normed = (id + 0.5) / size;
+	normed = 2 * normed - 1;
+
+	float norm = length(normed);
+	float strength = smootherstep(0, 1.0, 1.0 - norm);
+
+	float height = strength * (vfbm(normed) - 0.1);
+	imageStore(heightmap, ivec2(id), vec4(height));
+}

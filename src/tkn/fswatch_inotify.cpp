@@ -109,6 +109,7 @@ void FileWatcher::update() {
 
 			auto& entry = it->second;
 			impl_->changed.insert(entry.ids.begin(), entry.ids.end());
+			dlg_debug("Detected that file '{}' changed", it->second.path);
 
 			// Some editors delete the file instead of just writing it.
 			// In that case our watch got destroyed and we have to recreate it.

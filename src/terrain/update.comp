@@ -2,7 +2,6 @@
 
 #extension GL_GOOGLE_include_directive : require
 #include "subd.glsl"
-#include "displace.glsl"
 
 layout(local_size_x_id = 0) in;
 
@@ -14,13 +13,16 @@ layout(set = 0, binding = 0, row_major) uniform Scene {
 layout(set = 0, binding = 1) buffer Vertices { vec4 vertices[]; };
 layout(set = 0, binding = 2) buffer Indices { uint indices[]; };
 
-layout(set = 0, binding = 3) readonly buffer OldKeys {
+layout(set = 0, binding = 3) uniform sampler2D heightmap;
+#include "displace.glsl"
+
+layout(set = 0, binding = 4) readonly buffer OldKeys {
 	uint counter;
 	float _pad;
 	uvec2 keys[];
 } old;
 
-layout(set = 0, binding = 4) buffer NewKeys {
+layout(set = 0, binding = 5) buffer NewKeys {
 	uint counter;
 	uint _pad;
 	uvec2 keys[];
