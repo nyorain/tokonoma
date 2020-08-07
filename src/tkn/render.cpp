@@ -276,14 +276,28 @@ SyncScope operator|(SyncScope a, SyncScope b) {
 	return a |= b;
 }
 
-vk::SamplerCreateInfo linearSamplerInfo() {
+vk::SamplerCreateInfo linearSamplerInfo(vk::SamplerAddressMode mode) {
 	vk::SamplerCreateInfo sci;
-	sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
-	sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
-	sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
+	sci.addressModeU = mode;
+	sci.addressModeV = mode;
+	sci.addressModeW = mode;
 	sci.magFilter = vk::Filter::linear;
 	sci.minFilter = vk::Filter::linear;
 	sci.mipmapMode = vk::SamplerMipmapMode::linear;
+	sci.minLod = 0.0;
+	sci.maxLod = 100.0;
+	sci.anisotropyEnable = false;
+	return sci;
+}
+
+vk::SamplerCreateInfo nearestSamplerInfo(vk::SamplerAddressMode mode) {
+	vk::SamplerCreateInfo sci;
+	sci.addressModeU = mode;
+	sci.addressModeV = mode;
+	sci.addressModeW = mode;
+	sci.magFilter = vk::Filter::nearest;
+	sci.minFilter = vk::Filter::nearest;
+	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
 	sci.minLod = 0.0;
 	sci.maxLod = 100.0;
 	sci.anisotropyEnable = false;

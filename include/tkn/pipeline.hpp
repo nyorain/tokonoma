@@ -17,17 +17,13 @@
 #include <deque>
 #include <array>
 
-// IDEA: make descriptor updating easier, automatically applied
-// 	in updateDevice or the PipelineState classes.
 // TODO: add mechanism for descriptor sharing
 // TODO: add general mechnism for callbacks executed when a new pipe is
 //   loaded?
 
 namespace tkn {
 
-template<typename Sig> class Callable;
-template<typename Sig> using UniqueCallable = std::unique_ptr<Callable<Sig>>;
-
+struct SpecializationInfo;
 constexpr auto shaderEntryPointName = "main";
 
 class ReloadablePipeline {
@@ -43,17 +39,22 @@ public:
 		ShaderCache::CompiledShaderView module;
 	};
 
+	struct CreatorInfo {
+		const vpp::Device& dev;
+		nytl::Span<const CompiledStage> stages;
+		std::string_view pipeName;
+	};
+
 	// Function that creates the pipeline from the set of loaded shader
 	// stages. Note that this function might be called from a different
 	// thread. In case of error, this function can simply throw.
-	using Creator = Callable<vpp::Pipeline(const vpp::Device&,
-		nytl::Span<const CompiledStage>) const>;
+	using Creator = vpp::Pipeline(const CreatorInfo&) const;
 
 public:
 	ReloadablePipeline() = default;
 	ReloadablePipeline(const vpp::Device& dev, std::vector<Stage> stages,
-		std::unique_ptr<Creator> creator, FileWatcher&,
-		std::string name = {}, bool async = true);
+		UniqueCallable<Creator> creator, FileWatcher&,
+		bool async = true, std::string name = {});
 	~ReloadablePipeline();
 
 	ReloadablePipeline(ReloadablePipeline&& rhs) = default;
@@ -80,11 +81,8 @@ public:
 	const std::vector<Stage>& stages() const { return stages_; }
 	bool updatePending() const { return newPipe_; }
 
-	// TODO: allow changing name later on. It must be done in main thread
-	// anyways since string can't be referenced through a move.
-	// Add a general free-func `nameHandle` overload?
-	// remove name parameter from constructor?
-	const std::string& name() const { return name_; }
+	void name(std::string newName);
+	const auto& name() const { return name_; }
 
 private:
 	struct CreateInfo {
@@ -98,12 +96,17 @@ private:
 	};
 
 	void updateWatches(std::vector<std::string> newIncludes);
+
+	// Important that recreate gets its own string instead of referencing
+	// this->name_, since that is not immutable (and moving it may invalidate
+	// references, e.g. due to small string optimization, allowed by C++).
 	static CreateInfo recreate(const vpp::Device& dev,
-		nytl::Span<const Stage> stages, const Creator& creator);
+		nytl::Span<const Stage> stages, const Callable<Creator>& creator,
+		std::string name);
 
 private:
 	const vpp::Device* dev_ {}; // need to store explicitly for async init
-	std::unique_ptr<Creator> creator_;
+	UniqueCallable<Creator> creator_;
 	vpp::Pipeline pipe_;
 	vpp::Pipeline newPipe_;
 
@@ -115,35 +118,148 @@ private:
 	std::string name_;
 };
 
-struct PipelineState {
-	std::deque<vpp::TrDsLayout> dsLayouts;
-	vpp::PipelineLayout pipeLayout;
-	std::vector<vpp::TrDs> dss;
+struct LayoutedDs {
+	std::vector<vk::DescriptorSetLayoutBinding> bindings;
+	vpp::TrDsLayout layout;
+	vpp::TrDs ds;
 };
 
-// TODO: allow better sampler mapping. Callback function or something
-PipelineState inferComputeState(const vpp::Device& dev, nytl::Span<const u32> spv,
-	vk::Sampler sampler = {});
-PipelineState inferGraphicsState(const vpp::Device& dev, nytl::Span<const u32> vert,
-	nytl::Span<const u32> frag, vk::Sampler sampler = {});
+struct PipeLayoutDescriptors {
+	vpp::PipelineLayout pipeLayout;
+	std::deque<LayoutedDs> descriptors;
+};
 
-void cmdBindGraphics(vk::CommandBuffer cb, const PipelineState& state);
-void cmdBindCompute(vk::CommandBuffer, const PipelineState& state);
-
-// TODO: add name parameters
-class ComputePipelineState {
+// TODO: filter out redundant updates
+// TODO: clean up implementation.
+// 	Maybe always use abstract updates and only resolve in 'update'?
+// TODO: support all descriptor types
+class DescriptorUpdater {
 public:
-	using InfoHandler = Callable<void(vk::ComputePipelineCreateInfo&) const>;
+	// Does *not* apply updates in its destructor
+	DescriptorUpdater() = default;
+	~DescriptorUpdater() = default;
+
+	DescriptorUpdater(DescriptorUpdater&&) = default;
+	DescriptorUpdater& operator=(DescriptorUpdater&&) = default;
+
+	DescriptorUpdater(const DescriptorUpdater&) = delete;
+	DescriptorUpdater& operator=(const DescriptorUpdater&) = delete;
+
+	void buffer(std::vector<vk::DescriptorBufferInfo>,
+		std::optional<vk::DescriptorType> type,
+		unsigned startElem = 0u);
+	void image(std::vector<vk::DescriptorImageInfo>,
+		std::optional<vk::DescriptorType> type,
+		unsigned startElem = 0u);
+
+	void buffer(vpp::BufferSpan span, std::optional<vk::DescriptorType> type);
+	void image(vk::ImageView view, vk::ImageLayout, vk::Sampler,
+		std::optional<vk::DescriptorType>);
+
+	void uniformBuffer(vpp::BufferSpan span);
+	void storageBuffer(vpp::BufferSpan span);
+	void storageImage(vk::ImageView view,
+		vk::ImageLayout = vk::ImageLayout::general);
+	void sampledImage(vk::ImageView view,
+		vk::ImageLayout = vk::ImageLayout::shaderReadOnlyOptimal);
+	void combinedImageSampler(vk::ImageView view,
+		vk::ImageLayout = vk::ImageLayout::shaderReadOnlyOptimal,
+		vk::Sampler sampler = {});
+	void inputAttachment(vk::ImageView view,
+		vk::ImageLayout = vk::ImageLayout::shaderReadOnlyOptimal);
+	void sampler(vk::Sampler sampler);
+
+	void set(vpp::BufferSpan span);
+	void set(vk::ImageView view,
+		vk::ImageLayout = vk::ImageLayout::undefined,
+		vk::Sampler = {});
+	void set(const vpp::ViewableImage&,
+		vk::ImageLayout = vk::ImageLayout::undefined,
+		vk::Sampler = {});
+	void set(vk::Sampler);
+
+	template<typename... Args>
+	void operator()(const Args&... args) {
+		set(args...);
+	}
+
+	void seek(unsigned set, unsigned binding);
+	void skip(unsigned inc = 1u);
+	void nextSet(unsigned inc = 1u);
+
+	/// Returns whether an update was performed.
+	/// Simply does nothing when no updates are queued.
+	bool apply();
+
+	void init(const std::deque<LayoutedDs>& dss);
+	bool initialized() const { return sets_; }
+
+protected:
+	struct AbstractUpdate {
+		unsigned set;
+		unsigned binding; // may go beyond set, into next set
+		unsigned startElem {};
+		std::variant<
+			nytl::Span<vk::DescriptorBufferInfo>,
+			nytl::Span<vk::DescriptorImageInfo>> data;
+		std::optional<vk::DescriptorType> as;
+	};
+
+	std::vector<AbstractUpdate> abstractUpdates_;
+	std::vector<vk::WriteDescriptorSet> writes_;
+
+	// double vector to avoid reference (in writes_) invalidation
+	// some values must be stored continuesly, so deque doesnt work
+	std::vector<std::vector<vk::DescriptorBufferInfo>> buffers_;
+	std::vector<std::vector<vk::BufferView>> views_;
+	std::vector<std::vector<vk::DescriptorImageInfo>> images_;
+
+	unsigned int currentBinding_ = 0;
+	unsigned int currentSet_ = 0;
+	const std::deque<LayoutedDs>* sets_ {};
+};
+
+using SamplerProvider = tkn::Callable<const vk::Sampler*(unsigned set, unsigned binding) const>;
+
+PipeLayoutDescriptors inferComputeState(const vpp::Device& dev, nytl::Span<const u32> spv,
+	vpp::DescriptorAllocator* dsAlloc = nullptr,
+	const SamplerProvider* samplers = {});
+PipeLayoutDescriptors inferGraphicsState(const vpp::Device& dev, nytl::Span<const u32> vert,
+	nytl::Span<const u32> frag, vpp::DescriptorAllocator* dsAlloc = nullptr,
+	const SamplerProvider* samplers = {});
+void nameHandle(const PipeLayoutDescriptors&, std::string_view name);
+
+void cmdBindGraphics(vk::CommandBuffer cb, const PipeLayoutDescriptors& state);
+void cmdBindCompute(vk::CommandBuffer, const PipeLayoutDescriptors& state);
+
+// ManagedPipelines
+struct ComputePipeInfoProvider {
+	static std::unique_ptr<ComputePipeInfoProvider> create(vk::Sampler);
+	static std::unique_ptr<ComputePipeInfoProvider> create(
+		tkn::SpecializationInfo, vk::Sampler sampler = {});
+
+	virtual ~ComputePipeInfoProvider() = default;
+	virtual void fill(vk::ComputePipelineCreateInfo&) const {}
+	virtual const vk::Sampler* samplers(unsigned set, unsigned binding) const {
+		(void) set; (void) binding;
+		return {};
+	}
+};
+
+class ManagedComputePipe {
+public:
+	using InfoProvider = ComputePipeInfoProvider;
 
 public:
-	ComputePipelineState() = default;
-	ComputePipelineState(const vpp::Device&, std::string shaderPath,
+	ManagedComputePipe() = default;
+	ManagedComputePipe(const vpp::Device&, std::string shaderPath,
 		tkn::FileWatcher&, std::string preamble = {},
-		std::unique_ptr<InfoHandler> infoHandler = {}, bool async = true);
+		std::unique_ptr<InfoProvider> provider = {}, bool async = true,
+		std::string name = {});
 
 	void reload() { pipe_.reload(); }
 	void update() { pipe_.update(); }
-	bool updateDevice() { return pipe_.updateDevice(); }
+	bool updateDevice();
 
 	auto& pipeState() { return *state_; }
 	const auto& pipeState() const { return *state_; }
@@ -152,34 +268,48 @@ public:
 	vk::Pipeline pipe() const { return pipe_.pipe(); }
 	vk::PipelineLayout pipeLayout() const { return state_->pipeLayout; }
 
-protected:
-	static vpp::Pipeline recreate(const vpp::Device& dev,
-		nytl::Span<const ReloadablePipeline::CompiledStage> stages,
-		PipelineState& state, const InfoHandler* infoHandler);
+	auto& dsu() { return updater_; }
 
-	std::unique_ptr<PipelineState> state_;
-	std::unique_ptr<InfoHandler> infoHandler_;
+protected:
+	static vpp::Pipeline recreate(const ReloadablePipeline::CreatorInfo& info,
+		PipeLayoutDescriptors& state, const InfoProvider* infoHandler);
+
+	std::unique_ptr<PipeLayoutDescriptors> state_;
+	std::unique_ptr<InfoProvider> infoProvider_;
 	ReloadablePipeline pipe_;
+	DescriptorUpdater updater_;
 };
 
-class GraphicsPipelineState {
-public:
-	using InfoHandler = Callable<void(vpp::GraphicsPipelineInfo&) const>;
+struct GraphicsPipeInfoProvider {
+	static std::unique_ptr<GraphicsPipeInfoProvider> create(
+		vpp::GraphicsPipelineInfo info, vk::Sampler sampler);
 
+	virtual ~GraphicsPipeInfoProvider() = default;
+	virtual void fill(vpp::GraphicsPipelineInfo&) const = 0;
+	virtual const vk::Sampler* samplers(unsigned set, unsigned binding) const {
+		(void) set; (void) binding;
+		return {};
+	}
+};
+
+class ManagedGraphicsPipe {
+public:
+	using InfoProvider = GraphicsPipeInfoProvider;
 	struct StageInfo {
 		std::string path;
 		std::string preamble {};
 	};
 
 public:
-	GraphicsPipelineState() = default;
-	GraphicsPipelineState(const vpp::Device&,
+	ManagedGraphicsPipe() = default;
+	ManagedGraphicsPipe(const vpp::Device&,
 		StageInfo vert, StageInfo frag, tkn::FileWatcher&,
-		std::unique_ptr<InfoHandler>, bool async = true);
+		std::unique_ptr<InfoProvider>, bool async = true,
+		std::string name = {});
 
 	void reload() { pipe_.reload(); }
 	void update() { pipe_.update(); }
-	bool updateDevice() { return pipe_.updateDevice(); }
+	bool updateDevice();
 
 	auto& pipeState() { return *state_; }
 	const auto& pipeState() const { return *state_; }
@@ -188,18 +318,20 @@ public:
 	vk::Pipeline pipe() const { return pipe_.pipe(); }
 	vk::PipelineLayout pipeLayout() const { return state_->pipeLayout; }
 
-protected:
-	static vpp::Pipeline recreate(const vpp::Device& dev,
-		nytl::Span<const ReloadablePipeline::CompiledStage> stages,
-		PipelineState& state, const InfoHandler& infoHandler);
+	auto& dsu() { return updater_; }
 
-	std::unique_ptr<PipelineState> state_;
-	std::unique_ptr<InfoHandler> infoHandler_;
+protected:
+	static vpp::Pipeline recreate(const ReloadablePipeline::CreatorInfo& info,
+		PipeLayoutDescriptors& state, const InfoProvider& provider);
+
+	std::unique_ptr<PipeLayoutDescriptors> state_;
+	std::unique_ptr<InfoProvider> infoProvider_;
 	ReloadablePipeline pipe_;
+	DescriptorUpdater updater_;
 };
 
-void cmdBind(vk::CommandBuffer cb, const ComputePipelineState&);
-void cmdBind(vk::CommandBuffer cb, const GraphicsPipelineState&);
+void cmdBind(vk::CommandBuffer cb, const ManagedComputePipe&);
+void cmdBind(vk::CommandBuffer cb, const ManagedGraphicsPipe&);
 
 class ThreadStateManager;
 class ThreadState {

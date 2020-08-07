@@ -140,18 +140,47 @@ private:
 template<typename F>
 CallableImpl(F) -> CallableImpl<typename nytl::FunctionTraits<F>::Signature, F>;
 
-// TODO: make this a small wrapper class that just internally allocates.
-template<typename Sig> using UniqueCallable = std::unique_ptr<Callable<Sig>>;
+// UniqueCallable: allocating wrapper around CallableImpl.
+// Calling a UniqueCallable object should (given that the compiler optimizes
+// everything as far as possible) just have the overhead of one additional
+// load and a function pointer call.
+template<typename Sig> class UniqueCallable;
 
-template<typename Sig, typename F>
-UniqueCallable<Sig> makeUniqueCallable(F func) {
-    return std::make_unique<CallableImpl<Sig, F>>(std::move(func));
-}
+template<typename Ret, typename... Args>
+class UniqueCallable<Ret(Args...)> :
+		public std::unique_ptr<Callable<Ret(Args...)>> {
+public:
+	using Sig = Ret(Args...);
+	UniqueCallable() = default;
 
-template<typename F>
-auto makeUniqueCallable(F func) {
-	using Sig = typename nytl::FunctionTraits<F>::Signature;
-    return makeUniqueCallable<Sig, F>(std::move(func));
-}
+	template<typename F>
+	UniqueCallable(F f) {
+		auto& ptr = static_cast<std::unique_ptr<Callable<Ret(Args...)>>&>(*this);
+		ptr = std::make_unique<CallableImpl<Sig, F>>(std::move(f));
+	}
+
+	inline Ret operator()(Args... args) {
+		return (*this)(std::forward<Args>(args)...);
+	}
+};
+
+template<typename Ret, typename... Args>
+class UniqueCallable<Ret(Args...) const> :
+		public std::unique_ptr<Callable<Ret(Args...) const>> {
+public:
+	using Sig = Ret(Args...) const;
+	UniqueCallable() = default;
+
+	template<typename F>
+	UniqueCallable(F f) {
+		auto& ptr = static_cast<std::unique_ptr<Callable<Ret(Args...) const>>&>(*this);
+		ptr = std::make_unique<CallableImpl<Sig, F>>(std::move(f));
+	}
+
+	inline Ret operator()(Args... args) const {
+		const Callable<Sig>& impl = *(*this);
+		return impl(std::forward<Args>(args)...);
+	}
+};
 
 } // namespace tkn

@@ -5,6 +5,7 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 #include "noise.glsl"
 #include "snoise.glsl"
+#include "constants.glsl"
 
 layout(set = 0, binding = 0, r32f) writeonly uniform image2D heightmap;
 
@@ -17,7 +18,7 @@ float vfbm(vec2 st) {
 	float amp = 0.5f; // ampliture
 	float mod = 1.f; // modulation
 	for(int i = 0; i < 5; ++i) {
-		sum += amp * voronoiNoise(5 * i + mod * st);
+		sum += amp * max(1 - voronoiNoise3(5 * i + mod * st), octaveMin);
 		// sum += amp * (voronoiNoise2(mod * st)) * gradientNoise(2 * mod * st);
 		// sum += amp * gradientNoise( mod * st);
 	
@@ -45,9 +46,14 @@ void main() {
 	vec2 normed = (id + 0.5) / size;
 	normed = 2 * normed - 1;
 
-	float norm = length(normed);
-	float strength = smootherstep(0, 1.0, 1.0 - norm);
+	// float norm = length(normed);
+	// float norm = abs(normed.x) + abs(normed.y);
+	float norm = max(abs(normed.x), abs(normed.y));
 
-	float height = strength * (vfbm(normed) - 0.1);
+	// float strength = smootherstep(0, 1.0, 1.0 - norm);
+	// float strength = 1.0 - norm;
+	float strength = 0.8;
+
+	float height = max(strength * vfbm(2.0 * normed), allMin);
 	imageStore(heightmap, ivec2(id), vec4(height));
 }

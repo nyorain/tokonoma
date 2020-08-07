@@ -918,9 +918,9 @@ public:
 			readT(mieH, pa, "mie.scaleHeight");
 			atmos.mieDensity.constantTerm = 0.f;
 			atmos.mieDensity.expScale = -1.f / mieH;
-			atmos.mieDensity.expTerm = 1.f;
 			atmos.mieDensity.lienarTerm = 0.f;
 			readT(atmos.mieG, pa, "mie.g");
+			readT(atmos.mieDensity.expTerm, pa, "mie.strength");
 
 			auto mieScatUse = qwe::asT<std::string_view>(pa, "mie.scattering.use");
 			if(mieScatUse == "rgb") {
@@ -940,8 +940,8 @@ public:
 			readT(rayleighH, pa, "rayleigh.scaleHeight");
 			atmos.rayleighDensity.constantTerm = 0.f;
 			atmos.rayleighDensity.expScale = -1.f / rayleighH;
-			atmos.rayleighDensity.expTerm = 1.f;
 			atmos.rayleighDensity.lienarTerm = 0.f;
+			readT(atmos.rayleighDensity.expTerm, pa, "rayleigh.strength");
 
 			auto rayleighScatUse = qwe::asT<std::string_view>(pa, "rayleigh.scattering.use");
 			if(rayleighScatUse == "rgb") {

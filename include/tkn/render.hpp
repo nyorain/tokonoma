@@ -3,7 +3,9 @@
 // Contains utility for writing render and compute passes.
 
 #include <tkn/types.hpp>
+#include <tkn/bits.hpp>
 #include <vpp/fwd.hpp>
+#include <vpp/memoryMap.hpp>
 #include <vkpp/structs.hpp>
 #include <vkpp/enums.hpp>
 #include <nytl/span.hpp>
@@ -48,7 +50,10 @@ vk::Extent2D mipmapSize(vk::Extent2D full, unsigned i);
 
 // Returns a default SamplerCreateInfo for a (tri-)linear sampler with
 // clampToEdge addressMode.
-vk::SamplerCreateInfo linearSamplerInfo();
+vk::SamplerCreateInfo linearSamplerInfo(
+	vk::SamplerAddressMode = vk::SamplerAddressMode::clampToEdge);
+vk::SamplerCreateInfo nearestSamplerInfo(
+	vk::SamplerAddressMode = vk::SamplerAddressMode::clampToEdge);
 
 struct SyncScope {
 	vk::PipelineStageFlags stages {};
@@ -223,5 +228,50 @@ struct RenderPassInfo {
 // afterwards though.
 RenderPassInfo renderPassInfo(nytl::Span<const vk::Format> formats,
 		nytl::Span<const nytl::Span<const unsigned>> passes);
+
+
+// SpecializationInfo
+struct SpecializationInfo {
+	WriteBuffer data;
+	std::vector<vk::SpecializationMapEntry> entries;
+
+	template<typename... Args>
+	static SpecializationInfo create(const Args&... args) {
+		SpecializationInfo ret;
+		(ret.add(args), ...);
+		return ret;
+	}
+
+	template<typename T>
+	std::enable_if_t<BytesConvertible<T>> add(const T& obj) {
+		add(entries.empty() ? 0u : entries.back().constantID, data.buffer.size(), obj);
+	}
+
+	template<typename T>
+	std::enable_if_t<BytesConvertible<T>> add(unsigned constantID, unsigned offset,
+			const T& obj) {
+		auto& entry = entries.emplace_back();
+		entry.constantID = constantID;
+		entry.offset = offset;
+		entry.size = sizeof(obj);
+		write(data, obj);
+	}
+
+	vk::SpecializationInfo info() const {
+		vk::SpecializationInfo spec;
+		spec.dataSize = data.buffer.size();
+		spec.pData = data.buffer.data();
+		spec.mapEntryCount = entries.size();
+		spec.pMapEntries = entries.data();
+		return spec;
+	}
+};
+
+
+template<typename T>
+T& as(const vpp::MemoryMapView& view) {
+	dlg_assert(view.size() >= sizeof(T));
+	return *reinterpret_cast<T*>(view.ptr());
+}
 
 } // namespace tkn

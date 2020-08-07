@@ -1,0 +1,61 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D heightmap;
+layout(set = 0, binding = 1, r16f) uniform image2D shadowmap;
+layout(set = 0, binding = 2) uniform Ubo {
+	mat4 _1;
+	vec3 _2;
+	float _3;
+	vec3 toLight;
+} ubo;
+
+void main() {
+	const uvec2 id = gl_GlobalInvocationID.xy;
+	const ivec2 size = imageSize(shadowmap);
+	if(id.x >= size.x || id.y >= size.y) {
+		return;
+	}
+
+	vec2 normPos = (id + 0.5) / size;
+	vec2 groundPos = -1 + 2 * normPos;
+	float height = textureLod(heightmap, normPos, 0).r;
+	vec3 rayStart = vec3(groundPos.x, height, groundPos.y);
+	
+	float dt;
+	float shadow = 1.f;
+
+	// float maxHeight = 0.0;
+	float maxDiff = 0.0;
+
+	for(float t = 0.001; t < 5.f && shadow > 0.f; t += dt) {
+		vec3 pos = rayStart + t * ubo.toLight;
+		if(pos.xz != clamp(pos.xz, -1.f, 1.f)) {
+			break;
+		}
+
+		// float lod = clamp(t / 0.1, 0.0, 10);
+		float lod = 0.0;
+		float height = textureLod(heightmap, 0.5 + 0.5 * pos.xz, lod).r;
+
+		if(pos.xz == clamp(pos.xz, -1.f, 1.f) && height > pos.y) {
+			// shadow *= exp(-0.05 * pow(1 - t, 2) - 0.25 * (height - pos.y));
+			// shadow *= exp(-0.01 / t - 0.25 * (height - pos.y));
+			// shadow *= exp(-0.8 / pow(t, 2) * (height - pos.y));
+			shadow *= mix(exp(-0.001 / pow(t, 1)), 0.0, 10 * (height - pos.y));
+		}
+
+		if(height - pos.y > maxDiff) {
+			maxDiff = height - pos.y;
+			// maxHeight = height;
+		}
+
+		dt = 0.001;
+		// dt = 0.01 * t;
+	}
+
+	imageStore(shadowmap, ivec2(id), vec4(shadow));
+	// imageStore(shadowmap, ivec2(id), vec4(maxDiff));
+}

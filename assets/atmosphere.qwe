@@ -58,6 +58,7 @@ atmosphere:
 		g: 0.8
 		# ref: 1200
 		scaleHeight: 1200
+		strength: 1.0
 		scattering:
 			# compute: generate it manually, physically based. 
 			#   Uses 'alpha', 'beta', 'scatterAlbedo' parameter.
@@ -65,19 +66,21 @@ atmosphere:
 			use: compute
 			# ref: 0.0
 			alpha: 0.0
-			# ref 5.328e-3
+			# beta: 5.328e-3
 			beta: 1.328e-2
-			scatterAlbedo: 0.95
+			scatterAlbedo: 1.0
 			# only for use: rgb
 			rgb:
 				8.e-5
 				8.e-5
 				8.e-5
 	rayleigh:
+		strength: 1.0
 		scattering:
-			use: compute
+			use: rgb
 			# Bruneton's reference: 1.8402e-6
-			strength: 4.8e-6
+			strength: 1.8402e-6
+			# strength: 4.8e-6
 			# only for use: rgb
 			# From http://renderwonk.com/publications/gdm-2002/GDM_August_2002.pdf
 			# Those values should rather be calculated with a wavelength-dependent

@@ -171,6 +171,7 @@ private:
 	std::shared_mutex mutex_;
 };
 
+// TODO: evaluate whether this can be merged with ThreadState
 class PipelineCache {
 public:
 	// Returns a thread-specific pipeline cache instance.

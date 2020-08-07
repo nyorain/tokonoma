@@ -5,6 +5,7 @@
 #include <nytl/math.hpp>
 #include <dlg/dlg.hpp>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <fstream>
 #include <algorithm>
@@ -144,5 +145,11 @@ inline std::string_view skipWhitespace(std::string_view source) {
 
 	return source.substr(fnws);
 }
+
+template<typename ...Ts>
+struct Visitor : Ts...  {
+    Visitor(const Ts&... args) : Ts(args)...  {}
+    using Ts::operator()...;
+};
 
 } // namespace tkn

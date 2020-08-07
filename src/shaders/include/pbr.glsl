@@ -34,7 +34,7 @@ float distributionGGX(vec3 n, vec3 h, float roughness) {
 	float ndh = max(dot(n, h), 0.0);
 	float ndh2 = ndh * ndh;
 
-	float denom = max(ndh2 * (a2 - 1.0) + 1.0, 0.01);
+	float denom = max(ndh2 * (a2 - 1.0) + 1.0, 0.00001);
 	denom = pi * denom * denom;
 	return a2 / denom;
 }
@@ -69,7 +69,7 @@ vec3 cookTorrance(vec3 n, vec3 l, vec3 v, float roughness,
 	float g = geometrySmith(ndv, ndl, roughness);
 	vec3 f = fresnelSchlick(clamp(dot(h, v), 0.0, 1.0), f0);
 
-	vec3 specular = (ndf * g * f) / max(4.0 * ndv * ndl, 0.001);
+	vec3 specular = (ndf * g * f) / (4.0 * ndv * ndl);
 	vec3 diffuse = (1.0 - f) * (1.0 - metallic) * albedo / pi;
 	return (specular + diffuse) * ndl;
 }

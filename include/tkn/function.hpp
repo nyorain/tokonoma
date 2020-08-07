@@ -245,7 +245,7 @@ public:
 		new(&storage_) (Ptr)(std::move(obj));
 	}
 
-	Ret operator()(Args... args) {
+	Ret operator()(Args... args) const {
 		dlg_assert(impl_);
 		return std::invoke(*impl_, storage_, std::forward<Args>(args)...);
 	}

@@ -1,6 +1,3 @@
-#include "noise.glsl"
-#include "snoise.glsl"
-
 // requires previously declared
 // sample2D heightmap
 
