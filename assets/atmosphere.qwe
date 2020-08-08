@@ -29,7 +29,7 @@ meta:
 		heightSize: 128
 	# maximum multiscattering level. Must be >= 1
 	# table generation time increases linearly with this
-	maxScatterOrder: 3
+	maxScatterOrder: 1
 atmosphere:
 	# atmosphere boundaries in meters
 	# mini-earth

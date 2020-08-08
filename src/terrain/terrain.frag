@@ -45,6 +45,8 @@ float outline() {
 
 
 float shadow() {
+	// return 1.0;
+
 #ifdef SHADOW_MANUAL
 	float dt;
 	float shadow = 1.f;
@@ -67,6 +69,8 @@ float shadow() {
 }
 
 vec3 computeAO(vec3 normal) {
+	//return vec3(0.01);
+
 	float ao = 1.0;
 	float height = textureLod(heightmap, baseCoord, 0).r;
 
@@ -100,10 +104,10 @@ vec3 computeAO(vec3 normal) {
 }
 
 void main() {
-	float x0 = textureOffset(heightmap, baseCoord, ivec2(-1, 0)).r;
-	float x1 = textureOffset(heightmap, baseCoord, ivec2(1, 0)).r;
-	float z0 = textureOffset(heightmap, baseCoord, ivec2(0, -1)).r;
-	float z1 = textureOffset(heightmap, baseCoord, ivec2(0, 1)).r;
+	float x0 = textureLodOffset(heightmap, baseCoord, 0, ivec2(-1, 0)).r;
+	float x1 = textureLodOffset(heightmap, baseCoord, 0, ivec2(1, 0)).r;
+	float z0 = textureLodOffset(heightmap, baseCoord, 0, ivec2(0, -1)).r;
+	float z1 = textureLodOffset(heightmap, baseCoord, 0, ivec2(0, 1)).r;
 
 	float dx = 0.5 * (x1 - x0) / pixLength.x;
 	float dz = 0.5 * (z1 - z0) / pixLength.y;

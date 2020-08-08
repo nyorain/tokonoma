@@ -787,13 +787,14 @@ void App::run() {
 	using Clock = std::chrono::high_resolution_clock;
 	using Secd = std::chrono::duration<double, std::ratio<1, 1>>;
 	auto lastUpdate = Clock::now();
+	auto lastUpdateDevice = Clock::now();
 
 	// Calculate delta time since last update call
-	auto dt = [&]{
+	auto dt = [](auto& lastTime){
 		auto now = Clock::now();
-		auto diff = now - lastUpdate;
+		auto diff = now - lastTime;
 		auto dt = std::chrono::duration_cast<Secd>(diff).count();
-		lastUpdate = now;
+		lastTime = now;
 		return dt;
 	};
 
@@ -804,7 +805,7 @@ void App::run() {
 	// Make sure we only start the main loop when we receive the
 	// initial resize event to know our initial size.
 	while(!resize_) {
-		update(dt());
+		update(dt(lastUpdate));
 	}
 
 	// TODO: controlling whne vpp::Renderer rerecords is really unintuitive
@@ -837,7 +838,7 @@ void App::run() {
 		// The device will not be using any of the resources we change here.
 		// Make sure to call updateDevice *after* any new buffers have been
 		// initialized (from resize).
-		updateDevice();
+		updateDevice(dt(lastUpdateDevice));
 		if(rerecord_) {
 			impl_->renderer.invalidate();
 		}
@@ -878,7 +879,7 @@ void App::run() {
 
 		// - update phase -
 		redraw_ = false;
-		update(dt());
+		update(dt(lastUpdate));
 
 		while(run_ && !redraw_ && !resize_) {
 			// TODO: ideally, we could use waitEvents in update
@@ -888,7 +889,7 @@ void App::run() {
 			// which is (currently) not worth it/possible.
 			auto idleRate = 144.f;
 			std::this_thread::sleep_for(Secd(1 / idleRate));
-			update(dt());
+			update(dt(lastUpdate));
 		}
 	}
 }
@@ -915,6 +916,11 @@ void App::update(double dt) {
 	if(impl_->gui) {
 		redraw_ |= gui().update(dt);
 	}
+}
+
+void App::updateDevice(double dt) {
+	(void) dt;
+	updateDevice();
 }
 
 void App::updateDevice() {

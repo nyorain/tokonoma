@@ -109,6 +109,7 @@ protected:
 	// Called every frame when the last frame has finished and device
 	// resources can therefore be accessed.
 	virtual void updateDevice();
+	virtual void updateDevice(double dt);
 
 	// Schedules a rerecord. Will happen during the next updateDevice.
 	void scheduleRerecord() { rerecord_ = true; }

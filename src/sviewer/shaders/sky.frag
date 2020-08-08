@@ -110,7 +110,9 @@ void main() {
 	// dithering
 	float rnd1 = random(gl_FragCoord.xy + 0.17);
 	float rnd2 = random(gl_FragCoord.xy + 0.85);
-	float dither = 0.5 * (rnd1 + rnd2) - 0.5;
+	float dither = (rnd1 + rnd2) - 0.5;
 	light = toLinearCheap(toNonlinearCheap(light) + dither / 255.f);
+	// light = toLinear(toNonlinear(light) + dither / 255.f);
+	// light += dither / 255.f;
 	fragColor = vec4(light, 1.0);
 }

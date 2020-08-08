@@ -115,17 +115,13 @@ public:
 		}
 		shaderFile_ = name;
 
-		auto handler = [rp = renderPass()](vpp::GraphicsPipelineInfo& gpi) {
-			gpi.renderPass(rp);
-		};
+		vpp::GraphicsPipelineInfo gpi;
+		gpi.renderPass(renderPass());
+		pipe_ = tkn::ManagedGraphicsPipe{dev, {"tkn/shaders/fullscreen.vert"},
+			{name}, fsWatcher_, tkn::GraphicsPipeInfoProvider::create(gpi)};
 
-		pipe_ = tkn::GraphicsPipelineState{dev, {"tkn/shaders/fullscreen.vert"},
-			{name}, fsWatcher_, tkn::makeUniqueCallable(handler), false};
-
-		{
-			vpp::DescriptorSetUpdate update(pipe_.pipeState().dss[0]);
-			update.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
-		}
+		auto& dsu = pipe_.dsu();
+		dsu(ubo_);
 
 		/*
 		if(!initPipe(shaderFile_, renderPass(), pipeline_)) {
@@ -242,8 +238,11 @@ public:
 
 		// vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe);
 		// tkn::cmdBindGraphics(cb, pipe_.pipeState());
-		tkn::cmdBind(cb, pipe_);
-		vk::cmdDraw(cb, 6, 1, 0, 0);
+
+		if(pipe) {
+			tkn::cmdBind(cb, pipe_);
+			vk::cmdDraw(cb, 6, 1, 0, 0);
+		}
 	}
 
 	void render(vk::CommandBuffer cb) override {
@@ -491,7 +490,7 @@ protected:
 	// vpp::TrDsLayout dsLayout_;
 	// vpp::TrDs ds_;
 
-	tkn::GraphicsPipelineState pipe_;
+	tkn::ManagedGraphicsPipe pipe_;
 	tkn::ControlledCamera cam_;
 
 	/*

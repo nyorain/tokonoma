@@ -36,7 +36,7 @@ vec4 computeScattering(vec3 posWS) {
 	float phaseH = phaseHG(nu, 0.45);
 	float phase1 = phaseHG(nu, 0.0);
 
-	float density = 0.05; // assumed constant
+	float density = 0.2; // assumed constant
 	float opticalDepth = density * dist;
 	float transmittance = exp(-opticalDepth);
 

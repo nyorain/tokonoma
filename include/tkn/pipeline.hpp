@@ -282,7 +282,7 @@ protected:
 
 struct GraphicsPipeInfoProvider {
 	static std::unique_ptr<GraphicsPipeInfoProvider> create(
-		vpp::GraphicsPipelineInfo info, vk::Sampler sampler);
+		vpp::GraphicsPipelineInfo info, vk::Sampler sampler = {});
 
 	virtual ~GraphicsPipeInfoProvider() = default;
 	virtual void fill(vpp::GraphicsPipelineInfo&) const = 0;
@@ -355,4 +355,3 @@ private:
 };
 
 } // namespace tkn
-

@@ -1,0 +1,94 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "noise.glsl"
+
+const float mass = 0.005;
+const float maxLifetime = 2.0; // in seconds
+const float depositionRate = 0.1; // in change per second
+
+layout(local_size_x = 64) in;
+
+struct Particle {
+	vec2 pos;
+	vec2 vel;
+	float sediment;
+	float lifetime;
+};
+
+layout(set = 0, binding = 0, r32f) uniform image2D heightmap;
+layout(set = 0, binding = 1) buffer Particles {
+	Particle particles[];
+};
+
+layout(set = 0, binding = 2) uniform Ubo {
+	mat4 _0;
+	vec3 _1;
+	float dt;
+} ubo;
+
+vec2 pixLength = 1.0 / imageSize(heightmap);
+
+vec3 computeNormal(vec2 pos) {
+	vec2 baseCoord = 0.5 + 0.5 * pos;
+	ivec2 baseTexel = ivec2(baseCoord * imageSize(heightmap));
+
+	float x0 = imageLoad(heightmap, baseTexel + ivec2(-1, 0)).r;
+	float x1 = imageLoad(heightmap, baseTexel + ivec2(1, 0)).r;
+	float z0 = imageLoad(heightmap, baseTexel + ivec2(0, -1)).r;
+	float z1 = imageLoad(heightmap, baseTexel + ivec2(0, 1)).r;
+
+	float dx = 0.5 * (x1 - x0) / pixLength.x;
+	float dz = 0.5 * (z1 - z0) / pixLength.y;
+
+	vec3 n = normalize(vec3(0, 1, 0) - dx * vec3(1, 0, 0) - dz * vec3(0, 0, 1));
+	return n;
+}
+
+void init(inout Particle drop, uint id) {
+	drop.pos = -1 + 2 * random2(drop.pos + id);
+	drop.vel = vec2(0.0);
+	drop.lifetime = 0.0;
+	drop.sediment = 0.0;
+}
+
+void main() {
+	uint id = gl_GlobalInvocationID.x;
+	if(id >= particles.length() /* || id > 256*/) {
+		return;
+	}
+
+	Particle drop = particles[id];
+	drop.lifetime += ubo.dt;
+	if(drop.pos != clamp(drop.pos, -1.0, 1.0) || drop.lifetime > maxLifetime) {
+		init(drop, id);
+		particles[id] = drop;
+		return;
+	}
+
+	vec2 baseCoord = 0.5 + 0.5 * drop.pos;
+	ivec2 baseTexel = ivec2(baseCoord * imageSize(heightmap));
+	float height = imageLoad(heightmap, baseTexel).r;
+
+	drop.pos += ubo.dt * drop.vel;
+
+	vec3 n = computeNormal(drop.pos);
+	drop.vel += 0.01 * ubo.dt * n.xz / (mass + drop.sediment);
+	drop.vel *= pow(0.5, ubo.dt);
+
+	baseCoord = 0.5 + 0.5 * drop.pos;
+	baseTexel = ivec2(baseCoord * imageSize(heightmap));
+	float nheight = imageLoad(heightmap, baseTexel).r;
+
+	// float ceq = max(10 * length(drop.vel) * (0.0 + 10 * hdiff), 0.0);
+	float ceq = max(5 * length(drop.vel), 0.0);
+
+	// float hdiff = 20 * (nheight - height);
+	float depos = ubo.dt * (depositionRate) * (drop.sediment - ceq);
+	drop.sediment -= depos;
+	nheight += 0.1 * depos;
+	imageStore(heightmap, baseTexel, vec4(nheight));
+	// imageAtomicAdd(heightmap, baseTexel, depos);
+
+	particles[id] = drop;
+}

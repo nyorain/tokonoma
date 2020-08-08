@@ -70,7 +70,7 @@ float lodFromDistance(float z, float triangleSize) {
 	const float fov = 0.42 * 3.141;
 	const float targetPixelSize = 15.f;
 	const float screenResolution = 2000.f; 
-	const float maxLod = 26.f;
+	const float maxLod = 24.f;
 
 	const float s = z * tan(fov / 2);
 	const float tmp = s * targetPixelSize / (screenResolution * triangleSize);

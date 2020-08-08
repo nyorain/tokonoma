@@ -32,19 +32,30 @@ public:
 	struct UboData {
 		nytl::Mat4f vp;
 		nytl::Vec3f viewPos;
-		float _pad0;
+		float dt;
 		nytl::Vec3f toLight;
 		float _pad1;
 		nytl::Mat4f vpInv;
 	};
 
-	static constexpr vk::Extent2D heightmapSize = {4096, 4096};
+	// ersionParticle.comp
+	struct Particle {
+		nytl::Vec2f pos {};
+		nytl::Vec2f vel {};
+		float sediment {};
+		float lifetime {};
+	};
+
+	// static constexpr vk::Extent2D heightmapSize = {4096, 4096};
+	static constexpr vk::Extent2D heightmapSize = {1024, 1024};
 	static constexpr auto heightmapFormat = vk::Format::r32Sfloat;
 
 	static constexpr vk::Extent2D shadowmapSize = {1024, 1024};
 	static constexpr auto shadowmapFormat = vk::Format::r16Sfloat;
 
 	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
+
+	static constexpr auto particleCount = 32 * 1024;
 
 	static auto toLight() {
 		return normalized(nytl::Vec3f{-0.5, 0.2, -0.6});
@@ -74,6 +85,7 @@ public:
 		heightmapInfo.view.subresourceRange.levelCount = heightmapInfo.img.mipLevels;
 
 		heightmap_ = {dev.devMemAllocator(), heightmapInfo, dev.deviceMemoryTypes()};
+		vpp::nameHandle(heightmap_, "heightmap");
 
 		// shadowmap
 		usage = vk::ImageUsageBits::storage |
@@ -81,6 +93,7 @@ public:
 		auto shadowmapInfo = vpp::ViewableImageCreateInfo(
 			shadowmapFormat, vk::ImageAspectBits::color, shadowmapSize, usage);
 		shadowmap_ = {dev.devMemAllocator(), shadowmapInfo, dev.deviceMemoryTypes()};
+		vpp::nameHandle(shadowmap_, "shadowmap");
 
 		// vertex & index data
 		auto shape = tkn::generateQuad(
@@ -106,6 +119,13 @@ public:
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 		uboMap_ = ubo_.memoryMap();
 
+		// particles
+		auto particles = std::vector<Particle>(particleCount);
+		auto particleUsage = vk::BufferUsageBits::storageBuffer |
+			vk::BufferUsageBits::transferDst;
+		particles_ = {dev.bufferAllocator(), sizeof(Particle) * particleCount,
+			particleUsage, dev.deviceMemoryTypes()};
+
 		// upload data
 		auto& qs = dev.queueSubmitter();
 		auto cb = dev.commandAllocator().get(qs.queue().family());
@@ -116,6 +136,7 @@ public:
 
 		auto stage3 = vpp::fillStaging(cb, vertices_, verts);
 		auto stage4 = vpp::fillStaging(cb, indices_, inds);
+		auto stage5 = vpp::fillStaging(cb, particles_, tkn::bytes(particles));
 
 		vk::endCommandBuffer(cb);
 		auto sid = qs.add(cb);
@@ -193,6 +214,15 @@ public:
 				fileWatcher_, std::move(ppProvider)};
 
 			// descriptor updated in initBuffers
+		}
+
+		// erosion pipeline
+		{
+			erosionParticlePipe_ = {dev, "terrain/erosionParticle.comp", fileWatcher_};
+			auto& dsu = erosionParticlePipe_.dsu();
+			dsu(heightmap_);
+			dsu(particles_);
+			dsu(ubo_);
 		}
 
 		qs.wait(sid);
@@ -274,21 +304,26 @@ public:
 		updatePipe_.update();
 		genPipe_.update();
 		shadowPipe_.update();
+		erosionParticlePipe_.update();
 		ppPipe_.update();
 		subd_.update();
 
 		Base::scheduleRedraw();
 	}
 
-	void updateDevice() override {
-		if(cam_.needsUpdate) {
-			cam_.needsUpdate = false;
+	void updateDevice(double dt) override {
+		App::updateDevice(dt);
 
+		{
 			auto& data = tkn::as<UboData>(uboMap_);
-			data.vp = cam_.viewProjectionMatrix();
-			data.viewPos = cam_.position();
+			if(cam_.needsUpdate) {
+				cam_.needsUpdate = false;
+				data.vp = cam_.viewProjectionMatrix();
+				data.viewPos = cam_.position();
+				data.vpInv = nytl::Mat4f(nytl::inverse(cam_.viewProjectionMatrix()));
+			}
 			data.toLight = toLight();
-			data.vpInv = nytl::Mat4f(nytl::inverse(cam_.viewProjectionMatrix()));
+			data.dt = dt;
 
 			uboMap_.flush();
 		}
@@ -298,6 +333,7 @@ public:
 		rerec |= updatePipe_.updateDevice();
 		rerec |= subd_.updateDevice();
 		rerec |= ppPipe_.updateDevice();
+		rerec |= erosionParticlePipe_.updateDevice();
 
 		if(rerec && mainPipesLoaded()) {
 			Base::scheduleRerecord();
@@ -317,6 +353,32 @@ public:
 			return;
 		}
 
+		// erode
+		auto heightmapSrc = tkn::SyncScope {
+			vk::PipelineStageBits::topOfPipe,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			{},
+		};
+		auto heightmapDst = tkn::SyncScope::computeReadWrite();
+
+		auto subres = vk::ImageSubresourceRange{
+			vk::ImageAspectBits::color,
+			0, vk::remainingMipLevels,
+			0, 1};
+		tkn::barrier(cb, heightmap_.image(), heightmapSrc, heightmapDst, subres);
+
+		auto erodedx = tkn::ceilDivide(particleCount, 64);
+		tkn::cmdBind(cb, erosionParticlePipe_);
+		vk::cmdDispatch(cb, erodedx, 1, 1);
+
+		heightmapSrc = heightmapDst;
+		heightmapDst = tkn::SyncScope::fragmentSampled();
+		heightmapDst.stages = vk::PipelineStageBits::allCommands;
+		tkn::barrier(cb, heightmap_.image(), heightmapSrc, heightmapDst, subres);
+
+		// subdivide
+		// TODO: we don't need to do this every frame.
+		// This would likely profit from low priority async compute.
 		subd_.resetCounter(cb);
 		tkn::cmdBind(cb, updatePipe_);
 		subd_.computeUpdate(cb);
@@ -363,6 +425,7 @@ public:
 		return bool(renderPipe_.pipe()) &&
 			bool(updatePipe_.pipe()) &&
 			bool(ppPipe_.pipe()) &&
+			bool(erosionParticlePipe_.pipe()) &&
 			subd_.loaded();
 	}
 
@@ -470,6 +533,7 @@ protected:
 	tkn::ManagedGraphicsPipe renderPipe_;
 	tkn::ManagedGraphicsPipe ppPipe_;
 	tkn::ManagedComputePipe updatePipe_;
+	tkn::ManagedComputePipe erosionParticlePipe_;
 
 	tkn::ControlledCamera cam_;
 	tkn::FileWatcher fileWatcher_;
@@ -477,6 +541,7 @@ protected:
 	vpp::SubBuffer ubo_;
 	vpp::SubBuffer vertices_;
 	vpp::SubBuffer indices_;
+	vpp::SubBuffer particles_;
 
 	vpp::MemoryMapView uboMap_;
 
