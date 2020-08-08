@@ -754,6 +754,30 @@ ThreadState::~ThreadState() {
 }
 
 // DescriptorUpdater
+bool areRangesOverlapping(unsigned startA, unsigned countA,
+		unsigned startB, unsigned countB) {
+	return (startA >= startB && startA < startB + countB) ||
+		(startB >= startA && startB < startA + countA);
+}
+
+void DescriptorUpdater::write(const vk::WriteDescriptorSet& write) {
+	// check if there is already a write
+	for(auto& w : writes_) {
+		if(w.dstSet == write.dstSet &&
+				w.dstBinding == write.dstBinding &&
+				areRangesOverlapping(w.dstArrayElement, w.descriptorCount,
+					write.dstArrayElement, write.descriptorCount)) {
+			// TODO: implement array case
+			dlg_assert(write.dstArrayElement == 1);
+			dlg_assert(w.dstArrayElement == 1);
+			w = write;
+			return;
+		}
+	}
+
+	writes_.push_back(write);
+}
+
 void DescriptorUpdater::buffer(std::vector<vk::DescriptorBufferInfo> infos,
 		std::optional<vk::DescriptorType> type, unsigned startElem) {
 
@@ -771,9 +795,9 @@ void DescriptorUpdater::buffer(std::vector<vk::DescriptorBufferInfo> infos,
 		dlg_assert(!type || dt == *type);
 		dlg_assert(set.bindings[currentBinding_].descriptorCount >= infos.size());
 
-		writes_.emplace_back(set.ds, currentBinding_,
-			startElem, buffers_.back().size(), dt, nullptr, buffers_.back().data(),
-			nullptr);
+		write({set.ds, currentBinding_,
+			startElem, u32(buffers_.back().size()), dt, nullptr,
+			buffers_.back().data(), nullptr});
 	}
 
 	skip();
@@ -796,9 +820,9 @@ void DescriptorUpdater::image(std::vector<vk::DescriptorImageInfo> infos,
 		dlg_assert(!type || dt == *type);
 		dlg_assert(set.bindings[currentBinding_].descriptorCount >= infos.size());
 
-		writes_.emplace_back(set.ds, currentBinding_,
-			startElem, images_.back().size(), dt, images_.back().data(), nullptr,
-			nullptr);
+		write({set.ds, currentBinding_,
+			startElem, u32(images_.back().size()), dt, images_.back().data(),
+			nullptr, nullptr});
 	}
 
 	skip();
@@ -949,9 +973,9 @@ void DescriptorUpdater::init(const std::deque<LayoutedDs>& dss) {
 
 		std::visit(Visitor{
 			[&](nytl::Span<vk::DescriptorBufferInfo> infos) {
-				writes_.emplace_back(set.ds, currentBinding_,
-					abstract.startElem, infos.size(), type, nullptr, infos.data(),
-					nullptr);
+				write({set.ds, currentBinding_,
+					abstract.startElem, u32(infos.size()), type, nullptr,
+					infos.data(), nullptr});
 			},
 			[&](nytl::Span<vk::DescriptorImageInfo> infos) {
 				// fix undefined layouts
@@ -971,9 +995,9 @@ void DescriptorUpdater::init(const std::deque<LayoutedDs>& dss) {
 					}
 				}
 
-				writes_.emplace_back(set.ds, currentBinding_,
-					abstract.startElem, infos.size(), type, infos.data(), nullptr,
-					nullptr);
+				write({set.ds, currentBinding_,
+					abstract.startElem, u32(infos.size()), type, infos.data(),
+					nullptr, nullptr});
 			},
 		}, abstract.data);
 	}

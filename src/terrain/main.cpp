@@ -23,6 +23,7 @@
 #include <vpp/vk.hpp>
 
 #include <swa/swa.h>
+#include <cstddef>
 
 using namespace tkn::types;
 
@@ -41,9 +42,9 @@ public:
 	// ersionParticle.comp
 	struct Particle {
 		nytl::Vec2f pos {};
-		nytl::Vec2f vel {};
+		nytl::Vec2f vel {1.f, 0.f};
 		float sediment {};
-		float lifetime {};
+		float water {0.f};
 	};
 
 	// static constexpr vk::Extent2D heightmapSize = {4096, 4096};
@@ -122,6 +123,7 @@ public:
 		// particles
 		auto particles = std::vector<Particle>(particleCount);
 		auto particleUsage = vk::BufferUsageBits::storageBuffer |
+			vk::BufferUsageBits::vertexBuffer |
 			vk::BufferUsageBits::transferDst;
 		particles_ = {dev.bufferAllocator(), sizeof(Particle) * particleCount,
 			particleUsage, dev.deviceMemoryTypes()};
@@ -225,6 +227,41 @@ public:
 			dsu(ubo_);
 		}
 
+		// erosion particles
+		{
+			vpp::GraphicsPipelineInfo gpi;
+			gpi.assembly.topology = vk::PrimitiveTopology::pointList;
+			gpi.rasterization.polygonMode = vk::PolygonMode::point;
+			gpi.renderPass(pass0_.rp);
+			gpi.multisample.rasterizationSamples = samples();
+
+			static vk::VertexInputAttributeDescription attribs[] = {
+				{0, 0, vk::Format::r32g32Sfloat, offsetof(Particle, pos)},
+				{1, 0, vk::Format::r32Sfloat, offsetof(Particle, sediment)},
+				{2, 0, vk::Format::r32Sfloat, offsetof(Particle, water)},
+			};
+
+			static vk::VertexInputBindingDescription bindings[] = {
+				0, sizeof(Particle), vk::VertexInputRate::vertex,
+			};
+
+			gpi.vertex.pVertexAttributeDescriptions = attribs;
+			gpi.vertex.vertexAttributeDescriptionCount = 3u;
+			gpi.vertex.pVertexBindingDescriptions = bindings;
+			gpi.vertex.vertexBindingDescriptionCount = 1u;
+			gpi.depthStencil.depthTestEnable = true;
+			gpi.depthStencil.depthWriteEnable = true;
+			gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
+
+			auto provider = tkn::GraphicsPipeInfoProvider::create(gpi, linearSampler_);
+			particlePipe_ = {dev, {"terrain/particle.vert"}, {"terrain/particle.frag"},
+				fileWatcher_, std::move(provider)};
+
+			auto& dsu = particlePipe_.dsu();
+			dsu(heightmap_);
+			dsu(ubo_);
+		}
+
 		qs.wait(sid);
 		return true;
 	}
@@ -305,6 +342,7 @@ public:
 		genPipe_.update();
 		shadowPipe_.update();
 		erosionParticlePipe_.update();
+		particlePipe_.update();
 		ppPipe_.update();
 		subd_.update();
 
@@ -334,6 +372,7 @@ public:
 		rerec |= subd_.updateDevice();
 		rerec |= ppPipe_.updateDevice();
 		rerec |= erosionParticlePipe_.updateDevice();
+		rerec |= particlePipe_.updateDevice();
 
 		if(rerec && mainPipesLoaded()) {
 			Base::scheduleRerecord();
@@ -344,7 +383,7 @@ public:
 		regen |= shadowPipe_.updateDevice();
 
 		if(regen && genPipesLoaded()) {
-			generateHeightmap();
+			generateHeightmap(true);
 		}
 	}
 
@@ -404,6 +443,11 @@ public:
 		tkn::cmdBind(cb, renderPipe_);
 		subd_.draw(cb);
 
+		tkn::cmdBind(cb, particlePipe_);
+		vk::cmdBindVertexBuffers(cb, 0, {{particles_.buffer()}},
+			{{particles_.offset()}});
+		vk::cmdDraw(cb, particleCount, 1, 0, 0);
+
 		vk::cmdEndRenderPass(cb);
 	}
 
@@ -439,77 +483,76 @@ public:
 		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
-	void generateHeightmap() {
+	void generateHeightmap(bool regenTerrain) {
 		if(!genPipesLoaded()) {
 			return;
 		}
 
 		// record
-		vk::beginCommandBuffer(genCb_, {});
+		auto cb = genCb_.vkHandle();
+		vk::beginCommandBuffer(cb, {});
 
-		vk::ImageMemoryBarrier barrier;
-		barrier.image = heightmap_.image();
-		barrier.subresourceRange = {vk::ImageAspectBits::color, 0,
-			vk::remainingMipLevels, 0, 1};
-		barrier.oldLayout = vk::ImageLayout::undefined;
-		barrier.newLayout = vk::ImageLayout::general;
-		barrier.srcAccessMask = {};
-		barrier.dstAccessMask = vk::AccessBits::shaderWrite;
+		// terrain: optionally recreate, create heightmap
+		{
+			auto subres = vk::ImageSubresourceRange {vk::ImageAspectBits::color, 0,
+				vk::remainingMipLevels, 0, 1};
+			auto srcScope = tkn::SyncScope{
+				vk::PipelineStageBits::topOfPipe,
+				vk::ImageLayout::shaderReadOnlyOptimal,
+				{}
+			};
 
-		vk::cmdPipelineBarrier(genCb_, vk::PipelineStageBits::topOfPipe,
-			vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
+			if(regenTerrain) {
+				srcScope.layout = vk::ImageLayout::undefined; // discard
+				auto dstScope = tkn::SyncScope::computeReadWrite();
+				tkn::barrier(cb, heightmap_.image(), srcScope, dstScope, subres);
+				srcScope = dstScope;
 
-		tkn::cmdBind(genCb_, genPipe_);
-		auto dx = tkn::ceilDivide(heightmapSize.width, 8);
-		auto dy = tkn::ceilDivide(heightmapSize.height, 8);
-		vk::cmdDispatch(genCb_, dx, dy, 1);
+				tkn::cmdBind(cb, genPipe_);
+				auto dx = tkn::ceilDivide(heightmapSize.width, 8);
+				auto dy = tkn::ceilDivide(heightmapSize.height, 8);
+				vk::cmdDispatch(cb, dx, dy, 1);
+			}
 
-		// generate mipmaps
-		tkn::DownscaleTarget dtarget;
-		dtarget.image = heightmap_.image();
-		dtarget.format = heightmapFormat;
-		dtarget.extent = {heightmapSize.width, heightmapSize.height, 1u};
-		dtarget.srcScope = {
-			vk::PipelineStageBits::computeShader,
-			vk::ImageLayout::general,
-			vk::AccessBits::shaderWrite
-		};
+			// generate mipmaps
+			tkn::DownscaleTarget dtarget;
+			dtarget.image = heightmap_.image();
+			dtarget.format = heightmapFormat;
+			dtarget.extent = {heightmapSize.width, heightmapSize.height, 1u};
+			dtarget.srcScope = srcScope;
 
-		auto genLevels = vpp::mipmapLevels(heightmapSize) - 1;
+			auto genLevels = vpp::mipmapLevels(heightmapSize) - 1;
 
-		tkn::SyncScope dstScope {
-			vk::PipelineStageBits::allCommands,
-			vk::ImageLayout::shaderReadOnlyOptimal,
-			vk::AccessBits::shaderRead,
-		};
+			tkn::SyncScope dstScope {
+				vk::PipelineStageBits::allCommands,
+				vk::ImageLayout::shaderReadOnlyOptimal,
+				vk::AccessBits::shaderRead,
+			};
 
-		tkn::downscale(genCb_, dtarget, genLevels, &dstScope);
+			tkn::downscale(cb, dtarget, genLevels, &dstScope);
+		}
 
 		// generate shadowmap
-		barrier.image = shadowmap_.image();
-		barrier.subresourceRange = {vk::ImageAspectBits::color, 0,
-			vk::remainingMipLevels, 0, 1};
-		barrier.oldLayout = vk::ImageLayout::undefined;
-		barrier.newLayout = vk::ImageLayout::general;
-		barrier.srcAccessMask = {};
-		barrier.dstAccessMask = vk::AccessBits::shaderWrite;
+		{
+			auto srcScope = tkn::SyncScope{
+				vk::PipelineStageBits::topOfPipe,
+				vk::ImageLayout::undefined,
+				{}
+			};
+			auto dstScope = tkn::SyncScope::computeReadWrite();
+			tkn::barrier(cb, shadowmap_.image(), srcScope, dstScope);
 
-		vk::cmdPipelineBarrier(genCb_, vk::PipelineStageBits::topOfPipe,
-			vk::PipelineStageBits::computeShader, {}, {}, {}, {{barrier}});
+			tkn::cmdBind(genCb_, shadowPipe_);
+			auto dx = tkn::ceilDivide(shadowmapSize.width, 8);
+			auto dy = tkn::ceilDivide(shadowmapSize.height, 8);
+			vk::cmdDispatch(genCb_, dx, dy, 1);
 
-		tkn::cmdBind(genCb_, shadowPipe_);
-		dx = tkn::ceilDivide(shadowmapSize.width, 8);
-		dy = tkn::ceilDivide(shadowmapSize.height, 8);
-		vk::cmdDispatch(genCb_, dx, dy, 1);
+			srcScope = dstScope;
+			dstScope = tkn::SyncScope::fragmentSampled();
+			tkn::barrier(cb, shadowmap_.image(), srcScope, dstScope);
+		}
 
-		barrier.oldLayout = vk::ImageLayout::general;
-		barrier.newLayout = vk::ImageLayout::shaderReadOnlyOptimal;
-		barrier.srcAccessMask = vk::AccessBits::shaderWrite;
-		barrier.dstAccessMask = vk::AccessBits::shaderRead;
-		vk::cmdPipelineBarrier(genCb_, vk::PipelineStageBits::computeShader,
-			vk::PipelineStageBits::fragmentShader, {}, {}, {}, {{barrier}});
-
-		vk::endCommandBuffer(genCb_);
+		vk::endCommandBuffer(cb);
 
 		// submit work
 		vk::SubmitInfo si;
@@ -526,12 +569,28 @@ public:
 			vk::PipelineStageBits::fragmentShader);
 	}
 
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
+			return true;
+		}
+
+		if(ev.pressed) {
+			if(ev.keycode == swa_key_r) {
+				generateHeightmap(false);
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	const char* name() const override { return "terrain"; }
 	bool needsDepth() const override { return false; }
 
 protected:
 	tkn::ManagedGraphicsPipe renderPipe_;
 	tkn::ManagedGraphicsPipe ppPipe_;
+	tkn::ManagedGraphicsPipe particlePipe_;
 	tkn::ManagedComputePipe updatePipe_;
 	tkn::ManagedComputePipe erosionParticlePipe_;
 

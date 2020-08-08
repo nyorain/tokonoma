@@ -2,10 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "noise.glsl"
-
-const float mass = 0.005;
-const float maxLifetime = 2.0; // in seconds
-const float depositionRate = 0.1; // in change per second
+#include "constants.glsl"
 
 layout(local_size_x = 64) in;
 
@@ -13,7 +10,7 @@ struct Particle {
 	vec2 pos;
 	vec2 vel;
 	float sediment;
-	float lifetime;
+	float water;
 };
 
 layout(set = 0, binding = 0, r32f) uniform image2D heightmap;
@@ -46,9 +43,9 @@ vec3 computeNormal(vec2 pos) {
 }
 
 void init(inout Particle drop, uint id) {
-	drop.pos = -1 + 2 * random2(drop.pos + id);
-	drop.vel = vec2(0.0);
-	drop.lifetime = 0.0;
+	drop.pos = -1 + 2 * random2(vec2(ubo.dt * id, id));
+	drop.vel = vec2(1.0, 0.0);
+	drop.water = 1.0 + random(id * drop.pos);
 	drop.sediment = 0.0;
 }
 
@@ -58,9 +55,13 @@ void main() {
 		return;
 	}
 
+	// approach roughly modeled after 
+	// https://www.firespark.de/resources/downloads/implementation%20of%20a%20methode%20for%20hydraulic%20erosion.pdf
+	// See https://www.reddit.com/r/proceduralgeneration/comments/45w2jg
+
 	Particle drop = particles[id];
-	drop.lifetime += ubo.dt;
-	if(drop.pos != clamp(drop.pos, -1.0, 1.0) || drop.lifetime > maxLifetime) {
+	drop.water *= (1 - evaporation);
+	if(drop.pos != clamp(drop.pos, -1.0, 1.0) || drop.water < minWater) {
 		init(drop, id);
 		particles[id] = drop;
 		return;
@@ -70,25 +71,44 @@ void main() {
 	ivec2 baseTexel = ivec2(baseCoord * imageSize(heightmap));
 	float height = imageLoad(heightmap, baseTexel).r;
 
-	drop.pos += ubo.dt * drop.vel;
+	float speed = length(drop.vel);
+	vec2 nvel = drop.vel / speed;
+	drop.pos += 2 * nvel * pixLength;
 
 	vec3 n = computeNormal(drop.pos);
-	drop.vel += 0.01 * ubo.dt * n.xz / (mass + drop.sediment);
-	drop.vel *= pow(0.5, ubo.dt);
+	nvel = normalize(mix(n.xz, nvel, inertia));
 
-	baseCoord = 0.5 + 0.5 * drop.pos;
-	baseTexel = ivec2(baseCoord * imageSize(heightmap));
-	float nheight = imageLoad(heightmap, baseTexel).r;
+	vec2 nbaseCoord = 0.5 + 0.5 * drop.pos;
+	ivec2 nbaseTexel = ivec2(nbaseCoord * imageSize(heightmap));
+	float nheight = imageLoad(heightmap, nbaseTexel).r;
 
-	// float ceq = max(10 * length(drop.vel) * (0.0 + 10 * hdiff), 0.0);
-	float ceq = max(5 * length(drop.vel), 0.0);
+	float hdiff = (nheight - height);
+	float cap = speed * drop.water * capacity;
 
-	// float hdiff = 20 * (nheight - height);
-	float depos = ubo.dt * (depositionRate) * (drop.sediment - ceq);
-	drop.sediment -= depos;
-	nheight += 0.1 * depos;
-	imageStore(heightmap, baseTexel, vec4(nheight));
-	// imageAtomicAdd(heightmap, baseTexel, depos);
+	// TODO!
+	if(hdiff > 0.0) { // going upwards
+	} else { // going downards
+		// cap = max(-hdiff, cap);
+	}
+
+	// float cap = max(-hdiff, minSlope) * speed * drop.water * capacity;
+
+	if(drop.sediment < cap) {
+		float erode = min((cap - drop.sediment) * erosionRate, -hdiff);
+		height -= erode;
+		drop.sediment += erode;
+	} else {
+		float depos = (drop.sediment - cap) * depositionRate;
+		height += depos;
+		drop.sediment -= depos;
+	}
+
+	imageStore(heightmap, baseTexel, vec4(height));
+
+	// TODO!
+	// speed = sqrt(speed * speed + hdiff * gravity);
+	speed = 1.0;
+	drop.vel = speed * nvel;
 
 	particles[id] = drop;
 }

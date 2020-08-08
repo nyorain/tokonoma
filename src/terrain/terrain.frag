@@ -69,7 +69,7 @@ float shadow() {
 }
 
 vec3 computeAO(vec3 normal) {
-	//return vec3(0.01);
+	// return vec3(0.01);
 
 	float ao = 1.0;
 	float height = textureLod(heightmap, baseCoord, 0).r;

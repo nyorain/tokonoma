@@ -145,6 +145,7 @@ public:
 	DescriptorUpdater(const DescriptorUpdater&) = delete;
 	DescriptorUpdater& operator=(const DescriptorUpdater&) = delete;
 
+	void write(const vk::WriteDescriptorSet&);
 	void buffer(std::vector<vk::DescriptorBufferInfo>,
 		std::optional<vk::DescriptorType> type,
 		unsigned startElem = 0u);
