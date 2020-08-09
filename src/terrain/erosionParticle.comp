@@ -98,7 +98,7 @@ void main() {
 
 	float hdiff = (height - nheight);
 	float hdiffC = max(hdiff, minSlope);
-	float cap = speed * drop.water * capacity * 5000 * hdiffC;
+	float cap = speed * drop.water * capacity * 40000 * hdiffC;
 
 	if(drop.sediment < cap) {
 		const float erode = min((cap - drop.sediment) * erosionRate, hdiffC);

@@ -59,7 +59,7 @@ public:
 
 	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
 
-	static constexpr auto particleCount = 256 * 1024;
+	static constexpr auto particleCount = 1024;
 
 	static auto toLight() {
 		return normalized(nytl::Vec3f{-0.5, 0.2, -0.6});
@@ -515,27 +515,29 @@ public:
 
 		// erode
 		if(erodePipesLoaded()) {
-			// 1: update particles
-			auto erodedx = tkn::ceilDivide(particleCount, 64);
-			tkn::cmdBind(cb, erode_.particleUpdatePipe);
-			vk::cmdDispatch(cb, erodedx, 1, 1);
+			for(auto i = 0u; i < 64; ++i) {
+				// 1: update particles
+				auto erodedx = tkn::ceilDivide(particleCount, 64);
+				tkn::cmdBind(cb, erode_.particleUpdatePipe);
+				vk::cmdDispatch(cb, erodedx, 1, 1);
 
-			// 2: apply erosion
-			const auto [width, height] = heightmapSize;
-			vk::cmdBeginRenderPass(cb, {
-				erode_.rp, erode_.fb,
-				{0u, 0u, width, height}, 0, nullptr,
-			}, {});
+				// 2: apply erosion
+				const auto [width, height] = heightmapSize;
+				vk::cmdBeginRenderPass(cb, {
+					erode_.rp, erode_.fb,
+					{0u, 0u, width, height}, 0, nullptr,
+				}, {});
 
-			vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
-			vk::cmdSetViewport(cb, 0, 1, vp);
-			vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
+				vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
+				vk::cmdSetViewport(cb, 0, 1, vp);
+				vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
-			tkn::cmdBind(cb, erode_.particleErodePipe);
-			tkn::cmdBindVertexBuffers(cb, {{erode_.particles}});
-			vk::cmdDraw(cb, particleCount, 1, 0, 0);
+				tkn::cmdBind(cb, erode_.particleErodePipe);
+				tkn::cmdBindVertexBuffers(cb, {{erode_.particles}});
+				vk::cmdDraw(cb, particleCount, 1, 0, 0);
 
-			vk::cmdEndRenderPass(cb);
+				vk::cmdEndRenderPass(cb);
+			}
 		}
 
 		// subdivide
@@ -566,12 +568,14 @@ public:
 		tkn::cmdBind(cb, renderPipe_);
 		subd_.draw(cb);
 
+#ifdef DEBUG_DRAW_PARTICLES
 		if(erodePipesLoaded()) {
 			// debug draw particles
 			tkn::cmdBind(cb, erode_.particleRenderPipe);
 			tkn::cmdBindVertexBuffers(cb, {{erode_.particles}});
 			vk::cmdDraw(cb, particleCount, 1, 0, 0);
 		}
+#endif // DEBUG_DRAW_PARTICLES
 
 		vk::cmdEndRenderPass(cb);
 	}

@@ -20,5 +20,5 @@ void main() {
 
 	vec2 toCenter = 2 * (0.5 - gl_PointCoord);
 	float strength = max(1 - length(toCenter), 0.0) / (0.5 * erosionRadius * erosionRadius);
-	outStrength = 0.01 * strength * inStrength;
+	outStrength = strength * inStrength;
 }
