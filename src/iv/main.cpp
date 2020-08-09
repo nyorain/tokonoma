@@ -36,7 +36,7 @@
 
 using namespace tkn::types;
 
-class ImageView final : public tkn::SinglePassApp {
+class ImageViewer final : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
 	struct Args : public Base::Args {
@@ -418,11 +418,6 @@ protected:
 };
 
 int main(int argc, const char** argv) {
-	ImageView app;
-	if(!app.init({argv, argv + argc})) {
-		return EXIT_FAILURE;
-	}
-
-	app.run();
+	return tkn::appMain<ImageViewer>(argc, argv);
 }
 

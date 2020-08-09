@@ -269,11 +269,24 @@ struct SpecializationInfo {
 	}
 };
 
-
 template<typename T>
 T& as(const vpp::MemoryMapView& view) {
 	dlg_assert(view.size() >= sizeof(T));
 	return *reinterpret_cast<T*>(view.ptr());
 }
+
+struct PipelineVertexInfo {
+	std::vector<vk::VertexInputAttributeDescription> attribs;
+	std::vector<vk::VertexInputBindingDescription> bindings;
+
+	vk::PipelineVertexInputStateCreateInfo info() const {
+		vk::PipelineVertexInputStateCreateInfo ret;
+		ret.pVertexAttributeDescriptions = attribs.data();
+		ret.vertexAttributeDescriptionCount = attribs.size();
+		ret.pVertexBindingDescriptions = bindings.data();
+		ret.vertexBindingDescriptionCount = bindings.size();
+		return ret;
+	}
+};
 
 } // namespace tkn

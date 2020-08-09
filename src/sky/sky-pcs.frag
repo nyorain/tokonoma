@@ -103,7 +103,8 @@ vec3 getIn() {
 		scat += (1 / pi) * albedo * transToGround * groundIrradiance;
 
 		// direct
-		scat += albedo * vec3(atmos.solarIrradiance) * 
+		scat += (1 / pi) * albedo * vec3(atmos.solarIrradiance) * 
+			transToGround *
 			transmittanceToSun(atmos, transTex, toSun) *
 			max(dot(normal, sunDir), 0.0);
 	} else {

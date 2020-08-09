@@ -235,24 +235,13 @@ public:
 
 		// erosion particles apply to heightmap
 		{
-			vpp::GraphicsPipelineInfo gpi;
-			gpi.assembly.topology = vk::PrimitiveTopology::pointList;
-			gpi.rasterization.polygonMode = vk::PolygonMode::point;
-			gpi.renderPass(erode_.rp);
-
-			static vk::VertexInputAttributeDescription attribs[] = {
-				{0, 0, vk::Format::r32g32Sfloat, offsetof(Particle, oldPos)},
-				{1, 0, vk::Format::r32Sfloat, offsetof(Particle, erode)},
+			static auto vertexInfo = tkn::PipelineVertexInfo{{
+					{0, 0, vk::Format::r32g32Sfloat, offsetof(Particle, oldPos)},
+					{1, 0, vk::Format::r32Sfloat, offsetof(Particle, erode)},
+				}, {
+					{0, sizeof(Particle), vk::VertexInputRate::vertex},
+				}
 			};
-
-			static vk::VertexInputBindingDescription bindings[] = {
-				0, sizeof(Particle), vk::VertexInputRate::vertex,
-			};
-
-			gpi.vertex.pVertexAttributeDescriptions = attribs;
-			gpi.vertex.vertexAttributeDescriptionCount = 2u;
-			gpi.vertex.pVertexBindingDescriptions = bindings;
-			gpi.vertex.vertexBindingDescriptionCount = 1u;
 
 			static vk::PipelineColorBlendAttachmentState blend = {
 				true,
@@ -270,6 +259,12 @@ public:
 					vk::ColorComponentBits::b |
 					vk::ColorComponentBits::a,
 			};
+
+			vpp::GraphicsPipelineInfo gpi;
+			gpi.assembly.topology = vk::PrimitiveTopology::pointList;
+			gpi.rasterization.polygonMode = vk::PolygonMode::point;
+			gpi.renderPass(erode_.rp);
+			gpi.vertex = vertexInfo.info();
 			gpi.blend.attachmentCount = 1u;
 			gpi.blend.pAttachments = &blend;
 
@@ -280,27 +275,21 @@ public:
 
 		// erosion particles debug render in viewport
 		{
+			static auto vertexInfo = tkn::PipelineVertexInfo{{
+				{0, 0, vk::Format::r32g32Sfloat, offsetof(Particle, pos)},
+				{1, 0, vk::Format::r32g32Sfloat, offsetof(Particle, vel)},
+				{2, 0, vk::Format::r32Sfloat, offsetof(Particle, sediment)},
+				{3, 0, vk::Format::r32Sfloat, offsetof(Particle, water)},
+			}, {
+				{0, sizeof(Particle), vk::VertexInputRate::vertex},
+			}};
+
 			vpp::GraphicsPipelineInfo gpi;
 			gpi.assembly.topology = vk::PrimitiveTopology::pointList;
 			gpi.rasterization.polygonMode = vk::PolygonMode::point;
 			gpi.renderPass(pass0_.rp);
 			gpi.multisample.rasterizationSamples = samples();
-
-			static vk::VertexInputAttributeDescription attribs[] = {
-				{0, 0, vk::Format::r32g32Sfloat, offsetof(Particle, pos)},
-				{1, 0, vk::Format::r32g32Sfloat, offsetof(Particle, vel)},
-				{2, 0, vk::Format::r32Sfloat, offsetof(Particle, sediment)},
-				{3, 0, vk::Format::r32Sfloat, offsetof(Particle, water)},
-			};
-
-			static vk::VertexInputBindingDescription bindings[] = {
-				0, sizeof(Particle), vk::VertexInputRate::vertex,
-			};
-
-			gpi.vertex.pVertexAttributeDescriptions = attribs;
-			gpi.vertex.vertexAttributeDescriptionCount = 4u;
-			gpi.vertex.pVertexBindingDescriptions = bindings;
-			gpi.vertex.vertexBindingDescriptionCount = 1u;
+			gpi.vertex = vertexInfo.info();
 			gpi.depthStencil.depthTestEnable = true;
 			// important for scattering in post-process.
 			gpi.depthStencil.depthWriteEnable = false;
@@ -395,8 +384,6 @@ public:
 
 	void initBuffers(const vk::Extent2D& size, nytl::Span<RenderBuffer> bufs) override {
 		Base::initBuffers(size, bufs);
-		dlg_info("initbuffers");
-
 		auto& dev = vkDevice();
 
 		// depth

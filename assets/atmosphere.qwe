@@ -29,7 +29,7 @@ meta:
 		heightSize: 128
 	# maximum multiscattering level. Must be >= 1
 	# table generation time increases linearly with this
-	maxScatterOrder: 1
+	maxScatterOrder: 2
 atmosphere:
 	# atmosphere boundaries in meters
 	# mini-earth
@@ -51,14 +51,14 @@ atmosphere:
 	minMuS: -0.2
 	# average ground color, rgb. Used for multi scattering
 	groundAlbedo:
-		0.1
-		0.1
-		0.1
+		0.3
+		0.3
+		0.3
 	mie:
-		g: 0.8
+		g: 0.7
 		# ref: 1200
 		scaleHeight: 1200
-		strength: 1.0
+		strength: 0.001
 		scattering:
 			# compute: generate it manually, physically based. 
 			#   Uses 'alpha', 'beta', 'scatterAlbedo' parameter.
@@ -66,18 +66,18 @@ atmosphere:
 			use: compute
 			# ref: 0.0
 			alpha: 0.0
-			# beta: 5.328e-3
-			beta: 1.328e-2
-			scatterAlbedo: 1.0
+			beta: 5.328e-3
+			# beta: 1.328e-2
+			scatterAlbedo: 0.95
 			# only for use: rgb
 			rgb:
 				8.e-5
 				8.e-5
 				8.e-5
 	rayleigh:
-		strength: 1.0
+		strength: 2.0
 		scattering:
-			use: rgb
+			use: compute
 			# Bruneton's reference: 1.8402e-6
 			strength: 1.8402e-6
 			# strength: 4.8e-6

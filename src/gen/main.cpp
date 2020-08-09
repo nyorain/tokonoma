@@ -141,8 +141,8 @@ int main(int argc, const char** argv) {
 	} else if(result.has_option("shproj")) {
 		auto out = output.value_or("sh.bin");
 		saveSHProj(result["shproj"], out, dev);
-	} else if(result.has_option("bakesky")) {
-		float turbidity = result["bakesky"].as<float>();
+	} else if(result.has_option("bake-sky")) {
+		float turbidity = result["bake-sky"].as<float>();
 		auto outEnv = output.value_or("skyEnvs.ktx");
 		auto outData = "skyData.bin"; // TODO: don't hardcode
 		return saveSkies(turbidity, outEnv, outData, dev);
