@@ -27,6 +27,23 @@ void cmdBindComputeDescriptors(vk::CommandBuffer cb, vk::PipelineLayout pl,
 		pl, first, {ds}, {off});
 }
 
+void cmdBindVertexBuffers(vk::CommandBuffer cb,
+		nytl::Span<const vpp::BufferSpan> bufs, unsigned first) {
+	constexpr auto maxCount = 256;
+	dlg_assert(bufs.size() < maxCount);
+
+	std::array<vk::Buffer, maxCount> handles;
+	std::array<vk::DeviceSize, maxCount> offsets;
+
+	for(auto i = 0u; i < bufs.size(); ++i) {
+		handles[i] = bufs[i].buffer();
+		offsets[i] = bufs[i].offset();
+	}
+
+	vk::cmdBindVertexBuffers(cb, first, bufs.size(),
+		*handles.data(), *offsets.data());
+}
+
 void cmdCopyBuffer(vk::CommandBuffer cb, vpp::BufferSpan src,
 		vpp::BufferSpan dst) {
 	dlg_assert(src.size() == dst.size());

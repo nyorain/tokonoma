@@ -25,6 +25,8 @@ void cmdBindGraphicsDescriptors(vk::CommandBuffer, vk::PipelineLayout,
 void cmdBindComputeDescriptors(vk::CommandBuffer, vk::PipelineLayout,
 	unsigned first, std::initializer_list<vk::DescriptorSet>,
 	std::initializer_list<uint32_t> = {});
+void cmdBindVertexBuffers(vk::CommandBuffer, nytl::Span<const vpp::BufferSpan>,
+	unsigned first = 0u);
 
 void cmdCopyBuffer(vk::CommandBuffer, vpp::BufferSpan src, vpp::BufferSpan dst);
 

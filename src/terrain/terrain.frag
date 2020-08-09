@@ -91,16 +91,16 @@ vec3 computeAO(vec3 normal) {
 	float rough6 = textureLod(heightmap, baseCoord, 8u).r;
 	float rough7 = textureLod(heightmap, baseCoord, 10u).r;
 
-	ao *= min(1.0, exp(-500 * (rough1 - height)));
-	ao *= min(1.0, exp(-300 * (rough2 - height)));
-	ao *= min(1.0, exp(-150 * (rough3 - height)));
-	ao *= min(1.0, exp(-100 * (rough4 - height)));
-	ao *= min(1.0, exp(-50 * (rough5 - height)));
-	ao *= min(1.0, exp(-20 * (rough6 - height)));
-	ao *= min(1.0, exp(-10 * (rough7 - height)));
+	ao *= min(1.0, exp(-200 * (rough1 - height)));
+	ao *= min(1.0, exp(-150 * (rough2 - height)));
+	ao *= min(1.0, exp(-100 * (rough3 - height)));
+	ao *= min(1.0, exp(-50 * (rough4 - height)));
+	ao *= min(1.0, exp(-20 * (rough5 - height)));
+	ao *= min(1.0, exp(-10 * (rough6 - height)));
+	ao *= min(1.0, exp(-5 * (rough7 - height)));
 #endif
 
-	return 0.1 * ao * ambientColor * (0.1 + 0.9 * max(normal.y, 0.0));
+	return 0.25 * ao * ambientColor * (0.1 + 0.9 * max(normal.y, 0.0));
 }
 
 void main() {

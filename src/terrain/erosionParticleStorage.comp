@@ -1,0 +1,124 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "noise.glsl"
+#include "constants.glsl"
+
+layout(local_size_x = 64) in;
+
+struct Particle {
+	vec2 pos;
+	vec2 vel;
+	float sediment;
+	float water;
+};
+
+layout(set = 0, binding = 0, r32f) uniform image2D heightmap;
+
+layout(set = 0, binding = 1) buffer Particles {
+	Particle particles[];
+};
+
+layout(set = 0, binding = 2) uniform Ubo {
+	mat4 _0;
+	vec3 _1;
+	float dt;
+} ubo;
+
+vec2 pixLength = 1.0 / imageSize(heightmap);
+
+vec3 computeNormal(vec2 pos) {
+	vec2 baseCoord = 0.5 + 0.5 * pos;
+	ivec2 baseTexel = ivec2(baseCoord * imageSize(heightmap));
+
+	float x0 = imageLoad(heightmap, baseTexel + ivec2(-1, 0)).r;
+	float x1 = imageLoad(heightmap, baseTexel + ivec2(1, 0)).r;
+	float z0 = imageLoad(heightmap, baseTexel + ivec2(0, -1)).r;
+	float z1 = imageLoad(heightmap, baseTexel + ivec2(0, 1)).r;
+
+	float dx = 0.5 * (x1 - x0) / pixLength.x;
+	float dz = 0.5 * (z1 - z0) / pixLength.y;
+
+	vec3 n = normalize(vec3(0, 1, 0) - dx * vec3(1, 0, 0) - dz * vec3(0, 0, 1));
+	return n;
+}
+
+void init(inout Particle drop, uint id) {
+	drop.pos = -1 + 2 * random2(vec2(ubo.dt * id, id));
+	drop.vel = vec2(1.0, 0.0);
+	drop.water = 1.0 + random(id * drop.pos);
+	drop.sediment = 0.001;
+}
+
+void main() {
+	uint id = gl_GlobalInvocationID.x;
+	if(id >= particles.length() /* || id > 256*/) {
+		return;
+	}
+
+	// approach roughly modeled after 
+	// https://www.firespark.de/resources/downloads/implementation%20of%20a%20methode%20for%20hydraulic%20erosion.pdf
+	// See https://www.reddit.com/r/proceduralgeneration/comments/45w2jg
+
+	Particle drop = particles[id];
+	drop.water *= (1 - evaporation);
+	if(drop.pos != clamp(drop.pos, -1.0, 1.0) || drop.water < minWater) {
+		init(drop, id);
+		particles[id] = drop;
+		return;
+	}
+
+	vec2 baseCoord = 0.5 + 0.5 * drop.pos;
+	ivec2 baseTexel = ivec2(baseCoord * imageSize(heightmap));
+	float height = imageLoad(heightmap, baseTexel).r;
+
+	float speed = length(drop.vel);
+	vec2 nvel = drop.vel / speed;
+	drop.pos += 2 * nvel * pixLength;
+
+	vec3 n = computeNormal(drop.pos);
+	nvel = mix(n.xz, nvel, inertia);
+	if(dot(nvel, nvel) < 0.000001) {
+		// This can happend when the particle is on flat ground.
+		// normalizing such a small vector would be a bad idea.
+		// Instead, we simply choose a random direction.
+		nvel = random2(id + drop.pos);
+	}
+
+	nvel = normalize(nvel);
+
+	vec2 nbaseCoord = 0.5 + 0.5 * drop.pos;
+	ivec2 nbaseTexel = ivec2(nbaseCoord * imageSize(heightmap));
+	float nheight = imageLoad(heightmap, nbaseTexel).r;
+
+	float hdiff = (nheight - height);
+	float cap = 100 * speed * drop.water * capacity * max(-hdiff, minSlope);
+
+	// TODO!
+	if(hdiff > 0.0) { // going upwards
+	} else { // going downards
+		// cap = max(-hdiff, cap);
+	}
+
+	// float cap = max(-hdiff, minSlope) * speed * drop.water * capacity;
+
+	if(drop.sediment < cap) {
+		float erode = min((cap - drop.sediment) * erosionRate, -hdiff);
+		height -= erode;
+		drop.sediment += erode;
+	} else {
+		float depos = (drop.sediment - cap) * depositionRate;
+		height += depos;
+		drop.sediment -= depos;
+	}
+
+	imageStore(heightmap, baseTexel, vec4(height));
+
+	// TODO!
+	speed = sqrt(speed * speed + hdiff * gravity);
+	// speed = 1.0;
+	drop.vel = speed * nvel;
+
+	particles[id] = drop;
+}
+

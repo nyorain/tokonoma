@@ -4,8 +4,9 @@
 #include "constants.glsl"
 
 layout(location = 0) in vec2 pos;
-layout(location = 1) in float sediment;
-layout(location = 2) in float water;
+layout(location = 1) in vec2 vel;
+layout(location = 2) in float sediment;
+layout(location = 3) in float water;
 
 layout(location = 0) out vec3 color;
 
@@ -18,7 +19,7 @@ void main() {
 	vec2 baseCoord = 0.5 + 0.5 * pos;
 	float height = texture(heightmap, baseCoord).r;
 
-	gl_Position = ubo.vp * vec4(pos.x, height, pos.y, 1.0);
-	gl_PointSize = 1.0;
-	color = vec3(sediment / capacity, 0.1, water);
+	gl_Position = ubo.vp * vec4(pos.x, height + 0.001, pos.y, 1.0);
+	gl_PointSize = 2.0;
+	color = vec3(sediment / capacity, length(vel), 0.5 + 0.5 * water);
 }

@@ -35,20 +35,23 @@ public:
 		nytl::Vec3f viewPos;
 		float dt;
 		nytl::Vec3f toLight;
-		float _pad1;
+		float time;
 		nytl::Mat4f vpInv;
 	};
 
 	// ersionParticle.comp
 	struct Particle {
-		nytl::Vec2f pos {};
+		nytl::Vec2f pos {0.f, 0.f};
 		nytl::Vec2f vel {1.f, 0.f};
-		float sediment {};
+		float sediment {0.f};
 		float water {0.f};
+		float erode {0.f};
+		float _pad;
+		nytl::Vec2f oldPos {0.f, 0.f};
 	};
 
 	// static constexpr vk::Extent2D heightmapSize = {4096, 4096};
-	static constexpr vk::Extent2D heightmapSize = {1024, 1024};
+	static constexpr vk::Extent2D heightmapSize = {2048, 2048};
 	static constexpr auto heightmapFormat = vk::Format::r32Sfloat;
 
 	static constexpr vk::Extent2D shadowmapSize = {1024, 1024};
@@ -56,7 +59,7 @@ public:
 
 	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
 
-	static constexpr auto particleCount = 32 * 1024;
+	static constexpr auto particleCount = 256 * 1024;
 
 	static auto toLight() {
 		return normalized(nytl::Vec3f{-0.5, 0.2, -0.6});
@@ -74,10 +77,12 @@ public:
 
 		// pass data
 		initPass0();
+		initErodePass();
 
 		// heightmap
 		auto usage = vk::ImageUsageBits::storage |
 			vk::ImageUsageBits::sampled |
+			vk::ImageUsageBits::colorAttachment |
 			vk::ImageUsageBits::transferSrc |
 			vk::ImageUsageBits::transferDst;
 		auto heightmapInfo = vpp::ViewableImageCreateInfo(
@@ -125,7 +130,7 @@ public:
 		auto particleUsage = vk::BufferUsageBits::storageBuffer |
 			vk::BufferUsageBits::vertexBuffer |
 			vk::BufferUsageBits::transferDst;
-		particles_ = {dev.bufferAllocator(), sizeof(Particle) * particleCount,
+		erode_.particles = {dev.bufferAllocator(), sizeof(Particle) * particleCount,
 			particleUsage, dev.deviceMemoryTypes()};
 
 		// upload data
@@ -138,7 +143,7 @@ public:
 
 		auto stage3 = vpp::fillStaging(cb, vertices_, verts);
 		auto stage4 = vpp::fillStaging(cb, indices_, inds);
-		auto stage5 = vpp::fillStaging(cb, particles_, tkn::bytes(particles));
+		auto stage5 = vpp::fillStaging(cb, erode_.particles, tkn::bytes(particles));
 
 		vk::endCommandBuffer(cb);
 		auto sid = qs.add(cb);
@@ -220,14 +225,60 @@ public:
 
 		// erosion pipeline
 		{
-			erosionParticlePipe_ = {dev, "terrain/erosionParticle.comp", fileWatcher_};
-			auto& dsu = erosionParticlePipe_.dsu();
+			erode_.particleUpdatePipe = {dev, "terrain/erosionParticle.comp",
+				fileWatcher_, {}, tkn::ComputePipeInfoProvider::create(linearSampler_)};
+			auto& dsu = erode_.particleUpdatePipe.dsu();
 			dsu(heightmap_);
-			dsu(particles_);
+			dsu(erode_.particles);
 			dsu(ubo_);
 		}
 
-		// erosion particles
+		// erosion particles apply to heightmap
+		{
+			vpp::GraphicsPipelineInfo gpi;
+			gpi.assembly.topology = vk::PrimitiveTopology::pointList;
+			gpi.rasterization.polygonMode = vk::PolygonMode::point;
+			gpi.renderPass(erode_.rp);
+
+			static vk::VertexInputAttributeDescription attribs[] = {
+				{0, 0, vk::Format::r32g32Sfloat, offsetof(Particle, oldPos)},
+				{1, 0, vk::Format::r32Sfloat, offsetof(Particle, erode)},
+			};
+
+			static vk::VertexInputBindingDescription bindings[] = {
+				0, sizeof(Particle), vk::VertexInputRate::vertex,
+			};
+
+			gpi.vertex.pVertexAttributeDescriptions = attribs;
+			gpi.vertex.vertexAttributeDescriptionCount = 2u;
+			gpi.vertex.pVertexBindingDescriptions = bindings;
+			gpi.vertex.vertexBindingDescriptionCount = 1u;
+
+			static vk::PipelineColorBlendAttachmentState blend = {
+				true,
+				// color
+				vk::BlendFactor::one, // src
+				vk::BlendFactor::one, // dst
+				vk::BlendOp::add,
+				// alpha, don't care
+				vk::BlendFactor::zero, // src
+				vk::BlendFactor::zero, // dst
+				vk::BlendOp::add,
+				// color write mask
+				vk::ColorComponentBits::r |
+					vk::ColorComponentBits::g |
+					vk::ColorComponentBits::b |
+					vk::ColorComponentBits::a,
+			};
+			gpi.blend.attachmentCount = 1u;
+			gpi.blend.pAttachments = &blend;
+
+			auto provider = tkn::GraphicsPipeInfoProvider::create(gpi);
+			erode_.particleErodePipe = {dev, {"terrain/erode.vert"},
+				{"terrain/erode.frag"}, fileWatcher_, std::move(provider)};
+		}
+
+		// erosion particles debug render in viewport
 		{
 			vpp::GraphicsPipelineInfo gpi;
 			gpi.assembly.topology = vk::PrimitiveTopology::pointList;
@@ -237,8 +288,9 @@ public:
 
 			static vk::VertexInputAttributeDescription attribs[] = {
 				{0, 0, vk::Format::r32g32Sfloat, offsetof(Particle, pos)},
-				{1, 0, vk::Format::r32Sfloat, offsetof(Particle, sediment)},
-				{2, 0, vk::Format::r32Sfloat, offsetof(Particle, water)},
+				{1, 0, vk::Format::r32g32Sfloat, offsetof(Particle, vel)},
+				{2, 0, vk::Format::r32Sfloat, offsetof(Particle, sediment)},
+				{3, 0, vk::Format::r32Sfloat, offsetof(Particle, water)},
 			};
 
 			static vk::VertexInputBindingDescription bindings[] = {
@@ -246,21 +298,40 @@ public:
 			};
 
 			gpi.vertex.pVertexAttributeDescriptions = attribs;
-			gpi.vertex.vertexAttributeDescriptionCount = 3u;
+			gpi.vertex.vertexAttributeDescriptionCount = 4u;
 			gpi.vertex.pVertexBindingDescriptions = bindings;
 			gpi.vertex.vertexBindingDescriptionCount = 1u;
 			gpi.depthStencil.depthTestEnable = true;
-			gpi.depthStencil.depthWriteEnable = true;
+			// important for scattering in post-process.
+			gpi.depthStencil.depthWriteEnable = false;
 			gpi.depthStencil.depthCompareOp = vk::CompareOp::lessOrEqual;
 
 			auto provider = tkn::GraphicsPipeInfoProvider::create(gpi, linearSampler_);
-			particlePipe_ = {dev, {"terrain/particle.vert"}, {"terrain/particle.frag"},
-				fileWatcher_, std::move(provider)};
+			erode_.particleRenderPipe = {dev, {"terrain/particle.vert"},
+				{"terrain/particle.frag"}, fileWatcher_, std::move(provider)};
 
-			auto& dsu = particlePipe_.dsu();
+			auto& dsu = erode_.particleRenderPipe.dsu();
 			dsu(heightmap_);
 			dsu(ubo_);
 		}
+
+		vk::ImageViewCreateInfo ivi;
+		ivi.image = heightmap_.image();
+		ivi.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
+		ivi.format = heightmapFormat;
+		ivi.viewType = vk::ImageViewType::e2d;
+		erode_.heightmapView = {dev, ivi};
+
+		// erosion framebuffer
+		vk::FramebufferCreateInfo fbi;
+		fbi.width = heightmapSize.width;
+		fbi.height = heightmapSize.height;
+		fbi.layers = 1u;
+		fbi.attachmentCount = 1u;
+		fbi.pAttachments = &erode_.heightmapView.vkHandle();
+		fbi.renderPass = erode_.rp;
+		erode_.fb = {dev, fbi};
+		vpp::nameHandle(erode_.fb, "erode.fb");
 
 		qs.wait(sid);
 		return true;
@@ -278,21 +349,53 @@ public:
 			{{offscreenFormat, pass0_.depthFormat}},
 			{{{pass0}}});
 
-		vk::SubpassDependency dep;
+		auto& dep = rpi.dependencies.emplace_back();
 		dep.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
 		dep.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
 		dep.dstStageMask = vk::PipelineStageBits::fragmentShader;
 		dep.dstAccessMask = vk::AccessBits::shaderRead;
 		dep.srcSubpass = 0u;
 		dep.dstSubpass = vk::subpassExternal;
-		rpi.dependencies.push_back(dep);
 
 		pass0_.rp = {dev, rpi.info()};
 		vpp::nameHandle(pass0_.rp, "pass0.rp");
 	}
 
+	void initErodePass() {
+		auto& dev = vkDevice();
+
+		auto pass0 = {0u};
+		auto rpi = tkn::renderPassInfo({{heightmapFormat}}, {{pass0}});
+		// don't clear the heightmap
+		rpi.attachments[0].loadOp = vk::AttachmentLoadOp::load;
+		rpi.attachments[0].initialLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+
+		auto& depIn = rpi.dependencies.emplace_back();
+		depIn.srcStageMask = vk::PipelineStageBits::computeShader;
+		depIn.srcAccessMask = vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite;
+		depIn.dstStageMask = vk::PipelineStageBits::allGraphics;
+		depIn.dstAccessMask = vk::AccessBits::shaderRead |
+			vk::AccessBits::vertexAttributeRead |
+			vk::AccessBits::colorAttachmentRead |
+			vk::AccessBits::colorAttachmentWrite;
+		depIn.srcSubpass = vk::subpassExternal;
+		depIn.dstSubpass = 0u;
+
+		auto& depOut = rpi.dependencies.emplace_back();
+		depOut.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
+		depOut.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
+		depOut.dstStageMask = vk::PipelineStageBits::allCommands;
+		depOut.dstAccessMask = vk::AccessBits::shaderRead;
+		depOut.srcSubpass = 0u;
+		depOut.dstSubpass = vk::subpassExternal;
+
+		erode_.rp = {dev, rpi.info()};
+		vpp::nameHandle(pass0_.rp, "erode.rp");
+	}
+
 	void initBuffers(const vk::Extent2D& size, nytl::Span<RenderBuffer> bufs) override {
 		Base::initBuffers(size, bufs);
+		dlg_info("initbuffers");
 
 		auto& dev = vkDevice();
 
@@ -325,14 +428,17 @@ public:
 
 		// update descriptors
 		auto& dsupp = ppPipe_.dsu();
-		dsupp.seek(0, 0);
 		dsupp(pass0_.colorTarget);
 		dsupp(pass0_.depthTarget);
 		dsupp(ubo_);
+
+		// TODO: should not be here I guess
+		dsupp.apply();
 	}
 
 	void update(double dt) override {
 		Base::update(dt);
+		time_ += dt;
 
 		cam_.update(swaDisplay(), dt);
 
@@ -341,8 +447,9 @@ public:
 		updatePipe_.update();
 		genPipe_.update();
 		shadowPipe_.update();
-		erosionParticlePipe_.update();
-		particlePipe_.update();
+		erode_.particleUpdatePipe.update();
+		erode_.particleRenderPipe.update();
+		erode_.particleErodePipe.update();
 		ppPipe_.update();
 		subd_.update();
 
@@ -362,6 +469,7 @@ public:
 			}
 			data.toLight = toLight();
 			data.dt = dt;
+			data.time = time_;
 
 			uboMap_.flush();
 		}
@@ -371,10 +479,12 @@ public:
 		rerec |= updatePipe_.updateDevice();
 		rerec |= subd_.updateDevice();
 		rerec |= ppPipe_.updateDevice();
-		rerec |= erosionParticlePipe_.updateDevice();
-		rerec |= particlePipe_.updateDevice();
 
-		if(rerec && mainPipesLoaded()) {
+		rerec |= erode_.particleErodePipe.updateDevice();
+		rerec |= erode_.particleRenderPipe.updateDevice();
+		rerec |= erode_.particleUpdatePipe.updateDevice();
+
+		if(rerec && mainPipesLoaded() && generated_) {
 			Base::scheduleRerecord();
 		}
 
@@ -383,37 +493,50 @@ public:
 		regen |= shadowPipe_.updateDevice();
 
 		if(regen && genPipesLoaded()) {
-			generateHeightmap(true);
+			// don't regenerate terrain every time the pipe changes,
+			// only the first time. We do this so we don't reset the
+			// erosion just because e.g. an include file changed (and
+			// the generation itself did not change).
+			// If needed, just trigger regeneraiton manually via the
+			// shortcut
+			generateHeightmap(!generated_);
+
+			if(!generated_) {
+				generated_ = true;
+				Base::scheduleRerecord();
+			}
 		}
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
-		if(!mainPipesLoaded()) {
+		if(!mainPipesLoaded() || !generated_) {
 			return;
 		}
 
 		// erode
-		auto heightmapSrc = tkn::SyncScope {
-			vk::PipelineStageBits::topOfPipe,
-			vk::ImageLayout::shaderReadOnlyOptimal,
-			{},
-		};
-		auto heightmapDst = tkn::SyncScope::computeReadWrite();
+		if(erodePipesLoaded()) {
+			// 1: update particles
+			auto erodedx = tkn::ceilDivide(particleCount, 64);
+			tkn::cmdBind(cb, erode_.particleUpdatePipe);
+			vk::cmdDispatch(cb, erodedx, 1, 1);
 
-		auto subres = vk::ImageSubresourceRange{
-			vk::ImageAspectBits::color,
-			0, vk::remainingMipLevels,
-			0, 1};
-		tkn::barrier(cb, heightmap_.image(), heightmapSrc, heightmapDst, subres);
+			// 2: apply erosion
+			const auto [width, height] = heightmapSize;
+			vk::cmdBeginRenderPass(cb, {
+				erode_.rp, erode_.fb,
+				{0u, 0u, width, height}, 0, nullptr,
+			}, {});
 
-		auto erodedx = tkn::ceilDivide(particleCount, 64);
-		tkn::cmdBind(cb, erosionParticlePipe_);
-		vk::cmdDispatch(cb, erodedx, 1, 1);
+			vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
+			vk::cmdSetViewport(cb, 0, 1, vp);
+			vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
 
-		heightmapSrc = heightmapDst;
-		heightmapDst = tkn::SyncScope::fragmentSampled();
-		heightmapDst.stages = vk::PipelineStageBits::allCommands;
-		tkn::barrier(cb, heightmap_.image(), heightmapSrc, heightmapDst, subres);
+			tkn::cmdBind(cb, erode_.particleErodePipe);
+			tkn::cmdBindVertexBuffers(cb, {{erode_.particles}});
+			vk::cmdDraw(cb, particleCount, 1, 0, 0);
+
+			vk::cmdEndRenderPass(cb);
+		}
 
 		// subdivide
 		// TODO: we don't need to do this every frame.
@@ -443,16 +566,18 @@ public:
 		tkn::cmdBind(cb, renderPipe_);
 		subd_.draw(cb);
 
-		tkn::cmdBind(cb, particlePipe_);
-		vk::cmdBindVertexBuffers(cb, 0, {{particles_.buffer()}},
-			{{particles_.offset()}});
-		vk::cmdDraw(cb, particleCount, 1, 0, 0);
+		if(erodePipesLoaded()) {
+			// debug draw particles
+			tkn::cmdBind(cb, erode_.particleRenderPipe);
+			tkn::cmdBindVertexBuffers(cb, {{erode_.particles}});
+			vk::cmdDraw(cb, particleCount, 1, 0, 0);
+		}
 
 		vk::cmdEndRenderPass(cb);
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		if(!mainPipesLoaded()) {
+		if(!mainPipesLoaded() || !generated_) {
 			return;
 		}
 
@@ -469,8 +594,13 @@ public:
 		return bool(renderPipe_.pipe()) &&
 			bool(updatePipe_.pipe()) &&
 			bool(ppPipe_.pipe()) &&
-			bool(erosionParticlePipe_.pipe()) &&
 			subd_.loaded();
+	}
+
+	bool erodePipesLoaded() const {
+		return bool(erode_.particleErodePipe.pipe()) &&
+			bool(erode_.particleUpdatePipe.pipe()) &&
+			bool(erode_.particleRenderPipe.pipe());
 	}
 
 	void resize(unsigned w, unsigned h) override {
@@ -578,6 +708,9 @@ public:
 			if(ev.keycode == swa_key_r) {
 				generateHeightmap(false);
 				return true;
+			} else if(ev.keycode == swa_key_t) {
+				generateHeightmap(true);
+				return true;
 			}
 		}
 
@@ -590,9 +723,7 @@ public:
 protected:
 	tkn::ManagedGraphicsPipe renderPipe_;
 	tkn::ManagedGraphicsPipe ppPipe_;
-	tkn::ManagedGraphicsPipe particlePipe_;
 	tkn::ManagedComputePipe updatePipe_;
-	tkn::ManagedComputePipe erosionParticlePipe_;
 
 	tkn::ControlledCamera cam_;
 	tkn::FileWatcher fileWatcher_;
@@ -600,7 +731,6 @@ protected:
 	vpp::SubBuffer ubo_;
 	vpp::SubBuffer vertices_;
 	vpp::SubBuffer indices_;
-	vpp::SubBuffer particles_;
 
 	vpp::MemoryMapView uboMap_;
 
@@ -623,7 +753,20 @@ protected:
 		vpp::Framebuffer fb;
 	} pass0_;
 
+	// erosion
+	struct {
+		tkn::ManagedComputePipe particleUpdatePipe;
+		tkn::ManagedGraphicsPipe particleErodePipe;
+		tkn::ManagedGraphicsPipe particleRenderPipe;
+		vpp::SubBuffer particles;
+		vpp::ImageView heightmapView;
+		vpp::Framebuffer fb; // for heightmap, particleErodePipe
+		vpp::RenderPass rp;
+	} erode_;
+
+	bool generated_ {}; // whether the terrain was generated yet
 	Subdivider subd_;
+	double time_ {};
 };
 
 int main(int argc, const char** argv) {

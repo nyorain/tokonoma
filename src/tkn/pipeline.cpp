@@ -43,6 +43,10 @@ bool needsSampler(vk::DescriptorType dsType) {
 }
 
 void cmdBindGraphics(vk::CommandBuffer cb, const PipeLayoutDescriptors& state) {
+	if(state.descriptors.empty()) {
+		return;
+	}
+
 	std::vector<vk::DescriptorSet> sets;
 	for(auto& ds : state.descriptors) {
 		sets.push_back(ds.ds);
@@ -53,6 +57,10 @@ void cmdBindGraphics(vk::CommandBuffer cb, const PipeLayoutDescriptors& state) {
 }
 
 void cmdBindCompute(vk::CommandBuffer cb, const PipeLayoutDescriptors& state) {
+	if(state.descriptors.empty()) {
+		return;
+	}
+
 	std::vector<vk::DescriptorSet> sets;
 	for(auto& ds : state.descriptors) {
 		sets.push_back(ds.ds);
@@ -768,13 +776,16 @@ void DescriptorUpdater::write(const vk::WriteDescriptorSet& write) {
 				areRangesOverlapping(w.dstArrayElement, w.descriptorCount,
 					write.dstArrayElement, write.descriptorCount)) {
 			// TODO: implement array case
-			dlg_assert(write.dstArrayElement == 1);
-			dlg_assert(w.dstArrayElement == 1);
+			dlg_assert(write.descriptorCount == 1);
+			dlg_assert(w.descriptorCount == 1);
 			w = write;
 			return;
 		}
 	}
 
+	// TODO: validate (only information that validation layer does not provide).
+	// E.g. make sure that no sampler was given when descriptor type
+	// does not need it (output warning).
 	writes_.push_back(write);
 }
 
@@ -912,6 +923,14 @@ void DescriptorUpdater::set(vk::Sampler sampler) {
 	set({}, {}, sampler);
 }
 
+void DescriptorUpdater::set(vk::ImageView view, vk::Sampler sampler) {
+	set(view, vk::ImageLayout::undefined, sampler);
+}
+
+void DescriptorUpdater::set(const vpp::ViewableImage& img, vk::Sampler sampler) {
+	set(img.vkImageView(), vk::ImageLayout::undefined, sampler);
+}
+
 void DescriptorUpdater::seek(unsigned set, unsigned binding) {
 	currentSet_ = set;
 	currentBinding_ = binding;
@@ -919,7 +938,8 @@ void DescriptorUpdater::seek(unsigned set, unsigned binding) {
 		return;
 	}
 
-	while(currentBinding_ >= (*sets_)[currentSet_].bindings.size()) {
+	while(currentSet_ < sets_->size() &&
+			currentBinding_ >= (*sets_)[currentSet_].bindings.size()) {
 		currentBinding_ -= (*sets_)[currentSet_].bindings.size();
 		++currentSet_;
 	}
@@ -936,7 +956,8 @@ void DescriptorUpdater::skip(unsigned inc) {
 		return;
 	}
 
-	while(currentBinding_ >= (*sets_)[currentSet_].bindings.size()) {
+	while(currentSet_ < sets_->size() &&
+			currentBinding_ >= (*sets_)[currentSet_].bindings.size()) {
 		currentBinding_ -= (*sets_)[currentSet_].bindings.size();
 		++currentSet_;
 	}

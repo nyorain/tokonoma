@@ -177,6 +177,8 @@ public:
 	void set(const vpp::ViewableImage&,
 		vk::ImageLayout = vk::ImageLayout::undefined,
 		vk::Sampler = {});
+	void set(vk::ImageView view, vk::Sampler);
+	void set(const vpp::ViewableImage&, vk::Sampler);
 	void set(vk::Sampler);
 
 	template<typename... Args>
@@ -215,8 +217,8 @@ protected:
 	std::vector<std::vector<vk::BufferView>> views_;
 	std::vector<std::vector<vk::DescriptorImageInfo>> images_;
 
-	unsigned int currentBinding_ = 0;
-	unsigned int currentSet_ = 0;
+	unsigned int currentBinding_ {};
+	unsigned int currentSet_ {};
 	const std::deque<LayoutedDs>* sets_ {};
 };
 
@@ -253,6 +255,7 @@ public:
 
 public:
 	ManagedComputePipe() = default;
+	// TODO: use Stage instead of file + preamble
 	ManagedComputePipe(const vpp::Device&, std::string shaderPath,
 		tkn::FileWatcher&, std::string preamble = {},
 		std::unique_ptr<InfoProvider> provider = {}, bool async = true,
@@ -269,7 +272,7 @@ public:
 	vk::Pipeline pipe() const { return pipe_.pipe(); }
 	vk::PipelineLayout pipeLayout() const { return state_->pipeLayout; }
 
-	auto& dsu() { return updater_; }
+	auto& dsu() { updater_.seek(0, 0); return updater_; }
 
 protected:
 	static vpp::Pipeline recreate(const ReloadablePipeline::CreatorInfo& info,
@@ -319,7 +322,7 @@ public:
 	vk::Pipeline pipe() const { return pipe_.pipe(); }
 	vk::PipelineLayout pipeLayout() const { return state_->pipeLayout; }
 
-	auto& dsu() { return updater_; }
+	auto& dsu() { updater_.seek(0, 0); return updater_; }
 
 protected:
 	static vpp::Pipeline recreate(const ReloadablePipeline::CreatorInfo& info,

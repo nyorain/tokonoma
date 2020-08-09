@@ -12,6 +12,7 @@ layout(set = 0, binding = 0, r32f) writeonly uniform image2D heightmap;
 float vfbm(vec2 st) {
 	const float lacunarity = 1.65;
 	const float gain = 0.25;
+	st *= 2;
 
 	float sum = 0.f;
 	float ampSum = 0.f;
@@ -22,6 +23,25 @@ float vfbm(vec2 st) {
 		// sum += amp * (voronoiNoise2(mod * st)) * gradientNoise(2 * mod * st);
 		// sum += amp * gradientNoise( mod * st);
 	
+		ampSum += amp;
+		mod *= lacunarity;
+		amp *= gain;
+		st = lacunarity * st;
+	}
+
+	return sum / ampSum;
+}
+
+float fbm2(vec2 st) {
+	const float lacunarity = 2.0;
+	const float gain = 0.2;
+
+	float sum = 0.f;
+	float ampSum = 0.f;
+	float amp = 0.5f; // ampliture
+	float mod = 1.f; // modulation
+	for(int i = 0; i < 4; ++i) {
+		sum += amp * gradientNoise( mod * st);
 		ampSum += amp;
 		mod *= lacunarity;
 		amp *= gain;
@@ -54,6 +74,6 @@ void main() {
 	// float strength = 1.0 - norm;
 	float strength = 0.8;
 
-	float height = max(strength * vfbm(2.0 * normed), allMin);
+	float height = max(strength * vfbm(normed), allMin);
 	imageStore(heightmap, ivec2(id), vec4(height));
 }

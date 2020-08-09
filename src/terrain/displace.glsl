@@ -6,4 +6,3 @@ vec3 displace(vec3 pos) {
 	pos.y += height;
 	return pos;
 }
-
