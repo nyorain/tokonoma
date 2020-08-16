@@ -1,7 +1,6 @@
 #include <tkn/singlePassApp.hpp>
 #include <tkn/image.hpp>
 #include <tkn/color.hpp>
-#include <tkn/pipeline.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/render.hpp>
 #include <tkn/transform.hpp>
@@ -29,7 +28,13 @@ using namespace tkn::types;
 #include <nytl/mat.hpp>
 #include <dlg/dlg.hpp>
 
-#include "shared.glsl"
+#include <shaders/tkn.fullscreen.vert.h>
+#include <shaders/rays.rays.comp.h>
+#include <shaders/rays.raysRect.comp.h>
+#include <shaders/rays.ray.vert.h>
+#include <shaders/rays.ray.frag.h>
+#include <shaders/rays.tss.comp.h>
+#include <shaders/rays.pp.frag.h>
 
 // Passes:
 // 1. compute: generate new sample rays (with bounces)
@@ -37,17 +42,35 @@ using namespace tkn::types;
 // 3. compute: merge rendered framebuffer into hdr history (lerp)
 // 4. graphics: render history onto swapchain, tonemap
 
+struct Light {
+	Vec3f color;
+	float radius;
+	Vec2f pos;
+	float _pad0[2] {};
+};
+
+struct Material {
+	Vec3f albedo;
+	float roughness;
+	float metallic;
+	float _pad0[3] {};
+};
+
+struct Segment {
+	Vec2f start;
+	Vec2f end;
+	u32 material;
+	u32 _pad0 {};
+};
+
 class RaysApp : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
-	static constexpr auto sampleCount = 32 * 1024u;
-	// static constexpr auto sampleCount = 16;
-
-	// static constexpr auto sampleCount = 1024;
-	static constexpr auto maxBounces = 6u; // XXX: defined again in rays.comp
+	static constexpr auto sampleCount = 64 * 1024u;
+	// static constexpr auto sampleCount = 32;
+	static constexpr auto maxBounces = 3u; // XXX: defined again in rays.comp
 	static constexpr auto renderFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto maskFormat = vk::Format::r8g8Snorm;
-	static constexpr auto renderDownscale = 1u;
+	static constexpr auto renderDownscale = 2u;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -59,15 +82,16 @@ public:
 			"This application doesn't support multisampling");
 
 		auto& dev = vkDevice();
-
-		linearSampler_ = {dev, tkn::linearSamplerInfo()};
-		nearestSampler_ = {dev, tkn::nearestSamplerInfo()};
-
-		// ubo
-		auto hostBits = dev.hostMemoryTypes();
-		ubo_ = {dev.bufferAllocator(), sizeof(UboData),
-			vk::BufferUsageBits::uniformBuffer, hostBits};
-		uboMap_ = ubo_.memoryMap();
+		vk::SamplerCreateInfo sci {};
+		sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
+		sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
+		sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
+		sci.magFilter = vk::Filter::linear;
+		sci.minFilter = vk::Filter::linear;
+		sci.mipmapMode = vk::SamplerMipmapMode::linear;
+		sci.minLod = 0.0;
+		sci.maxLod = 100;
+		sampler_ = {dev, sci};
 
 		auto& qs = dev.queueSubmitter();
 		auto qfam = qs.queue().family();
@@ -77,21 +101,17 @@ public:
 		initScene(cb);
 		initCompute();
 		initGfx();
-
-		tss_ = {dev, "rays/tss.comp", fileWatcher_, {},
-			tkn::ComputePipeInfoProvider::create(linearSampler_)};
-
+		initTss();
 		initPP();
-		initMask();
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 
 		rvgInit();
+		windowTransform_ = {rvgContext()};
 
 		timeWidget_ = {rvgContext(), defaultFont()};
 		timeWidget_.reset();
-		timeWidget_.addTiming("mask");
 		timeWidget_.addTiming("update");
 		timeWidget_.addTiming("render");
 		timeWidget_.addTiming("tss");
@@ -126,55 +146,62 @@ public:
 		return true;
 	}
 
+	void initTss() {
+		auto& dev = vkDevice();
+
+		// layouts
+		auto bindings = std::array {
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
+			vpp::descriptorBinding(vk::DescriptorType::storageImage,
+				vk::ShaderStageBits::compute),
+		};
+
+		tss_.dsLayout.init(dev, bindings);
+		tss_.pipeLayout = {dev, {{tss_.dsLayout.vkHandle()}}, {}};
+
+		// pipe
+		vpp::ShaderModule module(dev, rays_tss_comp_data);
+		vk::ComputePipelineCreateInfo cpi;
+		cpi.layout = tss_.pipeLayout;
+		cpi.stage.module = module;
+		cpi.stage.pName = "main";
+		cpi.stage.stage = vk::ShaderStageBits::compute;
+		tss_.pipe = {dev, cpi};
+
+		// ds
+		tss_.ds = {dev.descriptorAllocator(), tss_.dsLayout};
+	}
+
 	void initPP() {
 		auto& dev = vkDevice();
 
-		auto gpi = vpp::GraphicsPipelineInfo {};
-		gpi.renderPass(renderPass());
-		static auto atts = {tkn::noBlendAttachment()};
+		// layouts
+		auto bindings = std::array {
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
+		};
+
+		pp_.dsLayout.init(dev, bindings);
+		pp_.pipeLayout = {dev, {{pp_.dsLayout.vkHandle()}}, {}};
+
+		// pipe
+		auto vert = vpp::ShaderModule(dev, tkn_fullscreen_vert_data);
+		auto frag = vpp::ShaderModule(dev, rays_pp_frag_data);
+
+		vpp::GraphicsPipelineInfo gpi(renderPass(), pp_.pipeLayout, {{{
+				{vert, vk::ShaderStageBits::vertex},
+				{frag, vk::ShaderStageBits::fragment}
+		}}}, 0u);
+
+		auto atts = {tkn::noBlendAttachment()};
 		gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
 		gpi.blend.attachmentCount = atts.size();
 		gpi.blend.pAttachments = atts.begin();
-		pp_ = {dev, {"tkn/shaders/fullscreen.vert"}, {"rays/pp.frag"},
-			fileWatcher_, tkn::GraphicsPipeInfoProvider::create(gpi, linearSampler_)};
-	}
+		pp_.pipe = {dev, gpi.info()};
 
-	void initMask() {
-		auto& dev = vkDevice();
-
-		auto pass0 = {0u};
-		auto rpi = tkn::renderPassInfo({{maskFormat}}, {{pass0}});
-		mask_.rp = {dev, rpi.info()};
-
-		static vk::PipelineColorBlendAttachmentState batt = {
-			true,
-			// color
-			vk::BlendFactor::one, // src
-			vk::BlendFactor::one, // dst
-			vk::BlendOp::add,
-			// alpha, don't care
-			vk::BlendFactor::zero, // src
-			vk::BlendFactor::zero, // dst
-			vk::BlendOp::add,
-			// color write mask
-			vk::ColorComponentBits::r |
-				vk::ColorComponentBits::g |
-				vk::ColorComponentBits::b |
-				vk::ColorComponentBits::a,
-		};
-
-		auto gpi = vpp::GraphicsPipelineInfo {};
-		gpi.renderPass(mask_.rp);
-		gpi.assembly.topology = vk::PrimitiveTopology::lineList;
-		gpi.rasterization.lineWidth = 1.f;
-		gpi.blend.attachmentCount = 1u;
-		gpi.blend.pAttachments = &batt;
-		mask_.pipe = {dev, {"rays/mask.vert"}, {"rays/mask.frag"},
-			fileWatcher_, tkn::GraphicsPipeInfoProvider::create(gpi)};
-
-		auto& dsu = mask_.pipe.dsu();
-		dsu(ubo_);
-		dsu(bufs_.segments);
+		// ds
+		pp_.ds = {dev.descriptorAllocator(), pp_.dsLayout};
 	}
 
 	void initScene(vk::CommandBuffer cb) {
@@ -203,7 +230,7 @@ public:
 
 		// u32 mat = 0;
 		// u32 matBox = 0;
-		std::vector<Segment> segs {
+		std::initializer_list<Segment> segs {
 			// {{1, 1}, {2, 1}, 0},
 			// {{2, 1}, {2, 2}, 1},
 			// {{2, 2}, {1, 2}, 2},
@@ -225,21 +252,6 @@ public:
 			{{2, 1.2}, {-2, 1.2}, 1},
 			{{-2, 1.2}, {-2, -1.2}, 1},
 		};
-
-		// create circle
-#if 0
-		{
-			using nytl::constants::pi;
-			auto nPoints = 128u;
-			for(auto i = 0u; i < nPoints; ++i) {
-				auto a0 = float(2 * pi * (i / float(nPoints)));
-				auto a1 = float(2 * pi * ((i + 1) / float(nPoints)));
-				auto p0 = Vec2f{std::cos(a0), std::sin(a0)};
-				auto p1 = Vec2f{std::cos(a1), std::sin(a1)};
-				segs.push_back({p0, p1, 1});
-			}
-		}
-#endif // 0
 
 		// make sure they are all allocated on one buffer/device if possible
 		// vpp::SubBuffer::InitData initBufs {};
@@ -263,13 +275,16 @@ public:
 			vk::BufferUsageBits::indirectBuffer |
 			vk::BufferUsageBits::transferDst |
 			vk::BufferUsageBits::vertexBuffer, devMem};
-		// auto maxVerts = lights.size() * sampleCount * maxBounces * 2;
-		// maxVerts *= 3u; // TODO: for rects/triangles
-		// maxVerts *= 6u; // TODO: no idea
+		auto maxVerts = lights.size() * sampleCount * maxBounces * 2;
+		maxVerts *= 3u; // TODO: for rects/triangles
+		maxVerts *= 6u; // TODO: no idea
 		// maxVerts *= 64u; // TODO: for multi ray generation in higher bounces
-		auto maxVerts = lights.size() * sampleCount * (maxBounces + 1) * sizeof(LightVertex) * 2;
-		// maxVerts *= 32u; // TODO: just to be safe
-		bufs_.vertices = {ibs[4], dev.bufferAllocator(), maxVerts,
+		bufs_.positions = {ibs[4], dev.bufferAllocator(),
+			maxVerts * sizeof(Vec2f),
+			vk::BufferUsageBits::storageBuffer |
+			vk::BufferUsageBits::vertexBuffer, devMem};
+		bufs_.colors = {ibs[5],
+			dev.bufferAllocator(), maxVerts * sizeof(Vec4f),
 			vk::BufferUsageBits::storageBuffer |
 			vk::BufferUsageBits::vertexBuffer, devMem};
 
@@ -278,7 +293,8 @@ public:
 		bufs_.segments.init(ibs[1]);
 		bufs_.materials.init(ibs[2]);
 		bufs_.raysCmd.init(ibs[3]);
-		bufs_.vertices.init(ibs[4]);
+		bufs_.positions.init(ibs[4]);
+		bufs_.colors.init(ibs[5]);
 
 		dlg_assert(tkn::bytes(segs).size() == segs.size() * sizeof(*segs.begin()));
 		dlg_debug(tkn::bytes(segs).size());
@@ -291,15 +307,55 @@ public:
 		cmd.instanceCount = 1;
 		vpp::fillDirect(cb, bufs_.raysCmd, tkn::bytes(cmd));
 
-		scene_.lights = lights;
-		scene_.materials = mats;
-		scene_.segments = segs;
+		nLights_ = lights.size();
+		// light_ = *lights.begin();
+		lights_ = lights;
 	}
 
 	void initCompute() {
 		auto& dev = vkDevice();
-		comp_ = {dev, "rays/rays2.comp", fileWatcher_, {},
-			tkn::ComputePipeInfoProvider::create(linearSampler_)};
+
+		// layouts
+		auto bindings = std::array {
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::storageBuffer,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::compute),
+			vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
+				vk::ShaderStageBits::compute, &sampler_.vkHandle()),
+		};
+
+		comp_.dsLayout.init(dev, bindings);
+		comp_.pipeLayout = {dev, {{comp_.dsLayout.vkHandle()}}, {}};
+
+		// pipe
+		vpp::ShaderModule module(dev, rays_rays_comp_data);
+		vk::ComputePipelineCreateInfo cpi;
+		cpi.layout = comp_.pipeLayout;
+		cpi.stage.module = module;
+		cpi.stage.pName = "main";
+		cpi.stage.stage = vk::ShaderStageBits::compute;
+		comp_.pipe = {dev, cpi};
+
+		vpp::ShaderModule rectMod(dev, rays_raysRect_comp_data);
+		cpi.stage.module = rectMod;
+		comp_.rectPipe = {dev, cpi};
+
+		// ubo
+		auto uboSize = sizeof(Vec2f) * 2 + sizeof(float) * 2;
+		auto hostBits = dev.hostMemoryTypes();
+		comp_.ubo = {dev.bufferAllocator(), uboSize,
+			vk::BufferUsageBits::uniformBuffer, hostBits};
 
 		// noise
 		// noise tex
@@ -318,14 +374,18 @@ public:
 		noise_ = tkn::buildTexture(dev, tkn::loadImageLayers(paths), tcp);
 
 		// ds
-		auto& dsu = comp_.dsu();
-		dsu(bufs_.segments);
-		dsu(bufs_.materials);
-		dsu(bufs_.lights);
-		dsu(bufs_.raysCmd);
-		dsu(bufs_.vertices);
-		dsu(ubo_);
-		// dsu(noise_.imageView());
+		comp_.ds = {dev.descriptorAllocator(), comp_.dsLayout};
+
+		vpp::DescriptorSetUpdate dsu(comp_.ds);
+		dsu.storage({{{bufs_.segments}}});
+		dsu.storage({{{bufs_.materials}}});
+		dsu.storage({{{bufs_.lights}}});
+		dsu.storage({{{bufs_.raysCmd}}});
+		dsu.storage({{{bufs_.positions}}});
+		dsu.storage({{{bufs_.colors}}});
+		dsu.uniform({{{comp_.ubo}}});
+		dsu.imageSampler({{{}, noise_.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
 	}
 
 	void initGfx() {
@@ -367,25 +427,45 @@ public:
 		gfx_.rp = {dev, rpi};
 
 		// layouts
-		/*
-		static auto vertexInfo = tkn::PipelineVertexInfo {{
-			{0, 0, vk::Format::r32g32Sfloat},
-			{1, 1, vk::Format::r32g32b32a32Sfloat},
-		}, {
+		auto bindings = std::array {
+			vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
+				vk::ShaderStageBits::vertex),
+		};
+
+		gfx_.dsLayout.init(dev, bindings);
+		gfx_.pipeLayout = {dev, {{gfx_.dsLayout.vkHandle()}}, {}};
+
+		// pipe
+		auto vert = vpp::ShaderModule(dev, rays_ray_vert_data);
+		auto frag = vpp::ShaderModule(dev, rays_ray_frag_data);
+
+		vpp::GraphicsPipelineInfo pipeInfo(gfx_.rp, gfx_.pipeLayout, {{{
+				{vert, vk::ShaderStageBits::vertex},
+				{frag, vk::ShaderStageBits::fragment}
+		}}}, 0u, samples());
+
+		vk::VertexInputBindingDescription bufferBindings[] = {
 			{0, sizeof(Vec2f), vk::VertexInputRate::vertex},
 			{1, sizeof(Vec4f), vk::VertexInputRate::vertex},
-		}};
-		*/
+		};
 
-		vpp::GraphicsPipelineInfo gpi;
-		gpi.renderPass(gfx_.rp);
-		// gpi.vertex = vertexInfo.info();
-		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
-		gpi.rasterization.lineWidth = 1.f;
+		vk::VertexInputAttributeDescription attribs[2] = {};
+		attribs[0].format = vk::Format::r32g32Sfloat;
+		attribs[1].format = vk::Format::r32g32b32a32Sfloat;
+		attribs[1].binding = 1;
+		attribs[1].location = 1;
+
+		pipeInfo.vertex.vertexBindingDescriptionCount = 2;
+		pipeInfo.vertex.pVertexBindingDescriptions = bufferBindings;
+		pipeInfo.vertex.vertexAttributeDescriptionCount = 2;
+		pipeInfo.vertex.pVertexAttributeDescriptions = attribs;
+
+		pipeInfo.assembly.topology = vk::PrimitiveTopology::lineList;
+		pipeInfo.rasterization.lineWidth = 1.f;
 
 		// additive color blending
 		// we don't really care about alpha
-		static vk::PipelineColorBlendAttachmentState blenda;
+		vk::PipelineColorBlendAttachmentState blenda;
 		blenda.alphaBlendOp = vk::BlendOp::add;
 		blenda.srcAlphaBlendFactor = vk::BlendFactor::one;
 		blenda.dstAlphaBlendFactor = vk::BlendFactor::zero;
@@ -398,16 +478,25 @@ public:
 			vk::ColorComponentBits::b |
 			vk::ColorComponentBits::a;
 		blenda.blendEnable = true;
-		gpi.blend.attachmentCount = 1;
-		gpi.blend.pAttachments = &blenda;
+		pipeInfo.blend.attachmentCount = 1;
+		pipeInfo.blend.pAttachments = &blenda;
 
-		gfx_.pipe = {dev, {"rays/ray2.vert"}, {"rays/ray.frag"},
-			fileWatcher_, tkn::GraphicsPipeInfoProvider::create(gpi)};
+		gfx_.pipe = {dev, pipeInfo.info()};
+
+		pipeInfo.assembly.topology = vk::PrimitiveTopology::triangleList;
+		gfx_.rectPipe = {dev, pipeInfo.info()};
+
+		// ubo
+		auto uboSize = sizeof(nytl::Mat4f) + sizeof(nytl::Vec2f);
+		auto hostMem = dev.hostMemoryTypes();
+		gfx_.ubo = {dev.bufferAllocator(), uboSize,
+			vk::BufferUsageBits::uniformBuffer, hostMem};
 
 		// ds
-		auto& dsu = gfx_.pipe.dsu();
-		dsu(bufs_.vertices);
-		dsu(ubo_);
+		gfx_.ds = {dev.descriptorAllocator(), gfx_.dsLayout};
+
+		vpp::DescriptorSetUpdate dsu(gfx_.ds);
+		dsu.uniform({{{gfx_.ubo}}});
 	}
 
 	void initBuffers(const vk::Extent2D& size,
@@ -424,7 +513,7 @@ public:
 			vk::ImageUsageBits::transferDst |
 			vk::ImageUsageBits::storage);
 		dlg_assert(vpp::supported(dev, info.img));
-		history_ = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
+		tss_.history = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
 
 		info.img.extent = {dsize.width, dsize.height, 1u};
 		info.img.usage = vk::ImageUsageBits::colorAttachment |
@@ -440,33 +529,18 @@ public:
 			dsize.width, dsize.height, 1);
 		gfx_.fb = {dev, fbi};
 
-		// mask
-		info = vpp::ViewableImageCreateInfo(maskFormat,
-			vk::ImageAspectBits::color, dsize,
-			vk::ImageUsageBits::sampled |
-			vk::ImageUsageBits::colorAttachment);
-		dlg_assert(vpp::supported(dev, info.img));
-
-		mask_.target = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
-
-		{
-			auto attachments = {mask_.target.vkImageView()};
-			fbi = vk::FramebufferCreateInfo({}, mask_.rp,
-				attachments.size(), attachments.begin(),
-				dsize.width, dsize.height, 1);
-			mask_.fb = {dev, fbi};
-		}
-
 		// update descriptors
-		auto& tssDsu = tss_.dsu();
-		tssDsu(gfx_.target);
-		tssDsu(history_);
-		tssDsu(mask_.target);
-		tssDsu.apply(); // TODO
+		vpp::DescriptorSetUpdate tu(tss_.ds);
+		tu.imageSampler({{{}, gfx_.target.vkImageView(),
+			vk::ImageLayout::shaderReadOnlyOptimal}});
+		tu.storage({{{}, tss_.history.vkImageView(),
+			vk::ImageLayout::general}});
 
-		auto& ppDsu = pp_.dsu();
-		ppDsu(history_, vk::ImageLayout::general);
-		ppDsu.apply(); // TODO
+		vpp::DescriptorSetUpdate pu(pp_.ds);
+		pu.imageSampler({{{}, tss_.history.vkImageView(),
+			vk::ImageLayout::general}});
+
+		vpp::apply({{tu, pu}});
 
 		// TODO: hack
 		// should simply be added as dependency (via semaphore) to
@@ -477,7 +551,7 @@ public:
 		vk::beginCommandBuffer(cb, {});
 
 		vk::ImageMemoryBarrier barrier;
-		barrier.image = history_.image();
+		barrier.image = tss_.history.image();
 		barrier.oldLayout = vk::ImageLayout::undefined;
 		barrier.newLayout = vk::ImageLayout::transferDstOptimal;
 		barrier.dstAccessMask = vk::AccessBits::transferWrite;
@@ -488,7 +562,7 @@ public:
 			{}, {}, {}, {{barrier}});
 		vk::ClearColorValue cv {0.f, 0.f, 0.f, 1.f};
 		vk::ImageSubresourceRange range{vk::ImageAspectBits::color, 0, 1, 0, 1};
-		vk::cmdClearColorImage(cb, history_.image(),
+		vk::cmdClearColorImage(cb, tss_.history.image(),
 			vk::ImageLayout::transferDstOptimal, cv, {{range}});
 
 		barrier.oldLayout = vk::ImageLayout::transferDstOptimal;
@@ -505,62 +579,11 @@ public:
 		qs.wait(qs.add(cb));
 	}
 
-	bool pipesLoaded() const {
-		return pp_.pipe() &&
-			tss_.pipe() &&
-			comp_.pipe() &&
-			mask_.pipe.pipe() &&
-			gfx_.pipe.pipe();
-	}
-
 	// yeah, we could use BufferMemoryBarriers in this function
-	// but i'm too lazy rn. And my gpu/mesa impl doesn't care anyways
+	// but i'm too lazy rn. And my gpu/mesa impl doesn't care anyways :(
 	void beforeRender(vk::CommandBuffer cb) override {
 		Base::beforeRender(cb);
-		if(!pipesLoaded()) {
-			return;
-		}
-
 		timeWidget_.start(cb);
-		auto [width, height] = swapchainInfo().imageExtent;
-		auto dwidth = std::max(width >> renderDownscale, 1u);
-		auto dheight = std::max(height >> renderDownscale, 1u);
-
-		// generate mask
-		{
-			auto width = dwidth;
-			auto height = dheight;
-
-			vk::Viewport vp{0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
-			vk::cmdSetViewport(cb, 0, 1, vp);
-			vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
-
-			std::array<vk::ClearValue, 1u> cv {};
-			cv[0] = {{0.f, 0.f, 0.f, 0.f}};
-			vk::cmdBeginRenderPass(cb, {mask_.rp, mask_.fb,
-				{0u, 0u, width, height},
-				std::uint32_t(cv.size()), cv.data()}, {});
-
-			tkn::cmdBind(cb, mask_.pipe);
-
-			auto pixelSize = nytl::Vec2f{1.f / width, 1.f / height};
-			vk::cmdPushConstants(cb, mask_.pipe.pipeLayout(),
-				vk::ShaderStageBits::vertex, 0, 8, &pixelSize);
-
-			u32 down = 0u;
-			vk::cmdPushConstants(cb, mask_.pipe.pipeLayout(),
-				vk::ShaderStageBits::vertex, 8, 4, &down);
-			vk::cmdDraw(cb, 2 * scene_.segments.size(), 1, 0, 0);
-
-			down = 1u;
-			vk::cmdPushConstants(cb, mask_.pipe.pipeLayout(),
-				vk::ShaderStageBits::vertex, 8, 4, &down);
-			vk::cmdDraw(cb, 2 * scene_.segments.size(), 1, 0, 0);
-
-			vk::cmdEndRenderPass(cb);
-		}
-
-		timeWidget_.addTimestamp(cb);
 
 		// reset vertex counter
 		vk::DrawIndirectCommand cmd {};
@@ -576,10 +599,12 @@ public:
 			vk::PipelineStageBits::computeShader, {}, {{barrier}}, {}, {});
 
 		// generate rays to render
-		tkn::cmdBind(cb, comp_);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute,
+			useRects_ ? comp_.rectPipe : comp_.pipe);
+		tkn::cmdBindComputeDescriptors(cb, comp_.pipeLayout, 0, {comp_.ds});
 
 		u32 dy = sampleCount / 16;
-		vk::cmdDispatch(cb, scene_.lights.size(), dy, 1);
+		vk::cmdDispatch(cb, nLights_, dy, 1);
 		timeWidget_.addTimestamp(cb);
 
 		// make sure the generated rays are visible to gfx pipe
@@ -592,6 +617,10 @@ public:
 			vk::PipelineStageBits::allGraphics, {}, {{barrier}}, {}, {});
 
 		// render into offscreen buffer
+		auto [width, height] = swapchainInfo().imageExtent;
+		auto dwidth = std::max(width >> renderDownscale, 1u);
+		auto dheight = std::max(height >> renderDownscale, 1u);
+
 		vk::Viewport vp{0.f, 0.f, (float) dwidth, (float) dheight, 0.f, 1.f};
 		vk::cmdSetViewport(cb, 0, 1, vp);
 		vk::cmdSetScissor(cb, 0, 1, {0, 0, dwidth, dheight});
@@ -602,13 +631,16 @@ public:
 			{0u, 0u, dwidth, dheight},
 			std::uint32_t(cv.size()), cv.data()}, {});
 
-		tkn::cmdBind(cb, gfx_.pipe);
-		tkn::cmdBindVertexBuffers(cb, {{bufs_.vertices}});
-
-		// auto pixelSize = nytl::Vec2f{1.f / width, 1.f / height};
-		// vk::cmdPushConstants(cb, gfx_.pipe.pipeLayout(),
-		// 	vk::ShaderStageBits::vertex, 0, 8, &pixelSize);
-
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics,
+			useRects_ ? gfx_.rectPipe : gfx_.pipe);
+		tkn::cmdBindGraphicsDescriptors(cb, gfx_.pipeLayout, 0, {gfx_.ds});
+		vk::cmdBindVertexBuffers(cb, 0, {{
+			bufs_.positions.buffer().vkHandle(),
+			bufs_.colors.buffer().vkHandle(),
+		}}, {{
+			bufs_.positions.offset(),
+			bufs_.colors.offset(),
+		}});
 		vk::cmdDrawIndirect(cb, bufs_.raysCmd.buffer(),
 			bufs_.raysCmd.offset(), 1, 0);
 
@@ -619,12 +651,13 @@ public:
 		// work group size of tss.comp is 8x8
 		auto cx = (width + 7) >> 3; // ceil(width / 8)
 		auto cy = (height + 7) >> 3; // ceil(height / 8)
-		tkn::cmdBind(cb, tss_);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, tss_.pipe);
+		tkn::cmdBindComputeDescriptors(cb, tss_.pipeLayout, 0, {tss_.ds});
 		vk::cmdDispatch(cb, cx, cy, 1);
 
 		// make sure tss results are available for post processing
 		vk::ImageMemoryBarrier ibarrier;
-		ibarrier.image = history_.image();
+		ibarrier.image = tss_.history.image();
 		ibarrier.oldLayout = vk::ImageLayout::general;
 		ibarrier.newLayout = vk::ImageLayout::general;
 		ibarrier.srcAccessMask = vk::AccessBits::shaderRead |
@@ -637,15 +670,12 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		if(!pipesLoaded()) {
-			return;
-		}
-
-		tkn::cmdBind(cb, pp_);
+		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pp_.pipe);
+		tkn::cmdBindGraphicsDescriptors(cb, pp_.pipeLayout, 0, {pp_.ds});
 		vk::cmdDraw(cb, 4, 1, 0, 0); // fullscreen quad
 
 		rvgContext().bindDefaults(cb);
-		rvgWindowTransform().bind(cb);
+		windowTransform_.bind(cb);
 		timeWidget_.draw(cb);
 		timeWidget_.addTimestamp(cb);
 		timeWidget_.finish(cb);
@@ -654,18 +684,7 @@ public:
 	void update(double dt) override {
 		Base::update(dt);
 
-		fileWatcher_.update();
-		next_ |= pp_.update();
-		next_ |= tss_.update();
-		next_ |= comp_.update();
-		next_ |= gfx_.pipe.update();
-		next_ |= mask_.pipe.update();
-
-		if(rayTime_ != -1.f) {
-			rayTime_ += dt;
-		}
-
-		if(next_ || run_ || rayTime_ >= 0.f) {
+		if(next_ || run_) {
 			next_ = false;
 			Base::scheduleRedraw();
 		}
@@ -676,6 +695,10 @@ public:
 	void updateDevice() override {
 		Base::updateDevice();
 
+		auto map = gfx_.ubo.memoryMap();
+		auto span = map.span();
+		tkn::write(span, matrix_);
+
 		using namespace nytl::vec::cw::operators;
 		auto sampleID = frameID_ % samples_.size();
 		auto sample = samples_[sampleID];
@@ -684,17 +707,19 @@ public:
 		height = std::max(height >> renderDownscale, 1u);
 		auto pixSize = Vec2f{1.f / width, 1.f / height};
 		sample = sample * pixSize;
-		// sample = {0.f, 0.f}; // TODO
 
-		auto& data = tkn::as<UboData>(uboMap_);
-		data.transform = matrix_;
-		data.offset = view_.center - 0.5f * view_.size;
-		data.size = view_.size;
-		data.time = time_;
-		data.frameID = ++frameID_;
-		data.jitter = sample;
-		data.rayTime = rayTime_;
-		uboMap_.flush();
+		// TODO
+		sample = {0.f, 0.f};
+		tkn::write(span, sample);
+
+		map = comp_.ubo.memoryMap();
+		span = map.span();
+		tkn::write(span, view_.center - 0.5f * view_.size);
+		tkn::write(span, view_.size);
+		tkn::write(span, time_);
+		// tkn::write(span, 0.f);
+		tkn::write(span, ++frameID_);
+		map.flush();
 
 		if(updateLight_) {
 			updateLight_ = false;
@@ -705,19 +730,9 @@ public:
 			auto qfam = qs.queue().family();
 			auto cb = dev.commandAllocator().get(qfam);
 			vk::beginCommandBuffer(cb, {});
-			vpp::fillDirect(cb, bufs_.lights, tkn::bytes(scene_.lights));
+			vpp::fillDirect(cb, bufs_.lights, tkn::bytes(lights_));
 			vk::endCommandBuffer(cb);
 			qs.wait(qs.add(cb));
-		}
-
-		bool rerec = false;
-		rerec |= pp_.updateDevice();
-		rerec |= gfx_.pipe.updateDevice();
-		rerec |= comp_.updateDevice();
-		rerec |= tss_.updateDevice();
-		rerec |= mask_.pipe.updateDevice();
-		if(rerec) {
-			Base::scheduleRerecord();
 		}
 
 		timeWidget_.updateDevice();
@@ -733,6 +748,13 @@ public:
 	void resize(unsigned width, unsigned height) override {
 		Base::resize(width, height);
 		updateMatrix();
+
+		// update window transform
+		auto s = nytl::Vec{ 2.f / width, 2.f / height, 1};
+		auto transform = nytl::identity<4, float>();
+		tkn::scale(transform, s);
+		tkn::translate(transform, nytl::Vec3f {-1, -1, 0});
+		windowTransform_.matrix(transform);
 
 		// update time widget position
 		auto pos = nytl::Vec2ui{width, height};
@@ -753,32 +775,47 @@ public:
 			run_ = !run_;
 			return true;
 		} else if(ev.pressed && ev.keycode == swa_key_t) {
-			if(swa_display_active_keyboard_mods(swaDisplay()) & swa_keyboard_mod_shift) {
-				rayTime_ = -1.f;
-			} else {
-				rayTime_ = 0.f;
-			}
-
+			useRects_ = !useRects_;
+			dlg_info("rects: {}", useRects_);
+			App::scheduleRerecord();
 			return true;
 		}
 
 		return false;
 	}
 
+	/*
+	bool touchBegin(const swa_touch_event& ev) override {
+		if(Base::touchBegin(ev)) {
+			return true;
+		}
+
+		auto pos = tkn::windowToLevel(windowSize(), view_, {ev.x, ev.y});
+		light_.pos = pos;
+		updateLight_ = true;
+		return true;
+	}
+
+	void touchUpdate(const swa_touch_event& ev) override {
+		auto pos = tkn::windowToLevel(windowSize(), view_, {ev.x, ev.y});
+		light_.pos = pos;
+		updateLight_ = true;
+	}
+	*/
+
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
 		auto pos = tkn::windowToLevel(windowSize(), view_, {ev.x, ev.y});
 		auto dpy = swaDisplay();
-		auto& lights = scene_.lights;
 		if(swa_display_mouse_button_pressed(dpy, swa_mouse_button_left)
-				&& lights.size() > 0) {
-			lights[0].pos = pos;
+				&& lights_.size() > 0) {
+			lights_[0].pos = pos;
 		} else if(swa_display_mouse_button_pressed(dpy, swa_mouse_button_right)
-				&& lights.size() > 1) {
-			lights[1].pos = pos;
+				&& lights_.size() > 1) {
+			lights_[1].pos = pos;
 		} else if(swa_display_mouse_button_pressed(dpy, swa_mouse_button_middle)
-				&& lights.size() > 2) {
-			lights[2].pos = pos;
+				&& lights_.size() > 2) {
+			lights_[2].pos = pos;
 		}
 
 		updateLight_ = true;
@@ -788,65 +825,81 @@ public:
 	bool needsDepth() const override { return false; }
 
 protected:
+	std::vector<Light> lights_;
 	tkn::LevelView view_ {};
 	nytl::Mat4f matrix_;
+	unsigned nLights_ {};
 	float time_ {};
 	bool next_ {false};
 	bool run_ {true};
 
 	bool updateView_ {true};
 	bool updateLight_ {false};
-	vpp::Sampler linearSampler_;
-	vpp::Sampler nearestSampler_;
+	vpp::Sampler sampler_;
 
-	struct {
-		std::vector<Light> lights;
-		std::vector<Segment> segments;
-		std::vector<Material> materials;
-	} scene_;
+	bool useRects_ = false;
 
 	struct {
 		vpp::SubBuffer segments;
 		vpp::SubBuffer lights;
 		vpp::SubBuffer materials;
 		vpp::SubBuffer raysCmd;
-		vpp::SubBuffer vertices;
+		vpp::SubBuffer positions;
+		vpp::SubBuffer colors;
 	} bufs_;
 
 	struct {
-		tkn::ManagedGraphicsPipe pipe;
+		vpp::SubBuffer ubo;
+		vpp::Pipeline pipe;
+		vpp::Pipeline rectPipe;
+		vpp::PipelineLayout pipeLayout;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+	} comp_;
+
+	struct {
+		vpp::SubBuffer ubo;
+		vpp::Pipeline pipe;
+		vpp::Pipeline rectPipe;
+		vpp::PipelineLayout pipeLayout;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+
 		vpp::RenderPass rp;
 		vpp::Framebuffer fb;
 		vpp::ViewableImage target;
 	} gfx_;
 
 	struct {
-		tkn::ManagedGraphicsPipe pipe;
-		vpp::RenderPass rp;
-		vpp::ViewableImage target;
-		vpp::Framebuffer fb;
-	} mask_;
+		vpp::ViewableImage history;
+		vpp::Pipeline pipe;
+		vpp::PipelineLayout pipeLayout;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+	} tss_;
 
-	tkn::ManagedGraphicsPipe pp_;
-	tkn::ManagedComputePipe tss_;
-	tkn::ManagedComputePipe comp_;
+	struct {
+		vpp::Pipeline pipe;
+		vpp::PipelineLayout pipeLayout;
+		vpp::TrDsLayout dsLayout;
+		vpp::TrDs ds;
+	} pp_;
 
-	vpp::SubBuffer ubo_;
-	vpp::MemoryMapView uboMap_;
-
-	tkn::FileWatcher fileWatcher_;
 	tkn::TimeWidget timeWidget_;
+	rvg::Transform windowTransform_;
 
-	vpp::ViewableImage history_;
 	vpp::ViewableImage noise_;
 	unsigned frameID_ {};
 
 	std::vector<Vec2f> samples_ {};
-
-	float rayTime_ {-1.f};
 };
 
 int main(int argc, const char** argv) {
-	return tkn::appMain<RaysApp>(argc, argv);
+	RaysApp app;
+	if(!app.init({argv, argv + argc})) {
+		return EXIT_FAILURE;
+	}
+
+	app.run();
 }
 

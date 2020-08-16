@@ -350,7 +350,7 @@ std::vector<u32> compileShader(
 		nytl::StringParam glslSource,
 		EShLanguage shlang,
 		nytl::StringParam sourcePath,
-		nytl::StringParam preamble,
+		nytl::StringParam cpreamble,
 		nytl::Span<const char*> includeDirs) {
 	static bool glslangInit = initGlslang();
 	if(!glslangInit) {
@@ -367,9 +367,11 @@ std::vector<u32> compileShader(
 	shader.setEnvInput(EShSourceGlsl, shlang, EShClientVulkan, 100);
 	shader.setEnvClient(EShClientVulkan, EShTargetVulkan_1_0);
 	shader.setEnvTarget(EShTargetSpv, EShTargetSpv_1_0);
-	if(!preamble.empty()) {
-		shader.setPreamble(preamble.c_str());
-	}
+
+	std::string preamble = "#extension GL_GOOGLE_include_directive : require\n";
+	preamble += cpreamble;
+	preamble += '\n';
+	shader.setPreamble(preamble.c_str());
 
     DirStackFileIncluder includer;
 	includer.pushLocalDirs(includeDirs);

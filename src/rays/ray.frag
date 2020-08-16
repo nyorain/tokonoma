@@ -1,9 +1,13 @@
-#version 460
+#include "shared.glsl"
 
 layout(location = 0) in vec2 inPos;
 layout(location = 1) in vec4 inColor;
 
 layout(location = 0) out vec4 fragColor;
+
+layout(set = 0, binding = 1, row_major) uniform Scene {
+	UboData scene;
+};
 
 void main() {
 	// float dist = inColor.a;
@@ -16,11 +20,28 @@ void main() {
 	// float falloff = 1 / dist;
 	// fragColor = vec4(inColor.rgb, 1);
 
-	float fac = 1.f / inColor.a;
+	/*
 	if(inColor.a < 0.00001) {
 		fragColor = vec4(0, 0, 1, 1);	
 		return;
 	}
 
+	float fac = 1.f / inColor.a;
 	fragColor = vec4(fac * inColor.rgb, 1);
+	*/
+
+	vec3 color = inColor.rgb;
+	float alpha = 1.f;
+	if(scene.rayTime > -1.f) {
+		float dist = 0.2 * inColor.a;
+		alpha *= smoothstep(scene.rayTime - 0.05f, scene.rayTime, dist) *
+			(1 - smoothstep(scene.rayTime, scene.rayTime + 0.05f, dist));
+		// alpha *= (1 - smoothstep(scene.rayTime - 0.05, scene.rayTime, dist));
+	}
+
+	if(alpha < 0.001) {
+		discard;
+	}
+
+	fragColor = vec4(alpha * color, 1.f);
 }

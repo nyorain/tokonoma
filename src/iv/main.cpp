@@ -1,5 +1,8 @@
 #include <tkn/singlePassApp.hpp>
+#include <tkn/fswatch.hpp>
+#include <tkn/pipeline.hpp>
 #include <tkn/render.hpp>
+#include <tkn/levelView.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/bits.hpp>
 #include <tkn/defer.hpp>
@@ -92,104 +95,58 @@ public:
 		std::tie(image_, view_) = initTexture(initTex, wb).split();
 
 		// sampler
-		vk::SamplerCreateInfo sci;
-		sci.addressModeU = vk::SamplerAddressMode::clampToEdge;
-		sci.addressModeV = vk::SamplerAddressMode::clampToEdge;
-		sci.addressModeW = vk::SamplerAddressMode::clampToEdge;
-		sci.magFilter = vk::Filter::linear;
-		sci.minFilter = vk::Filter::linear;
-		sci.mipmapMode = vk::SamplerMipmapMode::linear;
-		sci.minLod = 0.0;
-		sci.maxLod = 100.0;
-		sci.anisotropyEnable = false;
+		auto sci = tkn::linearSamplerInfo();
 		sampler_ = {dev, sci};
 
-		// layouts
-		auto tbindings = std::array{
-			vpp::descriptorBinding(
-				vk::DescriptorType::combinedImageSampler,
-				vk::ShaderStageBits::fragment, &sampler_.vkHandle()),
-			// only needed for (!cubemap && tonemap_) atm
-			vpp::descriptorBinding(
-				vk::DescriptorType::uniformBuffer,
-				vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
-		};
+		// pipe
+		const char* vertShader;
+		const char* fragShader;
 
-		texDsLayout_.init(dev, tbindings);
+		vpp::GraphicsPipelineInfo gpi;
+		gpi.renderPass(renderPass());
 
 		if(cubemap_) {
-			auto cbindings = std::array{
-				vpp::descriptorBinding(
-					vk::DescriptorType::uniformBuffer,
-					vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment),
-			};
-
-			camDsLayout_.init(dev, cbindings);
-			pipeLayout_ = {dev, {{
-				camDsLayout_.vkHandle(),
-				texDsLayout_.vkHandle()}}, {}};
-
-			// pipeline
-			vpp::ShaderModule vertShader(dev, tkn_skybox_vert_data);
-			vpp::ShaderModule fragShader;
-			if(tonemap_) {
-				fragShader = {dev, tkn_skybox_tonemap_frag_data};
-			} else {
-				fragShader = {dev, tkn_skybox_frag_data};
-			}
-
-			vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
-				{vertShader, vk::ShaderStageBits::vertex},
-				{fragShader, vk::ShaderStageBits::fragment},
-			}}});
-
+			vertShader = "tkn/shaders/skybox.vert";
+			fragShader = "tkn/shaders/skybox.frag";
 			gpi.assembly.topology = vk::PrimitiveTopology::triangleStrip;
-			pipe_ = {dev, gpi.info()};
 		} else {
-			pipeLayout_ = {dev, {{texDsLayout_.vkHandle()}}, {}};
-
-			// pipeline
-			vpp::ShaderModule vertShader(dev, tkn_fullscreen_vert_data);
-			vpp::ShaderModule fragShader;
-			if(tonemap_) {
-				fragShader = {dev, tkn_textureTonemap_frag_data};
-			} else {
-				fragShader = {dev, tkn_texture_frag_data};
-			}
-
-			vpp::GraphicsPipelineInfo gpi(renderPass(), pipeLayout_, {{{
-				{vertShader, vk::ShaderStageBits::vertex},
-				{fragShader, vk::ShaderStageBits::fragment},
-			}}});
-
+			vertShader = "tkn/shaders/fullscreen.vert";
+			fragShader = "iv/texture.frag";
 			gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
-			pipe_ = {dev, gpi.info()};
 		}
+
+		std::string fragPreamble;
+		if(tonemap_) {
+			fragPreamble += "#define TONEMAP";
+		}
+
+		pipe_ = {dev, {vertShader}, {fragShader, fragPreamble},
+			fileWatcher_, tkn::GraphicsPipeInfoProvider::create(gpi, sampler_)};
 
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 
 		// camera
 		auto uboSize = std::max<vk::DeviceSize>(4u,
-			(cubemap_ ? sizeof(nytl::Mat4f) : 0) +
+			(cubemap_ ? sizeof(nytl::Mat4f) : 2 * sizeof(nytl::Vec2f)) +
 			(tonemap_ ? sizeof(float) : 0));
 		ubo_ = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
-		// ds
-		texDs_ = {dev.descriptorAllocator(), texDsLayout_};
-		vpp::DescriptorSetUpdate dsu(texDs_);
-		dsu.imageSampler({{{{}, view_,
-			vk::ImageLayout::shaderReadOnlyOptimal}}});
-		dsu.uniform({{{ubo_}}});
-
-		if(cubemap_) {
-			camDs_ = {dev.descriptorAllocator(), camDsLayout_};
-			vpp::DescriptorSetUpdate cdsu(camDs_);
-			cdsu.uniform({{{ubo_}}});
-		}
+		updateDs();
 
 		return true;
+	}
+
+	void updateDs() {
+		auto& dsu = pipe_.dsu();
+		if(cubemap_) {
+			dsu(ubo_);
+			dsu(view_);
+		} else {
+			dsu(view_);
+			dsu(ubo_);
+		}
 	}
 
 	argagg::parser argParser() const override {
@@ -233,20 +190,23 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
-		if(cubemap_) {
-			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {camDs_, texDs_});
-			vk::cmdDraw(cb, 14, 1, 0, 0, 0);
-		} else {
-			tkn::cmdBindGraphicsDescriptors(cb, pipeLayout_, 0, {texDs_});
-			vk::cmdDraw(cb, 4, 1, 0, 0);
+		if(pipe_.pipe()) {
+			tkn::cmdBind(cb, pipe_);
+			vk::cmdDraw(cb, cubemap_ ? 14 : 4, 1, 0, 0, 0);
+
+			// make sure redraw is triggered
+			camera_.needsUpdate = true;
 		}
 	}
 
 	void update(double delta) override {
 		Base::update(delta);
 		camera_.update(swaDisplay(), delta);
-		if(camera_.needsUpdate) {
+
+		fileWatcher_.update();
+		pipe_.update();
+
+		if(camera_.needsUpdate || pipe_.reloadablePipe().updatePending()) {
 			Base::scheduleRedraw();
 		}
 	}
@@ -260,7 +220,12 @@ public:
 			auto span = map.span();
 			if(cubemap_) {
 				tkn::write(span, camera_.fixedViewProjectionMatrix());
+			} else {
+				auto off = nytl::Vec2f(levelView_.center - 0.5f * levelView_.size);
+				tkn::write(span, off);
+				tkn::write(span, levelView_.size);
 			}
+
 			if(tonemap_) {
 				tkn::write(span, exposure_);
 			}
@@ -283,10 +248,11 @@ public:
 			viewInfo.subresourceRange.levelCount = 1u;
 			view_ = {vkDevice(), viewInfo};
 
-			vpp::DescriptorSetUpdate dsu(texDs_);
-			dsu.imageSampler({{{{}, view_,
-				vk::ImageLayout::shaderReadOnlyOptimal}}});
+			updateDs();
+			Base::scheduleRerecord();
+		}
 
+		if(pipe_.updateDevice()) {
 			Base::scheduleRerecord();
 		}
 	}
@@ -295,6 +261,11 @@ public:
 		Base::mouseMove(ev);
 		if(cubemap_) {
 			camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
+		} else if(swa_display_mouse_button_pressed(swaDisplay(), swa_mouse_button_left)) {
+			float dx = levelView_.size.x * float(ev.dx) / windowSize().x;
+			float dy = levelView_.size.y * float(ev.dy) / windowSize().y;
+			levelView_.center -= nytl::Vec2f{dx, dy};
+			camera_.needsUpdate = true;
 		}
 	}
 
@@ -303,7 +274,13 @@ public:
 			return true;
 		}
 
-		camera_.mouseWheel(dy);
+		if(cubemap_) {
+			camera_.mouseWheel(dy);
+		} else {
+			levelView_.size *= std::pow(1.025f, dy);
+			camera_.needsUpdate = true;
+		}
+
 		return true;
 	}
 
@@ -389,17 +366,10 @@ public:
 protected:
 	vpp::Image image_;
 	vpp::ImageView view_;
-
 	vpp::Sampler sampler_;
-	vpp::TrDsLayout texDsLayout_;
-	vpp::TrDs texDs_;
-	// cubemap only
-	vpp::TrDsLayout camDsLayout_;
-	vpp::TrDs camDs_;
 
-	vpp::PipelineLayout pipeLayout_;
-	vpp::Pipeline pipe_;
-	vpp::Pipeline boxPipe_;
+	tkn::ManagedGraphicsPipe pipe_;
+	tkn::FileWatcher fileWatcher_;
 
 	vk::Format format_;
 	unsigned layerCount_;
@@ -415,6 +385,9 @@ protected:
 	bool cubemap_ {};
 	vpp::SubBuffer ubo_;
 	tkn::ControlledCamera camera_;
+
+	// non-cubemap, 2D
+	tkn::LevelView levelView_ {{0.5f, 0.5f}, {1.f, 1.f}};
 };
 
 int main(int argc, const char** argv) {

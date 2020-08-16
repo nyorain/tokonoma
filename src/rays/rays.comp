@@ -1,38 +1,21 @@
 #version 460
+#extension GL_GOOGLE_include_directive : require
+
+#include "shared.glsl"
 
 const float pi = 3.1415926535897932;
 
 layout(local_size_x = 1, local_size_y = 16) in;
 
-struct Segment {
-	vec2 start;
-	vec2 end;
-	uint material;
-	uint _pad0;
-};
 
 layout(set = 0, binding = 0, std430) buffer Segments {
 	Segment segments[];
-};
-
-struct Material {
-	vec3 albedo;
-	float roughness;
-	float metallic;
-	float _pad0[3];
 };
 
 layout(set = 0, binding = 1, std430) buffer Materials {
 	Material materials[];
 };
 
-// Point light
-struct Light {
-	vec3 color;
-	float radius;
-	vec2 pos;
-	float _pad0[2];
-};
 
 layout(set = 0, binding = 2, std430) buffer Lights {
 	Light lights[];
@@ -63,12 +46,13 @@ layout(set = 0, binding = 5, std430) buffer Colors {
 	vec4 colors[];
 };
 
-
 layout(set = 0, binding = 6) uniform UBO {
 	vec2 pos;
 	vec2 size;
 	float time;
 } view;
+
+layout(set = 0, binding = 7) uniform sampler2DArray noiseTex;
 
 // pbr util
 float distributionGGX(vec2 n, vec2 h, float roughness) {
@@ -133,13 +117,13 @@ vec2 clip_aabb(vec2 boxmin, vec2 boxmax, vec2 pos, vec2 dir) {
 }
 
 float random(float v) {
-    float a = 43758.5453;
+    float a = 438.5453;
     float sn = mod(v, 3.14);
     return fract(sin(sn) * a);
 }
 
 float random(vec2 v) {
-    float a = 43758.5453;
+    float a = 492.1453;
     float b = 12.9898;
     float c = 78.233;
     float dt = dot(v, vec2(b, c));
@@ -183,6 +167,8 @@ bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos, out float isfac) 
 			seg = segi;
 			isfac = is.y;
 			m = is.x;
+
+			npos = mix(segi.start, segi.end, is.y);
 		}
 	}
 
@@ -190,7 +176,7 @@ bool trace(vec2 pos, vec2 dir, out Segment seg, out vec2 npos, out float isfac) 
 		return false;
 	}
 
-	npos = pos + m * dir;
+	// npos = pos + m * dir;
 	return true;
 }
 
@@ -255,7 +241,8 @@ void main() {
 	// vec2 dir = off;
 	// direction slightly random from offset
 	vec2 noff = vec2(-off.y, off.x);
-	float rf = -1 + 2 * random(light.pos + view.time + sampleID);
+	// float rf = -1 + 2 * random(light.pos * view.time + view.time * sampleID);
+	float rf = -1 + 2 * random(view.time + sampleID);
 	// float rf = -1 + 2 * random(light.pos + 3 * sampleID);
 	// rf = 0.f;
 	// rf = 0.2 * rf;
@@ -263,12 +250,11 @@ void main() {
 	vec2 dir = normalize(rf * noff + (1 - abs(rf)) * off);
 
 	float c = dot(dir, off);
-	// float s = sqrt(1 - c * c);
-	// if(dot(noff, dir) > 0) s = -s;
+	float s = sqrt(1 - c * c);
+	if(dot(noff, dir) > 0) s = -s;
 	// vec2 start = light.pos + light.radius * off;
-	vec2 start = light.pos - light.radius * off;
 
-	// vec2 start = light.pos + light.radius * (c * off + s * noff);
+	vec2 start = light.pos + light.radius * (c * off + s * noff);
 
 	Segment seg;
 	vec2 pos = start;
@@ -307,6 +293,9 @@ void main() {
 		normal *= -1;
 	}
 
+	// TODO: this should be dependent on pixel size...
+	npos += normal / 20.f;
+
 	Material mat = materials[seg.material];
 	insert(pos, npos, color, color);
 
@@ -315,7 +304,7 @@ void main() {
 	}
 
 	Iteration iterations[1 + maxBounces];
-	iterations[0].pos = npos;
+	iterations[0].pos = npos - normal / 20;
 	iterations[0].dir = dir;
 	iterations[0].normal = normal;
 	iterations[0].color = color * mat.albedo * max(dot(-dir, normal), 0);
@@ -341,14 +330,14 @@ void main() {
 
 		// just lambert
 		// TODO: importance sample, better sampling in general!
-		float theta = pi * random(5 + iterations[depth].id + pos + view.time);
+		float theta = pi * random(iterations[depth].id + mod(view.time * pos, 12) + 0.01 * view.time);
 		// float theta = pi * random(5 + iterations[depth].id + pos);
 		float ct = cos(theta);
 		float st = sin(theta);
 		vec2 dir = normalize(st * normal + ct * tangent);
 
 		if(seg.material == 1) {
-			dir = refract(-iterations[depth].dir, normal, 1.45f);
+			dir = refract(-iterations[depth].dir, normal, 0.0);
 		}
 
 		vec3 color = iterations[depth].color / nr;
@@ -360,6 +349,7 @@ void main() {
 			continue;
 		}
 
+
 		// don't let rays hit on outermost segment parts, we just
 		// abandon this ray.
 		// we do this so we don't get light leaks
@@ -369,22 +359,25 @@ void main() {
 			continue;
 		}
 
+		// TODO
+		// generate a new ray and follow it
+		tangent = normalize(seg.end - seg.start);
+		// TODO: left or right normal? define convention
+		// For now, all segments are double sided.
+		normal = vec2(-tangent.y, tangent.x);
+		if(dot(normal, -dir) < 0) {
+			normal *= -1;
+		}
+		npos += normal / 20.f;
+
 		insert(pos, npos, color, color);
 
 		if((depth + 1) < maxBounces) {
-			// generate a new ray and follow it
-			vec2 tangent = normalize(seg.end - seg.start);
-			// TODO: left or right normal? define convention
-			// For now, all segments are double sided.
-			vec2 normal = vec2(-tangent.y, tangent.x);
-			if(dot(normal, -dir) < 0) {
-				normal *= -1;
-			}
 
 			Material mat = materials[seg.material];
 
 			++depth;
-			iterations[depth].pos = npos;
+			iterations[depth].pos = npos - normal / 20;
 			iterations[depth].normal = normal;
 			iterations[depth].color = color * mat.albedo * max(dot(-dir, normal), 0);
 			// iterations[depth].color = color * mat.albedo * max(dot(-dir, normal), 0);

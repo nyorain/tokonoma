@@ -175,7 +175,7 @@ void insert(vec2 start0, vec2 end0, vec2 start1, vec2 end1,
 		vec4(cstart1, 1.0), vec4(cend1, 1.0));
 }
 
-const uint maxBounces = 0u;
+const uint maxBounces = 4u;
 const float lightEps = 0.001;
 
 void main() {

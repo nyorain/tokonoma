@@ -380,7 +380,7 @@ void ReloadablePipeline::reload() {
 		name_ + "[new]");
 }
 
-void ReloadablePipeline::update() {
+bool ReloadablePipeline::update() {
 	if(!future_.valid()) {
 		if(fileWatcher_) {
 			for(auto watch : fileWatches_) {
@@ -390,27 +390,31 @@ void ReloadablePipeline::update() {
 			}
 		}
 
-		return;
+		return false;
 	}
 
 	// check if future is available
 	auto res = future_.wait_for(std::chrono::seconds(0));
 	if(res != std::future_status::ready) {
-		return;
+		return false;
 	}
 
 	try {
 		auto [newPipe, newInc] = future_.get(); // this might throw when task threw
 		if(!newPipe) {
-			return;
+			return false;
 		}
 
 		newPipe_ = std::move(newPipe);
 		vpp::nameHandle(newPipe_, (name_ + "[pending]").c_str());
 		updateWatches(std::move(newInc));
+		return true;
 	} catch(const std::exception& err) {
 		dlg_warn("Exception thrown from pipeline creation task: {}", err.what());
+		return false;
 	}
+
+	// unreachable
 }
 
 bool ReloadablePipeline::updateDevice() {
@@ -424,6 +428,8 @@ bool ReloadablePipeline::updateDevice() {
 }
 
 void ReloadablePipeline::updateWatches(std::vector<std::string> newIncludes) {
+	// the shader files of the individual stages itself can't have changed,
+	// don't unregister them.
 	auto itOld = fileWatches_.begin() + stages_.size();
 	for(auto& inc : newIncludes) {
 		Watch* newWatch;
@@ -433,14 +439,19 @@ void ReloadablePipeline::updateWatches(std::vector<std::string> newIncludes) {
 				continue;
 			}
 
+			dlg_debug(" ({}) Removing shader file watch for {}", name_, itOld->path);
 			fileWatcher_->unregsiter(itOld->id);
 			newWatch = &*itOld;
 			++itOld;
 		} else {
 			newWatch = &fileWatches_.emplace_back();
+
+			// make sure this still holds, emplace_back may invalidate
+			// the old iterator
 			itOld = fileWatches_.end();
 		}
 
+		dlg_debug(" ({}) Adding shader file watch for {}", name_, inc);
 		newWatch->id = fileWatcher_->watch(inc);
 		newWatch->path = std::move(inc);
 	}
@@ -801,7 +812,10 @@ void DescriptorUpdater::buffer(std::vector<vk::DescriptorBufferInfo> infos,
 		update.startElem = startElem;
 		update.as = type;
 	} else {
+		dlg_assert(currentSet_ < sets_->size());
 		auto& set = (*sets_)[currentSet_];
+		dlg_assert(currentBinding_ < set.bindings.size());
+
 		auto dt = set.bindings[currentBinding_].descriptorType;
 		dlg_assert(!type || dt == *type);
 		dlg_assert(set.bindings[currentBinding_].descriptorCount >= infos.size());
@@ -826,7 +840,10 @@ void DescriptorUpdater::image(std::vector<vk::DescriptorImageInfo> infos,
 		update.startElem = startElem;
 		update.as = type;
 	} else {
+		dlg_assert(currentSet_ < sets_->size());
 		auto& set = (*sets_)[currentSet_];
+		dlg_assert(currentBinding_ < set.bindings.size());
+
 		auto dt = set.bindings[currentBinding_].descriptorType;
 		dlg_assert(!type || dt == *type);
 		dlg_assert(set.bindings[currentBinding_].descriptorCount >= infos.size());
@@ -884,7 +901,10 @@ void DescriptorUpdater::sampledImage(vk::ImageView view, vk::ImageLayout layout)
 
 void DescriptorUpdater::set(vpp::BufferSpan span) {
 	if(sets_) {
+		dlg_assert(currentSet_ < sets_->size());
 		auto& set = (*sets_)[currentSet_];
+		dlg_assert(currentBinding_ < set.bindings.size());
+
 		buffer(span, set.bindings[currentBinding_].descriptorType);
 	} else {
 		buffer(span, {});
@@ -894,7 +914,10 @@ void DescriptorUpdater::set(vpp::BufferSpan span) {
 void DescriptorUpdater::set(vk::ImageView view,
 		vk::ImageLayout layout, vk::Sampler sampler) {
 	if(sets_) {
+		dlg_assert(currentSet_ < sets_->size());
 		auto& set = (*sets_)[currentSet_];
+		dlg_assert(currentBinding_ < set.bindings.size());
+
 		if(layout == vk::ImageLayout::undefined) {
 			switch(set.bindings[currentBinding_].descriptorType) {
 				case vk::DescriptorType::combinedImageSampler:
@@ -988,7 +1011,11 @@ void DescriptorUpdater::init(const std::deque<LayoutedDs>& dss) {
 	sets_ = &dss;
 	for(auto& abstract : abstractUpdates_) {
 		seek(abstract.set, abstract.binding);
+		dlg_assert(currentSet_ < sets_->size());
+
 		auto& set = (*sets_)[currentSet_];
+		dlg_assert(currentBinding_ < set.bindings.size());
+
 		auto type = set.bindings[currentBinding_].descriptorType;
 		dlg_assert(!abstract.as || *abstract.as == type);
 

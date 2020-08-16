@@ -69,7 +69,7 @@ public:
 	// Should be called every frame (or at least every now and then). Does
 	// cpu-work related to pipeline creation such as checking for file
 	// change or completed creation jobs.
-	void update();
+	bool update();
 
 	// Will update the used pipeline and potentially destroy the old one
 	// when a job has finished. Returns whether the pipeline changed,
@@ -262,7 +262,7 @@ public:
 		std::string name = {});
 
 	void reload() { pipe_.reload(); }
-	void update() { pipe_.update(); }
+	bool update() { return pipe_.update(); }
 	bool updateDevice();
 
 	auto& pipeState() { return *state_; }
@@ -312,7 +312,7 @@ public:
 		std::string name = {});
 
 	void reload() { pipe_.reload(); }
-	void update() { pipe_.update(); }
+	bool update() { return pipe_.update(); }
 	bool updateDevice();
 
 	auto& pipeState() { return *state_; }

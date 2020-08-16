@@ -103,9 +103,16 @@ struct WriteBuffer {
 	std::vector<std::byte> buffer;
 };
 
+template<typename T>
+struct IsInitializerList : public std::false_type {};
+
+template<typename T>
+struct IsInitializerList<std::initializer_list<T>> : public std::true_type {};
+
 template<typename T> constexpr auto BytesConvertible =
 	std::is_trivially_copyable_v<T> &&
-	std::is_standard_layout_v<T>;
+	std::is_standard_layout_v<T> &&
+	!IsInitializerList<T>::value;
 
 // TODO: we probably can't assume this (e.g. for span).
 // Not sure if overload resolution works if this isn't true
@@ -133,22 +140,22 @@ bytes(T& val) {
 }
 
 template<typename T>
-std::enable_if_t<BytesConvertible<T>, nytl::Span<const std::byte>>
-bytes(const std::vector<T>& val) {
+nytl::Span<const std::byte> bytes(const std::vector<T>& val) {
+	static_assert(BytesConvertible<T>);
 	return nytl::as_bytes(nytl::span(val));
 }
 
 template<typename T>
-std::enable_if_t<BytesConvertible<T>, nytl::Span<std::byte>>
-bytes(std::vector<T>& val) {
+nytl::Span<std::byte> bytes(std::vector<T>& val) {
+	static_assert(BytesConvertible<T>);
 	return nytl::as_writeable_bytes(nytl::span(val));
 }
 
 // There is no non-const overload for initializer list since we can't
 // ever modify data in it.
 template<typename T>
-std::enable_if_t<BytesConvertible<T>, nytl::Span<const std::byte>>
-bytes(const std::initializer_list<T>& val) {
+nytl::Span<const std::byte> bytes(const std::initializer_list<T>& val) {
+	static_assert(BytesConvertible<T>);
 	return nytl::as_bytes(nytl::span(val));
 }
 

@@ -1,0 +1,276 @@
+#include "shared.glsl"
+#include "math.glsl"
+#include "noise.glsl"
+
+layout(local_size_x = 1, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, std430) buffer Segments {
+	Segment segments[];
+};
+
+layout(set = 0, binding = 1, std430) buffer Materials {
+	Material materials[];
+};
+
+layout(set = 0, binding = 2, std430) buffer Lights {
+	Light lights[];
+};
+
+layout(set = 0, binding = 3, std430) buffer DrawCommand {
+	// indirect draw command
+	uint vertexCount;
+	uint _p0;
+	uint _p1;
+	uint _p2;
+};
+
+layout(set = 0, binding = 4, std430) buffer Positions {
+	LightVertex vertices[];
+};
+
+layout(set = 0, binding = 5) uniform UBO {
+	UboData view;
+};
+
+layout(set = 0, binding = 6) uniform sampler2DArray noiseTex;
+
+// constants
+const uint maxBounces = 6u;
+
+// utility
+float cross(vec2 a, vec2 b) {
+	return a.x * b.y - a.y * b.x;
+}
+
+vec2 clipAABB(vec2 boxmin, vec2 boxmax, vec2 pos, vec2 dir, out vec2 tangent) {
+	vec2 v1 = (boxmin - pos) / dir;
+	vec2 v2 = (boxmax - pos) / dir;
+	float m = 99999999;
+	if(v1.x > 0 && v1.x < m) {
+		m = v1.x;
+		tangent = vec2(0, -1);
+	}
+
+	if(v1.y > 0 && v1.y < m) {
+		m = v1.y;
+		tangent = vec2(1, 0);
+	}
+
+	if(v2.x > 0 && v2.x < m) {
+		m = v2.x;
+		tangent = vec2(0, 1);
+	}
+
+	if(v2.y > 0 && v2.y < m) {
+		m = v2.y;
+		tangent = vec2(1, 0);
+	}
+
+	return pos + m * dir;
+}
+
+vec2 intersectionFacs(vec2 p1, vec2 d1, vec2 p2, vec2 d2) {
+	vec2 ab = p2 - p1;
+	float det = cross(d1, d2);
+
+	// TODO: colinear lines, not sure what should be returned here.
+	if(abs(det) < 0.000001) {
+		return vec2(0, 0);
+	}
+
+	return (1 / det) * vec2(cross(ab, d2), cross(ab, d1));
+}
+
+vec2 intersectRaySphere(vec2 ro, vec2 rd, vec3 circle) {
+	vec2 oc = ro - circle.xy;
+	float p2 = dot(rd, oc); // p/2
+	float q = dot(oc, oc) - circle.z * circle.z; // q
+	float s = p2 * p2 - q; // (p/2)^2 - q
+	if(s < 0.0) {
+		return vec2(-1.0);
+	}
+
+	s = sqrt(s);
+	return -p2 + vec2(-s, s);
+}
+
+vec2 lnormal(vec2 dir) {
+	return vec2(-dir.y, dir.x);
+}
+
+vec2 rnormal(vec2 dir) {
+	return vec2(dir.y, -dir.x);
+}
+
+struct TraceResult {
+	vec2 tangent;
+	uint matID;
+	// Ray t of hit, if any
+	float t;
+	// -1: did hit something but on border, discard ray
+	//  0: did not hit anything
+	//  1: valid hit
+	float state;
+};
+
+// The factor on the intersected segment is returned in isfac
+const float eps = 0.00001;
+TraceResult trace(vec2 pos, vec2 dir) {
+	const float startT = 9999999.f;
+
+	TraceResult res;
+	res.t = startT;
+	res.state = 0;
+
+	// segments
+	for(uint i = 0u; i < segments.length(); ++i) {
+		Segment segi = segments[i];
+		vec2 tangent = segi.end - segi.start;
+		vec2 is = intersectionFacs(pos, dir, segi.start, tangent);
+		if(is.y < -eps || is.y > 1 + eps || is.x < eps || is.x > res.t) {
+			continue;
+		}
+
+		if(is.y < eps || is.y > 1 - eps) {
+			res.state = -1;
+			continue;
+		}
+
+		res.state = 1;
+		res.tangent = tangent;
+		res.t = is.x;
+		res.matID = segi.material;
+	}
+
+	// TODO: circles
+	{
+		const vec3 circles[] = {
+			{-3, -4, 1},
+			{-5.3, -4, 1},
+			{-2, -5, 0.3},
+			{-1, -5, 0.6},
+			{0, -4.5, 0.4},
+		};
+
+		for(uint i = 0u; i < circles.length(); ++i) {
+			vec3 circle = circles[i];
+			vec2 is = intersectRaySphere(pos, dir, circle);
+			if(is.x > 0 && is.x < res.t) {
+				res.state = 1;	
+				res.t = is.x;
+				res.matID = 1;
+
+				vec2 pos = pos + res.t * dir;
+				res.tangent = lnormal(pos - circle.xy);
+			} else if(is.y > 0 && is.y < res.t) {
+				res.state = 1;
+				res.t = is.y;
+				res.matID = 1;
+
+				vec2 pos = pos + res.t * dir;
+				res.tangent = lnormal(pos - circle.xy);
+			}
+		}
+	}
+
+	if(res.state == 1) {
+		res.tangent = normalize(res.tangent);
+	}
+
+	return res;
+}
+
+void insert(vec2 pos, vec2 normal, vec2 npos, vec2 nnormal, vec3 color, inout float dist) {
+	uint vertexID = atomicAdd(vertexCount, 6);
+	uint vid0 = vertexID / 3;
+	uint vid1 = vid0 + 1;
+
+	vertices[vid0].position = pos; 
+	vertices[vid0].normal = normal; 
+	vertices[vid0].color = vec4(color, dist);
+
+	dist += distance(pos, npos);
+	vertices[vid1].position = npos; 
+	vertices[vid1].normal = nnormal;
+	vertices[vid1].color = vec4(color, dist);
+}
+
+void main() {
+	uint lightID = gl_GlobalInvocationID.x;
+	if(lightID >= lights.length()) {
+		return;
+	}
+
+	uint sampleCount = gl_WorkGroupSize.y * gl_NumWorkGroups.y;
+	uint sampleID = gl_GlobalInvocationID.y;
+	Light light = lights[lightID];
+
+	// float fs = sampleID + random(-mod(view.time, 1000) + sampleID);
+	float fs = sampleID;
+	float phi = 2 * pi * (fs / sampleCount);
+	vec2 off = vec2(cos(phi), sin(phi));
+
+	vec2 noff = vec2(-off.y, off.x);
+	float rf = -1 + 2 * random(mod(view.time, 965) + sampleID);
+	vec2 dir = normalize(rf * noff + (1 - abs(rf)) * off);
+	// vec2 dir = off;
+
+	vec2 start = light.pos + light.radius * off;
+	vec2 pos = start;
+	vec2 line = vec2(-dir.y, dir.x);
+	vec3 color = (1.f / sampleCount) * light.color / light.radius;
+	float dist = light.radius;
+	uint bounce = 0;
+
+	bool finished = false;
+	float isf;
+
+	while(true) {
+		TraceResult res = trace(pos, dir);
+		finished = (res.state == -1);
+		if(res.state != 1) {
+			break;
+		}
+
+		vec2 npos = pos + res.t * dir;
+		insert(pos, line, npos, res.tangent, color, dist);
+
+		// bounce
+		vec2 normal = lnormal(res.tangent);
+		if(dot(normal, -dir) < 0) { // double sided for now
+			normal *= -1;
+			res.tangent *= -1;
+		}
+
+		Material mat = materials[res.matID];
+
+		// lambert
+		vec2 ndir; 
+		if(res.matID == 1) {
+			ndir = refract(-dir, normal, 1.25);
+		} else {
+			// float theta = pi * random(pos + mod(view.time, 932));
+			float theta = 0.05 + 0.95 * pi * random(pos + mod(view.time, 932));
+			float ct = cos(theta);
+			float st = sin(theta);
+			ndir = normalize(st * normal + ct * res.tangent);
+		}
+
+		color *= mat.albedo * max(dot(-dir, normal), 0);
+
+		dir = ndir;
+		pos = npos;
+		line = res.tangent;
+		if(++bounce > maxBounces) {
+			finished = true;
+			break;
+		}
+	}
+
+	// add final ray out of screen
+	if(!finished) {
+		vec2 nline;
+		vec2 npos = clipAABB(view.offset, view.offset + view.size, pos, dir, nline);
+		insert(pos, line, npos, nline, color, dist);
+	}
+}

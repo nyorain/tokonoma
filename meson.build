@@ -314,7 +314,6 @@ repro = build_target('repro', [
 
 rays = build_target('rays', [
 		'src/rays/main.cpp',
-		rays_shaders,
 	], dependencies: tkn_dep,
 	target_type: exetarget)
 
