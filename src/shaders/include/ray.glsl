@@ -51,6 +51,8 @@ vec3 sphereNormal(vec3 ce, vec3 pos) {
 	return normalize(pos - ce);
 }
 
+// NOTE: this might be wrong, see rays/rays2.comp and the 2D version there.
+
 /// Returns intersection ray parameter and box normal of ray and box.
 /// -1.0 when there is no intersection, a negative value if the
 /// ray origin is inside the box.

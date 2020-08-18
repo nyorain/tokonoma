@@ -121,7 +121,7 @@ void main() {
 		return;
 	}
 
-	float fac = 0.2f;
+	float fac = 0.8f;
 	vec3 h = imageLoad(history, id).rgb;
 
 	float accum = 0.0;
@@ -129,6 +129,12 @@ void main() {
 	h += fac * loadHistory(id, ivec2(0, 1), accum).rgb;
 	h += fac * loadHistory(id, ivec2(0, -1), accum).rgb;
 	h += fac * loadHistory(id, ivec2(-1, 0), accum).rgb;
+
+	h += fac * loadHistory(id, ivec2(-1, 1), accum).rgb;
+	h += fac * loadHistory(id, ivec2(1, 1), accum).rgb;
+	h += fac * loadHistory(id, ivec2(1, -1), accum).rgb;
+	h += fac * loadHistory(id, ivec2(-1, -1), accum).rgb;
+
 	h /= (1 + accum * fac);
 
 	// h += fac * imageLoad(history, id + ivec2(1, 0)).rgb;
@@ -168,7 +174,7 @@ void main() {
 	
 	float n = gradientNoise(1000 * uv + 10 * (h.rg + h.b));
 	// float n = gradientNoise(1000 * uv);
-	f -= 0.5 * pow(ndiff, 2) * n;
+	f -= 0.2 * pow(ndiff, 2) * n;
 	f = max(f, 0);
 
 	// float f = 0.9999;

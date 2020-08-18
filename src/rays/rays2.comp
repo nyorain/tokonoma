@@ -94,6 +94,54 @@ vec2 intersectRaySphere(vec2 ro, vec2 rd, vec3 circle) {
 	return -p2 + vec2(-s, s);
 }
 
+vec2 intersectRayBox(vec2 ro, vec2 rd, vec2 center, vec2 hsize) {
+	vec2 dir = rd;
+	vec2 o = ro - center;
+
+	// how many t we need to reach xi = 0 from origin
+	// might result in +/- infinity in an dimension
+	vec2 d = -o / dir;
+
+	// t needed for ray to progress 1 in dimension i
+	// might result in +/- infinity in an dimension
+	vec2 ad = abs(hsize / dir);
+
+	// ts needed for first/second xi = 1 intersections (following ray in its dir)
+	// oi + di * t1i = sign(di)
+	// oi + di * t2i = -sign(di)
+	// again: might be infinity. Well defined though:
+	vec2 t1 = d - ad;
+	vec2 t2 = d + ad;
+
+	// the t value on which the ray has entered (i.e. crossed the first
+	// intersection point; must be from the outside) the unit cube in
+	// all dimensions.
+	// That's why we need max here: the last one.
+	float tn = max(t1.x, t1.y);
+
+	// the t value on which the ray has left (i.e. crossed the second
+	// intersection point; must be from the inside) the unit cube
+	// in the first dimensions.
+	// That's why we need min here: the first one.
+	float tf = min(t2.x, t2.y);
+
+	// if the ray leaves the unit cube in one dimension while not
+	// having entered in all, it will never intersect.
+	// When otherwise tf < 0.0, then the first intersection, then
+	// both intersections are on negative t values.
+	if(tn > tf || tf < 0.0) {
+		return vec2(-1.f, -1.f);
+	}
+
+	// TODO: fix for 2D
+    // normal = -sign(r.dir) * step(t1.yzx, t1.xyz) * step(t1.zxy, t1.xyz);
+
+	// If the origin of the ray is *in* the box, then this
+	// returns a negative value: the first intersection of the ray
+	// behind the origin.
+	return vec2(tn, tf);
+}
+
 vec2 lnormal(vec2 dir) {
 	return vec2(-dir.y, dir.x);
 }
@@ -104,7 +152,7 @@ vec2 rnormal(vec2 dir) {
 
 struct TraceResult {
 	vec2 tangent;
-	uint matID;
+	int matID;
 	// Ray t of hit, if any
 	float t;
 	// -1: did hit something but on border, discard ray
@@ -113,16 +161,8 @@ struct TraceResult {
 	float state;
 };
 
-// The factor on the intersected segment is returned in isfac
 const float eps = 0.00001;
-TraceResult trace(vec2 pos, vec2 dir) {
-	const float startT = 9999999.f;
-
-	TraceResult res;
-	res.t = startT;
-	res.state = 0;
-
-	// segments
+void traceSegments(inout TraceResult res, vec2 pos, vec2 dir) {
 	for(uint i = 0u; i < segments.length(); ++i) {
 		Segment segi = segments[i];
 		vec2 tangent = segi.end - segi.start;
@@ -139,39 +179,102 @@ TraceResult trace(vec2 pos, vec2 dir) {
 		res.state = 1;
 		res.tangent = tangent;
 		res.t = is.x;
-		res.matID = segi.material;
+		res.matID = int(segi.material);
 	}
+}
 
-	// TODO: circles
-	{
-		const vec3 circles[] = {
-			{-3, -4, 1},
-			{-5.3, -4, 1},
-			{-2, -5, 0.3},
-			{-1, -5, 0.6},
-			{0, -4.5, 0.4},
-		};
+void traceSpheres(inout TraceResult res, vec2 pos, vec2 dir) {
+	const vec3 circles[] = {
+		{-3, -4, 1},
+		{-5.3, -4, 1},
+		{-2, -5, 0.3},
+		{-1, -5, 0.6},
+		{0, -4.5, 0.4},
+	};
 
-		for(uint i = 0u; i < circles.length(); ++i) {
-			vec3 circle = circles[i];
-			vec2 is = intersectRaySphere(pos, dir, circle);
-			if(is.x > 0 && is.x < res.t) {
-				res.state = 1;	
-				res.t = is.x;
-				res.matID = 1;
-
-				vec2 pos = pos + res.t * dir;
-				res.tangent = lnormal(pos - circle.xy);
-			} else if(is.y > 0 && is.y < res.t) {
-				res.state = 1;
-				res.t = is.y;
-				res.matID = 1;
-
-				vec2 pos = pos + res.t * dir;
-				res.tangent = lnormal(pos - circle.xy);
-			}
+	for(uint i = 0u; i < circles.length(); ++i) {
+		vec3 circle = circles[i];
+		vec2 is = intersectRaySphere(pos, dir, circle);
+		if(is.x > 0 && is.x < res.t) {
+			res.t = is.x;
+		} else if(is.y > 0 && is.y < res.t) {
+			res.t = is.y;
+		} else {
+			continue;
 		}
+
+		res.state = 1;	
+		res.matID = -1;
+
+		vec2 pos = pos + res.t * dir;
+		res.tangent = lnormal(pos - circle.xy);
 	}
+}
+
+void traceScattering(inout TraceResult res, vec2 pos, vec2 dir) {
+	const float density = 4.f;
+	const vec2 boxPos = vec2(-4.5, 2.0);
+	const vec2 boxSize = vec2(1, 2);
+	const float g = 0.8;
+
+	vec2 is = intersectRayBox(pos, dir, boxPos, boxSize);
+	float t0;
+	float t1;
+	if(is.x > 0.0 && is.x < res.t) {
+		t0 = is.x;
+		t1 = min(is.y, res.t);
+	} else if(is.x < 0.0 && is.y > 0) {
+		t0 = 0;
+		t1 = min(is.y, res.t);
+	} else {
+		return;
+	}
+
+	float dist = t1 - t0;
+	float p = 1 - exp(-density * dist);
+	float r = random(pos + dir + 0.1 * mod(view.time, 179));
+
+	if(r > p) {
+		return;
+	}
+
+	res.t = t0 - log(1 - r) / density;
+	res.state = 1;
+	res.matID = -2;
+
+	// evaluate direction via henyey greenstein, importance sampled
+	// refer to notes from https://www.astro.umd.edu/~jph/HG_note.pdf
+	{
+		float r = random(pos - 0.5 * dir - 0.122 * mod(view.time, 113));
+		float s = 2 * r - 1;
+
+		float gg = g * g;
+		float l = (1 - gg) / (1 + g * s);
+		float mu = abs(g) < 0.001 ? s : 1 / (2 * g) * (1 + gg - l * l);
+
+		vec2 normal = lnormal(dir);
+		if(fract(1000 * r) > 0.5) { // left/right scattering random as well
+			normal = -normal;
+		}
+
+		vec2 ndir = (1 - abs(mu)) * normal + mu * dir;
+		res.tangent = 0.5 * (dir + ndir);
+	}
+}
+
+// The factor on the intersected segment is returned in isfac
+TraceResult trace(vec2 pos, vec2 dir) {
+	const float startT = 9999999.f;
+
+	TraceResult res;
+	res.t = startT;
+	res.state = 0;
+
+	traceSegments(res, pos, dir);
+	traceSpheres(res, pos, dir);
+
+	// important that this one is done last.
+	traceScattering(res, pos, dir);
 
 	if(res.state == 1) {
 		res.tangent = normalize(res.tangent);
@@ -193,6 +296,31 @@ void insert(vec2 pos, vec2 normal, vec2 npos, vec2 nnormal, vec3 color, inout fl
 	vertices[vid1].position = npos; 
 	vertices[vid1].normal = nnormal;
 	vertices[vid1].color = vec4(color, dist);
+}
+
+vec2 generateBounce(vec2 npos, vec2 dir, uint matID, vec2 normal,
+		vec2 tangent, inout vec3 color) {
+	// lambert
+	vec2 ndir; 
+	if(matID == -1 || matID == 1) {
+		ndir = refract(dir, normal, 1.45);
+		color *= vec3(0.4, 0.4, 0.8); // * max(dot(-dir, normal), 0);
+	} else if(matID == -2) {
+		ndir = reflect(dir, normal);
+		color *= 0.95;
+	} else {
+		Material mat = materials[matID];
+
+		// lambertian diffuse. Small offset in random though to avoid artefacts.
+		float theta = 0.05 + 0.95 * pi * random(npos + mod(view.time, 932));
+		float ct = cos(theta);
+		float st = sin(theta);
+		ndir = normalize(st * normal + ct * tangent);
+
+		color *= mat.albedo * max(dot(-dir, normal), 0);
+	}
+
+	return ndir;
 }
 
 void main() {
@@ -232,39 +360,33 @@ void main() {
 			break;
 		}
 
-		vec2 npos = pos + res.t * dir;
-		insert(pos, line, npos, res.tangent, color, dist);
-
-		// bounce
 		vec2 normal = lnormal(res.tangent);
-		if(dot(normal, -dir) < 0) { // double sided for now
+		if(dot(normal, dir) > 0.0) { // double sided for now
 			normal *= -1;
 			res.tangent *= -1;
 		}
 
-		Material mat = materials[res.matID];
-
-		// lambert
-		vec2 ndir; 
-		if(res.matID == 1) {
-			ndir = refract(-dir, normal, 1.25);
-		} else {
-			// float theta = pi * random(pos + mod(view.time, 932));
-			float theta = 0.05 + 0.95 * pi * random(pos + mod(view.time, 932));
-			float ct = cos(theta);
-			float st = sin(theta);
-			ndir = normalize(st * normal + ct * res.tangent);
+		// for line generation
+		// TODO: this is a hack. We could instead fix it for all cases
+		// where this is the better choice though (less numerical
+		// issues in ray2.vert).
+		if(abs(dot(dir, res.tangent)) > 0.9999) {
+			res.tangent = normal;
 		}
 
-		color *= mat.albedo * max(dot(-dir, normal), 0);
+		vec2 npos = pos + res.t * dir;
+		insert(pos, line, npos, res.tangent, color, dist);
 
-		dir = ndir;
-		pos = npos;
-		line = res.tangent;
 		if(++bounce > maxBounces) {
 			finished = true;
 			break;
 		}
+
+		vec2 ndir = generateBounce(npos, dir, res.matID, normal, res.tangent, color);
+
+		dir = ndir;
+		pos = npos;
+		line = res.tangent;
 	}
 
 	// add final ray out of screen

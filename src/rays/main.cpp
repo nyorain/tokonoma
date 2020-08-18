@@ -40,7 +40,7 @@ using namespace tkn::types;
 class RaysApp : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
-	static constexpr auto sampleCount = 32 * 1024u;
+	static constexpr auto sampleCount = 64 * 1024u;
 	// static constexpr auto sampleCount = 16;
 
 	// static constexpr auto sampleCount = 1024;
@@ -185,8 +185,8 @@ public:
 		float fac = 25.f;
 		std::initializer_list<Light> lights = {
 			{fac * tkn::blackbodyApproxRGB(4000), 0.05f, {-1.f, 1.f}},
-			// {1.f * tkn::blackbody(3500), 0.1f, {2.0f, 1.8f}},
-			// {1.f * tkn::blackbody(5500), 0.1f, {-2.f, -1.8f}},
+			{1.f * tkn::blackbodyApproxRGB(3500), 0.1f, {2.0f, 1.8f}},
+			{1.f * tkn::blackbodyApproxRGB(5500), 0.1f, {-2.f, -1.8f}},
 			// {1 * tkn::blackbody(5000), 0.1f, {-2.f, 2.f}},
 			// {fac * tkn::blackbody(7000), 0.1f, {2.f, -1.f}},
 		};

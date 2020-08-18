@@ -33,10 +33,15 @@ void main() {
 	vec3 color = inColor.rgb;
 	float alpha = 1.f;
 	if(scene.rayTime > -1.f) {
-		float dist = 0.2 * inColor.a;
+		float speed = 0.5;
+		float dist = inColor.a / speed;
 		alpha *= smoothstep(scene.rayTime - 0.05f, scene.rayTime, dist) *
 			(1 - smoothstep(scene.rayTime, scene.rayTime + 0.05f, dist));
 		// alpha *= (1 - smoothstep(scene.rayTime - 0.05, scene.rayTime, dist));
+
+		alpha /= 0.1 * speed;
+	} else {
+		alpha = 1 / pow(inColor.a, 1);
 	}
 
 	if(alpha < 0.001) {
