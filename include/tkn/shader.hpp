@@ -42,7 +42,7 @@ std::vector<u32> compileShader(const fs::path& glslPath,
 
 // TODO: test and re-audit synchronization. Might have issues, mainly
 //   when one module is compiled by multiple threads at the same time.
-// TODO: Re-check hash *after* compilation and retry if it has changed?
+// TODO(low): Re-check hash *after* compilation and retry if it has changed?
 //   Currently, if a file changes between hash building and compilation,
 //   we will store the compiled mod under an hash not matching the
 //   source we compiled. Or maybe while building the hash, already load

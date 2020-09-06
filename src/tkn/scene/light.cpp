@@ -127,10 +127,11 @@ void initShadowData(ShadowData& data, const vpp::Device& dev, vk::Format depthFo
 	sci.mipmapMode = vk::SamplerMipmapMode::nearest;
 	sci.compareEnable = true;
 	sci.compareOp = vk::CompareOp::lessOrEqual;
-	sci.magFilter = vk::Filter::linear;
-	sci.minFilter = vk::Filter::linear;
-	// sci.magFilter = vk::Filter::nearest;
-	// sci.minFilter = vk::Filter::nearest;
+	// linear depth sampling often not supported
+	// sci.magFilter = vk::Filter::linear;
+	// sci.minFilter = vk::Filter::linear;
+	sci.magFilter = vk::Filter::nearest;
+	sci.minFilter = vk::Filter::nearest;
 	data.sampler = {dev, sci};
 
 	auto lightBindings = std::array {

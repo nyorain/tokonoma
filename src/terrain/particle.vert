@@ -20,6 +20,6 @@ void main() {
 	float height = texture(heightmap, baseCoord).r;
 
 	gl_Position = ubo.vp * vec4(pos.x, height + 0.001, pos.y, 1.0);
-	gl_PointSize = 2.0;
+	gl_PointSize = 8.0;
 	color = vec3(sediment / capacity, length(vel), 0.5 + 0.5 * water);
 }

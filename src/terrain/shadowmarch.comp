@@ -27,11 +27,12 @@ void main() {
 	float dt;
 	float shadow = 1.f;
 
-	// float maxHeight = 0.0;
-	float maxDiff = 0.0;
+	float maxDiff = -1.0;
+	float maxHeight = 0.0;
 
-	for(float t = 0.001; t < 5.f && shadow > 0.f; t += dt) {
+	for(float t = 0.01; t < 3.f && shadow > 0.f; t += dt) {
 		vec3 pos = rayStart + t * ubo.toLight;
+		// vec3 pos = rayStart + t * normalize(vec3(-5, 1, 0));
 		if(pos.xz != clamp(pos.xz, -1.f, 1.f)) {
 			break;
 		}
@@ -40,22 +41,25 @@ void main() {
 		float lod = 0.0;
 		float height = textureLod(heightmap, 0.5 + 0.5 * pos.xz, lod).r;
 
+		/*
 		if(pos.xz == clamp(pos.xz, -1.f, 1.f) && height > pos.y) {
 			// shadow *= exp(-0.05 * pow(1 - t, 2) - 0.25 * (height - pos.y));
 			// shadow *= exp(-0.01 / t - 0.25 * (height - pos.y));
 			// shadow *= exp(-0.8 / pow(t, 2) * (height - pos.y));
 			shadow *= mix(exp(-0.001 / pow(t, 1)), 0.0, 10 * (height - pos.y));
 		}
+		*/
 
 		if(height - pos.y > maxDiff) {
 			maxDiff = height - pos.y;
-			// maxHeight = height;
+			maxHeight = height;
 		}
 
-		dt = 0.001;
+
+		dt = max(0.01, 0.01 * t);
 		// dt = 0.01 * t;
 	}
 
-	imageStore(shadowmap, ivec2(id), vec4(shadow));
-	// imageStore(shadowmap, ivec2(id), vec4(maxDiff));
+	// imageStore(shadowmap, ivec2(id), vec4(shadow));
+	imageStore(shadowmap, ivec2(id), vec4(maxDiff));
 }

@@ -23,7 +23,6 @@ tkn_deps = [
 	dep_vui,
 	dep_vulkan,
 	dep_png,
-	dep_glslang,
 	gltf_dep,
 ]
 
@@ -39,7 +38,6 @@ tkn_src = [
 	'render.cpp',
 	'headless.cpp',
 	'defer.cpp',
-	'shader.cpp',
 	'f16.cpp',
 	'util.cpp',
 	'headeronly.cpp',
@@ -47,7 +45,6 @@ tkn_src = [
 	'threadPool.cpp',
 	'stream.cpp',
 	'sky.cpp',
-	'pipeline.cpp',
 	'formats.cpp',
 
 	'scene/scene.cpp',
@@ -76,6 +73,17 @@ tkn_src = [
 	tkn_shaders,
 ]
 
+# TODO: currently, android does not support std::filesystem (r21).
+# It will in the next release, then we can remove hits.
+# We can actually implement the ShaderCache using an android cache dir,
+# so we don't rely on pre-compilation on android. See here:
+# https://stackoverflow.com/questions/7595324
+if not android
+	tkn_src += 'pipeline.cpp'
+	tkn_src += 'shader.cpp'
+	tkn_deps += dep_glslang
+endif
+
 # TODO: remove that. use own library
 # but tbh, the whole component is shit anyways
 if dep_b2d.found()
@@ -95,7 +103,7 @@ endif
 if cc.has_header('sys/inotify.h')
 	tkn_src += 'fswatch_inotify.cpp'
 else
-	# TODO
+	tkn_src += 'fswatch_stdfs.cpp'
 endif
 
 tkn_lib = library('tkn',

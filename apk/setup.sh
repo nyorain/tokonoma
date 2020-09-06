@@ -20,6 +20,8 @@ manifestInput=$4
 out=$5
 font=$6
 
+NDK='/opt/android-ndk'
+
 cd $out
 
 mkdir -p lib/$arch
@@ -35,7 +37,7 @@ cp $manifestInput ./AndroidManifest.xml.in
 # link libraries to the lib/$arch dir since they
 # have to be there when packaged with aapt
 ln -sf \
-	/opt/android-ndk/sources/cxx-stl/llvm-libc++/libs/$arch/libc++_shared.so \
+	$NDK/sources/cxx-stl/llvm-libc++/libs/$arch/libc++_shared.so \
 	lib/$arch
 
 d="$(pwd)/.."
@@ -43,17 +45,18 @@ b="$d/../.."
 ln -sf \
 	$d/src/tkn/libtinygltf.so \
 	$d/src/tkn/libtkn.so \
-	$d/subprojects/ny/src/ny/libny.so \
+	$d/subprojects/swa/libswa.so \
 	$d/subprojects/vpp/src/vpp/libvpp.so \
 	$d/subprojects/dlg/libdlg.so \
 	$d/subprojects/katachi/libkatachi.so \
 	$d/subprojects/rvg/src/rvg/librvg.so \
-	$d/subprojects/libpng-1.6.37/libpng16.so.16 \
+	$d/subprojects/libpng-1.6.37/libpng16.so \
 	$d/subprojects/vkpp/libvkpp.so \
 	$d/subprojects/vui/src/vui/libvui.so \
 	$d/subprojects/cubeb/libcubeb.so \
 	$d/subprojects/b2d/Box2D/libBox2D.so \
 	$b/subprojects/steamaudio_api/lib/Android/libphonon.so \
+	$NDK/sources/third_party/vulkan/src/build-android/jniLibs/$arch/libVkLayer_khronos_validation.so \
 	lib/$arch
 
 # generate dummy apk
@@ -67,21 +70,22 @@ $BT/aapt package -f -M AndroidManifest.xml \
 
 $BT/aapt add $apk \
 	lib/$arch/libc++_shared.so \
-	lib/$arch/libtinygltf.so \
-	lib/$arch/libtkn.so \
-	lib/$arch/libny.so \
-	lib/$arch/libvpp.so \
-	lib/$arch/libdlg.so \
-	lib/$arch/libkatachi.so \
-	lib/$arch/librvg.so \
-	lib/$arch/libpng16.so.16 \
-	lib/$arch/libvkpp.so \
-	lib/$arch/libvui.so \
-	lib/$arch/libBox2D.so \
+	lib/$arch/libswa.so \
 	lib/$arch/libcubeb.so \
-	lib/$arch/libphonon.so \
-	assets/font.ttf \
-	assets/test.ogg
+	lib/$arch/libdlg.so
+	# lib/$arch/libvpp.so \
+	# lib/$arch/libtinygltf.so \
+	# lib/$arch/libtkn.so \
+	# lib/$arch/libkatachi.so \
+	# lib/$arch/librvg.so \
+	# lib/$arch/libpng16.so \
+	# lib/$arch/libvkpp.so \
+	# lib/$arch/libvui.so \
+	# lib/$arch/libBox2D.so \
+	# lib/$arch/libphonon.so \
+	# lib/$arch/libVkLayer_khronos_validation.so
+	# assets/font.ttf \
+	# assets/test.ogg \
 	# assets/model.glb \
 	# assets/brdflut.ktx \
 	# assets/convolution.ktx \

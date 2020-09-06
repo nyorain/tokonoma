@@ -44,7 +44,7 @@
 // == FluidSystem ==
 class FluidSystem {
 public:
-	unsigned pressureIterations = 20u;
+	unsigned pressureIterations = 10u;
 	// static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
@@ -489,6 +489,7 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 // == FluidApp ==
 class FluidApp : public tkn::SinglePassApp {
 public:
+	static constexpr auto defaultGridWidth = 256;
 	using Base = tkn::SinglePassApp;
 
 public:
@@ -759,7 +760,7 @@ protected:
 	vpp::PipelineLayout pipeLayout_;
 	vpp::Pipeline pipe_;
 
-	unsigned gridWidth_ {512};
+	unsigned gridWidth_ {defaultGridWidth};
 	unsigned pressureIterations_ {40};
 };
 

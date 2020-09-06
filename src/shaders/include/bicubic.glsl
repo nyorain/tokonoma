@@ -10,6 +10,7 @@ vec4 cubic(float v) {
     return vec4(x, y, z, w) * (1.0 / 6.0);
 }
 
+// fast version, blurring
 vec4 textureBicubic(sampler2D tex, vec2 texCoords) {
    vec2 texSize = textureSize(tex, 0);
    vec2 invTexSize = 1.0 / texSize;

@@ -320,7 +320,7 @@ ReloadablePipeline::ReloadablePipeline(const vpp::Device& dev,
 			throw std::runtime_error(msg);
 		}
 
-		fileWatches_.push_back({fileWatcher_->watch(resolved.c_str()), stage.file});
+		fileWatches_.push_back({fileWatcher_->watch(resolved.u8string()), stage.file});
 
 		bool relevantStage = stage.stage == vk::ShaderStageBits::compute ||
 			stage.stage == vk::ShaderStageBits::fragment;

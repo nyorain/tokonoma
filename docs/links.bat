@@ -13,3 +13,4 @@ mklink libpng16-16.dll subprojects\libpng-1.6.37\libpng16-16.dll
 mklink libny.dll subprojects\ny\src\ny\libny.dll
 mklink phonon.dll ..\..\subprojects\steamaudio_api\bin\Windows\x64\phonon.dll
 mklink libBox2D.dll subprojects\b2d\Box2D\libBox2D.dll
+mklink libglslang.dll subprojects\glslang\libglslang.dll

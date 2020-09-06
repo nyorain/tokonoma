@@ -393,7 +393,7 @@ public:
 			pointLightObjMatrix(), pointLight_.materialID);
 
 		initPP();
-		taa_.init(dev, linearSampler_);
+		taa_.init(dev, linearSampler_, nearestSampler_);
 
 		// init layouts cb
 		semaphoreInitLayouts_ = {dev};
@@ -466,6 +466,8 @@ public:
 			tkn::TAAPass::flagColorClip);
 		createFlagCheckbox(panel, "luminanceWeigh", taa_.params.flags,
 			tkn::TAAPass::flagLuminanceWeigh);
+		createFlagCheckbox(panel, "bicubic", taa_.params.flags,
+			tkn::TAAPass::flagBicubic);
 
 		auto& cbox = panel.create<Checkbox>("disable").checkbox();
 		cbox.onToggle = [&](auto&) {

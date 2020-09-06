@@ -1,5 +1,4 @@
 #include <tkn/app.hpp>
-#include <tkn/window.hpp>
 #include <ny/event.hpp>
 #include <ny/mouseButton.hpp>
 #include <ny/key.hpp>

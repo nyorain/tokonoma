@@ -2,6 +2,7 @@
 
 #extension GL_GOOGLE_include_directive : enable
 #include "scene.glsl"
+#include "bicubic.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -11,6 +12,7 @@ const uint flagTonemap = (1 << 2u);
 const uint flagDepthReject = (1 << 3u);
 const uint flagColorClip = (1 << 4u);
 const uint flagLuminanceWeigh = (1 << 5u);
+const uint flagBicubic = (1 << 6u);
 
 layout(set = 0, binding = 0) uniform sampler2D inHistory;
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D outHistory;
@@ -194,7 +196,13 @@ void main() {
 
 	// TAA rejections and weighting
 	color = tonemap(color);
-	vec4 histz = texture(inHistory, tc.xy);
+	vec4 histz;
+	if((ubo.flags & flagBicubic) != 0) {
+		histz = textureBicubicCatmull(inHistory, tc.xy);
+	} else {
+		histz = texture(inHistory, tc.xy);
+	}
+
 	vec3 hist = tonemap(histz.rgb);
 	float histZ = histz.w;
 	float weight = ubo.maxFac;

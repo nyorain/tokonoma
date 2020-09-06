@@ -162,7 +162,7 @@ protected:
 	}
 
 	template<typename F>
-	static const FunctionImpl impl = {
+	static constexpr FunctionImpl impl = {
 		&destroyImpl<F>,
 		&callImpl<F>,
 		&moveDestroy<F>

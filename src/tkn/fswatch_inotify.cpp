@@ -2,6 +2,7 @@
 #include <dlg/dlg.hpp>
 #include <sys/inotify.h>
 #include <unordered_set>
+#include <unordered_map>
 #include <unistd.h>
 #include <cerrno>
 #include <cstring>
@@ -31,6 +32,7 @@ FileWatcher::FileWatcher() {
 	}
 }
 
+// TODO: close fd!
 FileWatcher::~FileWatcher() = default;
 
 // TODO: check if already existent, add dummy alias id.

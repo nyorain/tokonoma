@@ -1,14 +1,15 @@
 apks = {
-	'rays': rays,
+	# 'rays': rays,
 	'fluid': fluid,
-	'particles': particles,
-	'volume': volume,
-	'br': br,
-	'daudio': daudio,
-	'daudiorc': daudiorc,
-	'daudiosin': daudiosin,
-	'daudioravg': daudioravg,
-	'atmosphere': atmosphere,
+	# 'particles': particles,
+	# 'volume': volume,
+	# 'br': br,
+	# 'daudio': daudio,
+	# 'daudiorc': daudiorc,
+	# 'daudiosin': daudiosin,
+	# 'daudioravg': daudioravg,
+	# 'atmosphere': atmosphere,
+	'daudiotest': daudiotest,
 }
 
 setupsh = files('setup.sh')

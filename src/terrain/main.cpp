@@ -1,4 +1,5 @@
 #include "subd.hpp"
+#include "sky.hpp"
 
 #include <tkn/singlePassApp.hpp>
 #include <tkn/types.hpp>
@@ -37,6 +38,10 @@ public:
 		nytl::Vec3f toLight;
 		float time;
 		nytl::Mat4f vpInv;
+
+		nytl::Vec3f sunColor;
+		float _pad0;
+		nytl::Vec3f ambientColor;
 	};
 
 	// ersionParticle.comp
@@ -60,10 +65,6 @@ public:
 	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
 
 	static constexpr auto particleCount = 1024;
-
-	static auto toLight() {
-		return normalized(nytl::Vec3f{-0.5, 0.2, -0.6});
-	}
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -417,6 +418,8 @@ public:
 		auto& dsupp = ppPipe_.dsu();
 		dsupp(pass0_.colorTarget);
 		dsupp(pass0_.depthTarget);
+		dsupp(shadowmap_);
+		dsupp(heightmap_);
 		dsupp(ubo_);
 
 		// TODO: should not be here I guess
@@ -426,6 +429,10 @@ public:
 	void update(double dt) override {
 		Base::update(dt);
 		time_ += dt;
+
+		if(!paused_) {
+			dayTime_ += dt;
+		}
 
 		cam_.update(swaDisplay(), dt);
 
@@ -454,9 +461,13 @@ public:
 				data.viewPos = cam_.position();
 				data.vpInv = nytl::Mat4f(nytl::inverse(cam_.viewProjectionMatrix()));
 			}
-			data.toLight = toLight();
 			data.dt = dt;
 			data.time = time_;
+
+			const float dayTimeN = std::fmod(0.1 * dayTime_, 1.0);
+			data.toLight = toLight(dayTimeN);
+			data.sunColor = Sky::computeSunColor(dayTimeN);
+			data.ambientColor = Sky::computeAmbientColor(dayTimeN);
 
 			uboMap_.flush();
 		}
@@ -471,13 +482,17 @@ public:
 		rerec |= erode_.particleRenderPipe.updateDevice();
 		rerec |= erode_.particleUpdatePipe.updateDevice();
 
-		if(rerec && mainPipesLoaded() && generated_) {
-			Base::scheduleRerecord();
-		}
 
 		bool regen = false;
 		regen |= genPipe_.updateDevice();
-		regen |= shadowPipe_.updateDevice();
+
+		bool rshadow = shadowPipe_.updateDevice();
+		regen |= rshadow;
+		rerec |= rshadow;
+
+		if(rerec && mainPipesLoaded() && generated_) {
+			Base::scheduleRerecord();
+		}
 
 		if(regen && genPipesLoaded()) {
 			// don't regenerate terrain every time the pipe changes,
@@ -500,8 +515,12 @@ public:
 			return;
 		}
 
+		if(shadowPipe_.pipe()) {
+			computeShadowmap(cb);
+		}
+
 		// erode
-		if(erodePipesLoaded()) {
+		if(erodePipesLoaded() && !pauseErode_) {
 			for(auto i = 0u; i < 64; ++i) {
 				// 1: update particles
 				auto erodedx = tkn::ceilDivide(particleCount, 64);
@@ -555,14 +574,12 @@ public:
 		tkn::cmdBind(cb, renderPipe_);
 		subd_.draw(cb);
 
-#ifdef DEBUG_DRAW_PARTICLES
-		if(erodePipesLoaded()) {
+		if(erodePipesLoaded() && drawParticles_) {
 			// debug draw particles
 			tkn::cmdBind(cb, erode_.particleRenderPipe);
 			tkn::cmdBindVertexBuffers(cb, {{erode_.particles}});
 			vk::cmdDraw(cb, particleCount, 1, 0, 0);
 		}
-#endif // DEBUG_DRAW_PARTICLES
 
 		vk::cmdEndRenderPass(cb);
 	}
@@ -653,26 +670,7 @@ public:
 			tkn::downscale(cb, dtarget, genLevels, &dstScope);
 		}
 
-		// generate shadowmap
-		{
-			auto srcScope = tkn::SyncScope{
-				vk::PipelineStageBits::topOfPipe,
-				vk::ImageLayout::undefined,
-				{}
-			};
-			auto dstScope = tkn::SyncScope::computeReadWrite();
-			tkn::barrier(cb, shadowmap_.image(), srcScope, dstScope);
-
-			tkn::cmdBind(genCb_, shadowPipe_);
-			auto dx = tkn::ceilDivide(shadowmapSize.width, 8);
-			auto dy = tkn::ceilDivide(shadowmapSize.height, 8);
-			vk::cmdDispatch(genCb_, dx, dy, 1);
-
-			srcScope = dstScope;
-			dstScope = tkn::SyncScope::fragmentSampled();
-			tkn::barrier(cb, shadowmap_.image(), srcScope, dstScope);
-		}
-
+		computeShadowmap(cb);
 		vk::endCommandBuffer(cb);
 
 		// submit work
@@ -690,6 +688,25 @@ public:
 			vk::PipelineStageBits::fragmentShader);
 	}
 
+	void computeShadowmap(vk::CommandBuffer cb) {
+		auto srcScope = tkn::SyncScope{
+			vk::PipelineStageBits::topOfPipe,
+			vk::ImageLayout::undefined,
+			{}
+		};
+		auto dstScope = tkn::SyncScope::computeReadWrite();
+		tkn::barrier(cb, shadowmap_.image(), srcScope, dstScope);
+
+		tkn::cmdBind(cb, shadowPipe_);
+		auto dx = tkn::ceilDivide(shadowmapSize.width, 8);
+		auto dy = tkn::ceilDivide(shadowmapSize.height, 8);
+		vk::cmdDispatch(cb, dx, dy, 1);
+
+		srcScope = dstScope;
+		dstScope = tkn::SyncScope::fragmentSampled();
+		tkn::barrier(cb, shadowmap_.image(), srcScope, dstScope);
+	}
+
 	bool key(const swa_key_event& ev) override {
 		if(Base::key(ev)) {
 			return true;
@@ -702,6 +719,17 @@ public:
 			} else if(ev.keycode == swa_key_t) {
 				generateHeightmap(true);
 				return true;
+			} else if(ev.keycode == swa_key_p) {
+				paused_ ^= true;
+				return true;
+			} else if(ev.keycode == swa_key_u) {
+				pauseErode_ ^= true;
+				Base::scheduleRerecord();
+				return true;
+			} else if(ev.keycode == swa_key_o) {
+				drawParticles_ ^= true;
+				Base::scheduleRerecord();
+				return true;
 			}
 		}
 
@@ -710,6 +738,13 @@ public:
 
 	const char* name() const override { return "terrain"; }
 	bool needsDepth() const override { return false; }
+
+	nytl::Vec3f toLight(float dayTimeN) {
+		using nytl::constants::pi;
+		const float dayTime = 2 * pi * dayTimeN;
+		const Vec3f toLight = Vec3f{std::sin(dayTime), -std::cos(dayTime), 0.0};
+		return toLight;
+	}
 
 protected:
 	tkn::ManagedGraphicsPipe renderPipe_;
@@ -758,6 +793,10 @@ protected:
 	bool generated_ {}; // whether the terrain was generated yet
 	Subdivider subd_;
 	double time_ {};
+	double dayTime_ {};
+	bool paused_ {true};
+	bool pauseErode_ {true};
+	bool drawParticles_ {false};
 };
 
 int main(int argc, const char** argv) {

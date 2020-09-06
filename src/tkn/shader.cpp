@@ -87,7 +87,7 @@ std::optional<vpp::ShaderModule> compileShader(const vpp::Device& dev,
 		std::string_view glslPath, nytl::StringParam args, fs::path spvOutput,
 		std::vector<u32>* outSpv) {
 	std::string cmd = "glslangValidator -V -o ";
-	cmd += spvOutput;
+	cmd += spvOutput.u8string();
 
 	// include dirs
 	cmd += " -I";
@@ -464,13 +464,13 @@ std::vector<u32> compileShader(const fs::path& glslPath,
 		nytl::StringParam preamble,
 		nytl::Span<const char*> includeDirs) {
 	EShLanguage lang;
-	if(!deduceShaderStage(glslPath.c_str(), lang)) {
+	if(!deduceShaderStage(glslPath.u8string(), lang)) {
 		dlg_warn("Can't deduce shader type of {}", glslPath);
 		return {};
 	}
 
 	std::string source = readFilePath(glslPath);
-	return compileShader(source, lang, glslPath.c_str(), preamble, includeDirs);
+	return compileShader(source, lang, glslPath.u8string(), preamble, includeDirs);
 }
 
 // ShaderCache
@@ -745,7 +745,7 @@ ShaderCache::CompiledShaderView ShaderCache::load(
 		fs::create_directories(spvPathParent);
 	}
 
-	vpp::writeFile(spvPath.c_str(), tkn::bytes(spv), true);
+	vpp::writeFile(spvPath.u8string(), tkn::bytes(spv), true);
 	fs::last_write_time(spvPath, preCompileTime);
 
 	auto lockGuard = std::lock_guard(mutex_);
@@ -820,7 +820,7 @@ std::vector<std::string> ShaderCache::includes(const fs::path& shaderPath) {
 	while(!worklist.empty()) {
 		auto item = worklist.back();
 		worklist.pop_back();
-		seen.insert(item);
+		seen.insert(item.u8string());
 
 		auto known = known_.find(item.string());
 		if(known == known_.end()) {
@@ -830,7 +830,10 @@ std::vector<std::string> ShaderCache::includes(const fs::path& shaderPath) {
 
 		auto& included = known->second.includes;
 		worklist.insert(worklist.end(), included.begin(), included.end());
-		ret.insert(ret.end(), included.begin(), included.end());
+
+		for(auto& inc : included) {
+			ret.push_back(inc.u8string());
+		}
 	}
 
 	return ret;

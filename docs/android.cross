@@ -14,7 +14,7 @@ tkn_android_platform = '/opt/android-sdk/platforms/android-28'
 tkn_android_suffix = ''
 
 [host_machine]
-system = 'linux'
+system = 'android'
 cpu_family = 'aarch64'
 cpu = 'arm64-v8a'
 endian = 'big' # not sure

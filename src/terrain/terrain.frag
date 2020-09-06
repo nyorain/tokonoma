@@ -10,11 +10,8 @@ layout(location = 1) noperspective in vec3 inBary;
 layout(location = 0) out vec4 outFragColor;
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
-	mat4 vp;
-	vec3 viewPos;
-	float _;
-	vec3 toLight;
-} scene;
+	UboData scene;
+};
 
 layout(set = 0, binding = 3) uniform sampler2D heightmap;
 layout(set = 0, binding = 4) uniform sampler2D shadowmap;
@@ -63,8 +60,12 @@ float shadow() {
 
 	return shadow;
 #else
-	return texture(shadowmap, baseCoord).r;
+	// return texture(shadowmap, baseCoord).r;
 	// return exp(-100 * texture(shadowmap, baseCoord).r);
+
+	float height = texture(shadowmap, baseCoord).r;
+	// return step(height, 0.0);
+	return 1 - smoothstep(0.0, 0.001, height);
 #endif
 }
 
@@ -100,7 +101,7 @@ vec3 computeAO(vec3 normal) {
 	ao *= min(1.0, exp(-5 * (rough7 - height)));
 #endif
 
-	return 0.25 * ao * ambientColor * (0.1 + 0.9 * max(normal.y, 0.0));
+	return 0.1 * ao * scene.ambientColor * (0.1 + 0.9 * max(normal.y, 0.0));
 }
 
 void main() {
@@ -119,11 +120,11 @@ void main() {
 	const vec3 albedo = vec3(1.0);
 
 	vec3 ao = computeAO(n);
-	// light += max(dot(scene.toLight, n), 0.0) * lightColor * 0.4 * (shadow() + 10 * ao);
+	// light += max(dot(scene.toLight, n), 0.0) * scene.sunColor * 0.4 * (shadow() + 10 * ao);
 
 	float roughness = inPos.y <= allMin ? 0.2 : 0.8;
 	light += cookTorrance(n, scene.toLight, toCam,
-		roughness, 0.1, albedo) * lightColor * shadow();
+		roughness, 0.1, albedo) * scene.sunColor * shadow();
 
 	// ao
 	light += ao * albedo;

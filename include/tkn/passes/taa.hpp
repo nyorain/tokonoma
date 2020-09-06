@@ -45,6 +45,8 @@ public:
 	// Whether the weighing between current and history sample should be
 	// modified by the luminance difference.
 	static constexpr auto flagLuminanceWeigh = (1 << 5u);
+	// Whether the history is sampled with a bicubic filter.
+	static constexpr auto flagBicubic = (1 << 6u);
 
 	struct {
 		// Minimum and maximum factors of how much history is used, based
@@ -73,7 +75,9 @@ public:
 
 	// - linearSampler: a sampler with linear sampling. Addressing
 	//   modes, anisotropy and such don't matter.
-	void init(vpp::Device& dev, vk::Sampler linearSampler);
+	// - nearestSampler: sampler with nearest sampling.
+	void init(vpp::Device& dev, vk::Sampler linearSampler,
+		vk::Sampler nearestSampler);
 	// - renderInput: view to the rgba image that will hold the rendered
 	//   scene content when this pass is run.
 	// - depthInput: view to the depth image that will hold the depth

@@ -18,3 +18,7 @@ daudioravg = build_target('daudioravg', [
 	], dependencies: [tkn_dep, dep_cubeb, dep_playground],
 	target_type: exetarget)
 
+daudiotest = build_target('daudiotest', [
+		'cubeb4.cpp',
+	], dependencies: [dep_dlg, dep_swa, dep_cubeb, dep_playground],
+	target_type: exetarget)

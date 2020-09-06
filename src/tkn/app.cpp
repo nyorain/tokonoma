@@ -245,6 +245,7 @@ App::~App() {
 		threadPoolPtr->destroy();
 	}
 
+#ifndef __ANDROID__
 	if(impl_->dev) {
 		// make sure all shader modules are destroyed before
 		// the device is destroyed.
@@ -252,6 +253,7 @@ App::~App() {
 		tkn::PipelineCache::finishInstance();
 		tkn::ThreadState::finishInstance();
 	}
+#endif // __ANDROID__
 
 	if(impl_ && impl_->dlg.oldHandler) {
 		dlg_set_handler(impl_->dlg.oldHandler, impl_->dlg.oldData);
@@ -956,6 +958,8 @@ void App::addSemaphore(vk::Semaphore seph, vk::PipelineStageFlags waitDst) {
 }
 
 void App::resize(unsigned width, unsigned height) {
+	dlg_debug("resize {} {}", width, height);
+
 	// update gui transform if there is a gui
 	if(impl_->gui) {
 		auto s = nytl::Vec{2.f / width, 2.f / height, 1};

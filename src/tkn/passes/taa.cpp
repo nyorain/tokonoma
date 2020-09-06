@@ -14,7 +14,8 @@
 
 namespace tkn {
 
-void TAAPass::init(vpp::Device& dev, vk::Sampler linearSampler) {
+void TAAPass::init(vpp::Device& dev, vk::Sampler linearSampler,
+		vk::Sampler nearestSampler) {
 	auto taaBindings = std::array {
 		// linear sampler for history access important
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
@@ -24,7 +25,7 @@ void TAAPass::init(vpp::Device& dev, vk::Sampler linearSampler) {
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::compute, &linearSampler),
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
-			vk::ShaderStageBits::compute, &linearSampler),
+			vk::ShaderStageBits::compute, &nearestSampler),
 		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler,
 			vk::ShaderStageBits::compute, &linearSampler),
 		vpp::descriptorBinding(vk::DescriptorType::uniformBuffer,
