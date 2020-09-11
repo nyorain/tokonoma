@@ -1,5 +1,6 @@
 #include "subd.hpp"
-#include "sky.hpp"
+// #include "sky.hpp"
+#include "atmosphere.hpp"
 
 #include <tkn/singlePassApp.hpp>
 #include <tkn/types.hpp>
@@ -134,20 +135,25 @@ public:
 		erode_.particles = {dev.bufferAllocator(), sizeof(Particle) * particleCount,
 			particleUsage, dev.deviceMemoryTypes()};
 
+		// atmosphere
+		atmosSem_ = {dev};
+		atmosphere_ = {dev, fileWatcher_, AtmosphereDesc::earth(1000.f)};
+
 		// upload data
 		auto& qs = dev.queueSubmitter();
-		auto cb = dev.commandAllocator().get(qs.queue().family());
-		vk::beginCommandBuffer(cb, {});
+		updateCb_ = dev.commandAllocator().get(qs.queue().family(),
+			vk::CommandPoolCreateBits::resetCommandBuffer);
+		vk::beginCommandBuffer(updateCb_, {});
 
 		Subdivider::InitData initSubd;
-		subd_ = {initSubd, dev, fileWatcher_, shape.indices.size(), cb};
+		subd_ = {initSubd, dev, fileWatcher_, shape.indices.size(), updateCb_};
 
-		auto stage3 = vpp::fillStaging(cb, vertices_, verts);
-		auto stage4 = vpp::fillStaging(cb, indices_, inds);
-		auto stage5 = vpp::fillStaging(cb, erode_.particles, tkn::bytes(particles));
+		auto stage3 = vpp::fillStaging(updateCb_, vertices_, verts);
+		auto stage4 = vpp::fillStaging(updateCb_, indices_, inds);
+		auto stage5 = vpp::fillStaging(updateCb_, erode_.particles, tkn::bytes(particles));
 
-		vk::endCommandBuffer(cb);
-		auto sid = qs.add(cb);
+		vk::endCommandBuffer(updateCb_);
+		auto sid = qs.add(updateCb_);
 
 		// graphics pipeline
 		{
@@ -305,6 +311,7 @@ public:
 			dsu(ubo_);
 		}
 
+		// images
 		vk::ImageViewCreateInfo ivi;
 		ivi.image = heightmap_.image();
 		ivi.subresourceRange = {vk::ImageAspectBits::color, 0, 1, 0, 1};
@@ -420,9 +427,12 @@ public:
 		dsupp(pass0_.depthTarget);
 		dsupp(shadowmap_);
 		dsupp(heightmap_);
+		dsupp(atmosphere_.transmittanceLUT());
 		dsupp(ubo_);
+		dsupp(atmosphere_.ubo());
 
-		// TODO: should not be here I guess
+		// TODO: should not be here I guess. rework how that is handled.
+		// maybe add 'beforeSubmit' or something?
 		dsupp.apply();
 	}
 
@@ -446,6 +456,7 @@ public:
 		erode_.particleErodePipe.update();
 		ppPipe_.update();
 		subd_.update();
+		atmosphere_.update();
 
 		Base::scheduleRedraw();
 	}
@@ -466,8 +477,8 @@ public:
 
 			const float dayTimeN = std::fmod(0.1 * dayTime_, 1.0);
 			data.toLight = toLight(dayTimeN);
-			data.sunColor = Sky::computeSunColor(dayTimeN);
-			data.ambientColor = Sky::computeAmbientColor(dayTimeN);
+			data.sunColor = Vec3f{1.f, 1.f, 1.f}; // Sky::computeSunColor(dayTimeN);
+			data.ambientColor = Vec3f{0.4f, 0.5f, 0.8f}; // Sky::computeAmbientColor(dayTimeN);
 
 			uboMap_.flush();
 		}
@@ -505,6 +516,27 @@ public:
 
 			if(!generated_) {
 				generated_ = true;
+				Base::scheduleRerecord();
+			}
+		}
+
+		atmosphere_.updateDevice();
+		if(atmosphere_.changed() && atmosphere_.pipe().pipe()) {
+			auto& cb = updateCb_;
+			vk::beginCommandBuffer(cb, {});
+			atmosphere_.compute(cb);
+			vk::endCommandBuffer(cb);
+
+			vk::SubmitInfo si;
+			si.pCommandBuffers = &cb.vkHandle();
+			si.commandBufferCount = 1u;
+			si.pSignalSemaphores = &atmosSem_.vkHandle();
+			si.signalSemaphoreCount = 1u;
+			vkDevice().queueSubmitter().add(si);
+
+			addSemaphore(atmosSem_, vk::PipelineStageBits::allGraphics);
+			if(!atmosComputed_) {
+				atmosComputed_ = true;
 				Base::scheduleRerecord();
 			}
 		}
@@ -585,7 +617,7 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		if(!mainPipesLoaded() || !generated_) {
+		if(!mainPipesLoaded() || !generated_ || !atmosComputed_) {
 			return;
 		}
 
@@ -797,6 +829,11 @@ protected:
 	bool paused_ {true};
 	bool pauseErode_ {true};
 	bool drawParticles_ {false};
+
+	vpp::CommandBuffer updateCb_;
+	Atmosphere atmosphere_;
+	vpp::Semaphore atmosSem_;
+	bool atmosComputed_ {false};
 };
 
 int main(int argc, const char** argv) {

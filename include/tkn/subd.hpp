@@ -14,9 +14,14 @@
 #include <vpp/pipeline.hpp>
 #include <vpp/vk.hpp>
 
-using namespace tkn::types;
+// Projects that could be ported to this new api:
+// - subd
+// - terrain
+// - planet
 
-class Subdivider {
+namespace tkn {
+
+class SubdComp {
 public:
 	//  TODO: make this variable
 	static constexpr auto maxTriCount = 10 * 1024 * 1024; // 10MB
@@ -30,8 +35,8 @@ public:
 	};
 
 public:
-	Subdivider() = default;
-	Subdivider(InitData& data, const vpp::Device& dev, tkn::FileWatcher& fswatch,
+	SubdComp() = default;
+	SubdComp(InitData& data, const vpp::Device& dev, tkn::FileWatcher& fswatch,
 			std::size_t indexCount, vk::CommandBuffer initCb) {
 		indexCount_ = indexCount;
 
@@ -239,3 +244,5 @@ protected:
 	vpp::SubBuffer keys1_; // temporary update buffer
 	std::size_t indexCount_;
 };
+
+} // namespace tkn

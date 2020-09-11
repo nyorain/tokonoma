@@ -62,6 +62,14 @@ struct SyncScope {
 	vk::ImageLayout layout {vk::ImageLayout::undefined};
 	vk::AccessFlags access {};
 
+	static inline SyncScope discard() {
+		return {
+			vk::PipelineStageBits::topOfPipe,
+			vk::ImageLayout::undefined,
+			{}
+		};
+	}
+
 	static inline SyncScope fragmentSampled() {
 		return {
 			vk::PipelineStageBits::fragmentShader,
@@ -76,11 +84,25 @@ struct SyncScope {
 			vk::AccessBits::shaderRead,
 		};
 	}
+	static inline SyncScope allSampled() {
+		return {
+			vk::PipelineStageBits::allCommands,
+			vk::ImageLayout::shaderReadOnlyOptimal,
+			vk::AccessBits::shaderRead,
+		};
+	}
 	static inline SyncScope computeReadWrite() {
 		return {
 			vk::PipelineStageBits::computeShader,
 			vk::ImageLayout::general,
 			vk::AccessBits::shaderRead | vk::AccessBits::shaderWrite,
+		};
+	}
+	static inline SyncScope computeWrite() {
+		return {
+			vk::PipelineStageBits::computeShader,
+			vk::ImageLayout::general,
+			vk::AccessBits::shaderWrite,
 		};
 	}
 };

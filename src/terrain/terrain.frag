@@ -64,8 +64,7 @@ float shadow() {
 	// return exp(-100 * texture(shadowmap, baseCoord).r);
 
 	float height = texture(shadowmap, baseCoord).r;
-	// return step(height, 0.0);
-	return 1 - smoothstep(0.0, 0.001, height);
+	return 1 - smoothstep(0.0, 0.01, height);
 #endif
 }
 

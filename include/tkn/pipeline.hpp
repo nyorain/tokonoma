@@ -133,6 +133,10 @@ struct PipeLayoutDescriptors {
 // TODO: clean up implementation.
 // 	Maybe always use abstract updates and only resolve in 'update'?
 // TODO: support all descriptor types
+// TODO: maybe move the update data itself to ManagedPipeline?
+//   or have *something* in ManagedPipeline that owns it and then make
+//   this just an operator that modifies it (and every call to pipe.dsu()
+//   returns a new operator starting at 0,0).
 class DescriptorUpdater {
 public:
 	// Does *not* apply updates in its destructor

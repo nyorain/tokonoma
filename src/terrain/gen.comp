@@ -75,5 +75,9 @@ void main() {
 	float strength = 0.8;
 
 	float height = max(strength * vfbm(normed), allMin);
+
+	// height = vfbm(vec2(height, vfbm(normed.yx)));
+	// height = 4 * fbm2(vec2(4 * fbm2(normed.xy), vfbm(0.5 * normed.yx)));
+
 	imageStore(heightmap, ivec2(id), vec4(height));
 }

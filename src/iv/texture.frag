@@ -18,21 +18,20 @@ layout(set = 0, binding = 1) uniform UBO {
 #endif // TONEMAP
 } ubo;
 
-/*
 void main() {
 	vec2 uv = ubo.offset + ubo.size * inUV;
 
-	vec4 color = textureBicubic(tex, uv);
+	// vec4 color = textureBicubic(tex, uv);
 	// vec4 color = textureBicubicCatmull(tex, uv);
-	// vec4 color = texture(tex, uv);
+	vec4 color = texture(tex, uv);
 
 #ifdef TONEMAP
 	color.rgb = 1.0 - exp(-ubo.exposure * color.rgb);
 #endif // TONEMAP
 	outFragColor = color;
 }
-*/
 
+/*
 const vec3 colors[] = {
 	{1, 0, 0},
 	{1, 1, 0},
@@ -71,3 +70,4 @@ void main() {
 	// outFragColor = vec4(color, 1.0);
 	outFragColor = color;
 }
+*/

@@ -1,0 +1,111 @@
+#include "atmosphere.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) writeonly uniform image2D outTransmittance;
+layout(set = 0, binding = 1) writeonly uniform image2D outMultiscat;
+layout(set = 0, binding = 2) writeonly buffer OutLightBuf {
+	vec4 sun;
+	vec4 sky;
+} outLightBuf;
+
+layout(set = 0, binding = 3) uniform UBO {
+	AtmosphereDesc atmos;
+	vec3 solarIrradiance;	
+	float _pad0;
+} ubo;
+
+layout(push_constant) uniform PCR {
+	uint compute;
+	float r;
+	float muS;
+} pcr;
+
+const uint computeTransmittance = 0u;
+const uint computeMultiscale = 1u;
+const uint computeLight = 2u;
+
+// Computes the optical depths of the given ray through to the top
+// of the atmosphere for the rayleigh, mie and absorption layers.
+// Might be more efficient to calculate all three at once, given the
+// cheap operation and high sample count.
+void opticalDepths(float r, float mu, out float ods[maxLayers]) {
+	// NOTE: might be good idea to make sampleCount depend on length of ray
+	// relative to atmosphere properties (e.g. highest frequency layer)
+	const uint sampleCount = 256u;
+	float dt = distanceToTop(ubo.atmos, r, mu) / sampleCount;
+
+	// We use maxLayers instead of atmos.nLayers to allow loop unrolling
+	for(uint i = 0u; i < maxLayers; ++i) {
+		ods[i] = 0.0;
+	}
+
+	for(uint i = 0u; i <= sampleCount; ++i) {
+		float t_i = i * dt;
+		float r_i = sqrt(t_i * t_i + 2.f * r * mu * t_i + r * r);
+		float h_i = r_i - ubo.atmos.bottom;
+		float w_i = (i == 0u || i == sampleCount) ? 0.5f : 1.f;
+
+		for(uint l = 0u; l < maxLayers; ++l) {
+			AtmosphereLayer layer = ubo.atmos.layers[l];
+			float d = density(layer.type, layer.data, h_i);
+			ods[l] += dt * w_i * d;
+		}
+	}
+}
+
+// Compute the transmittance to the top of the atmosphere for the given ray.
+vec3 computeTransmittanceToTop(float r, float mu) {
+	float ods[maxLayers];
+	opticalDepths(r, mu, ods);
+
+	vec3 sum = vec3(0.0);
+	for(uint l = 0u; l < ubo.atmos.nLayers; ++l) {
+		AtmosphereLayer layer = ubo.atmos.layers[l];
+		sum += ods[l] * (layer.scattering + layer.absorption);
+	}
+
+	return exp(-sum);
+}
+
+void rayFromTransTexUnit(vec2 range, out float r, out float mu) {
+	float x_mu = range.x;
+	float x_r = range.y;
+	// Distance to top atmosphere boundary for a horizontal ray at ground level.
+	float H = sqrt(ubo.atmos.top * ubo.atmos.top - ubo.atmos.bottom * ubo.atmos.bottom);
+	// Distance to the horizon, from which we can compute r:
+	float rho = H * x_r;
+	r = sqrt(rho * rho + ubo.atmos.bottom * ubo.atmos.bottom);
+	// Distance to the top atmosphere boundary for the ray (r,mu), and its minimum
+	// and maximum values over all mu - obtained for (r,1) and (r,mu_horizon) -
+	// from which we can recover mu:
+	float d_min = ubo.atmos.top - r;
+	float d_max = rho + H;
+	float d = d_min + x_mu * (d_max - d_min);
+	mu = (d == 0.0) ? 1.f : (H * H - rho * rho - d * d) / (2.f * r * d);
+	mu = clamp(mu, -1.f, 1.f);
+}
+
+void main() {
+	if(pcr.compute == computeTransmittance) {
+		uvec2 texel = gl_GlobalInvocationID.xy;
+		uvec2 size = imageSize(outTransmittance);
+		if(texel.x >= size.x || texel.y >= size.y) {
+			return;
+		}
+
+		// Make sure pixel at position 0 contains the value 0.0 and
+		// the last pixel (position size - 1) contains value 1.0.
+		// NOTE: this is basically what bruneton does via the
+		// GetUnitRangeFromTextureCoord, except that they don't use compute
+		// shaders/storage images. We can explicitly access pixels in a saner
+		// way here instead of re-normalizing the position coming from
+		// gl_FragCoord.
+		vec2 unitRange = texel / (size - 1.f);
+		float r, mu;
+		rayFromTransTexUnit(unitRange, r, mu);
+
+		vec3 trans = computeTransmittanceToTop(r, mu);
+		imageStore(outTransmittance, ivec2(texel), vec4(trans, 1.0));
+	}
+}

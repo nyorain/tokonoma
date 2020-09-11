@@ -817,6 +817,15 @@ public:
 		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
+	bool mouseWheel(float dx, float dy) override {
+		if(App::mouseWheel(dx, dy)) {
+			return true;
+		}
+
+		camera_.mouseWheel(dy);
+		return true;
+	}
+
 	void updateDevice() override {
 		App::updateDevice();
 		updateLight_ |= camera_.needsUpdate; // for directional light

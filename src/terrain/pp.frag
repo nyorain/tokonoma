@@ -4,6 +4,7 @@
 #include "color.glsl"
 #include "scene.glsl"
 #include "constants.glsl"
+#include "atmosphere.glsl"
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outFragColor;
@@ -14,16 +15,16 @@ layout(set = 0, binding = 1) uniform sampler2D depthTex;
 layout(set = 0, binding = 2) uniform sampler2D shadowmap;
 layout(set = 0, binding = 3) uniform sampler2D heightmap;
 
-layout(set = 0, binding = 4, row_major) uniform Scene {
+layout(set = 0, binding = 4) uniform sampler2D transmittanceLUT;
+
+layout(set = 0, binding = 5, row_major) uniform Scene {
 	UboData scene;
 };
 
-// henyey-greenstein
-float phaseHG(float nu, float g) {
-	float gg = g * g;
-	const float fac = 0.07957747154;
-	return fac * ((1 - gg)) / (pow(1 + gg - 2 * g * nu, 1.5f));
-}
+layout(set = 0, binding = 6, row_major) uniform AtmosphereUBO {
+	AtmosphereDesc atmos;
+	vec3 solarIrradiance;
+};
 
 vec3 skyColor(vec3 rayDir, float shadow) {
 	const vec3 toLight = scene.toLight;
@@ -38,41 +39,64 @@ vec3 skyColor(vec3 rayDir, float shadow) {
 	return light;
 }
 
-vec4 computeScattering(vec3 posWS) {
+IntegratedVolume computeScattering(vec3 posWS, float depth) {
 	vec3 rayStart = scene.viewPos;
 	vec3 rayDir = posWS - scene.viewPos;
 	float dist = distance(posWS, scene.viewPos);
 	rayDir /= dist;
 
-	// iterations for shadow
-	// float stepSize = 0.02;
-	const uint numSamples = 100;
-	const float stepSize = min(dist, 2) / numSamples;
-	vec3 pos = rayStart;
-	float shadow = 0.0;
-	float off = 0.0; //stepSize * random(posWS + 0.1 * scene.time);
-	float t = 0.0;
-	for(uint i = 0u; i < numSamples && t < dist; ++i) {
-		pos = rayStart + (t + off) * rayDir;	
-		if(pos.xz == clamp(pos.xz, -1.0, 1.0)) {
-			float height = texture(heightmap, 0.5 + 0.5 * pos.xz).r;
-			float shadowHeight = texture(shadowmap, 0.5 + 0.5 * pos.xz).r;
-			shadow += stepSize * (smoothstep(pos.y - height - 0.01, pos.y - height, shadowHeight));
-		}
-
-		t += stepSize;
+	float r = atmos.bottom + scene.viewPos.y;
+	float mu = rayDir.y;
+	float nu = dot(rayDir, scene.toLight);
+	float muS = scene.toLight.y;
+	if(depth > 0.999) {
+		// TODO: does not work when looking through atmosphere from side
+		dist = distanceToNearestBoundary(atmos, r, mu);
+		posWS = scene.viewPos + dist * rayDir;
 	}
 
-	shadow = t == 0.0 ? 1.0 : 1 - shadow / t;
+	// iterations for shadow
+	// float stepSize = 0.02;
+	float stepSize = 0.02;
+	vec3 pos = rayStart;
+	float shadow = 0.0;
+	float t = 0.0;
+	float roff = random(posWS + 0.1 * scene.time);
 
-	float density = 0.5; // assumed constant
-	float opticalDepth = density * dist;
-	float transmittance = exp(-opticalDepth);
+	IntegratedVolume iv;
+	iv.inscatter = vec3(0.0);
+	iv.transmittance = vec3(1.0);
 
-	vec3 inscattered = skyColor(rayDir, shadow) * density;
-	inscattered = inscattered * (1 - transmittance) / density;
+	for(uint i = 0u; t < dist && i < 1024; ++i) {
+		float shadow = 1.0;
 
-	return vec4(inscattered, transmittance);
+		pos = rayStart + (t + roff * stepSize) * rayDir;	
+		if(pos == clamp(pos, -1.5, 1.5)) {
+			float height = texture(heightmap, 0.5 + 0.5 * pos.xz).r;
+			float shadowHeight = texture(shadowmap, 0.5 + 0.5 * pos.xz).r;
+			shadow *= 1 - smoothstep(pos.y - height - 0.01, pos.y - height, shadowHeight);
+		} else {
+			// stepSize *= min(10, length(pos.xz));
+			// stepSize *= 1 + 10 * random(posWS + 0.1 * scene.time);
+			stepSize = max(max(stepSize, 1), 0.1 * t);
+		}
+
+		float d = t + roff * stepSize;
+		float r_d = clamp(sqrt(d * d + 2.f * r * mu * d + r * r), atmos.bottom, atmos.top);
+		float muS_d = clamp((r * muS + d * nu) / r_d, -1.f, 1.f);
+		VolumeSample vs = sampleAtmosphere(atmos, r_d, mu, muS_d, nu,
+			transmittanceLUT, shadow, solarIrradiance);
+
+		if(t + stepSize > dist) {
+			stepSize = dist - t;
+		}
+
+		integrateStep(iv, stepSize, vs);
+		t += stepSize;
+		// stepSize = max(stepSize, 0.5 * t);
+	}
+
+	return iv;
 }
 
 void main() {
@@ -83,8 +107,8 @@ void main() {
 	vec3 posWS = reconstructWorldPos(inUV, scene.invVP, depth);
 
 	// scattering
-	vec4 scatter = computeScattering(posWS);
-	color = scatter.a * color + scatter.rgb;
+	IntegratedVolume iv = computeScattering(posWS, depth);
+	color = iv.transmittance * color + iv.inscatter;
 
 	// tonemap
 	float exposure = 1.0;

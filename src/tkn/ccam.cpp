@@ -209,6 +209,12 @@ void ControlledCamera::mouseWheel(float delta) {
 		mouseWheelZoom(camera_, arcball->con, delta, arcball->zoomFac);
 		needsUpdate = true;
 	}
+
+	// TODO: remove again
+	if(auto* p = std::get_if<Perspective>(&projection_)) {
+		p->fov *= std::pow(1.05, delta);
+		needsUpdate = true;
+	}
 }
 
 void ControlledCamera::flipY(bool f) {

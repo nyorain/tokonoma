@@ -366,6 +366,7 @@ planet_gen = build_target('planet_gen', [
 
 terrain = build_target('terrain', [
 		'src/terrain/main.cpp',
+		'src/terrain/atmosphere.cpp',
 	], dependencies: [tkn_dep],
 	target_type: exetarget)
 
