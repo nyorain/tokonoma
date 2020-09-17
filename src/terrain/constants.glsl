@@ -16,13 +16,19 @@ const float gravity = 200.0;
 const float erosionRadius = 8.f;
 
 struct UboData {
-	mat4 vp;
+	mat4 viewMtx;
+	mat4 projMtx;
+	mat4 viewProjMtx;
+
+	mat4 invViewMtx;
+	mat4 invProjMtx;
+	mat4 invViewProjMtx;
+
 	vec3 viewPos;
 	float dt;
 	vec3 toLight;
 	float time;
-	mat4 invVP;
 	vec3 sunColor;
-	float _pad0;
+	uint frameCounter;
 	vec3 ambientColor;
 };

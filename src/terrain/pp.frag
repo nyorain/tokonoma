@@ -103,12 +103,13 @@ void main() {
 	vec3 color = texture(colorTex, inUV).rgb;
 
 	// get world space pos
-	float depth = texture(depthTex, inUV).r;
-	vec3 posWS = reconstructWorldPos(inUV, scene.invVP, depth);
+	// float depth = texture(depthTex, inUV).r;
+	// vec3 posWS = reconstructWorldPos(inUV, scene.invVP, depth);
 
 	// scattering
-	IntegratedVolume iv = computeScattering(posWS, depth);
-	color = iv.transmittance * color + iv.inscatter;
+	// TODO: move to volumetric pass
+	// IntegratedVolume iv = computeScattering(posWS, depth);
+	// color = iv.transmittance * color + iv.inscatter;
 
 	// tonemap
 	float exposure = 1.0;

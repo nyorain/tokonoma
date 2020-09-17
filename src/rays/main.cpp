@@ -78,7 +78,7 @@ public:
 		initCompute();
 		initGfx();
 
-		tss_ = {dev, "rays/tss.comp", fileWatcher_, {},
+		tss_ = {dev, {"rays/tss.comp"}, fileWatcher_,
 			tkn::ComputePipeInfoProvider::create(linearSampler_)};
 
 		initPP();
@@ -298,7 +298,7 @@ public:
 
 	void initCompute() {
 		auto& dev = vkDevice();
-		comp_ = {dev, "rays/rays2.comp", fileWatcher_, {},
+		comp_ = {dev, {"rays/rays2.comp"}, fileWatcher_,
 			tkn::ComputePipeInfoProvider::create(linearSampler_)};
 
 		// noise

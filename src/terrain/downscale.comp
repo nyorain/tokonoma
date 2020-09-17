@@ -1,0 +1,34 @@
+#include "constants.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D depthTex;
+layout(set = 0, binding = 1) writeonly uniform image2D outDepth;
+layout(set = 0, binding = 2) uniform UBO {
+	UboData ubo;
+};
+
+layout(push_constant) uniform PCR {
+	uint downscale;
+};
+
+void main() {
+	uvec2 texel = gl_GlobalInvocationID.xy;	
+	uvec2 size = uvec2(imageSize(outDepth));
+	if(texel.x >= size.x || texel.y >= size.y) {
+		return;
+	}
+
+	// dynamic alternation of min/max
+	bool useMin = (ubo.frameCounter + texel.x + texel.y) % 2 == 0u;
+	float depth = useMin ? 1.f : 0.f;
+	for(uint i = 0u; i < downscale; ++i) {
+		for(uint j = 0u; j < downscale; ++j) {
+			ivec2 pos = ivec2(downscale * texel) + ivec2(i, j);
+			float depthi = texelFetch(depthTex, pos, 0).r;
+			depth = useMin ? min(depth, depthi) : max(depth, depthi);
+		}
+	}
+
+	imageStore(outDepth, ivec2(texel), vec4(depth));
+}

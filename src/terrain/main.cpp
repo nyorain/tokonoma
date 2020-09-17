@@ -1,5 +1,4 @@
 #include "subd.hpp"
-// #include "sky.hpp"
 #include "atmosphere.hpp"
 
 #include <tkn/singlePassApp.hpp>
@@ -29,19 +28,26 @@
 
 using namespace tkn::types;
 
+// TODO: should be ported to tkn::App instead
 class TerrainApp : public tkn::SinglePassApp {
 public:
 	using Base = tkn::SinglePassApp;
 	struct UboData {
-		nytl::Mat4f vp;
+		nytl::Mat4f viewMtx;
+		nytl::Mat4f projMtx;
+		nytl::Mat4f viewProjMtx;
+
+		nytl::Mat4f invViewMtx;
+		nytl::Mat4f invProjMtx;
+		nytl::Mat4f invViewProjMtx;
+
 		nytl::Vec3f viewPos;
 		float dt;
 		nytl::Vec3f toLight;
 		float time;
-		nytl::Mat4f vpInv;
 
 		nytl::Vec3f sunColor;
-		float _pad0;
+		u32 frameCounter;
 		nytl::Vec3f ambientColor;
 	};
 
@@ -64,8 +70,11 @@ public:
 	static constexpr auto shadowmapFormat = vk::Format::r16Sfloat;
 
 	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto volumeFormat = vk::Format::r16g16b16a16Sfloat;
+	static constexpr auto downscaleDepthFormat = vk::Format::r32Sfloat;
 
 	static constexpr auto particleCount = 1024;
+	static constexpr auto volumetricDownscale = 2u;
 
 public:
 	bool init(nytl::Span<const char*> args) override {
@@ -77,8 +86,14 @@ public:
 		linearSampler_ = {dev, tkn::linearSamplerInfo()};
 		nearestSampler_ = {dev, tkn::nearestSamplerInfo()};
 
+		depthFormat_ = tkn::findDepthFormat(vkDevice());
+		if(depthFormat_ == vk::Format::undefined) {
+			throw std::runtime_error("No depth format supported");
+		}
+
 		// pass data
 		initPass0();
+		initPass1();
 		initErodePass();
 
 		// heightmap
@@ -203,11 +218,11 @@ public:
 			genSem_ = vpp::Semaphore{dev};
 			genCb_ = dev.commandAllocator().get(dev.queueSubmitter().queue().family(),
 				vk::CommandPoolCreateBits::resetCommandBuffer);
-			genPipe_ = {dev, "terrain/gen.comp", fileWatcher_};
+			genPipe_ = {dev, {"terrain/gen.comp"}, fileWatcher_};
 			genPipe_.dsu().set(heightmap_);
 
 			auto shadowProvider = tkn::ComputePipeInfoProvider::create(linearSampler_);
-			shadowPipe_ = {dev, "terrain/shadowmarch.comp", fileWatcher_, {},
+			shadowPipe_ = {dev, {"terrain/shadowmarch.comp"}, fileWatcher_,
 				std::move(shadowProvider)};
 
 			auto& dsuShadow = shadowPipe_.dsu();
@@ -336,26 +351,43 @@ public:
 
 	void initPass0() {
 		auto& dev = vkDevice();
-		pass0_.depthFormat = tkn::findDepthFormat(vkDevice());
-		if(pass0_.depthFormat == vk::Format::undefined) {
-			throw std::runtime_error("No depth format supported");
-		}
 
 		auto pass0 = {0u, 1u};
 		auto rpi = tkn::renderPassInfo(
-			{{offscreenFormat, pass0_.depthFormat}},
+			{{offscreenFormat, depthFormat_}},
 			{{{pass0}}});
 
 		auto& dep = rpi.dependencies.emplace_back();
-		dep.srcStageMask = vk::PipelineStageBits::colorAttachmentOutput;
-		dep.srcAccessMask = vk::AccessBits::colorAttachmentWrite;
-		dep.dstStageMask = vk::PipelineStageBits::fragmentShader;
-		dep.dstAccessMask = vk::AccessBits::shaderRead;
+		dep.srcStageMask =
+			vk::PipelineStageBits::colorAttachmentOutput |
+			vk::PipelineStageBits::earlyFragmentTests;
+		dep.srcAccessMask =
+			vk::AccessBits::colorAttachmentWrite |
+			vk::AccessBits::depthStencilAttachmentWrite;
+		dep.dstStageMask =
+			vk::PipelineStageBits::fragmentShader |
+			vk::PipelineStageBits::computeShader;
+		dep.dstAccessMask =
+			vk::AccessBits::shaderRead |
+			vk::AccessBits::shaderWrite;
 		dep.srcSubpass = 0u;
 		dep.dstSubpass = vk::subpassExternal;
 
+		rpi.attachments[0].finalLayout = vk::ImageLayout::general;
+		rpi.attachments[1].finalLayout = vk::ImageLayout::shaderReadOnlyOptimal;
+
 		pass0_.rp = {dev, rpi.info()};
 		vpp::nameHandle(pass0_.rp, "pass0.rp");
+	}
+
+	void initPass1() {
+		auto& dev = vkDevice();
+
+		pass1_.downscalePipe = {dev, {"terrain/downscale.comp"}, fileWatcher_,
+			tkn::ComputePipeInfoProvider::create(nearestSampler_)};
+		pass1_.volumetricPipe = {dev, {"terrain/volume.comp"}, fileWatcher_};
+		pass1_.upscalePipe = {dev, {"terrain/upscale.comp"}, fileWatcher_,
+			tkn::ComputePipeInfoProvider::create(nearestSampler_)};
 	}
 
 	void initErodePass() {
@@ -397,17 +429,41 @@ public:
 		// depth
 		auto usage = vk::ImageUsageBits::depthStencilAttachment |
 			vk::ImageUsageBits::sampled;
-		auto info = vpp::ViewableImageCreateInfo(pass0_.depthFormat,
+		auto info = vpp::ViewableImageCreateInfo(depthFormat_,
 			vk::ImageAspectBits::depth, size, usage);
 		info.img.samples = samples();
 		pass0_.depthTarget = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
+		vpp::nameHandle(pass0_.depthTarget, "pass0.depthTarget");
 
 		// color
 		usage = vk::ImageUsageBits::colorAttachment |
+			vk::ImageUsageBits::storage |
 			vk::ImageUsageBits::sampled;
 		info = vpp::ViewableImageCreateInfo(offscreenFormat,
 			vk::ImageAspectBits::color, size, usage);
 		pass0_.colorTarget = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
+		vpp::nameHandle(pass0_.colorTarget, "pass0.colorTarget");
+
+		// pass1
+		auto downscaledSize = size;
+		downscaledSize.width >>= volumetricDownscale;
+		downscaledSize.height >>= volumetricDownscale;
+
+		// color
+		usage = vk::ImageUsageBits::colorAttachment |
+			vk::ImageUsageBits::storage |
+			vk::ImageUsageBits::sampled;
+		info = vpp::ViewableImageCreateInfo(volumeFormat,
+			vk::ImageAspectBits::color, downscaledSize, usage);
+		pass1_.colorTarget = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
+		vpp::nameHandle(pass1_.colorTarget, "pass1.colorTarget");
+
+		// depth
+		usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled;
+		info = vpp::ViewableImageCreateInfo(downscaleDepthFormat,
+			vk::ImageAspectBits::color, downscaledSize, usage);
+		pass1_.depthTarget = {dev.devMemAllocator(), info, dev.deviceMemoryTypes()};
+		vpp::nameHandle(pass1_.depthTarget, "pass1.depthTarget");
 
 		// fb
 		auto attachments = {
@@ -431,9 +487,29 @@ public:
 		dsupp(ubo_);
 		dsupp(atmosphere_.ubo());
 
+		auto& dsuDownscale = pass1_.downscalePipe.dsu();
+		dsuDownscale(pass0_.depthTarget);
+		dsuDownscale(pass1_.depthTarget);
+		dsuDownscale(ubo_);
+
+		auto& dsuVolumetric = pass1_.volumetricPipe.dsu();
+		dsuVolumetric(pass1_.colorTarget);
+		dsuVolumetric(pass1_.depthTarget, nearestSampler_);
+		dsuVolumetric(ubo_);
+
+		auto& dsuUpscale = pass1_.upscalePipe.dsu();
+		dsuUpscale(pass1_.depthTarget);
+		dsuUpscale(pass1_.colorTarget);
+		dsuUpscale(pass0_.depthTarget);
+		dsuUpscale(pass0_.colorTarget);
+		dsuUpscale(ubo_);
+
 		// TODO: should not be here I guess. rework how that is handled.
 		// maybe add 'beforeSubmit' or something?
 		dsupp.apply();
+		dsuDownscale.apply();
+		dsuVolumetric.apply();
+		dsuUpscale.apply();
 	}
 
 	void update(double dt) override {
@@ -457,6 +533,9 @@ public:
 		ppPipe_.update();
 		subd_.update();
 		atmosphere_.update();
+		pass1_.upscalePipe.update();
+		pass1_.downscalePipe.update();
+		pass1_.volumetricPipe.update();
 
 		Base::scheduleRedraw();
 	}
@@ -464,19 +543,32 @@ public:
 	void updateDevice(double dt) override {
 		App::updateDevice(dt);
 
+		// make sure it does not get too large
+		frameCounter_ = (frameCounter_ + 1) % 2048;
+
 		{
 			auto& data = tkn::as<UboData>(uboMap_);
 			if(cam_.needsUpdate) {
+				data.viewMtx = cam_.viewMatrix();
+				data.projMtx = cam_.projectionMatrix();
+				data.viewProjMtx = cam_.viewProjectionMatrix();
+
+				data.invViewMtx = Mat4f(nytl::inverse(data.viewMtx));
+				data.invProjMtx = Mat4f(nytl::inverse(data.projMtx));
+				data.invViewProjMtx = Mat4f(nytl::inverse(data.viewProjMtx));
+
 				cam_.needsUpdate = false;
-				data.vp = cam_.viewProjectionMatrix();
 				data.viewPos = cam_.position();
-				data.vpInv = nytl::Mat4f(nytl::inverse(cam_.viewProjectionMatrix()));
 			}
 			data.dt = dt;
 			data.time = time_;
+			data.frameCounter = frameCounter_;
 
 			const float dayTimeN = std::fmod(0.1 * dayTime_, 1.0);
 			data.toLight = toLight(dayTimeN);
+
+			// TODO: compute from atmosphere. Update when atmosphere or
+			// time changed.
 			data.sunColor = Vec3f{1.f, 1.f, 1.f}; // Sky::computeSunColor(dayTimeN);
 			data.ambientColor = Vec3f{0.4f, 0.5f, 0.8f}; // Sky::computeAmbientColor(dayTimeN);
 
@@ -493,6 +585,9 @@ public:
 		rerec |= erode_.particleRenderPipe.updateDevice();
 		rerec |= erode_.particleUpdatePipe.updateDevice();
 
+		rerec |= pass1_.upscalePipe.updateDevice();
+		rerec |= pass1_.downscalePipe.updateDevice();
+		rerec |= pass1_.volumetricPipe.updateDevice();
 
 		bool regen = false;
 		regen |= genPipe_.updateDevice();
@@ -548,7 +643,7 @@ public:
 		}
 
 		if(shadowPipe_.pipe()) {
-			computeShadowmap(cb);
+			// computeShadowmap(cb);
 		}
 
 		// erode
@@ -614,6 +709,47 @@ public:
 		}
 
 		vk::cmdEndRenderPass(cb);
+
+		// pass1
+		auto scopeDepthSrc = tkn::SyncScope::discard();
+		auto scopeDepthDst = tkn::SyncScope::computeWrite();
+		tkn::barrier(cb, pass1_.depthTarget.image(), scopeDepthSrc, scopeDepthDst);
+
+		auto scopeColorLRSrc = tkn::SyncScope::discard();
+		auto scopeColorLRDst = tkn::SyncScope::computeWrite();
+		tkn::barrier(cb, pass1_.colorTarget.image(), scopeColorLRSrc, scopeColorLRDst);
+
+		// downscale
+		auto dgx = tkn::ceilDivide(width >> volumetricDownscale, 8);
+		auto dgy = tkn::ceilDivide(height >> volumetricDownscale, 8);
+
+		const u32 downscalePcr = (1u << volumetricDownscale);
+		vk::cmdPushConstants(cb, pass1_.downscalePipe.pipeLayout(),
+			vk::ShaderStageBits::compute, 0u, 4u, &downscalePcr);
+		tkn::cmdBind(cb, pass1_.downscalePipe);
+		vk::cmdDispatch(cb, dgx, dgy, 1);
+
+		scopeDepthSrc = scopeDepthDst;
+		scopeDepthDst = tkn::SyncScope::computeSampled();
+		tkn::barrier(cb, pass1_.depthTarget.image(), scopeDepthSrc, scopeDepthDst);
+
+		// volumetrics
+		tkn::cmdBind(cb, pass1_.volumetricPipe);
+		vk::cmdDispatch(cb, dgx, dgy, 1);
+
+		scopeColorLRSrc = scopeColorLRDst;
+		scopeColorLRDst = tkn::SyncScope::computeSampled();
+		tkn::barrier(cb, pass1_.colorTarget.image(), scopeColorLRSrc, scopeColorLRDst);
+
+		// upscale
+		auto gx = tkn::ceilDivide(width, 8);
+		auto gy = tkn::ceilDivide(height, 8);
+		tkn::cmdBind(cb, pass1_.upscalePipe);
+		vk::cmdDispatch(cb, gx, gy, 1);
+
+		auto scopeColorSrc = tkn::SyncScope::computeReadWrite();
+		auto scopeColorDst = tkn::SyncScope::fragmentSampled();
+		tkn::barrier(cb, pass0_.colorTarget.image(), scopeColorSrc, scopeColorDst);
 	}
 
 	void render(vk::CommandBuffer cb) override {
@@ -634,6 +770,9 @@ public:
 		return bool(renderPipe_.pipe()) &&
 			bool(updatePipe_.pipe()) &&
 			bool(ppPipe_.pipe()) &&
+			bool(pass1_.downscalePipe.pipe()) &&
+			bool(pass1_.volumetricPipe.pipe()) &&
+			bool(pass1_.upscalePipe.pipe()) &&
 			subd_.loaded();
 	}
 
@@ -804,12 +943,21 @@ protected:
 
 	// offscreen rendering
 	struct {
-		vk::Format depthFormat;
 		vpp::ViewableImage depthTarget;
 		vpp::ViewableImage colorTarget;
 		vpp::RenderPass rp;
 		vpp::Framebuffer fb;
 	} pass0_;
+
+	// volumetric rendering
+	struct {
+		vpp::ViewableImage depthTarget;
+		vpp::ViewableImage colorTarget;
+		tkn::ManagedComputePipe downscalePipe;
+		tkn::ManagedComputePipe volumetricPipe;
+		// tkn::ManagedComputePipe blurPipe; // TODO: add bilateral blur
+		tkn::ManagedComputePipe upscalePipe;
+	} pass1_;
 
 	// erosion
 	struct {
@@ -829,6 +977,7 @@ protected:
 	bool paused_ {true};
 	bool pauseErode_ {true};
 	bool drawParticles_ {false};
+	u32 frameCounter_ {};
 
 	vpp::CommandBuffer updateCb_;
 	Atmosphere atmosphere_;

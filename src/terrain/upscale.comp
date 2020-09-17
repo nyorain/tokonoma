@@ -1,0 +1,95 @@
+#include "constants.glsl"
+#include "functions.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// low resolution, downscaled textures
+layout(set = 0, binding = 0) uniform sampler2D lrDepth;
+layout(set = 0, binding = 1) uniform sampler2D lrColor;
+
+// high resolution
+layout(set = 0, binding = 2) uniform sampler2D hrDepth;
+layout(set = 0, binding = 3, rgba16f) uniform image2D hrColor;
+
+layout(set = 0, binding = 4, row_major) uniform UBO {
+	UboData ubo;
+};
+
+const float bias = 0.001;
+
+float remap(float x, float lowOld, float highOld, float lowNew, float highNew) {
+	return lowNew + ((x - lowOld) / (highOld - lowOld)) * (highNew - lowNew);
+	return mix(lowNew, highNew, (x - lowOld) / (highOld - lowOld));
+}
+
+float linearStep(float low, float high, float x) {
+	// clamp(remap(x, low, high, 0, 1), 0, 1)
+	return clamp((x - low) / (high - low), 0.f, 1.f);
+}
+
+void main() {
+	uvec2 texel = gl_GlobalInvocationID.xy;	
+	uvec2 hrSize = uvec2(imageSize(hrColor));
+	uvec2 lrSize = uvec2(textureSize(lrColor, 0));
+	if(texel.x >= hrSize.x || texel.y >= hrSize.y) {
+		return;
+	}
+
+	float dstDepth = texelFetch(hrDepth, ivec2(texel), 0).r;
+	float dstZ = depthtoz(ubo.invProjMtx, dstDepth);
+	vec2 lrTexelSize = 1.f / lrSize;
+
+	vec2 uv = (texel + 0.5) / hrSize;
+	vec2 base = uv * lrSize;
+	ivec2 ibase = ivec2(floor(base));
+	vec2 f = fract(base);
+	const ivec2 offsets[] = {
+		{0, 0},
+		{0, 1},
+		{1, 0},
+		{1, 1},
+	};
+
+	const float linWeights[] = {
+		(1 - f.x) * (1 - f.y),
+		(1 - f.x) * f.y,
+		f.x * (1 - f.y),
+		f.x * f.y,
+	};
+
+	float weights[4];
+	float weightSum = 0.0;
+	float maxDepthDiff = 0.0;
+	vec4 samples[4];
+
+	for(uint i = 0u; i < 4u; ++i) {
+		ivec2 off = offsets[i];
+		ivec2 srcTexel = ibase + off;
+
+		float srcDepth = texelFetch(lrDepth, srcTexel, 0).r;
+		float srcZ = depthtoz(ubo.invProjMtx, srcDepth);
+		float diff = abs(srcZ - dstZ) / min(srcZ, dstZ);
+		float weight = 1 / (bias + diff);
+
+		samples[i] = texelFetch(lrColor, srcTexel, 0);
+		weights[i] = weight;
+		weightSum += weight;
+		maxDepthDiff = max(maxDepthDiff, diff);
+	}
+
+	float discontinuity = 1.0; // linearStep(0.0, 0.1, maxDepthDiff);
+
+	vec4 result = vec4(0.0);
+	for(uint i = 0u; i < 4u; ++i) {
+		float linWeight = linWeights[i];
+		float depthWeight = weights[i] / weightSum;
+		float weight = mix(linWeight, depthWeight, discontinuity);
+		result += weight * samples[i];
+	}
+
+	// apply scattering
+	vec3 color = imageLoad(hrColor, ivec2(texel)).rgb;
+	color = result.rgb + result.a * color;
+	imageStore(hrColor, ivec2(texel), vec4(color, result.a));
+}
+

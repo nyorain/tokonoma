@@ -52,7 +52,7 @@ Atmosphere::Atmosphere(const vpp::Device& dev, tkn::FileWatcher& fswatch,
 		vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 	uboMap_ = ubo_.memoryMap();
 
-	pipe_ = {dev, "terrain/atmosphere.comp", fswatch};
+	pipe_ = {dev, {"terrain/atmosphere.comp"}, fswatch};
 	auto& dsu = pipe_.dsu();
 	dsu(transmittanceLUT_);
 	dsu.skip(2); // dsu(multiscatLUT_);

@@ -239,7 +239,12 @@ void nameHandle(const PipeLayoutDescriptors&, std::string_view name);
 void cmdBindGraphics(vk::CommandBuffer cb, const PipeLayoutDescriptors& state);
 void cmdBindCompute(vk::CommandBuffer, const PipeLayoutDescriptors& state);
 
-// ManagedPipelines
+// managed pipelines
+struct ShaderStageInfo {
+	std::string path;
+	std::string preamble {};
+};
+
 struct ComputePipeInfoProvider {
 	static std::unique_ptr<ComputePipeInfoProvider> create(vk::Sampler);
 	static std::unique_ptr<ComputePipeInfoProvider> create(
@@ -259,11 +264,13 @@ public:
 
 public:
 	ManagedComputePipe() = default;
-	// TODO: use Stage instead of file + preamble
 	ManagedComputePipe(const vpp::Device&, std::string shaderPath,
-		tkn::FileWatcher&, std::string preamble = {},
+		tkn::FileWatcher&, std::string preamble,
 		std::unique_ptr<InfoProvider> provider = {}, bool async = true,
 		std::string name = {});
+	ManagedComputePipe(const vpp::Device&, ShaderStageInfo shader,
+		tkn::FileWatcher&, std::unique_ptr<InfoProvider> provider = {},
+		bool async = true, std::string name = {});
 
 	void reload() { pipe_.reload(); }
 	bool update() { return pipe_.update(); }
@@ -303,10 +310,7 @@ struct GraphicsPipeInfoProvider {
 class ManagedGraphicsPipe {
 public:
 	using InfoProvider = GraphicsPipeInfoProvider;
-	struct StageInfo {
-		std::string path;
-		std::string preamble {};
-	};
+	using StageInfo = ShaderStageInfo;
 
 public:
 	ManagedGraphicsPipe() = default;

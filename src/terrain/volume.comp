@@ -1,0 +1,38 @@
+#include "constants.glsl"
+#include "atmosphere.glsl"
+#include "functions.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) writeonly uniform image2D outVolume;
+layout(set = 0, binding = 1) uniform sampler2D depthTex;
+layout(set = 0, binding = 2, row_major) uniform UBO {
+	UboData ubo;
+};
+
+float mean(vec3 v) {
+	return (v.x + v.y + v.z) / 3;
+}
+
+void main() {
+	uvec2 texel = gl_GlobalInvocationID.xy;	
+	uvec2 size = uvec2(imageSize(outVolume));
+	if(texel.x >= size.x || texel.y >= size.y) {
+		return;
+	}
+
+	float depth = texelFetch(depthTex, ivec2(texel), 0).r;
+	float z = depthtoz(ubo.invProjMtx, depth);
+
+	IntegratedVolume iv;
+	iv.inscatter = vec3(0.0);
+	iv.transmittance = vec3(1.0);
+
+	VolumeSample vs;
+	vs.inscatter = vec3(0.1);
+	vs.extinction = vec3(0.1);
+	integrateStep(iv, z, vs);
+
+	vec4 res = vec4(iv.inscatter, mean(iv.transmittance));
+	imageStore(outVolume, ivec2(texel), res);
+}

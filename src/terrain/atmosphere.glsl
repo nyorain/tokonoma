@@ -183,12 +183,12 @@ void integrateStep(inout vec3 scatterAccum, inout vec3 transmittance, float step
 		vec3 scattering, vec3 extinction) {
 	vec3 tstep = exp(-stepLength * extinction);
 
-	// Naive solution
+	// Naive solution. Or other way around. Both not optimal..
 	// transmittance *= tstep;
 	// scatterAccum += stepLength * transmittance * scattering;
 
 	// Better volumetric integration after S. Hillaire
-	if(dot(extinction, extinction) > 1e-8) {
+	if(dot(extinction, extinction) > 1e-10) {
 		vec3 inscatter = scattering * (1 - tstep) / extinction;
 		scatterAccum += transmittance * inscatter;
 		transmittance *= tstep;

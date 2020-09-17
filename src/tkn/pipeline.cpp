@@ -533,13 +533,13 @@ ComputePipeInfoProvider::create(vk::Sampler sampler) {
 }
 
 ManagedComputePipe::ManagedComputePipe(const vpp::Device& dev,
-		std::string shaderPath, tkn::FileWatcher& fswatch,
-		std::string preamble, std::unique_ptr<InfoProvider> provider,
+		ShaderStageInfo shader, tkn::FileWatcher& fswatch,
+		std::unique_ptr<InfoProvider> provider,
 		bool async, std::string name) {
 	ReloadablePipeline::Stage stage = {
 		vk::ShaderStageBits::compute,
-		std::move(shaderPath),
-		std::move(preamble),
+		std::move(shader.path),
+		std::move(shader.preamble),
 	};
 
 	infoProvider_ = std::move(provider);
@@ -551,6 +551,14 @@ ManagedComputePipe::ManagedComputePipe(const vpp::Device& dev,
 	};
 
 	pipe_ = {dev, {stage}, creatorFunc, fswatch, async, std::move(name)};
+}
+
+ManagedComputePipe::ManagedComputePipe(const vpp::Device& dev,
+	std::string shaderPath, tkn::FileWatcher& fswatch,
+	std::string preamble, std::unique_ptr<InfoProvider> provider,
+	bool async, std::string name) :
+		ManagedComputePipe(dev, {std::move(shaderPath), std::move(preamble)},
+			fswatch, std::move(provider), async, std::move(name)) {
 }
 
 vpp::Pipeline ManagedComputePipe::recreate(

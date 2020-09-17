@@ -1,6 +1,4 @@
-#version 450
-
-#extension GL_GOOGLE_include_directive : require
+#include "constants.glsl"
 #include "subd.glsl"
 
 layout(location = 0) in uvec2 inKey;
@@ -8,9 +6,8 @@ layout(location = 0) out vec3 outPos;
 layout(location = 1) noperspective out vec3 outBary;
 
 layout(set = 0, binding = 0, row_major) uniform Scene {
-	mat4 vp;
-	vec3 pos;
-} scene;
+	UboData scene;
+};
 
 layout(set = 0, binding = 1) buffer Vertices { vec4 vertices[]; };
 layout(set = 0, binding = 2) buffer Indices { uint indices[]; };
@@ -38,5 +35,5 @@ void main() {
 		vid == 0 ? 1.f : 0.f, 
 		vid == 1 ? 1.f : 0.f, 
 		vid == 2 ? 1.f : 0.f);
-	gl_Position = scene.vp * vec4(pos, 1.0);
+	gl_Position = scene.viewProjMtx * vec4(pos, 1.0);
 }
