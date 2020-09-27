@@ -1,5 +1,5 @@
 #undef DLG_DEFAULT_TAGS
-#define DLG_DEFAULT_TAGS "tkn", "shader"
+#define DLG_DEFAULT_TAGS "tkn", "tkn/shader"
 
 #include <tkn/shader.hpp>
 #include <tkn/util.hpp>
@@ -22,21 +22,6 @@
 #include <SPIRV/Logger.h>
 
 namespace tkn {
-
-// TODO: don't use std::system for this. Instead use a proper
-// subprocess abstraction. This allows to:
-// - better specify arguments and environment
-// - properly redirect output if needed
-// - get more information about exit status? not about this
-// - not block until it terminates. Async and parallel shader compilation
-//   (without starting multiple thread that only wait for std::system
-//   to complete, that's insane honestly) would be pretty neat
-// https://github.com/benman64/subprocess looks quite promising.
-
-// TODO: add tracking to automatically reload shaders when they change.
-//   https://github.com/emcrisostomo/fswatch looks like a good cross-platform
-//   solution. Not sure if here is the right place for this, though.
-//   Combinding it with ShaderCache sounds like a good idea though.
 
 inline std::string readFilePath(const fs::path& path) {
 	auto openmode = std::ios::ate;

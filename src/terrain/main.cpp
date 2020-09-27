@@ -480,12 +480,7 @@ public:
 		// update descriptors
 		auto& dsupp = ppPipe_.dsu();
 		dsupp(pass0_.colorTarget);
-		dsupp(pass0_.depthTarget);
-		dsupp(shadowmap_);
-		dsupp(heightmap_);
-		dsupp(atmosphere_.transmittanceLUT());
 		dsupp(ubo_);
-		dsupp(atmosphere_.ubo());
 
 		auto& dsuDownscale = pass1_.downscalePipe.dsu();
 		dsuDownscale(pass0_.depthTarget);
@@ -493,9 +488,13 @@ public:
 		dsuDownscale(ubo_);
 
 		auto& dsuVolumetric = pass1_.volumetricPipe.dsu();
-		dsuVolumetric(pass1_.colorTarget);
+		dsuVolumetric(pass1_.colorTarget, linearSampler_);
 		dsuVolumetric(pass1_.depthTarget, nearestSampler_);
+		dsuVolumetric(shadowmap_, linearSampler_);
+		dsuVolumetric(heightmap_, linearSampler_);
+		dsuVolumetric(atmosphere_.transmittanceLUT(), linearSampler_);
 		dsuVolumetric(ubo_);
+		dsuVolumetric(atmosphere_.ubo());
 
 		auto& dsuUpscale = pass1_.upscalePipe.dsu();
 		dsuUpscale(pass1_.depthTarget);
@@ -643,7 +642,7 @@ public:
 		}
 
 		if(shadowPipe_.pipe()) {
-			// computeShadowmap(cb);
+			computeShadowmap(cb);
 		}
 
 		// erode
@@ -860,11 +859,7 @@ public:
 	}
 
 	void computeShadowmap(vk::CommandBuffer cb) {
-		auto srcScope = tkn::SyncScope{
-			vk::PipelineStageBits::topOfPipe,
-			vk::ImageLayout::undefined,
-			{}
-		};
+		auto srcScope = tkn::SyncScope::discard();
 		auto dstScope = tkn::SyncScope::computeReadWrite();
 		tkn::barrier(cb, shadowmap_.image(), srcScope, dstScope);
 

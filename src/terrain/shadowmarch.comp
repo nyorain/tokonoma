@@ -1,16 +1,12 @@
-#version 450
-#extension GL_GOOGLE_include_directive : require
+#include "constants.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform sampler2D heightmap;
 layout(set = 0, binding = 1, r16f) uniform image2D shadowmap;
 layout(set = 0, binding = 2) uniform Ubo {
-	mat4 _1;
-	vec3 _2;
-	float _3;
-	vec3 toLight;
-} ubo;
+	UboData ubo;
+};
 
 void main() {
 	const uvec2 id = gl_GlobalInvocationID.xy;

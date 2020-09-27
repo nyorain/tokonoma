@@ -1,18 +1,104 @@
 #include "constants.glsl"
 #include "atmosphere.glsl"
 #include "functions.glsl"
+#include "scene.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) writeonly uniform image2D outVolume;
 layout(set = 0, binding = 1) uniform sampler2D depthTex;
-layout(set = 0, binding = 2, row_major) uniform UBO {
+
+layout(set = 0, binding = 2) uniform sampler2D shadowmap;
+layout(set = 0, binding = 3) uniform sampler2D heightmap;
+
+layout(set = 0, binding = 4) uniform sampler2D transmittanceLUT;
+
+layout(set = 0, binding = 5, row_major) uniform UBO {
 	UboData ubo;
+};
+
+layout(set = 0, binding = 6, row_major) uniform AtmosphereUBO {
+	AtmosphereDesc atmos;
+	vec3 solarIrradiance;
 };
 
 float mean(vec3 v) {
 	return (v.x + v.y + v.z) / 3;
 }
+
+// vec3 skyColor(vec3 rayDir, float shadow) {
+// 	const vec3 toLight = scene.toLight;
+// 	const vec3 sunColor = scene.sunColor * smoothstep(-0.4, -0.1, toLight.y);
+// 
+// 	const float nu = dot(rayDir, toLight);
+// 	vec3 light = vec3(0.0);
+// 	light += 1 * phaseHG(nu, 0.8) * sunColor * shadow;
+// 	light += 2 * phaseHG(nu, 0.2) * scene.ambientColor * sunColor * shadow;
+// 	light += 8 * phaseHG(nu, 0.0) * scene.ambientColor;
+// 
+// 	return light;
+// }
+
+IntegratedVolume computeScattering(vec3 posWS, float depth) {
+	vec3 rayStart = ubo.viewPos;
+	vec3 rayDir = posWS - ubo.viewPos;
+	float dist = distance(posWS, ubo.viewPos);
+	rayDir /= dist;
+
+	float r = atmos.bottom + ubo.viewPos.y;
+	float mu = rayDir.y;
+	float nu = dot(rayDir, ubo.toLight);
+	float muS = ubo.toLight.y;
+	if(depth > 0.999) {
+		// TODO: does not work when looking through atmosphere from side
+		dist = distanceToNearestBoundary(atmos, r, mu);
+		posWS = ubo.viewPos + dist * rayDir;
+	}
+
+	// iterations for shadow
+	// float stepSize = 0.02;
+	float stepSize = 0.02;
+	vec3 pos = rayStart;
+	float shadow = 0.0;
+	float t = 0.0;
+	float roff = random(posWS + 0.1 * ubo.time); // TODO: blue noise instead
+
+	IntegratedVolume iv;
+	iv.inscatter = vec3(0.0);
+	iv.transmittance = vec3(1.0);
+
+	for(uint i = 0u; t < dist && i < 1024; ++i) {
+		float shadow = 1.0;
+
+		pos = rayStart + (t + roff * stepSize) * rayDir;	
+		if(pos == clamp(pos, -1.5, 1.5)) {
+			float height = texture(heightmap, 0.5 + 0.5 * pos.xz).r;
+			float shadowHeight = texture(shadowmap, 0.5 + 0.5 * pos.xz).r;
+			shadow *= 1 - smoothstep(pos.y - height - 0.01, pos.y - height, shadowHeight);
+		} else {
+			// stepSize *= min(10, length(pos.xz));
+			// stepSize *= 1 + 10 * random(posWS + 0.1 * scene.time);
+			stepSize = max(max(stepSize, 1), 0.1 * t);
+		}
+
+		float d = t + roff * stepSize;
+		float r_d = clamp(sqrt(d * d + 2.f * r * mu * d + r * r), atmos.bottom, atmos.top);
+		float muS_d = clamp((r * muS + d * nu) / r_d, -1.f, 1.f);
+		VolumeSample vs = sampleAtmosphere(atmos, r_d, mu, muS_d, nu,
+			transmittanceLUT, shadow, solarIrradiance);
+
+		if(t + stepSize > dist) {
+			stepSize = dist - t;
+		}
+
+		integrateStep(iv, stepSize, vs);
+		t += stepSize;
+		// stepSize = max(stepSize, 0.5 * t);
+	}
+
+	return iv;
+}
+
 
 void main() {
 	uvec2 texel = gl_GlobalInvocationID.xy;	
@@ -22,16 +108,11 @@ void main() {
 	}
 
 	float depth = texelFetch(depthTex, ivec2(texel), 0).r;
-	float z = depthtoz(ubo.invProjMtx, depth);
+	vec2 uv = (texel + 0.5) / size;
+	vec3 posWS = reconstructWorldPos(uv, ubo.invViewProjMtx, depth);
 
-	IntegratedVolume iv;
-	iv.inscatter = vec3(0.0);
-	iv.transmittance = vec3(1.0);
-
-	VolumeSample vs;
-	vs.inscatter = vec3(0.1);
-	vs.extinction = vec3(0.1);
-	integrateStep(iv, z, vs);
+	// scattering
+	IntegratedVolume iv = computeScattering(posWS, depth);
 
 	vec4 res = vec4(iv.inscatter, mean(iv.transmittance));
 	imageStore(outVolume, ivec2(texel), res);

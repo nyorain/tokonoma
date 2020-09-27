@@ -39,7 +39,7 @@ void main() {
 	float dstZ = depthtoz(ubo.invProjMtx, dstDepth);
 	vec2 lrTexelSize = 1.f / lrSize;
 
-	vec2 uv = (texel + 0.5) / hrSize;
+	vec2 uv = (texel - 0.5) / hrSize;
 	vec2 base = uv * lrSize;
 	ivec2 ibase = ivec2(floor(base));
 	vec2 f = fract(base);
@@ -77,7 +77,7 @@ void main() {
 		maxDepthDiff = max(maxDepthDiff, diff);
 	}
 
-	float discontinuity = 1.0; // linearStep(0.0, 0.1, maxDepthDiff);
+	float discontinuity = linearStep(0.0, 0.1, maxDepthDiff);
 
 	vec4 result = vec4(0.0);
 	for(uint i = 0u; i < 4u; ++i) {

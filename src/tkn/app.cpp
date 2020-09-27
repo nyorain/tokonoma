@@ -1149,6 +1149,23 @@ void App::dlgHandler(const struct dlg_origin* origin, const char* string) {
 		++impl_->dlg.warnings;
 	}
 
+	// check for DLG_DEFAULT_TAGS
+	for(auto it = origin->tags; *it; ++it) {
+		constexpr struct {
+			const char* name;
+			dlg_level level; // everything below that is ignored
+		} ignored[] = {
+			{"tkn/pipeline", dlg_level_warn},
+			{"tkn/shader", dlg_level_warn},
+		};
+
+		for(auto& ignore : ignored) {
+			if(!std::strcmp(*it, ignore.name) && origin->level <= ignore.level) {
+				return;
+			}
+		}
+	}
+
 	impl_->dlg.oldHandler(origin, string, impl_->dlg.oldData);
 }
 

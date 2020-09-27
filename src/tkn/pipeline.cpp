@@ -1,3 +1,6 @@
+#undef DLG_DEFAULT_TAGS
+#define DLG_DEFAULT_TAGS "tkn", "tkn/pipeline"
+
 #include <tkn/pipeline.hpp>
 #include <tkn/util.hpp>
 #include <tkn/threadPool.hpp>
