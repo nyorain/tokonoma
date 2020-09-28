@@ -80,7 +80,7 @@ add_project_arguments(
 # project-specific stuff
 defs = [
 	'-DDLG_BASE_PATH="' + source_root + '/"',
-	'-D\'NYTL_BYTES_ASSERT(x)=dlg_assert(x)\'',
+	# '-DNYTL_BYTES_ASSERT(x)=dlg_assert(x)',
 ]
 add_project_arguments(defs, language: 'cpp')
 add_project_arguments('-DASIO_STANDALONE', language: 'cpp')

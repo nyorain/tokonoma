@@ -5,9 +5,19 @@
 namespace rvg {
 namespace detail {
 
+
+GpuBuffer::GpuBuffer(rvg::Context& ctx, vk::BufferUsageFlags usage, u32 memBits) :
+		context_(&ctx), usage_(usage), memBits_(memBits) {
+	// if buffer might be allocated on non-host-visible memory, make sure
+	// to include transferDst flag
+	// TODO: ignore invalid bits that don't correspond to heap?
+	if((memBits_ & ~ctx.device().hostMemoryTypes()) != 0) {
+		usage_ |= vk::BufferUsageBits::transferDst;
+	}
+}
+
 bool GpuBuffer::updateDevice(unsigned typeSize, nytl::Span<const std::byte> data) {
 	dlg_assert(context_);
-	dlg_assert(buffer_.size());
 
 	// check if re-allocation is needed
 	auto& ctx = *context_;
@@ -78,11 +88,11 @@ bool GpuBuffer::updateDevice(unsigned typeSize, nytl::Span<const std::byte> data
 					dlg_assert(offset + size <= data.size());
 					dlg_trace("copying buffer: {} {}", offset, size);
 
-					write(span, srcSpan.subspan(offset, size));
 					auto& copy = copies.emplace_back();
 					copy.size = size;
-					copy.srcOffset = stage.offset() + span.data() - map.ptr();
+					copy.srcOffset = stage.offset() + (span.data() - map.ptr());
 					copy.dstOffset = buffer_.offset() + offset;
+					write(span, srcSpan.subspan(offset, size));
 				}
 
 			}

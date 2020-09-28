@@ -29,61 +29,56 @@ public:
 		clipPool_ = std::make_unique<rvg::ClipPool>(rvgContext());
 		paintPool_ = std::make_unique<rvg::PaintPool>(rvgContext());
 		vertexPool_ = std::make_unique<rvg::VertexPool>(rvgContext());
+		indexPool_ = std::make_unique<rvg::IndexPool>(rvgContext());
 
 		auto plane = nytl::Vec3f{1, 0, -10000};
-		clipID_ = clipPool_->allocate(1);
-		clipPool_->write(clipID_, {{plane}});
+		clipID_ = clipPool_->create(plane);
 
-		auto transform = nytl::identity<4, float>();
-		transformID_ = transformPool_->allocate();
-		transformPool_->write(transformID_, transform);
+		transformID_ = transformPool_->create(nytl::identity<4, float>());
+		// auto transform = nytl::identity<4, float>();
+		// transformPool_->write(transformID_, transform);
+		// transformPool_->writable(transformID_) = nytl::identity<4, float>();
 
 		{
-			std::array<rvg::VertexPool::Vertex, 4> verts;
+			std::array<rvg::Vertex, 4> verts;
 			verts[0] = {{0.5f, 0.5f}, {0.f, 0.f}, {}};
 			verts[1] = {{0.5f, 0.75f}, {0.f, 0.f}, {}};
 			verts[2] = {{0.75f, 0.75f}, {0.f, 0.f}, {}};
 			verts[3] = {{0.75f, 0.5f}, {0.f, 0.f}, {}};
-			draw0_.vertexID = vertexPool_->allocateVertices(verts.size());
-			vertexPool_->writeVertices(draw0_.vertexID, verts);
+			draw0_.vertexID = vertexPool_->create(verts);
 
 			auto off = draw0_.vertexID;
 			std::array<u32, 6> inds = {0, 1, 2, 0, 2, 3};
 			for(auto& ind : inds) {
 				ind += off;
 			}
-			draw0_.indexID = vertexPool_->allocateIndices(inds.size());
-			vertexPool_->writeIndices(draw0_.indexID, inds);
+			draw0_.indexID = indexPool_->create(inds);
 
 			rvg::PaintPool::PaintData paintData {};
 			paintData.inner = {1.f, 0.1f, 0.8f, 1.f};
 			paintData.transform[3][3] = 1u;
-			draw0_.paintID = paintPool_->allocate();
-			paintPool_->write(draw0_.paintID, paintData);
+			draw0_.paintID = paintPool_->create(paintData);
 		}
 
 		{
-			std::array<rvg::VertexPool::Vertex, 4> verts;
+			std::array<rvg::Vertex, 4> verts;
 			verts[0] = {{-0.5f, -0.5f}, {0.f, 0.f}, {}};
 			verts[1] = {{-0.5f, -0.75f}, {0.f, 0.f}, {}};
 			verts[2] = {{-0.75f, -0.75f}, {0.f, 0.f}, {}};
 			verts[3] = {{-0.75f, -0.5f}, {0.f, 0.f}, {}};
-			draw1_.vertexID = vertexPool_->allocateVertices(verts.size());
-			vertexPool_->writeVertices(draw1_.vertexID, verts);
+			draw1_.vertexID = vertexPool_->create(verts);
 
 			auto off = draw1_.vertexID;
 			std::array<u32, 6> inds = {0, 1, 2, 0, 2, 3};
 			for(auto& ind : inds) {
 				ind += off;
 			}
-			draw1_.indexID = vertexPool_->allocateIndices(inds.size());
-			vertexPool_->writeIndices(draw1_.indexID, inds);
+			draw1_.indexID = indexPool_->create(inds);
 
 			rvg::PaintPool::PaintData paintData {};
 			paintData.inner = {0.8f, 0.8f, 0.5f, 1.f};
 			paintData.transform[3][3] = 1u;
-			draw1_.paintID = paintPool_->allocate();
-			paintPool_->write(draw1_.paintID, paintData);
+			draw1_.paintID = paintPool_->create(paintData);
 		}
 
 		// setup pipeline
@@ -98,7 +93,7 @@ public:
 			{frag, vk::ShaderStageBits::fragment}
 		}}}, 0u, samples());
 
-		using Vertex = rvg::VertexPool::Vertex;
+		using Vertex = rvg::Vertex;
 		auto vertexInfo = tkn::PipelineVertexInfo{{
 				{0, 0, vk::Format::r32g32Sfloat, offsetof(Vertex, pos)},
 				{1, 0, vk::Format::r32g32Sfloat, offsetof(Vertex, uv)},
@@ -120,11 +115,12 @@ public:
 		Base::scheduleRedraw();
 
 		// record scene
-		{
+		if(updated_) {
 			auto rec = scene_->record();
 			rec.bind(*transformPool_);
 			rec.bind(*clipPool_);
 			rec.bind(*vertexPool_);
+			rec.bind(*indexPool_);
 			rec.bind(*paintPool_);
 			// rec.bindFontAtlas(rvgContext().defaultAtlas().texture().vkImageView());
 			rec.bindFontAtlas(rvgContext().emptyImage().vkImageView());
@@ -142,6 +138,12 @@ public:
 				rec.draw(call);
 			}
 		}
+
+		time_ += dt;
+
+		auto& paint0 = paintPool_->writable(draw0_.paintID);
+		paint0.inner[0] = 0.75 + 0.25 * std::sin(time_);
+		paint0.inner[1] = 0.75 - 0.25 * std::cos(time_);
 	}
 
 	void updateDevice() override {
@@ -150,7 +152,9 @@ public:
 		rerec |= paintPool_->updateDevice();
 		rerec |= transformPool_->updateDevice();
 		rerec |= vertexPool_->updateDevice();
+		rerec |= indexPool_->updateDevice();
 		rerec |= scene_->updateDevice();
+		updated_ = true;
 
 		if(rerec) {
 			Base::scheduleRerecord();
@@ -185,9 +189,13 @@ protected:
 	std::unique_ptr<rvg::ClipPool> clipPool_;
 	std::unique_ptr<rvg::PaintPool> paintPool_;
 	std::unique_ptr<rvg::VertexPool> vertexPool_;
+	std::unique_ptr<rvg::IndexPool> indexPool_;
 
 	unsigned clipID_;
 	unsigned transformID_;
+
+	bool updated_ {false};
+	double time_ {0.0};
 
 	struct Draw {
 		unsigned vertexID;

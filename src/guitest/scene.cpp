@@ -25,339 +25,33 @@ nytl::Span<const T> asSpan(nytl::Span<const std::byte> bytes) {
 	return nytl::Span<const T>(ptr, size);
 }
 
-template<typename T>
-unsigned bufferOffsetToID(unsigned offset) {
-	dlg_assert(offset % sizeof(T) == 0u);
-	return offset / sizeof(T);
-}
-
-template<typename T>
-unsigned bufferIDToOffset(unsigned id) {
-	return id * sizeof(T);
-}
-
 } // anon namespace
-
-// Buffer
-Buffer::Buffer(rvg::Context& ctx, vk::BufferUsageFlags usage, u32 memBits) :
-		context_(&ctx), usage_(usage), memBits_(memBits) {
-	// if buffer might be allocated non non-host-visible memory, we need
-	// to add the transferDst usage flag
-	if((memBits_ & (~ctx.device().hostMemoryTypes())) != 0) {
-		usage_ |= vk::BufferUsageBits::transferDst;
-	}
-}
-
-unsigned Buffer::allocate(unsigned size) {
-	for(auto it = free_.begin(); it != free_.end(); ++it) {
-		auto& f = *it;
-		auto off = f.offset;
-
-		if(f.size == size) {
-			free_.erase(it);
-		} else {
-			f.offset += size;
-			f.size -= size;
-		}
-
-		return off;
-	}
-
-	// append
-	auto off = data_.size();
-	data_.resize(data_.size() + size);
-	return off;
-}
-
-void Buffer::free(unsigned offset, unsigned size) {
-	// check if data size can be reduced since this was the last block
-	if(offset + size == data_.size()) {
-		data_.resize(offset);
-	}
-
-	// add free blocks
-	auto it = std::lower_bound(free_.begin(), free_.end(), offset,
-		[](auto span, auto offset) { return span.offset < offset; });
-	if(it > free_.begin()) {
-		// check if we can append to previous blocks
-		auto prev = it - 1;
-		if(prev->offset + prev->size == offset) {
-			prev->size += size;
-
-			// merge free blocks if possible
-			if(!free_.empty() && it < (free_.end() - 1)) {
-				auto next = it + 1;
-				if(prev->offset + prev->size == next->offset) {
-					prev->size += next->size;
-					free_.erase(next);
-				}
-			}
-
-			return;
-		}
-	}
-
-	if(!free_.empty() && it < (free_.end() - 1)) {
-		// check if we can preprend to previous block
-		auto next = it + 1;
-		if(offset + size == next->offset) {
-			next->offset = offset;
-			next->size += size;
-
-			// no check for block merging needed.
-			// we already know that there is a gap between the previous
-			// free block and the currently freed span
-
-			return;
-		}
-	}
-
-	// new free block needed
-	free_.insert(it, {offset, size});
-}
-
-void Buffer::write(unsigned offset, nytl::Span<const std::byte> src) {
-	dlg_assert(offset + src.size() <= data_.size());
-	std::memcpy(data_.data() + offset, src.data(), src.size());
-
-	// we don't have to check for already existing updates for this area.
-	// in that case the copying will simply be done twice. That case should
-	// happen very rarely, does not justify the overhead and additional code to
-	// optimize for it.
-	updates_.push_back({offset, src.size()});
-}
-
-unsigned Buffer::allocate(nytl::Span<const std::byte> data) {
-	auto off = allocate(data.size());
-	write(off, data);
-	return off;
-}
-
-nytl::Span<std::byte> Buffer::writable(unsigned offset, unsigned size) {
-	dlg_assert(offset + size <= data_.size());
-	updates_.push_back({offset, size});
-	return nytl::bytes(data_).subspan(offset, size);
-}
-
-bool Buffer::updateDevice() {
-	// check if re-allocation is needed
-	auto realloc = false;
-	if(buffer_.size() < data_.size()) {
-		auto size = data_.size() * 2; // overallocate
-		buffer_ = {context().bufferAllocator(), size, usage_, memBits_};
-		realloc = true;
-	}
-
-	using nytl::write;
-
-	// update
-	if(realloc || !updates_.empty()) {
-		if(buffer_.mappable()) {
-			auto map = buffer_.memoryMap();
-			auto span = map.span();
-
-			if(realloc) {
-				dlg_trace("writing full mappable buffer, size: {}", data_.size());
-				write(span, data_);
-			} else {
-				for(auto& update : updates_) {
-					dlg_assert(update.offset + update.size <= data_.size());
-					dlg_trace("update mappable buffer: {} {}", update.offset, update.size);
-					std::memcpy(map.ptr() + update.offset,
-						data_.data() + update.offset,
-						update.size);
-				}
-			}
-
-			map.flush();
-		} else {
-			auto& ctx = context();
-			auto cb = ctx.uploadCmdBuf();
-
-			// check how large the stage buf must be
-			auto stageSize = 0u;
-			if(realloc) {
-				stageSize = data_.size();
-			} else {
-				for(auto& update : updates_) {
-					stageSize += update.size;
-				}
-			}
-
-			auto stage = vpp::SubBuffer(ctx.bufferAllocator(),
-				stageSize, vk::BufferUsageBits::transferSrc,
-				ctx.device().hostMemoryTypes());
-			auto map = stage.memoryMap();
-			auto span = map.span();
-			std::vector<vk::BufferCopy> copies;
-			if(realloc) {
-				write(span, data_);
-
-				auto& copy = copies.emplace_back();
-				copy.size = data_.size();
-				copy.srcOffset = stage.offset();
-				copy.dstOffset = buffer_.offset();
-				dlg_trace("copying full buffer, size: {}", data_.size());
-			} else {
-				auto srcSpan = bytes(data_);
-				copies.reserve(updates_.size());
-				for(auto& update : updates_) {
-					dlg_trace("copying buffer: {} {}", update.offset, update.size);
-					write(span, srcSpan.subspan(update.offset, update.size));
-					auto& copy = copies.emplace_back();
-					copy.size = update.size;
-					copy.srcOffset = stage.offset() + span.data() - map.ptr();
-					copy.dstOffset = buffer_.offset() + update.offset;
-				}
-
-			}
-
-			vk::cmdCopyBuffer(cb, stage.buffer(), buffer_.buffer(), copies);
-			ctx.addStage(std::move(stage));
-			ctx.addCommandBuffer({}, std::move(cb)); // TODO
-		}
-	}
-	updates_.clear();
-
-	return realloc;
-}
-
-// SizeTrackedBuffer
-unsigned AllocTrackedBuffer::allocate(unsigned size) {
-	auto off = Buffer::allocate(size);
-	auto it = std::lower_bound(allocations_.begin(), allocations_.end(), off,
-		[](auto span, auto offset) { return span.offset < offset; });
-	allocations_.insert(it, {off, size});
-	return off;
-}
-
-void AllocTrackedBuffer::free(unsigned offset) {
-	auto it = std::lower_bound(allocations_.begin(), allocations_.end(), offset,
-		[](auto span, auto offset) { return span.offset < offset; });
-	dlg_assertm(it != allocations_.end() && it->offset == offset,
-		"No allocation for given offset");
-	Buffer::free(it->offset, it->size);
-	allocations_.erase(it);
-}
-
-void AllocTrackedBuffer::free(unsigned offset, unsigned size) {
-	// debug check that allocation exists
-	auto it = std::lower_bound(allocations_.begin(), allocations_.end(), offset,
-		[](auto span, auto offset) { return span.offset < offset; });
-	dlg_assertm(it != allocations_.end() &&
-		it->offset == offset &&
-		it->size == size,
-		"No allocation for given offset and size");
-	Buffer::free(offset, size);
-	allocations_.erase(it);
-}
 
 // VertexPool
 VertexPool::VertexPool(rvg::Context& ctx) :
-	vertices_(ctx, vk::BufferUsageBits::vertexBuffer, ctx.device().deviceMemoryTypes()),
-	indices_(ctx, vk::BufferUsageBits::indexBuffer, ctx.device().deviceMemoryTypes()) {
+	Buffer(ctx, vk::BufferUsageBits::vertexBuffer, ctx.device().deviceMemoryTypes()) {
 }
 
-void VertexPool::bind(vk::CommandBuffer cb) {
-	auto& vb = vertices_.buffer();
-	auto& ib = indices_.buffer();
-	vk::cmdBindVertexBuffers(cb, 0, {{vb.buffer()}}, {{vb.offset()}});
-	vk::cmdBindIndexBuffer(cb, ib.buffer(), ib.offset(), vk::IndexType::uint32);
-}
-
-bool VertexPool::updateDevice() {
-	auto ret = false;
-	ret |= vertices_.updateDevice();
-	ret |= indices_.updateDevice();
-	return ret;
-}
-
-unsigned VertexPool::allocateVertices(unsigned count) {
-	return bufferOffsetToID<Vertex>(vertices_.allocate(count * sizeof(Vertex)));
-}
-unsigned VertexPool::allocateIndices(unsigned count) {
-	return bufferOffsetToID<Index>(indices_.allocate(count * sizeof(Index)));
-}
-void VertexPool::writeVertices(unsigned id, Span<const Vertex> vertices) {
-	auto offset = bufferIDToOffset<Vertex>(id);
-	vertices_.write(offset, nytl::bytes(vertices));
-}
-void VertexPool::writeIndices(unsigned id, Span<const Index> indices) {
-	auto offset = bufferIDToOffset<Index>(id);
-	indices_.write(offset, nytl::bytes(indices));
-}
-void VertexPool::freeVertices(unsigned id) {
-	auto offset = bufferIDToOffset<Vertex>(id);
-	vertices_.free(offset);
-}
-void VertexPool::freeIndices(unsigned id) {
-	auto offset = bufferIDToOffset<Index>(id);
-	indices_.free(offset);
+// IndexPool
+IndexPool::IndexPool(rvg::Context& ctx) :
+	Buffer(ctx, vk::BufferUsageBits::indexBuffer, ctx.device().deviceMemoryTypes()) {
 }
 
 // TransformPool
 TransformPool::TransformPool(Context& ctx) :
-	buffer_(ctx, vk::BufferUsageBits::storageBuffer, ctx.device().deviceMemoryTypes()) {
-}
-
-unsigned TransformPool::allocate() {
-	auto offset = buffer_.allocate(sizeof(Matrix));
-	auto id = bufferOffsetToID<Matrix>(offset);
-	new(buffer_.writable(offset, sizeof(Matrix)).data()) Matrix();
-	return id;
-}
-
-void TransformPool::free(unsigned id) {
-	auto offset = bufferIDToOffset<Matrix>(id);
-	buffer_.free(offset, sizeof(Matrix));
-}
-
-void TransformPool::write(unsigned id, const Matrix& transform) {
-	auto offset = bufferIDToOffset<Matrix>(id);
-	buffer_.write(offset, nytl::bytes(transform));
-}
-
-TransformPool::Matrix& TransformPool::writable(unsigned id) {
-	auto offset = bufferIDToOffset<Matrix>(id);
-	return nytl::ref<Matrix>(buffer_.writable(offset, sizeof(Matrix)));
+	Buffer(ctx, vk::BufferUsageBits::storageBuffer, ctx.device().deviceMemoryTypes()) {
 }
 
 // ClipPool
 ClipPool::ClipPool(Context& ctx) :
-	buffer_(ctx, vk::BufferUsageBits::storageBuffer, ctx.device().deviceMemoryTypes()) {
-}
-
-unsigned ClipPool::allocate(unsigned count) {
-	return bufferOffsetToID<Plane>(buffer_.allocate(sizeof(Plane) * count));
-}
-
-void ClipPool::free(unsigned id, unsigned count) {
-	auto offset = bufferIDToOffset<Plane>(id);
-	buffer_.free(offset, sizeof(Plane) * count);
-}
-
-void ClipPool::write(unsigned id, nytl::Span<const Plane> planes) {
-	auto offset = bufferIDToOffset<Plane>(id);
-	buffer_.write(offset, nytl::bytes(planes));
+	Buffer(ctx, vk::BufferUsageBits::storageBuffer, ctx.device().deviceMemoryTypes()) {
 }
 
 // PaintPool
 PaintPool::PaintPool(Context& ctx) :
-	buffer_(ctx, vk::BufferUsageBits::storageBuffer, ctx.device().deviceMemoryTypes()) {
+	Buffer(ctx, vk::BufferUsageBits::storageBuffer, ctx.device().deviceMemoryTypes()) {
 }
 
-unsigned PaintPool::allocate() {
-	return bufferOffsetToID<PaintData>(buffer_.allocate(sizeof(PaintData)));
-}
-void PaintPool::free(unsigned id) {
-	auto offset = bufferIDToOffset<PaintData>(id);
-	buffer_.free(offset, sizeof(PaintData));
-}
-
-void PaintPool::write(unsigned id, const PaintData& data) {
-	auto offset = bufferIDToOffset<PaintData>(id);
-	buffer_.write(offset, nytl::bytes(data));
-}
 void PaintPool::setTexture(unsigned i, vk::ImageView texture) {
 	dlg_assert(i < numTextures);
 	textures_.resize(std::max<std::size_t>(i, textures_.size()));
@@ -463,11 +157,11 @@ bool Scene::updateDevice() {
 	std::vector<vpp::DescriptorSetUpdate> dsus;
 	auto updateDs = [&](auto& draw) {
 		auto& dsu = dsus.emplace_back(draw.ds);
-		dsu.storage(draw.clipPool->buffer());
-		dsu.storage(draw.transformPool->buffer());
-		dsu.storage(draw.paintPool->buffer());
+		dsu.storage(draw.state.clipBuffer);
+		dsu.storage(draw.state.transformBuffer);
+		dsu.storage(draw.state.paintBuffer);
 
-		auto& texs = draw.paintPool->textures();
+		auto& texs = draw.state.textures;
 		auto binding = dsu.currentBinding();
 		dlg_assert(texs.size() <= numTextures);
 		for(auto i = 0u; i < texs.size(); ++i) {
@@ -480,7 +174,7 @@ bool Scene::updateDevice() {
 		}
 
 		dsu.storage(ownCmdBuffer_);
-		dsu.imageSampler(draw.fontAtlas);
+		dsu.imageSampler(draw.state.fontAtlas);
 	};
 
 	if(ownCmdBufChanged) {
@@ -514,7 +208,11 @@ void Scene::recordDraw(vk::CommandBuffer cb) {
 	for(auto& draw : draws_) {
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
 			pipeLayout_, 0, {{draw.ds.vkHandle()}}, {});
-		draw.vertexPool->bind(cb);
+
+		vk::cmdBindVertexBuffers(cb, 0,
+			{{draw.state.vertexBuffer.buffer()}}, {{draw.state.vertexBuffer.offset()}});
+		vk::cmdBindIndexBuffer(cb, draw.state.indexBuffer.buffer(),
+			draw.state.indexBuffer.offset(), vk::IndexType::uint32);
 
 		if(multidrawIndirect) {
 			vk::cmdDrawIndexedIndirect(cb, indirectCmdBuffer_.buffer(), offset,
@@ -560,12 +258,7 @@ void Scene::add(DrawSet set) {
 	} else {
 		// check if descriptors are the same
 		auto& oldDraw = draws_[id];
-		bool same =
-			oldDraw.transformPool == set.transformPool &&
-			oldDraw.clipPool == set.clipPool &&
-			oldDraw.paintPool == set.paintPool &&
-			oldDraw.vertexPool == set.vertexPool &&
-			oldDraw.fontAtlas == set.fontAtlas;
+		bool same = (oldDraw.state == set.state);
 		if(!same) {
 			dsUpdates_.push_back(id);
 		}
@@ -602,50 +295,65 @@ DrawRecorder::~DrawRecorder() {
 	scene_.finish();
 }
 
-void DrawRecorder::bind(TransformPool& pool) {
-	pending_.transformPool = &pool;
+void DrawRecorder::bindTransformBuffer(vpp::BufferSpan pool) {
+	dlg_assert(pool.valid());
+	pending_.state.transformBuffer = pool;
 	if(current_.commands.empty()) {
-		current_.transformPool = &pool;
+		current_.state.transformBuffer = pool;
 	}
 }
 
-void DrawRecorder::bind(ClipPool& pool) {
-	pending_.clipPool = &pool;
+void DrawRecorder::bindClipBuffer(vpp::BufferSpan pool) {
+	dlg_assert(pool.valid());
+	pending_.state.clipBuffer = pool;
 	if(current_.commands.empty()) {
-		current_.clipPool = &pool;
+		current_.state.clipBuffer = pool;
 	}
 }
 
-void DrawRecorder::bind(PaintPool& pool) {
-	pending_.paintPool = &pool;
+void DrawRecorder::bindPaintBuffer(vpp::BufferSpan pool) {
+	dlg_assert(pool.valid());
+	pending_.state.paintBuffer = pool;
 	if(current_.commands.empty()) {
-		current_.paintPool = &pool;
+		current_.state.paintBuffer = pool;
 	}
 }
 
-void DrawRecorder::bind(VertexPool& pool) {
-	pending_.vertexPool = &pool;
+void DrawRecorder::bindVertexBuffer(vpp::BufferSpan pool) {
+	dlg_assert(pool.valid());
+	pending_.state.vertexBuffer = pool;
 	if(current_.commands.empty()) {
-		current_.vertexPool = &pool;
+		current_.state.vertexBuffer = pool;
+	}
+}
+
+void DrawRecorder::bindIndexBuffer(vpp::BufferSpan pool) {
+	dlg_assert(pool.valid());
+	pending_.state.indexBuffer = pool;
+	if(current_.commands.empty()) {
+		current_.state.indexBuffer = pool;
+	}
+}
+
+void DrawRecorder::bindTextures(std::vector<vk::ImageView> textures) {
+	pending_.state.textures = std::move(textures);
+	if(current_.commands.empty()) {
+		current_.state.textures = pending_.state.textures;
 	}
 }
 
 void DrawRecorder::bindFontAtlas(vk::ImageView atlas) {
-	pending_.fontAtlas = atlas;
+	dlg_assert(atlas);
+	pending_.state.fontAtlas = atlas;
 	if(current_.commands.empty()) {
-		current_.fontAtlas = atlas;
+		current_.state.fontAtlas = atlas;
 	}
 }
 
 void DrawRecorder::draw(const DrawCall& call) {
 	// check if state is still the same
 	dlg_assert(pending_.commands.empty()); // TODO: shouldn't exist in first place
-	bool same =
-		(current_.clipPool == pending_.clipPool) &&
-		(current_.transformPool == pending_.transformPool) &&
-		(current_.paintPool == pending_.paintPool) &&
-		(current_.vertexPool == pending_.vertexPool) &&
-		(current_.fontAtlas == pending_.fontAtlas);
+	bool same = (current_.state == pending_.state);
 	if(!same) {
 		dlg_assert(!current_.commands.empty());
 		scene_.add(std::move(current_));
@@ -655,6 +363,20 @@ void DrawRecorder::draw(const DrawCall& call) {
 	DrawCommand cmd;
 	static_cast<DrawCall&>(cmd) = call;
 	current_.commands.push_back(cmd);
+}
+
+// free
+bool operator==(const DrawState& a, const DrawState& b) {
+	return
+		a.transformBuffer == b.transformBuffer &&
+		a.clipBuffer == b.clipBuffer &&
+		a.paintBuffer == b.paintBuffer &&
+		a.vertexBuffer == b.vertexBuffer &&
+		a.indexBuffer == b.indexBuffer &&
+		a.fontAtlas == b.fontAtlas &&
+		std::equal(
+			a.textures.begin(), a.textures.end(),
+			b.textures.begin(), b.textures.end());
 }
 
 } // namespace rvg

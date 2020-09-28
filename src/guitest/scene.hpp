@@ -8,165 +8,104 @@
 #include <nytl/mat.hpp>
 #include <cstdint>
 
+// TODO
+// - allow specifying for pools whether they should be allocated on hostVisible mem
+// - allow pool deferred initilization? but maybe each pool should have
+//   its dedicated allocation after all
+
 namespace rvg {
 
 // TODO: placeholder. Query dynamically, also use descriptor indexing.
 constexpr auto numTextures = 15;
 
-// TODO: add reserve, shrink mechanisms
-// TODO(opt, low): we could add a FixedSizeBuffer where all allocations
-// have the same size, simplifies some things and allows us to get rid of
-// Span (and its size member).
-class Buffer {
-public:
-	Buffer(rvg::Context& ctx, vk::BufferUsageFlags usage, u32 memBits);
-
-	// TODO: revisit/fix
-	~Buffer() = default;
-
-	Buffer(Buffer&&) = delete;
-	Buffer& operator=(Buffer&&) = delete;
-
-	unsigned allocate(unsigned size);
-	unsigned allocate(nytl::Span<const std::byte> data);
-	void write(unsigned offset, nytl::Span<const std::byte> data);
-	void free(unsigned offset, unsigned size);
-
-	// Returns the given span as writable buffer.
-	// The buffer is only guaranteed to be valid until the allocate or free
-	// call. Will automatically mark the returned range for update.
-	nytl::Span<std::byte> writable(unsigned offset, unsigned size);
-
-	bool updateDevice();
-
-	rvg::Context& context() const { return *context_; }
-	const vpp::SubBuffer& buffer() const { return buffer_; }
-	const std::vector<std::byte> data() const { return data_; }
-
-protected:
-	struct Span {
-		vk::DeviceSize offset;
-		vk::DeviceSize size;
-	};
-
-	rvg::Context* context_;
-	vpp::SubBuffer buffer_;
-	std::vector<std::byte> data_;
-	std::vector<Span> updates_;
-	std::vector<Span> free_; // sorted by offset
-
-	vk::BufferUsageFlags usage_;
-	u32 memBits_;
-};
-
 // Buffer that tracks allocation and therefore does not require the size
 // of the allocation when freeing.
-class AllocTrackedBuffer : public Buffer {
+template<typename T>
+class AllocTrackedBuffer : public Buffer<T> {
 public:
-	using Buffer::Buffer;
-	unsigned allocate(unsigned size);
-	void free(unsigned offset);
-	void free(unsigned offset, unsigned size);
+	using Buffer<T>::Buffer;
+	unsigned allocate(unsigned count) {
+		auto off = Buffer<T>::allocate(count);
+		auto it = std::lower_bound(allocations_.begin(), allocations_.end(), off,
+			[](auto span, auto offset) { return span.offset < offset; });
+		allocations_.insert(it, {off, count});
+		return off;
+	}
+
+	void free(unsigned start) {
+		auto it = std::lower_bound(allocations_.begin(), allocations_.end(), start,
+			[](auto span, auto start) { return span.start < start; });
+		assert(it != allocations_.end() && it->start == start &&
+			"No allocation for given offset");
+		Buffer<T>::free(it->start, it->count);
+		allocations_.erase(it);
+	}
+
+	void free(unsigned start, unsigned count) {
+		// debug check that allocation exists
+		auto it = std::lower_bound(allocations_.begin(), allocations_.end(), start,
+			[](auto span, auto start) { return span.start < start; });
+		assert(it != allocations_.end() &&
+			it->start == start &&
+			it->count == count &&
+			"No allocation for given offset and size");
+		Buffer<T>::free(start, count);
+		allocations_.erase(it);
+	}
 
 protected:
-	std::vector<Span> allocations_;
+	std::vector<detail::BufferSpan> allocations_;
 };
 
-class TransformPool {
+class TransformPool : public Buffer<Mat4f> {
 public:
 	using Matrix = Mat4f;
-
-public:
 	TransformPool(Context&);
-
-	unsigned allocate();
-	void free(unsigned id);
-	void write(unsigned id, const Matrix& transform);
-
-	Matrix& writable(unsigned id);
-	nytl::Span<Matrix> writable(unsigned id, unsigned count);
-
-	bool updateDevice() { return buffer_.updateDevice(); }
-	const auto& buffer() const { return buffer_.buffer(); }
-
-protected:
-	Buffer buffer_;
 };
 
-class ClipPool {
+class ClipPool : public Buffer<nytl::Vec3f> {
 public:
 	// Plane is all points x for which: dot(plane.xy, x) - plane.z == 0.
 	// The inside of the plane are all points for which it's >0.
 	// Everything <0 gets clipped.
 	using Plane = nytl::Vec3f;
-
-public:
 	ClipPool(Context&);
-
-	unsigned allocate(unsigned id);
-	void free(unsigned id, unsigned count);
-	void write(unsigned id, nytl::Span<const Plane> planes);
-
-	bool updateDevice() { return buffer_.updateDevice(); }
-
-	const auto& buffer() const { return buffer_.buffer(); }
-
-protected:
-	Buffer buffer_;
 };
 
-class PaintPool {
-public:
-	struct PaintData {
-		Vec4f inner;
-		Vec4f outer;
-		Vec4f custom;
-		nytl::Mat4f transform; // mat3 + additional data
-	};
+// TODO: rename
+struct PaintData2 {
+	Vec4f inner;
+	Vec4f outer;
+	Vec4f custom;
+	nytl::Mat4f transform; // mat3 + additional data
+};
 
+class PaintPool : public Buffer<PaintData2> {
 public:
+	using PaintData = PaintData2;
 	PaintPool(Context& ctx);
-
-	unsigned allocate();
-	void free(unsigned id);
-	void write(unsigned id, const PaintData& data);
-	void setTexture(unsigned i, vk::ImageView texture);
-
-	bool updateDevice() { return buffer_.updateDevice(); }
-
-	const auto& buffer() const { return buffer_.buffer(); }
+	void setTexture(unsigned i, vk::ImageView);
 	const auto& textures() const { return textures_; }
 
 protected:
-	Buffer buffer_;
 	std::vector<vk::ImageView> textures_;
 };
 
-class VertexPool {
-public:
-	using Index = u32;
-	struct Vertex {
-		Vec2f pos; // NOTE: we could probably use 16 bit floats instead
-		Vec2f uv; // NOTE: try using 8 or 16 bit snorm, or 16bit float instead
-		Vec4u8 color;
-	};
+using Index = u32;
+struct Vertex {
+	Vec2f pos; // NOTE: we could probably use 16 bit floats instead
+	Vec2f uv; // NOTE: try using 8 or 16 bit snorm, or 16bit float instead
+	Vec4u8 color;
+};
 
+class VertexPool : public Buffer<Vertex> {
 public:
 	VertexPool(rvg::Context& ctx);
+};
 
-	void bind(vk::CommandBuffer cb);
-	bool updateDevice();
-
-	unsigned allocateVertices(unsigned count);
-	unsigned allocateIndices(unsigned count);
-	void writeVertices(unsigned id, Span<const Vertex> vertices);
-	void writeIndices(unsigned id, Span<const Index> indices);
-	void freeVertices(unsigned id);
-	void freeIndices(unsigned id);
-
-protected:
-	AllocTrackedBuffer vertices_;
-	AllocTrackedBuffer indices_;
+class IndexPool : public Buffer<Index> {
+public:
+	IndexPool(rvg::Context& ctx);
 };
 
 struct DrawCall {
@@ -185,15 +124,22 @@ struct DrawCommand : DrawCall {
 	u32 offset; // total offset in cmd buffer
 };
 
+struct DrawState {
+	vpp::BufferSpan transformBuffer;
+	vpp::BufferSpan clipBuffer;
+	vpp::BufferSpan paintBuffer;
+	vpp::BufferSpan vertexBuffer;
+	vpp::BufferSpan indexBuffer;
+	std::vector<vk::ImageView> textures;
+	vk::ImageView fontAtlas;
+};
+
+bool operator==(const DrawState& a, const DrawState& b);
+
 struct DrawSet {
 	std::vector<DrawCommand> commands;
 	vpp::TrDs ds;
-
-	TransformPool* transformPool;
-	ClipPool* clipPool;
-	PaintPool* paintPool;
-	VertexPool* vertexPool;
-	vk::ImageView fontAtlas;
+	DrawState state;
 };
 
 class Scene;
@@ -204,11 +150,25 @@ public:
 	DrawRecorder(Scene& scene);
 	~DrawRecorder();
 
-	void bind(TransformPool&);
-	void bind(ClipPool&);
-	void bind(PaintPool&);
-	void bind(VertexPool&);
-	void bindFontAtlas(vk::ImageView fontAtlas);
+	void bindTransformBuffer(vpp::BufferSpan);
+	void bindClipBuffer(vpp::BufferSpan);
+	void bindPaintBuffer(vpp::BufferSpan);
+	void bindVertexBuffer(vpp::BufferSpan);
+	void bindIndexBuffer(vpp::BufferSpan);
+	void bindFontAtlas(vk::ImageView);
+	void bindTextures(std::vector<vk::ImageView>);
+
+	void bind(TransformPool& pool) { bindTransformBuffer(pool.buffer()); }
+	void bind(ClipPool& pool) { bindClipBuffer(pool.buffer()); }
+	void bind(VertexPool& pool) { bindVertexBuffer(pool.buffer()); }
+	void bind(IndexPool& pool) { bindIndexBuffer(pool.buffer()); }
+	void bind(PaintPool& pool) {
+		bindPaintBuffer(pool.buffer());
+		bindTextures(pool.textures());
+	};
+
+	// TODO
+	void bind(FontAtlas&);
 
 	void draw(const DrawCall&);
 

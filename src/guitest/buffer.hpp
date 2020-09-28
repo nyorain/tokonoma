@@ -29,6 +29,7 @@ struct GpuBuffer {
 	std::vector<BufferSpan> free_;
 	vpp::SubBuffer buffer_;
 
+	GpuBuffer(rvg::Context& ctx, vk::BufferUsageFlags usage, u32 memBits);
 	unsigned allocate(unsigned count);
 	void free(unsigned id, unsigned count);
 	bool updateDevice(unsigned typeSize, nytl::Span<const std::byte> data);
@@ -36,13 +37,18 @@ struct GpuBuffer {
 
 } // namespace detail
 
+// TODO: add reserve, shrink mechanisms
+// TODO(opt, low): we could add a FixedSizeBuffer where all allocations
+// have the same size, simplifies some things and allows us to get rid of
+// Span (and its size member).
 template<typename T>
 class Buffer {
 public:
-	Buffer(rvg::Context& ctx, vk::BufferUsageFlags usage, u32 memBits) {
-		buffer_.context_ = &ctx;
-		buffer_.usage_ = usage;
-		buffer_.memBits_ = memBits;
+	using Type = T;
+
+public:
+	Buffer(rvg::Context& ctx, vk::BufferUsageFlags usage, u32 memBits) :
+		buffer_(ctx, usage, memBits) {
 	}
 
 	// TODO: revisit/fix
@@ -51,18 +57,12 @@ public:
 	Buffer(Buffer&&) = delete;
 	Buffer& operator=(Buffer&&) = delete;
 
-	unsigned allocate(unsigned count) {
+	unsigned allocate(unsigned count = 1) {
 		auto id = buffer_.allocate(count);
 		if(id == 0xFFFFFFFFu) {
 			id = data_.size();
 		}
-		data_.resize(std::max(data_.size(), id + count));
-		return id;
-	}
-
-	unsigned allocate(nytl::Span<const T> data) {
-		auto id = allocate(data.size());
-		write(id, data);
+		data_.resize(std::max<unsigned>(data_.size(), id + count));
 		return id;
 	}
 
@@ -70,6 +70,22 @@ public:
 		buffer_.updates_.push_back({startID, data.size()});
 		NYTL_BYTES_ASSERT(data_.size() >= startID + data.size());
 		std::copy(data.begin(), data.end(), data_.begin() + startID);
+	}
+
+	void write(unsigned startID, const T& data) {
+		write(startID, nytl::Span<const T>(&data, 1));
+	}
+
+	unsigned create(const T& data) {
+		auto id = allocate(1);
+		write(id, data);
+		return id;
+	}
+
+	unsigned create(nytl::Span<const T> data) {
+		auto id = allocate(data.size());
+		write(id, data);
+		return id;
 	}
 
 	void free(unsigned startID, unsigned count) {
@@ -84,8 +100,16 @@ public:
 	// The buffer is only guaranteed to be valid until the allocate or free
 	// call. Will automatically mark the returned range for update.
 	nytl::Span<T> writable(unsigned startID, unsigned count) {
+		NYTL_BYTES_ASSERT(data_.size() >= startID + count);
+		buffer_.updates_.push_back({startID, count});
 		auto full = nytl::span(data_);
 		return full.subspan(startID, count);
+	}
+
+	T& writable(unsigned id) {
+		NYTL_BYTES_ASSERT(data_.size() > id);
+		buffer_.updates_.push_back({id, 1u});
+		return data_[id];
 	}
 
 	bool updateDevice() {
