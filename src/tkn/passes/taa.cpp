@@ -109,11 +109,11 @@ void TAAPass::initBuffers(vk::Extent2D size, vk::ImageView renderInput,
 
 	vpp::DescriptorSetUpdate dsu(ds_);
 	dsu.imageSampler({{{}, inHist_, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.storage({{{}, outHist_, vk::ImageLayout::general}});
-	dsu.imageSampler({{{}, renderInput, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, depthInput, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, velInput, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.uniform({{{ubo_}}});
+	dsu.storage(outHist_);
+	dsu.imageSampler(renderInput);
+	dsu.imageSampler(depthInput);
+	dsu.imageSampler(velInput);
+	dsu.uniform(ubo_);
 
 	// TODO: don't allocate cb everytime, don't stall and such.
 	auto& qs = dev.queueSubmitter();

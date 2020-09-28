@@ -792,16 +792,16 @@ void Scene::init(InitData& data, WorkBatcher& wb, vk::ImageView dummyView) {
 	samplers.resize(samplerCount, defaultInfo);
 
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.storage({{{modelIDs_}}});
-	dsu.storage({{{instanceBuf_}}});
-	dsu.storage({{{materialsBuf_}}});
+	dsu.storage(modelIDs_);
+	dsu.storage(instanceBuf_);
+	dsu.storage(materialsBuf_);
 	dsu.image(images);
 	dsu.sampler(samplers);
 
 	vpp::DescriptorSetUpdate bdsu(blendDs_);
-	bdsu.storage({{{blendModelIDs_}}});
-	bdsu.storage({{{instanceBuf_}}});
-	bdsu.storage({{{materialsBuf_}}});
+	bdsu.storage(blendModelIDs_);
+	bdsu.storage(instanceBuf_);
+	bdsu.storage(materialsBuf_);
 	bdsu.image(images);
 	bdsu.sampler(samplers);
 }
@@ -1093,14 +1093,14 @@ vk::Semaphore Scene::upload() {
 	device().queueSubmitter().add(si);
 	if(updateDs) {
 		vpp::DescriptorSetUpdate dsu(ds_);
-		dsu.storage({{{modelIDs_}}});
-		dsu.storage({{{instanceBuf_}}});
-		dsu.storage({{{materialsBuf_}}});
+		dsu.storage(modelIDs_);
+		dsu.storage(instanceBuf_);
+		dsu.storage(materialsBuf_);
 
 		vpp::DescriptorSetUpdate bdsu(blendDs_);
-		bdsu.storage({{{blendModelIDs_}}});
-		bdsu.storage({{{instanceBuf_}}});
-		bdsu.storage({{{materialsBuf_}}});
+		bdsu.storage(blendModelIDs_);
+		bdsu.storage(instanceBuf_);
+		bdsu.storage(materialsBuf_);
 	}
 
 	return uploadSemaphore_;

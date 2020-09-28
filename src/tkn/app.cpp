@@ -23,6 +23,7 @@
 #include <argagg.hpp>
 #include <iostream>
 #include <thread>
+#include <csignal>
 
 // We do this to allowe switching in normal if expressions
 // instead of compile-time switches where possible
@@ -1167,6 +1168,10 @@ void App::dlgHandler(const struct dlg_origin* origin, const char* string) {
 	}
 
 	impl_->dlg.oldHandler(origin, string, impl_->dlg.oldData);
+
+	if(origin->level == dlg_level_error) {
+		std::raise(SIGINT); // tmp
+	}
 }
 
 void App::vkDebug(

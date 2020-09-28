@@ -78,8 +78,11 @@ add_project_arguments(
 	language: 'cpp')
 
 # project-specific stuff
-flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
-add_project_arguments(flag_dlg, language: 'cpp')
+defs = [
+	'-DDLG_BASE_PATH="' + source_root + '/"',
+	'-D\'NYTL_BYTES_ASSERT(x)=dlg_assert(x)\'',
+]
+add_project_arguments(defs, language: 'cpp')
 add_project_arguments('-DASIO_STANDALONE', language: 'cpp')
 
 # required dependencies
@@ -213,7 +216,13 @@ executable('dummy',
 
 executable('guitest',
 	'src/guitest/main.cpp',
-	dependencies: tkn_dep)
+	dependencies: [tkn_dep, dep_playground])
+
+executable('rvgscene', files(
+		'src/guitest/rvgscene.cpp',
+		'src/guitest/scene.cpp',
+		'src/guitest/buffer.cpp',
+	), dependencies: [tkn_dep, dep_playground])
 
 particles = build_target('particles', [
 		'src/particles/main.cpp',

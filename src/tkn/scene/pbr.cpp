@@ -127,8 +127,8 @@ void Cubemapper::record(vk::CommandBuffer cb, vk::ImageView equirect) {
 
 	// update ds
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.storage({{{}, cubemap_.vkImageView(), vk::ImageLayout::general}});
-	dsu.imageSampler({{{}, equirect, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.storage(cubemap_.vkImageView());
+	dsu.imageSampler(equirect);
 	dsu.apply();
 
 	// record
@@ -227,8 +227,8 @@ void Irradiancer::record(vk::CommandBuffer cb, vk::ImageView envMap) {
 
 	// update ds
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.storage({{{}, irradiance_.vkImageView(), vk::ImageLayout::general}});
-	dsu.imageSampler({{{}, envMap, vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.storage(irradiance_.vkImageView());
+	dsu.imageSampler(envMap);
 	dsu.apply();
 
 	// record
@@ -345,9 +345,8 @@ std::vector<EnvironmentMapFilter::Mip> EnvironmentMapFilter::record(
 
 			mip.ds = {dev.descriptorAllocator(), dsLayout_};
 			vpp::DescriptorSetUpdate dsu(mip.ds);
-			dsu.storage({{{}, mip.view, vk::ImageLayout::general}});
-			dsu.imageSampler({{{}, cubemap,
-				vk::ImageLayout::shaderReadOnlyOptimal}});
+			dsu.storage(mip.view);
+			dsu.imageSampler(cubemap);
 			dsu.apply();
 
 			vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::compute,
@@ -396,8 +395,8 @@ void SHProjector::create(const vpp::Device& dev, vk::Sampler linear) {
 
 void SHProjector::record(vk::CommandBuffer cb, vk::ImageView irradianceCube) {
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.imageSampler({{{}, irradianceCube, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.storage({{{dst_}}});
+	dsu.imageSampler(irradianceCube);
+	dsu.storage(dst_);
 	dsu.apply();
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);

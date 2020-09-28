@@ -7,10 +7,11 @@ layout(location = 0) in vec2 inPos;
 layout(location = 1) in vec2 inUV;
 layout(location = 2) in vec4 inColor;
 
-layout(location = 0) out vec2 outUV;
-layout(location = 1) out vec2 outPaintPos;
-layout(location = 2) out vec4 outColor;
-layout(location = 3) out flat uint outCmdIndex;
+layout(location = 0) out vec2 outPos;
+layout(location = 1) out vec2 outUV;
+layout(location = 2) out vec2 outPaintPos;
+layout(location = 3) out vec4 outColor;
+layout(location = 4) out flat uint outCmdIndex;
 
 //////////////////////////////////////////////////////////////////////////////
 // - Multidraw implementation -
@@ -18,7 +19,7 @@ layout(location = 3) out flat uint outCmdIndex;
 // But since vulkan does not require it, we need a custom workaround. In
 // this case we simply use a push constant.
 // Either way, we will define 'uint cmdIndex' that holds the command id.
-#ifdef MULTIDRAW
+#ifndef MULTIDRAW
 
 layout(push_constant) uniform DrawID {
 	uint cmdIndex;
@@ -64,16 +65,18 @@ layout(push_constant) uniform DrawID {
 //////////////////////////////////////////////////////////////////////////////
 
 void main() {
+	outUV = inUV;
+	outCmdIndex = cmdIndex;
+	outPos = inPos;
+
 	DrawCommand cmd = cmds[cmdIndex];
 	clipDists(cmd.clipStart, cmd.clipCount);
 
-	vec3 pos = transforms[cmd.transform] * vec3(inPos, 1.0);
-	gl_Position = vec4(pos.xy, 0.0, pos.z);
+	vec4 pos = transforms[cmd.transform] * vec4(inPos, 0.0, 1.0);
+	gl_Position = pos;
 
-	vec3 ppos = paints[cmd.paint].transform * vec3(inPos, 1.0);
+	vec3 ppos = mat3(paints[cmd.paint].transform) * vec3(inPos, 1.0);
 	outPaintPos = ppos.xy / ppos.z;
-	outUV = inUV;
-	outCmdIndex = cmdIndex;
 
 	// fill.frag expects *all* colors in linear space.
 	// polygon specifies that it - as everything in rvg - expects colors

@@ -9,6 +9,8 @@ layout(location = 2) in vec2 inPaintPos;
 layout(location = 3) in vec4 inColor;
 layout(location = 4) in flat uint inCmdIndex;
 
+layout(location = 0) out vec4 outColor;
+
 void doClipping(int planeStart, int planeCount) {
 #ifdef VERTEX_CLIP_DISTANCE
 	// If vertex plane clipping is supported, we already performed clipping
@@ -30,25 +32,26 @@ void doClipping(int planeStart, int planeCount) {
 }
 
 vec4 paintColor(vec2 coords, PaintData paint, vec4 col) {
-	if(paint.type == paintTypeColor) {
+	uint type = uint(paint.transform[3][3]);
+	if(type == paintTypeColor) {
 		return paint.inner;
-	} else if(paint.type == paintTypeLinGrad) {
+	} else if(type == paintTypeLinGrad) {
 		vec2 start = paint.custom.xy;
 		vec2 end = paint.custom.zw;
 		vec2 dir = end - start;
 		float fac = dot(coords - start, dir) / dot(dir, dir);
 		return mix(paint.inner, paint.outer, clamp(fac, 0, 1));
-	} else if(paint.type == paintTypeRadGrad) {
+	} else if(type == paintTypeRadGrad) {
 		vec2 center = paint.custom.xy;
 		float r1 = paint.custom.z;
 		float r2 = paint.custom.w;
 		float fac = (length(coords - center) - r1) / (r2 - r1);
 		return mix(paint.inner, paint.outer, clamp(fac, 0, 1));
-	} else if(paint.type == paintTypeTexRGBA) {
+	} else if(type == paintTypeTexRGBA) {
 		return paint.inner * texture(textures[uint(paint.custom.r)], coords);
-	} else if(paint.type == paintTypeTexA) {
+	} else if(type == paintTypeTexA) {
 		return paint.inner * texture(textures[uint(paint.custom.r)], coords).a;
-	} else if(paint.type == paintTypePointColor) {
+	} else if(type == paintTypePointColor) {
 		return col.rgba;
 	}
 
@@ -62,7 +65,7 @@ void main() {
 
 	PaintData paint = paints[cmd.paint];
 
-	vec4 outColor = paintColor(inPaintPos, paint, inColor);
+	outColor = paintColor(inPaintPos, paint, inColor);
 	if(cmd.type == drawTypeText) {
 		outColor.a *= texture(fontAtlas, inUV).a;
 	}
@@ -72,7 +75,7 @@ void main() {
 		float fw = cmd.uvFadeWidth;
 		// reference/alternative formulation for y antialiasing:
 		// min(1.0, 1.0 - (abs(inUV.y) - (1 - fw)) / fw)
-		float aaFacY = min(1.0, (1.0 - abs(inUv.y)) * fw);
+		float aaFacY = min(1.0, (1.0 - abs(inUv.y)) / fw);
 		float aaFacX = inUV.x;
 		outColor.a *= aaFacX * aaFacY;
 	}

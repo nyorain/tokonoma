@@ -140,12 +140,12 @@ void GaussianBlur::initInstance(Instance& ini, InstanceInitData& data) const {
 void GaussianBlur::updateInstance(Instance& ds, vk::ImageView view,
 		vk::ImageView tmp) const {
 	vpp::DescriptorSetUpdate dsu1(ds.ping);
-	dsu1.imageSampler({{{}, view, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu1.storage({{{}, tmp, vk::ImageLayout::general}});
+	dsu1.imageSampler(view);
+	dsu1.storage(tmp);
 
 	vpp::DescriptorSetUpdate dsu2(ds.pong);
-	dsu2.imageSampler({{{}, tmp, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu2.storage({{{}, view, vk::ImageLayout::general}});
+	dsu2.imageSampler(tmp);
+	dsu2.storage(view);
 }
 
 void GaussianBlur::record(vk::CommandBuffer cb, const Instance& instance,

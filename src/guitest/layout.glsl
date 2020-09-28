@@ -15,19 +15,18 @@ layout(set = 0, binding = 0) buffer ClipSet {
 	vec3 clipPlanes[];
 };
 
-layout(set = 0, binding = 1) buffer TransformSet {
-	mat3 transforms[];
+layout(set = 0, binding = 1, row_major) buffer TransformSet {
+	mat4 transforms[];
 };
 
 struct PaintData {
 	vec4 inner;
 	vec4 outer;
 	vec4 custom;
-	mat3 transform;
-	uint type;
+	mat4 transform;
 };
 
-layout(set = 0, binding = 2) buffer PaintSet {
+layout(set = 0, binding = 2, row_major) buffer PaintSet {
 	PaintData paints[];
 };
 

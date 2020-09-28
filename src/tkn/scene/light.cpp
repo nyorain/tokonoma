@@ -273,9 +273,8 @@ DirLight::DirLight(WorkBatcher& wb, const ShadowData& data) {
 		vk::BufferUsageBits::uniformBuffer, hostMem};
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
-	ldsu.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
-	ldsu.imageSampler({{{}, shadowMap(),
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ldsu.uniform(ubo_);
+	ldsu.imageSampler(shadowMap());
 	ldsu.apply();
 }
 
@@ -479,10 +478,8 @@ PointLight::PointLight(WorkBatcher& wb, const ShadowData& data,
 		vk::BufferUsageBits::uniformBuffer, hostMem};
 
 	vpp::DescriptorSetUpdate ldsu(ds_);
-	ldsu.uniform({{{ubo_}}});
-	ldsu.imageSampler({{{},
-		hasShadowMap() ? shadowMap() : noShadowMap,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
+	ldsu.uniform(ubo_);
+	ldsu.imageSampler(hasShadowMap() ? shadowMap() : noShadowMap);
 	ldsu.apply();
 
 	updateDevice();

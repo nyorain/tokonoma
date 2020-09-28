@@ -92,13 +92,10 @@ void HighLightPass::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 	vpp::nameHandle(target_, "HightLightPass:target");
 
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.imageSampler({{{}, lightInput,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, emissionInput ? emissionInput : lightInput,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.storage({{{}, target_.vkImageView(),
-		vk::ImageLayout::general}});
-	dsu.uniform({{{ubo_}}});
+	dsu.imageSampler(lightInput);
+	dsu.imageSampler(emissionInput ? emissionInput : lightInput);
+	dsu.storage(target_.vkImageView());
+	dsu.uniform(ubo_);
 
 	emission_ = (emissionInput);
 }
