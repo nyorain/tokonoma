@@ -2,9 +2,10 @@
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
 #include <nytl/bytes.hpp>
+#include <katachi/stroke.hpp>
 #include <dlg/dlg.hpp>
 
-namespace rvg {
+namespace rvg2 {
 
 // util
 namespace {
@@ -27,72 +28,63 @@ nytl::Span<const T> asSpan(nytl::Span<const std::byte> bytes) {
 
 } // anon namespace
 
+// functions
+// bool operator==(const DrawState& a, const DrawState& b) {
+// 	return
+// 		a.transformBuffer == b.transformBuffer &&
+// 		a.clipBuffer == b.clipBuffer &&
+// 		a.paintBuffer == b.paintBuffer &&
+// 		a.vertexBuffer == b.vertexBuffer &&
+// 		a.indexBuffer == b.indexBuffer &&
+// 		a.fontAtlas == b.fontAtlas &&
+// 		std::equal(
+// 			a.textures.begin(), a.textures.end(),
+// 			b.textures.begin(), b.textures.end());
+// }
+
+// TODO
+// maybe just implement polygonIntersection, it's the interesting one.
+// only implement it for convex polygons, that's all we are interested in,
+// can simply do sutherland hodgman.
+// move it to katachi tho.
+// std::vector<Vec2f> polygonIntersection(Span<const Vec2f> a, Span<const Vec2f> b) {
+// }
+//
+// std::vector<Vec2f> polygonUnion(Span<const Vec2f> a, Span<const Vec2f> b);
+//
 // VertexPool
-VertexPool::VertexPool(rvg::Context& ctx) :
-	Buffer(ctx, vk::BufferUsageBits::vertexBuffer, ctx.device().deviceMemoryTypes()) {
+VertexPool::VertexPool(Context& ctx, DevMemBits bits) :
+	Buffer(ctx, vk::BufferUsageBits::vertexBuffer, bits) {
 }
 
 // IndexPool
-IndexPool::IndexPool(rvg::Context& ctx) :
-	Buffer(ctx, vk::BufferUsageBits::indexBuffer, ctx.device().deviceMemoryTypes()) {
+IndexPool::IndexPool(Context& ctx, DevMemBits bits) :
+	Buffer(ctx, vk::BufferUsageBits::indexBuffer, bits) {
 }
 
 // TransformPool
-TransformPool::TransformPool(Context& ctx) :
-	Buffer(ctx, vk::BufferUsageBits::storageBuffer, ctx.device().deviceMemoryTypes()) {
+TransformPool::TransformPool(Context& ctx, DevMemBits bits) :
+	Buffer(ctx, vk::BufferUsageBits::storageBuffer, bits) {
 }
 
 // ClipPool
-ClipPool::ClipPool(Context& ctx) :
-	Buffer(ctx, vk::BufferUsageBits::storageBuffer, ctx.device().deviceMemoryTypes()) {
+ClipPool::ClipPool(Context& ctx, DevMemBits) :
+	Buffer(ctx, vk::BufferUsageBits::storageBuffer, bits) {
 }
 
 // PaintPool
-PaintPool::PaintPool(Context& ctx) :
-	Buffer(ctx, vk::BufferUsageBits::storageBuffer, ctx.device().deviceMemoryTypes()) {
+PaintPool::PaintPool(Context& ctx, DevMemBits) :
+	Buffer(ctx, vk::BufferUsageBits::storageBuffer, bits) {
 }
 
 void PaintPool::setTexture(unsigned i, vk::ImageView texture) {
-	dlg_assert(i < numTextures);
+	dlg_assert(i < context().numBindableTextures());
 	textures_.resize(std::max<std::size_t>(i, textures_.size()));
 	textures_[i] = texture;
 }
 
 // Scene
 Scene::Scene(Context& ctx) : context_(&ctx) {
-	const auto stages = vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment;
-	std::array<vk::Sampler, numTextures> samplers;
-	for(auto& s : samplers) {
-		s = context().textureSampler();
-	}
-
-	auto& dev = context().device();
-	auto bindings = std::array{
-		// clip
-		vpp::descriptorBinding(vk::DescriptorType::storageBuffer, stages),
-		// transform
-		vpp::descriptorBinding(vk::DescriptorType::storageBuffer, stages),
-		// paint, buffer + textures
-		vpp::descriptorBinding(vk::DescriptorType::storageBuffer, stages),
-		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler, stages,
-			samplers.data(), numTextures),
-		// draw commands
-		vpp::descriptorBinding(vk::DescriptorType::storageBuffer, stages),
-		// font atlas
-		vpp::descriptorBinding(vk::DescriptorType::combinedImageSampler, stages,
-			&context().textureSampler().vkHandle()),
-	};
-	dsl_.init(dev, bindings);
-
-	if(context().multidrawIndirect()) {
-		pipeLayout_ = {dev, {{dsl_.vkHandle()}}, {}};
-	} else {
-		vk::PushConstantRange pcr;
-		pcr.offset = 0u;
-		pcr.size = 4u;
-		pcr.stageFlags = vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment;
-		pipeLayout_ = {dev, {{dsl_.vkHandle()}}, {{pcr}}};
-	}
 }
 
 bool Scene::updateDevice() {
@@ -156,6 +148,8 @@ bool Scene::updateDevice() {
 	// update descriptors
 	std::vector<vpp::DescriptorSetUpdate> dsus;
 	auto updateDs = [&](auto& draw) {
+		// TODO: bind dummy buffer as fallback?
+		// or warn about them here
 		auto& dsu = dsus.emplace_back(draw.ds);
 		dsu.storage(draw.state.clipBuffer);
 		dsu.storage(draw.state.transformBuffer);
@@ -163,14 +157,15 @@ bool Scene::updateDevice() {
 
 		auto& texs = draw.state.textures;
 		auto binding = dsu.currentBinding();
-		dlg_assert(texs.size() <= numTextures);
+		dlg_assert(texs.size() <= context().numBindableTextures());
+		auto sampler = context().sampler();
 		for(auto i = 0u; i < texs.size(); ++i) {
-			dsu.imageSampler(texs[i], {}, binding, i);
+			dsu.imageSampler(texs[i], sampler, binding, i);
 		}
 
-		auto& emptyImage = context().emptyImage();
-		for(auto i = texs.size(); i < numTextures; ++i) {
-			dsu.imageSampler(emptyImage.vkImageView(), {}, binding, i);
+		auto dummyImage = context().dummyImageView();
+		for(auto i = texs.size(); i < context().numBindableTextures(); ++i) {
+			dsu.imageSampler(dummyImage, sampler, binding, i);
 		}
 
 		dsu.storage(ownCmdBuffer_);
@@ -191,7 +186,7 @@ bool Scene::updateDevice() {
 		}
 
 		dsUpdates_.clear();
-		if(!dynamicDescriptors()) {
+		if(!context().descriptorIndexing()) {
 			rerec = true;
 		}
 	}
@@ -205,9 +200,11 @@ void Scene::recordDraw(vk::CommandBuffer cb) {
 
 	const auto cmdSize = sizeof(vk::DrawIndexedIndirectCommand);
 	auto offset = indirectCmdBuffer_.offset();
+
+	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, context().pipe());
 	for(auto& draw : draws_) {
 		vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-			pipeLayout_, 0, {{draw.ds.vkHandle()}}, {});
+			context().pipeLayout(), 0, {{draw.ds.vkHandle()}}, {});
 
 		vk::cmdBindVertexBuffers(cb, 0,
 			{{draw.state.vertexBuffer.buffer()}}, {{draw.state.vertexBuffer.offset()}});
@@ -225,7 +222,7 @@ void Scene::recordDraw(vk::CommandBuffer cb) {
 					vk::ShaderStageBits::fragment |
 					vk::ShaderStageBits::vertex;
 
-				vk::cmdPushConstants(cb, pipeLayout_, pcrStages, 0, 4u, &pcrValue);
+				vk::cmdPushConstants(cb, context().pipeLayout(), pcrStages, 0, 4u, &pcrValue);
 				vk::cmdDrawIndexedIndirect(cb, indirectCmdBuffer_.buffer(), offset,
 					1, cmdSize);
 				offset += cmdSize;
@@ -243,7 +240,7 @@ void Scene::add(DrawSet set) {
 		// is resized, e.g. think of a case where something is hidden
 		// and shown again over and over (meaning in one frame a draw call is
 		// added, then not), we allocate a new ds every time.
-		draw.ds = {context().dsAllocator(), dsl_};
+		draw.ds = {context().dsAllocator(), context().dsLayout()};
 		dsUpdates_.push_back(id);
 
 		for(auto c = 0u; c < draw.commands.size(); ++c) {
@@ -365,19 +362,33 @@ void DrawRecorder::draw(const DrawCall& call) {
 	current_.commands.push_back(cmd);
 }
 
-// free
-bool operator==(const DrawState& a, const DrawState& b) {
-	return
-		a.transformBuffer == b.transformBuffer &&
-		a.clipBuffer == b.clipBuffer &&
-		a.paintBuffer == b.paintBuffer &&
-		a.vertexBuffer == b.vertexBuffer &&
-		a.indexBuffer == b.indexBuffer &&
-		a.fontAtlas == b.fontAtlas &&
-		std::equal(
-			a.textures.begin(), a.textures.end(),
-			b.textures.begin(), b.textures.end());
+// PolygonClip
+PolygonClip::PolygonClip(ClipPool& pool, std::vector<Vec2f> points) :
+		pool_(&pool), points_(std::move(points)) {
+	if(points.empty()) {
+		id_ = 0u;
+		return;
+	}
+
+	ktc::enforceWinding(points, false); // counter-clockwise
+	std::vector<Vec3f> planes;
+	for(auto i = 0u; i < points.size(); ++i) {
+		auto curr = points[i];
+		auto next = points[(i + 1) % points.size()];
+		auto line = next - curr;
+		auto normal = Vec2f{line.y, -line.x}; // right normal
+		auto d = dot(normal, curr);
+		planes.push_back({normal.x, normal.y, d});
+	}
+
+	id_ = pool_->create(planes);
 }
 
-} // namespace rvg
+PolygonClip::~PolygonClip() {
+	if(pool_) {
+		pool_->free(id_, points.size());
+	}
+}
+
+} // namespace rvg2
 

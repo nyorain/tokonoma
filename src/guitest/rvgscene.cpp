@@ -1,3 +1,4 @@
+#include "context.hpp"
 #include "scene.hpp"
 #include <tkn/singlePassApp.hpp>
 #include <tkn/types.hpp>
@@ -7,8 +8,8 @@
 #include <tkn/pipeline.hpp>
 #include <dlg/dlg.hpp>
 #include <nytl/matOps.hpp>
-#include <rvg/context.hpp>
-#include <rvg/font.hpp>
+#include <vpp/submit.hpp>
+#include <vpp/queue.hpp>
 #include <vpp/vk.hpp>
 
 using namespace tkn::types;
@@ -21,15 +22,24 @@ public:
 			return false;
 		}
 
-		rvgInit();
+		// context
+		rvg2::ContextSettings ctxs;
+		ctxs.deviceFeatures = rvg2::DeviceFeature::uniformDynamicArrayIndexing;
+		ctxs.renderPass = renderPass();
+		ctxs.uploadQueueFamily = vkDevice().queueSubmitter().queue().family();
+		ctxs.subpass = 0u;
+		ctxs.samples = vk::SampleCountBits::e1;
+
+		context_ = std::make_unique<rvg2::Context>(vkDevice(), ctxs);
 
 		// scene setup
-		scene_ = std::make_unique<rvg::Scene>(rvgContext());
-		transformPool_ = std::make_unique<rvg::TransformPool>(rvgContext());
-		clipPool_ = std::make_unique<rvg::ClipPool>(rvgContext());
-		paintPool_ = std::make_unique<rvg::PaintPool>(rvgContext());
-		vertexPool_ = std::make_unique<rvg::VertexPool>(rvgContext());
-		indexPool_ = std::make_unique<rvg::IndexPool>(rvgContext());
+		auto& ctx = *context_;
+		scene_ = std::make_unique<rvg2::Scene>(ctx);
+		transformPool_ = std::make_unique<rvg2::TransformPool>(ctx);
+		clipPool_ = std::make_unique<rvg2::ClipPool>(ctx);
+		paintPool_ = std::make_unique<rvg2::PaintPool>(ctx);
+		vertexPool_ = std::make_unique<rvg2::VertexPool>(ctx);
+		indexPool_ = std::make_unique<rvg2::IndexPool>(ctx);
 
 		auto plane = nytl::Vec3f{1, 0, -10000};
 		clipID_ = clipPool_->create(plane);
@@ -40,7 +50,7 @@ public:
 		// transformPool_->writable(transformID_) = nytl::identity<4, float>();
 
 		{
-			std::array<rvg::Vertex, 4> verts;
+			std::array<rvg2::Vertex, 4> verts;
 			verts[0] = {{0.5f, 0.5f}, {0.f, 0.f}, {}};
 			verts[1] = {{0.5f, 0.75f}, {0.f, 0.f}, {}};
 			verts[2] = {{0.75f, 0.75f}, {0.f, 0.f}, {}};
@@ -54,14 +64,14 @@ public:
 			}
 			draw0_.indexID = indexPool_->create(inds);
 
-			rvg::PaintPool::PaintData paintData {};
+			rvg2::PaintPool::PaintData paintData {};
 			paintData.inner = {1.f, 0.1f, 0.8f, 1.f};
 			paintData.transform[3][3] = 1u;
 			draw0_.paintID = paintPool_->create(paintData);
 		}
 
 		{
-			std::array<rvg::Vertex, 4> verts;
+			std::array<rvg2::Vertex, 4> verts;
 			verts[0] = {{-0.5f, -0.5f}, {0.f, 0.f}, {}};
 			verts[1] = {{-0.5f, -0.75f}, {0.f, 0.f}, {}};
 			verts[2] = {{-0.75f, -0.75f}, {0.f, 0.f}, {}};
@@ -75,37 +85,11 @@ public:
 			}
 			draw1_.indexID = indexPool_->create(inds);
 
-			rvg::PaintPool::PaintData paintData {};
+			rvg2::PaintPool::PaintData paintData {};
 			paintData.inner = {0.8f, 0.8f, 0.5f, 1.f};
 			paintData.transform[3][3] = 1u;
 			draw1_.paintID = paintPool_->create(paintData);
 		}
-
-		// setup pipeline
-		auto& dev = vkDevice();
-		auto& sc = tkn::ShaderCache::instance(dev);
-		auto preamble = "#define MULTIDRAW\n";
-		auto vert = sc.load("guitest/fill2.vert", preamble).mod;
-		auto frag = sc.load("guitest/fill2.frag", preamble).mod;
-
-		vpp::GraphicsPipelineInfo gpi(renderPass(), scene_->pipeLayout(), {{{
-			{vert, vk::ShaderStageBits::vertex},
-			{frag, vk::ShaderStageBits::fragment}
-		}}}, 0u, samples());
-
-		using Vertex = rvg::Vertex;
-		auto vertexInfo = tkn::PipelineVertexInfo{{
-				{0, 0, vk::Format::r32g32Sfloat, offsetof(Vertex, pos)},
-				{1, 0, vk::Format::r32g32Sfloat, offsetof(Vertex, uv)},
-				{2, 0, vk::Format::r8g8b8a8Unorm, offsetof(Vertex, color)},
-			}, {
-				{0, sizeof(Vertex), vk::VertexInputRate::vertex},
-			}
-		};
-
-		gpi.vertex = vertexInfo.info();
-		gpi.assembly.topology = vk::PrimitiveTopology::triangleList;
-		pipe_ = {dev, gpi.info()};
 
 		return true;
 	}
@@ -123,10 +107,10 @@ public:
 			rec.bind(*indexPool_);
 			rec.bind(*paintPool_);
 			// rec.bindFontAtlas(rvgContext().defaultAtlas().texture().vkImageView());
-			rec.bindFontAtlas(rvgContext().emptyImage().vkImageView());
+			rec.bindFontAtlas(context_->dummyImageView());
 
 			for(auto& draw : {draw0_, draw1_}) {
-				rvg::DrawCall call;
+				rvg2::DrawCall call;
 				call.transform = transformID_;
 				call.paint = draw.paintID;
 				call.clipStart = clipID_;
@@ -160,12 +144,18 @@ public:
 			Base::scheduleRerecord();
 		}
 
+		vk::SubmitInfo si;
+		auto sem = context_->endFrameSubmit(si);
+		if(sem) {
+			auto& qs = vkDevice().queueSubmitter();
+			qs.add(si);
+			addSemaphore(sem, vk::PipelineStageBits::allGraphics);
+		}
+
 		Base::updateDevice();
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		rvgContext().bindDefaults(cb);
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, pipe_);
 		scene_->recordDraw(cb);
 	}
 
@@ -182,14 +172,13 @@ public:
 	const char* name() const override { return "rvg-scene-test"; }
 
 protected:
-	vpp::Pipeline pipe_;
-
-	std::unique_ptr<rvg::Scene> scene_;
-	std::unique_ptr<rvg::TransformPool> transformPool_;
-	std::unique_ptr<rvg::ClipPool> clipPool_;
-	std::unique_ptr<rvg::PaintPool> paintPool_;
-	std::unique_ptr<rvg::VertexPool> vertexPool_;
-	std::unique_ptr<rvg::IndexPool> indexPool_;
+	std::unique_ptr<rvg2::Context> context_;
+	std::unique_ptr<rvg2::Scene> scene_;
+	std::unique_ptr<rvg2::TransformPool> transformPool_;
+	std::unique_ptr<rvg2::ClipPool> clipPool_;
+	std::unique_ptr<rvg2::PaintPool> paintPool_;
+	std::unique_ptr<rvg2::VertexPool> vertexPool_;
+	std::unique_ptr<rvg2::IndexPool> indexPool_;
 
 	unsigned clipID_;
 	unsigned transformID_;

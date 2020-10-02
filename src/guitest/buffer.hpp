@@ -1,7 +1,5 @@
 #pragma once
 
-#include <rvg/fwd.hpp>
-#include <rvg/context.hpp>
 #include <vpp/fwd.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
@@ -10,9 +8,19 @@
 #include <cstdint>
 #include <algorithm>
 
-namespace rvg {
+namespace rvg2 {
 
+class Context;
 using u32 = std::uint32_t;
+static constexpr auto invalid = u32(0xFFFFFFFFu);
+
+enum class DevMemType {
+	all,
+	hostVisible,
+	deviceLocal,
+};
+
+using DevMemBits = std::variant<u32, DevMemType>;
 
 namespace detail {
 
@@ -21,23 +29,27 @@ struct BufferSpan {
 	vk::DeviceSize count;
 };
 
+// TODO: add reserve, shrink mechanisms
+// TODO: add more intelligent realloc here
+// TODO: more intelligent over-allocation, also make sure we never
+//   allocate buffer sizes below a certain threshold
+// TODO: support deferred initialization
 struct GpuBuffer {
-	rvg::Context* context_;
+	Context* context_;
 	vk::BufferUsageFlags usage_;
 	u32 memBits_;
 	std::vector<BufferSpan> updates_;
 	std::vector<BufferSpan> free_;
 	vpp::SubBuffer buffer_;
 
-	GpuBuffer(rvg::Context& ctx, vk::BufferUsageFlags usage, u32 memBits);
-	unsigned allocate(unsigned count);
-	void free(unsigned id, unsigned count);
-	bool updateDevice(unsigned typeSize, nytl::Span<const std::byte> data);
+	GpuBuffer(Context& ctx, vk::BufferUsageFlags usage, DevMemBits memBits);
+	u32 allocate(u32 count);
+	void free(u32 id, u32 count);
+	bool updateDevice(u32 typeSize, nytl::Span<const std::byte> data);
 };
 
 } // namespace detail
 
-// TODO: add reserve, shrink mechanisms
 // TODO(opt, low): we could add a FixedSizeBuffer where all allocations
 // have the same size, simplifies some things and allows us to get rid of
 // Span (and its size member).
@@ -47,7 +59,7 @@ public:
 	using Type = T;
 
 public:
-	Buffer(rvg::Context& ctx, vk::BufferUsageFlags usage, u32 memBits) :
+	Buffer(Context& ctx, vk::BufferUsageFlags usage, DevMemBits memBits) :
 		buffer_(ctx, usage, memBits) {
 	}
 
@@ -59,10 +71,49 @@ public:
 
 	unsigned allocate(unsigned count = 1) {
 		auto id = buffer_.allocate(count);
-		if(id == 0xFFFFFFFFu) {
+		if(id == invalid) {
 			id = data_.size();
 		}
 		data_.resize(std::max<unsigned>(data_.size(), id + count));
+		return id;
+	}
+
+	unsigned realloc(unsigned startID, unsigned count, unsigned newCount) {
+		// TODO: more intelligent algorithm that first checks whether
+		// it can be extended.
+		if(!count) {
+			return allocate(newCount);
+		}
+
+		// First, get a new logcial allocation on the buffer.
+		// Important to free first, so that the allocation will just
+		// be extended in-place if possible.
+		buffer_.free(startID, count);
+		auto id = buffer_.allocate(newCount);
+		if(id == invalid) {
+			id = data_.size();
+		}
+
+		// Check whether this allocation was the last in our logical state.
+		if(startID + count == data_.size()) {
+			// If so, we resize our logical state to tightly fit the new
+			// allocation.
+			auto newEnd = (id == data_.size()) ? (startID + newCount) : startID;
+			data_.resize(newEnd);
+		} else {
+			// Otherwise, just make sure our logical state is large enough.
+			data_.resize(std::max<unsigned>(data_.size(), id + newCount));
+		}
+
+		// Now copy from the old allocation in our logical state to the
+		// new allocation.
+		auto mcount = std::min(count, newCount);
+		auto b = data_.data();
+		// We don't use std::copy since our ranges may overlap in any way.
+		// std::memmove guarantees out it works, and Buffer is designed
+		// for trivial types anyways.
+		// std::copy(b + id, b + id + mcount, b + startID);
+		std::memmove(b + id, b + startID, mcount);
 		return id;
 	}
 
@@ -112,11 +163,22 @@ public:
 		return data_[id];
 	}
 
+	const T& read(unsigned id) const {
+		NYTL_BYTES_ASSERT(data_.size() > id);
+		return data_[id];
+	}
+
+	nytl::Span<const T> read(unsigned startID, unsigned count) const {
+		NYTL_BYTES_ASSERT(data_.size() >= startID + count);
+		auto full = nytl::span(data_);
+		return full.subspan(startID, count);
+	}
+
 	bool updateDevice() {
 		return buffer_.updateDevice(sizeof(T), nytl::bytes(data_));
 	}
 
-	rvg::Context& context() const { return *buffer_.context_; }
+	Context& context() const { return *buffer_.context_; }
 	const vpp::SubBuffer& buffer() const { return buffer_.buffer_; }
 	const std::vector<T>& data() const { return data_; }
 
@@ -125,5 +187,47 @@ protected:
 	detail::GpuBuffer buffer_;
 	std::vector<T> data_;
 };
+
+
+/*
+// Buffer that tracks allocation and therefore does not require the size
+// of the allocation when freeing.
+template<typename T>
+class AllocTrackedBuffer : public Buffer<T> {
+public:
+	using Buffer<T>::Buffer;
+	unsigned allocate(unsigned count) {
+		auto off = Buffer<T>::allocate(count);
+		auto it = std::lower_bound(allocations_.begin(), allocations_.end(), off,
+			[](auto span, auto offset) { return span.offset < offset; });
+		allocations_.insert(it, {off, count});
+		return off;
+	}
+
+	void free(unsigned start) {
+		auto it = std::lower_bound(allocations_.begin(), allocations_.end(), start,
+			[](auto span, auto start) { return span.start < start; });
+		assert(it != allocations_.end() && it->start == start &&
+			"No allocation for given offset");
+		Buffer<T>::free(it->start, it->count);
+		allocations_.erase(it);
+	}
+
+	void free(unsigned start, unsigned count) {
+		// debug check that allocation exists
+		auto it = std::lower_bound(allocations_.begin(), allocations_.end(), start,
+			[](auto span, auto start) { return span.start < start; });
+		assert(it != allocations_.end() &&
+			it->start == start &&
+			it->count == count &&
+			"No allocation for given offset and size");
+		Buffer<T>::free(start, count);
+		allocations_.erase(it);
+	}
+
+protected:
+	std::vector<detail::BufferSpan> allocations_;
+};
+*/
 
 } // namespace rvg

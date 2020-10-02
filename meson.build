@@ -218,11 +218,13 @@ executable('guitest',
 	'src/guitest/main.cpp',
 	dependencies: [tkn_dep, dep_playground])
 
-executable('rvgscene', files(
+executable('rvgscene', [
 		'src/guitest/rvgscene.cpp',
 		'src/guitest/scene.cpp',
 		'src/guitest/buffer.cpp',
-	), dependencies: [tkn_dep, dep_playground])
+		'src/guitest/context.cpp',
+		guitest_shaders,
+	], dependencies: [tkn_dep, dep_playground])
 
 particles = build_target('particles', [
 		'src/particles/main.cpp',

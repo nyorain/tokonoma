@@ -166,9 +166,8 @@ public:
 
 		render_.ds = {dev.descriptorAllocator(), render_.dsLayout};
 		vpp::DescriptorSetUpdate dsu(render_.ds);
-		dsu.uniform({{{render_.ubo}}});
-		dsu.imageSampler({{{}, render_.noiseView,
-			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.uniform(render_.ubo);
+		dsu.imageSampler(render_.noiseView);
 
 		return loadGfxPipe();
 	}
@@ -225,11 +224,10 @@ public:
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
 		vpp::DescriptorSetUpdate dsu1(sky_.cubemapDs);
-		dsu1.imageSampler({{{}, sky_.cubemaps.imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu1.imageSampler(sky_.cubemaps.imageView());
 
 		vpp::DescriptorSetUpdate dsu2(sky_.uboDs);
-		dsu2.uniform({{{sky_.ubo}}});
+		dsu2.uniform(sky_.ubo);
 
 		vpp::apply({{dsu1, dsu2}});
 	}

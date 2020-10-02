@@ -273,6 +273,10 @@ shaders_src = {
 	'dm': [
 		['model.frag'],
 	],
+	'guitest': [
+		['fill2.vert'],
+		['fill2.frag'],
+	],
 }
 
 # build them

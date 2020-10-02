@@ -1,13 +1,30 @@
 #include "buffer.hpp"
+#include "context.hpp"
 #include <dlg/dlg.hpp>
 #include <vpp/vk.hpp>
 
-namespace rvg {
+namespace rvg2 {
 namespace detail {
 
+template<typename ...Ts>
+struct Visitor : Ts...  {
+    Visitor(const Ts&... args) : Ts(args)...  {}
+    using Ts::operator()...;
+};
 
-GpuBuffer::GpuBuffer(rvg::Context& ctx, vk::BufferUsageFlags usage, u32 memBits) :
-		context_(&ctx), usage_(usage), memBits_(memBits) {
+GpuBuffer::GpuBuffer(Context& ctx, vk::BufferUsageFlags usage, DevMemBits memBits) :
+		context_(&ctx), usage_(usage) {
+
+	memBits_ = std::visit(Visitor{
+		[](u32 memBits) { return memBits; },
+		[&](DevMemType mt) -> u32 {
+			switch(mt) {
+				case DevMemType::all: return 0xFFFFFFFFu;
+				case DevMemType::hostVisible: return ctx.device().hostMemoryTypes();
+				case DevMemType::deviceLocal: return ctx.device().deviceMemoryTypes();
+			}
+		}}, memBits);
+
 	// if buffer might be allocated on non-host-visible memory, make sure
 	// to include transferDst flag
 	// TODO: ignore invalid bits that don't correspond to heap?
@@ -52,7 +69,7 @@ bool GpuBuffer::updateDevice(unsigned typeSize, nytl::Span<const std::byte> data
 
 			map.flush();
 		} else {
-			auto cb = ctx.uploadCmdBuf();
+			auto cb = ctx.recordableUploadCmdBuf();
 
 			// check how large the stage buf must be
 			auto stageSize = 0u;
@@ -98,8 +115,7 @@ bool GpuBuffer::updateDevice(unsigned typeSize, nytl::Span<const std::byte> data
 			}
 
 			vk::cmdCopyBuffer(cb, stage.buffer(), buffer_.buffer(), copies);
-			ctx.addStage(std::move(stage));
-			ctx.addCommandBuffer({}, std::move(cb)); // TODO
+			ctx.keepAlive(std::move(stage));
 		}
 	}
 	updates_.clear();

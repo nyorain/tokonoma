@@ -244,7 +244,7 @@ void saveBrdf(const char* filename, const vpp::Device& dev) {
 	// ds
 	auto ds = vpp::TrDs(dev.descriptorAllocator(), dsLayout);
 	vpp::DescriptorSetUpdate dsu(ds);
-	dsu.storage({{{}, lut.vkImageView(), vk::ImageLayout::general}});
+	dsu.storage(lut.vkImageView());
 	dsu.apply();
 
 	// record
