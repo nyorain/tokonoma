@@ -91,5 +91,11 @@ private:
 //std::vector<Vec2f> polygonIntersection(Span<const Vec2f> a, Span<const Vec2f> b);
 //std::vector<Vec2f> polygonUnion(Span<const Vec2f> a, Span<const Vec2f> b);
 
+// TODO
+struct Transform {
+	TransformPool* pool;
+	unsigned id;
+};
+
 } // namespace rvg2
 

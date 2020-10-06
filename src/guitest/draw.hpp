@@ -52,6 +52,31 @@ struct Draw {
 	float uvFadeWidth {0.f};
 };
 
+class DrawDescriptor {
+public:
+	DrawDescriptor(Context&);
+
+	bool updateDevice();
+
+	void state(const DrawState& state) {
+		updateDs_ = true;
+		state_ = state;
+	}
+	const DrawState& state() const {
+		return state_;
+	}
+	DrawState& changeState() {
+		updateDs_ = true;
+		return state_;
+	}
+
+protected:
+	bool updateDs_ {true};
+	DrawState state_;
+	Context* context_ {};
+	vpp::TrDs ds_;
+};
+
 /// Represents a single (multi-)draw call.
 /// Batches multiple draws that all have the same state (pools).
 class DrawCall {
@@ -67,23 +92,25 @@ public:
 	// changing the state will require a subsequent rerecord.
 	void record(vk::CommandBuffer cb);
 
-	// Returns whether a re-record is needed.
-	bool updateDevice();
-
-	void reserve(unsigned size);
-	unsigned add(nytl::Span<const Draw> draw);
-	unsigned add(const Draw& draw);
 	void write(unsigned id, nytl::Span<const Draw> draw);
 	void write(unsigned id, const Draw& draw);
 	Draw get(unsigned id);
+
+	// When these function are called, a re-record is needed.
+	void clear();
+	void reserve(unsigned size);
+	unsigned add(nytl::Span<const Draw> draw);
+	unsigned add(const Draw& draw);
 	void remove(unsigned id);
-	// TODO: remote(unsigned id, unsigned count)?
+
+	void descriptor(vk::DescriptorSet ds) { ds_ = ds; }
+	vk::DescriptorSet descriptor() const { return ds_; }
+
+	// TODO: remove(unsigned id, unsigned count)?
 	// TODO: add insert api (positional addition).
+	//   but how to keep ids in that case?
 
 	Context& context() const { return pool_->indirectCmdBuf.context(); }
-
-protected:
-	void free();
 
 protected:
 	DrawPool* pool_ {};
@@ -92,15 +119,20 @@ protected:
 	u32 size_ {};
 	u32 reserved_ {};
 
-	vpp::TrDs ds_ {};
+	vk::DescriptorSet ds_ {};
 	DrawState state_ {};
-	bool updateDs_ {true};
 	bool rerecord_ {true};
+};
+
+struct DrawInstance {
+	DrawCall* call;
+	u32 id;
 };
 
 class DrawRecorder {
 public:
-	DrawRecorder(Context& ctx, std::vector<DrawCall>& drawCalls);
+	DrawRecorder(Context& ctx, std::vector<DrawCall>& drawCalls,
+		std::vector<DrawDescriptor>& descriptors);
 	~DrawRecorder();
 
 	void bindTransformBuffer(vpp::BufferSpan);
@@ -115,7 +147,7 @@ public:
 	void bindPaint(u32);
 	void bindClips(u32 start, u32 end);
 
-	void draw(u32 indexStart, u32 indexCount, u32 firstVertex,
+	DrawInstance draw(u32 indexStart, u32 indexCount, u32 firstVertex,
 		u32 type, float uvFadeWidth);
 
 	// TODO: good idea? binding everything at once
@@ -150,6 +182,7 @@ protected:
 
 	Context* context_ {};
 	std::vector<DrawCall>* calls_;
+	std::vector<DrawDescriptor>* descriptors_;
 };
 
 } // namespace rvg

@@ -26,17 +26,18 @@ bool operator==(const DrawState& a, const DrawState& b) {
 }
 
 DrawCall::DrawCall(DrawPool& pool) : pool_(&pool) {
-	auto& ctx = pool.bindingsCmdBuf.context();
-	ds_ = {ctx.dsAllocator(), ctx.dsLayout()};
 }
 
 DrawCall::~DrawCall() {
-	free();
+	if(pool_ && reserved_) {
+		pool_->indirectCmdBuf.free(indirectBufID_, reserved_);
+		pool_->bindingsCmdBuf.free(bindingsBufID_, reserved_);
+	}
 }
 
 void DrawCall::record(vk::CommandBuffer cb) {
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
-		context().pipeLayout(), 0, {{ds_.vkHandle()}}, {});
+		context().pipeLayout(), 0, {{ds_}}, {});
 	vk::cmdBindVertexBuffers(cb, 0,
 		{{state_.vertexBuffer.buffer()}}, {{state_.vertexBuffer.offset()}});
 	vk::cmdBindIndexBuffer(cb, state_.indexBuffer.buffer(),
@@ -63,49 +64,6 @@ void DrawCall::record(vk::CommandBuffer cb) {
 	}
 }
 
-bool DrawCall::updateDevice() {
-	auto ret = rerecord_;
-	if(updateDs_) {
-		vpp::DescriptorSetUpdate dsu(ds_);
-
-		// TODO: bind dummy buffer as fallback?
-		// or warn about them here
-		dsu.storage(state_.clipBuffer);
-		dsu.storage(state_.transformBuffer);
-		dsu.storage(state_.paintBuffer);
-
-		auto& texs = state_.textures;
-		auto binding = dsu.currentBinding();
-		dlg_assert(texs.size() <= context().numBindableTextures());
-		auto sampler = context().sampler();
-		for(auto i = 0u; i < texs.size(); ++i) {
-			dsu.imageSampler(texs[i], sampler, binding, i);
-		}
-
-		auto dummyImage = context().dummyImageView();
-		for(auto i = texs.size(); i < context().numBindableTextures(); ++i) {
-			dsu.imageSampler(dummyImage, sampler, binding, i);
-		}
-
-		dsu.storage(pool_->bindingsCmdBuf.buffer());
-		dsu.imageSampler(state_.fontAtlas);
-
-		// when descriptor indexing is active, no rerecord is needed
-		ret |= !context().descriptorIndexing();
-	}
-
-	updateDs_ = false;
-	rerecord_ = false;
-	return ret;
-}
-
-void DrawCall::free() {
-	if(pool_ && reserved_) {
-		pool_->indirectCmdBuf.free(indirectBufID_, reserved_);
-		pool_->bindingsCmdBuf.free(bindingsBufID_, reserved_);
-	}
-}
-
 void DrawCall::reserve(unsigned i) {
 	if(reserved_ >= i) {
 		return;
@@ -121,6 +79,10 @@ void DrawCall::reserve(unsigned i) {
 	reserved_ = i;
 }
 
+void DrawCall::clear() {
+	size_ = 0u;
+}
+
 unsigned DrawCall::add(nytl::Span<const Draw> draw) {
 	// check that we enough space
 	auto req = size_ + draw.size();
@@ -131,6 +93,10 @@ unsigned DrawCall::add(nytl::Span<const Draw> draw) {
 	auto id = size_;
 	write(id, draw);
 	size_ += draw.size();
+
+	// TODO; we could avoid this if we always make reserrved_
+	// draws (with the not used ones empty).
+	rerecord_ = true;
 	return id;
 }
 
@@ -207,6 +173,44 @@ DrawRecorder::DrawRecorder(Context& ctx, std::vector<DrawCall>& drawCalls) {
 }
 
 DrawRecorder::~DrawRecorder() {
+}
+
+// DrawDescriptor
+DrawDescriptor::DrawDescriptor(Context& ctx) : context_(&ctx) {
+	ds_ = {ctx.dsAllocator(), ctx.dsLayout()};
+}
+
+bool DrawDescriptor::updateDevice() {
+	if(!updateDs_) {
+		return false;
+	}
+
+	vpp::DescriptorSetUpdate dsu(ds_);
+
+	// TODO: bind dummy buffer as fallback?
+	// or warn about them here
+	dsu.storage(state_.clipBuffer);
+	dsu.storage(state_.transformBuffer);
+	dsu.storage(state_.paintBuffer);
+
+	auto& texs = state_.textures;
+	auto binding = dsu.currentBinding();
+	dlg_assert(texs.size() <= context().numBindableTextures());
+	auto sampler = context().sampler();
+	for(auto i = 0u; i < texs.size(); ++i) {
+		dsu.imageSampler(texs[i], sampler, binding, i);
+	}
+
+	auto dummyImage = context().dummyImageView();
+	for(auto i = texs.size(); i < context().numBindableTextures(); ++i) {
+		dsu.imageSampler(dummyImage, sampler, binding, i);
+	}
+
+	dsu.storage(pool_->bindingsCmdBuf.buffer());
+	dsu.imageSampler(state_.fontAtlas);
+
+	// when descriptor indexing is active, no rerecord is needed
+	return !context().descriptorIndexing();
 }
 
 } // namespace rvg2

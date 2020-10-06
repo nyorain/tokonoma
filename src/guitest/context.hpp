@@ -11,6 +11,7 @@ namespace rvg2 {
 class Context;
 
 // Potentially supported device features/extensions.
+// TODO: support AMD's indirect draw count buffer extension
 enum class DeviceFeature {
 	// This feature is required.
 	// It's only in this list (and must be passed when creating a context)
