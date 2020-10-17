@@ -5,6 +5,7 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/image.hpp>
+#include <nytl/flags.hpp>
 
 namespace rvg2 {
 
@@ -22,39 +23,45 @@ enum class DeviceFeature {
 	// can slightly improve performance.
 	multidrawIndirect = (1u << 1),
 
-	// Optional, allows more updates (e.g. pool buffer reallocation) without
-	// requiring a command buffer re-record. Also allows a lot more textures
-	// per paint pool, potentially minimizing the number of state changes
-	// when many textures are needed for drawing.
-	descriptorIndexing = (1u << 2),
-
 	// Optional, makes plane clipping more efficient.
 	// The number of supported clip planes will be queried and used
 	// automatically in the vertex shader instead of performing this
 	// custom clipping in the fragment shader.
-	clipDistance = (1u << 3),
+	clipDistance = (1u << 2),
 };
 
-/// Control various aspects of a context.
-/// You have to set those members that have no default value to valid
-/// values.
+using DeviceFeatureFlags = nytl::Flags<DeviceFeature>;
+NYTL_FLAG_OPS(DeviceFeature)
+
+// Control various aspects of a context.
+// You have to set those members that have no default value to valid
+// values.
 struct ContextSettings {
-	/// The renderpass and subpass in which it will be used.
-	/// Must be specified for pipeline creation.
+	// The renderpass and subpass in which it will be used.
+	// Must be specified for pipeline creation.
 	vk::RenderPass renderPass;
 	unsigned subpass;
 	unsigned uploadQueueFamily;
 
-	/// Which device features are supported.
-	/// See DeviceFeatures for more information.
-	nytl::Flags<DeviceFeature> deviceFeatures;
+	// Which device features are supported.
+	// See DeviceFeatures for more information.
+	DeviceFeatureFlags deviceFeatures;
 
-	/// The multisample bits to use for the pipelines.
+	// The multisample bits to use for the pipelines.
 	vk::SampleCountBits samples {};
 
-	/// The pipeline cache to use.
-	/// Will use no cache if left empty.
+	// The pipeline cache to use.
+	// Will use no cache if left empty.
 	vk::PipelineCache pipelineCache {};
+
+	// Optional, can be passed to indicate that descriptor indexing is supported
+	// (via extension or vulkan 1.2, does not matter) and which
+	// features were enabled.
+	// Potentially allows more updates (e.g. pool buffer reallocation) without
+	// requiring a command buffer re-record. Also allows a lot more textures
+	// per paint pool, potentially minimizing the number of state changes
+	// when many textures are needed for drawing.
+	const vk::PhysicalDeviceDescriptorIndexingFeaturesEXT* descriptorIndexingFeatures {};
 };
 
 class Context {
@@ -77,9 +84,9 @@ public:
 	void keepAlive(vpp::SubBuffer);
 	void keepAlive(vpp::ViewableImage);
 
-	vpp::BufferAllocator& bufferAllocator() const;
-	vpp::DescriptorAllocator& dsAllocator() const;
-	vpp::DeviceMemoryAllocator& devMemAllocator() const;
+	vpp::BufferAllocator& bufferAllocator();
+	vpp::DescriptorAllocator& dsAllocator();
+	vpp::DeviceMemoryAllocator& devMemAllocator();
 
 	const vpp::Device& device() const { return dev_; }
 	const vpp::TrDsLayout& dsLayout() const { return dsLayout_; }
@@ -89,13 +96,16 @@ public:
 	vk::ImageView dummyImageView() const { return dummyImage_.vkImageView(); }
 	vpp::BufferSpan dummyBuffer() const { return dummyBuffer_; }
 
+	vpp::BufferSpan defaultTransform() const;
+	vpp::BufferSpan defaultPaint() const;
+
 	const ContextSettings& settings() const { return settings_; }
 	unsigned numBindableTextures() const { return numBindableTextures_; }
 	bool multidrawIndirect() const {
 		return settings().deviceFeatures & DeviceFeature::multidrawIndirect;
 	}
-	bool descriptorIndexing() const {
-		return settings().deviceFeatures & DeviceFeature::descriptorIndexing;
+	const auto* descriptorIndexingFeatures() const {
+		return descriptorIndexing_.get();
 	}
 
 private:
@@ -124,9 +134,10 @@ private:
 	KeepAlive keepAliveLast_;
 
 	ContextSettings settings_;
-	unsigned numBindableTextures_;
-};
+	unsigned numBindableTextures_ {};
 
-NYTL_FLAG_OPS(DeviceFeature)
+	std::unique_ptr<vk::PhysicalDeviceDescriptorIndexingFeaturesEXT> descriptorIndexing_ {};
+	vpp::DescriptorAllocator dsAlloc_ {};
+};
 
 } // namespace rvg2

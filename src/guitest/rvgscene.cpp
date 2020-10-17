@@ -1,4 +1,6 @@
 #include "context.hpp"
+#include "draw.hpp"
+#include "polygon.hpp"
 #include "scene.hpp"
 #include <tkn/singlePassApp.hpp>
 #include <tkn/types.hpp>
@@ -24,7 +26,7 @@ public:
 
 		// context
 		rvg2::ContextSettings ctxs;
-		ctxs.deviceFeatures = rvg2::DeviceFeature::uniformDynamicArrayIndexing;
+		ctxs.deviceFeatures = features_;
 		ctxs.renderPass = renderPass();
 		ctxs.uploadQueueFamily = vkDevice().queueSubmitter().queue().family();
 		ctxs.subpass = 0u;
@@ -34,62 +36,63 @@ public:
 
 		// scene setup
 		auto& ctx = *context_;
-		scene_ = std::make_unique<rvg2::Scene>(ctx);
 		transformPool_ = std::make_unique<rvg2::TransformPool>(ctx);
 		clipPool_ = std::make_unique<rvg2::ClipPool>(ctx);
 		paintPool_ = std::make_unique<rvg2::PaintPool>(ctx);
 		vertexPool_ = std::make_unique<rvg2::VertexPool>(ctx);
 		indexPool_ = std::make_unique<rvg2::IndexPool>(ctx);
+		drawPool_ = std::make_unique<rvg2::DrawPool>(ctx);
 
-		auto plane = nytl::Vec3f{1, 0, -10000};
-		clipID_ = clipPool_->create(plane);
-
-		transformID_ = transformPool_->create(nytl::identity<4, float>());
-		// auto transform = nytl::identity<4, float>();
-		// transformPool_->write(transformID_, transform);
-		// transformPool_->writable(transformID_) = nytl::identity<4, float>();
+		// auto clip = rvg2::rectClip({-0.9, -0.9}, {1.8, 1.8});
+		// clip_ = {*clipPool_, clip};
+		// transform_ = {*transformPool_};
 
 		{
-			std::array<rvg2::Vertex, 4> verts;
-			verts[0] = {{0.5f, 0.5f}, {0.f, 0.f}, {}};
-			verts[1] = {{0.5f, 0.75f}, {0.f, 0.f}, {}};
-			verts[2] = {{0.75f, 0.75f}, {0.f, 0.f}, {}};
-			verts[3] = {{0.75f, 0.5f}, {0.f, 0.f}, {}};
-			draw0_.vertexID = vertexPool_->create(verts);
-
-			auto off = draw0_.vertexID;
-			std::array<u32, 6> inds = {0, 1, 2, 0, 2, 3};
-			for(auto& ind : inds) {
-				ind += off;
-			}
-			draw0_.indexID = indexPool_->create(inds);
-
-			rvg2::PaintPool::PaintData paintData {};
+			rvg2::PaintData paintData {};
 			paintData.inner = {1.f, 0.1f, 0.8f, 1.f};
 			paintData.transform[3][3] = 1u;
-			draw0_.paintID = paintPool_->create(paintData);
+			paint0_ = {*paintPool_, paintData};
 		}
 
 		{
-			std::array<rvg2::Vertex, 4> verts;
-			verts[0] = {{-0.5f, -0.5f}, {0.f, 0.f}, {}};
-			verts[1] = {{-0.5f, -0.75f}, {0.f, 0.f}, {}};
-			verts[2] = {{-0.75f, -0.75f}, {0.f, 0.f}, {}};
-			verts[3] = {{-0.75f, -0.5f}, {0.f, 0.f}, {}};
-			draw1_.vertexID = vertexPool_->create(verts);
-
-			auto off = draw1_.vertexID;
-			std::array<u32, 6> inds = {0, 1, 2, 0, 2, 3};
-			for(auto& ind : inds) {
-				ind += off;
-			}
-			draw1_.indexID = indexPool_->create(inds);
-
-			rvg2::PaintPool::PaintData paintData {};
+			rvg2::PaintData paintData {};
 			paintData.inner = {0.8f, 0.8f, 0.5f, 1.f};
 			paintData.transform[3][3] = 1u;
-			draw1_.paintID = paintPool_->create(paintData);
+			paint1_ = {*paintPool_, paintData};
 		}
+
+		rvg2::DrawMode dm;
+		dm.fill = true;
+		dm.stroke = 20.f;
+		dm.aaStroke = true;
+		dm.aaFill = true;
+		dm.loop = true;
+
+		{
+			std::array<Vec2f, 4> verts;
+			verts[0] = {100.f, 100.f};
+			verts[1] = {100.f, 300.f};
+			verts[2] = {300.f, 300.f};
+			verts[3] = {300.f, 100.f};
+			draw0_ = {*indexPool_, *vertexPool_};
+			draw0_.update(verts, dm);
+		}
+
+		{
+			std::array<Vec2f, 4> verts;
+			verts[0] = {600.f, 600.f};
+			verts[1] = {600.f, 900.f};
+			verts[2] = {900.f, 900.f};
+			verts[3] = {900.f, 600.f};
+			draw1_ = {*indexPool_, *vertexPool_};
+			draw1_.update(verts, dm);
+		}
+
+		// TODO
+		auto id = drawPool_->indirectCmdBuf.allocate(100);
+		drawPool_->indirectCmdBuf.free(id + 99, 1);
+		id = drawPool_->bindingsCmdBuf.allocate(100);
+		drawPool_->bindingsCmdBuf.free(id + 99, 1);
 
 		return true;
 	}
@@ -100,32 +103,30 @@ public:
 
 		// record scene
 		if(updated_) {
-			auto rec = scene_->record();
-			rec.bind(*transformPool_);
-			rec.bind(*clipPool_);
+			dlg_assert(vpp::BufferSpan(drawPool_->bindingsCmdBuf.buffer()).valid());
+
+			auto rec = rvg2::DrawRecorder(*drawPool_, drawCalls_, drawDescriptors_);
 			rec.bind(*vertexPool_);
 			rec.bind(*indexPool_);
-			rec.bind(*paintPool_);
-			// rec.bindFontAtlas(rvgContext().defaultAtlas().texture().vkImageView());
 			rec.bindFontAtlas(context_->dummyImageView());
 
-			for(auto& draw : {draw0_, draw1_}) {
-				rvg2::DrawCall call;
-				call.transform = transformID_;
-				call.paint = draw.paintID;
-				call.clipStart = clipID_;
-				call.clipCount = 0; // TODO
-				call.indexStart = draw.indexID;
-				call.indexCount = 6u;
-				call.type = 0u;
-				call.uvFadeWidth = 0.0001f; // TODO
-				rec.draw(call);
-			}
+			// rec.bind(transform_);
+			// rec.bind(clip_);
+
+			rec.bind(paint0_);
+			draw1_.fill(rec);
+			draw0_.stroke(rec);
+
+			rec.bind(paint1_);
+			draw0_.fill(rec);
+			draw1_.stroke(rec);
+
+			updated_ = false;
 		}
 
 		time_ += dt;
 
-		auto& paint0 = paintPool_->writable(draw0_.paintID);
+		auto& paint0 = paint0_.changeData();
 		paint0.inner[0] = 0.75 + 0.25 * std::sin(time_);
 		paint0.inner[1] = 0.75 - 0.25 * std::cos(time_);
 	}
@@ -137,10 +138,22 @@ public:
 		rerec |= transformPool_->updateDevice();
 		rerec |= vertexPool_->updateDevice();
 		rerec |= indexPool_->updateDevice();
-		rerec |= scene_->updateDevice();
-		updated_ = true;
+		rerec |= drawPool_->indirectCmdBuf.updateDevice();
+		rerec |= drawPool_->bindingsCmdBuf.updateDevice();
+
+		for(auto& call : drawCalls_) {
+			rerec |= call.checkRerecord();
+		}
+
+		for(auto& ds : drawDescriptors_) {
+			rerec |= ds.updateDevice();
+		}
 
 		if(rerec) {
+			dlg_assert(vpp::BufferSpan(drawPool_->bindingsCmdBuf.buffer()).valid());
+
+			// HACK: only really needed the first time...
+			updated_ = true;
 			Base::scheduleRerecord();
 		}
 
@@ -156,44 +169,77 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		scene_->recordDraw(cb);
+		const auto extent = swapchainInfo().imageExtent;
+		rvg2::record(cb, drawCalls_, extent);
 	}
 
 	bool features(tkn::Features& enable, const tkn::Features& supported) override {
-		if(!supported.base.features.multiDrawIndirect) {
-			dlg_error("multidraw indirect not supported");
-			return false;
+		if(supported.base.features.multiDrawIndirect) {
+			enable.base.features.multiDrawIndirect = true;
+			features_ |= rvg2::DeviceFeature::multidrawIndirect;
 		}
 
-		enable.base.features.multiDrawIndirect = true;
+		if(supported.base.features.shaderUniformBufferArrayDynamicIndexing) {
+			enable.base.features.shaderUniformBufferArrayDynamicIndexing = true;
+			features_ |= rvg2::DeviceFeature::uniformDynamicArrayIndexing;
+		}
+
+		if(supported.base.features.shaderClipDistance) {
+			enable.base.features.shaderClipDistance = true;
+			features_ |= rvg2::DeviceFeature::clipDistance;
+		}
+
+		if(hasDescriptorIndexing_) {
+			auto checkEnable = [](auto& check, auto& set) {
+				if(check) {
+					set = true;
+				}
+			};
+
+			checkEnable(
+				supported.descriptorIndexing.descriptorBindingPartiallyBound,
+				enable.descriptorIndexing.descriptorBindingPartiallyBound);
+			checkEnable(
+				supported.descriptorIndexing.descriptorBindingSampledImageUpdateAfterBind,
+				enable.descriptorIndexing.descriptorBindingSampledImageUpdateAfterBind);
+			checkEnable(
+				supported.descriptorIndexing.descriptorBindingStorageBufferUpdateAfterBind,
+				enable.descriptorIndexing.descriptorBindingStorageBufferUpdateAfterBind);
+
+			descriptorIndexingFeatures_ = enable.descriptorIndexing;
+		}
+
 		return true;
 	}
 
 	const char* name() const override { return "rvg-scene-test"; }
 
 protected:
+	rvg2::DeviceFeatureFlags features_ {};
+
 	std::unique_ptr<rvg2::Context> context_;
-	std::unique_ptr<rvg2::Scene> scene_;
+	std::unique_ptr<rvg2::DrawPool> drawPool_;
 	std::unique_ptr<rvg2::TransformPool> transformPool_;
 	std::unique_ptr<rvg2::ClipPool> clipPool_;
 	std::unique_ptr<rvg2::PaintPool> paintPool_;
 	std::unique_ptr<rvg2::VertexPool> vertexPool_;
 	std::unique_ptr<rvg2::IndexPool> indexPool_;
 
-	unsigned clipID_;
-	unsigned transformID_;
+	std::vector<rvg2::DrawCall> drawCalls_;
+	std::vector<rvg2::DrawDescriptor> drawDescriptors_;
+
+	vk::PhysicalDeviceDescriptorIndexingFeaturesEXT descriptorIndexingFeatures_;
+
+	rvg2::Clip clip_;
+	rvg2::Transform transform_;
+	rvg2::Paint paint0_;
+	rvg2::Paint paint1_;
 
 	bool updated_ {false};
 	double time_ {0.0};
 
-	struct Draw {
-		unsigned vertexID;
-		unsigned indexID;
-		unsigned paintID;
-	};
-
-	Draw draw0_;
-	Draw draw1_;
+	rvg2::Polygon draw0_;
+	rvg2::Polygon draw1_;
 };
 
 int main(int argc, const char** argv) {

@@ -34,13 +34,19 @@ struct BufferSpan {
 // TODO: more intelligent over-allocation, also make sure we never
 //   allocate buffer sizes below a certain threshold
 // TODO: support deferred initialization
+// TODO: don't rely on typeSize? make this a pure byte buffer?
 struct GpuBuffer {
+	// the associated context, needed e.g. for allocators
 	Context* context_;
+	// usage and memBits are stored for when the buffer needs to be recreated
 	vk::BufferUsageFlags usage_;
 	u32 memBits_;
+	// ranges that have to be updated
 	std::vector<BufferSpan> updates_;
+	// ranges that are still free
 	std::vector<BufferSpan> free_;
 	vpp::SubBuffer buffer_;
+
 
 	GpuBuffer(Context& ctx, vk::BufferUsageFlags usage, DevMemBits memBits);
 	u32 allocate(u32 count);
@@ -50,9 +56,6 @@ struct GpuBuffer {
 
 } // namespace detail
 
-// TODO(opt, low): we could add a FixedSizeBuffer where all allocations
-// have the same size, simplifies some things and allows us to get rid of
-// Span (and its size member).
 template<typename T>
 class Buffer {
 public:
@@ -115,6 +118,12 @@ public:
 		// std::copy(b + id, b + id + mcount, b + startID);
 		std::memmove(b + id, b + startID, mcount);
 		return id;
+	}
+
+	void reallocRef(unsigned& startID, unsigned& count, unsigned newCount) {
+		unsigned i = realloc(startID, count, newCount);
+		startID = i;
+		count = newCount;
 	}
 
 	void write(unsigned startID, nytl::Span<const T> data) {
@@ -181,6 +190,7 @@ public:
 	Context& context() const { return *buffer_.context_; }
 	const vpp::SubBuffer& buffer() const { return buffer_.buffer_; }
 	const std::vector<T>& data() const { return data_; }
+	std::size_t logicalSize() const { return data_.size(); }
 
 protected:
 	using Span = detail::BufferSpan;

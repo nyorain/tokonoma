@@ -274,7 +274,7 @@ public:
 		stars_.dsCam = {dev.descriptorAllocator(), stars_.dsLayout};
 
 		vpp::DescriptorSetUpdate dsuCam(stars_.dsCam);
-		dsuCam.uniform({{{stars_.ubo}}});
+		dsuCam.uniform(stars_.ubo);
 		dsuCam.apply();
 
 		tkn::SkyboxRenderer::PipeInfo skyboxInfo;
@@ -329,13 +329,12 @@ public:
 		nameHandle(comp_.update.ds);
 
 		vpp::DescriptorSetUpdate dsu(comp_.update.ds);
-		dsu.storage({{{keys0_}}});
-		dsu.storage({{{keys1_}}});
-		dsu.uniform({{{ubo_}}});
-		dsu.storage({{{vertices_}}});
-		dsu.storage({{{indices_}}});
-		dsu.imageSampler({{{{}, heightmap_.imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}}});
+		dsu.storage(keys0_);
+		dsu.storage(keys1_);
+		dsu.uniform(ubo_);
+		dsu.storage(vertices_);
+		dsu.storage(indices_);
+		dsu.imageSampler(heightmap_.imageView());
 
 		auto mod = vpp::ShaderModule(dev, planet_update_comp_data);
 		vk::ComputePipelineCreateInfo cpi;
@@ -364,8 +363,8 @@ public:
 		nameHandle(comp_.indirect.ds);
 
 		vpp::DescriptorSetUpdate dsu(comp_.indirect.ds);
-		dsu.storage({{{comp_.dispatch}}});
-		dsu.storage({{{keys1_}}});
+		dsu.storage(comp_.dispatch);
+		dsu.storage(keys1_);
 
 		auto mod = vpp::ShaderModule(dev, planet_dispatch_comp_data);
 		vk::ComputePipelineCreateInfo cpi;
@@ -394,8 +393,8 @@ public:
 		nameHandle(gen_.ds);
 
 		vpp::DescriptorSetUpdate dsu(gen_.ds);
-		dsu.storage({{{}, heightmap_.imageView(), vk::ImageLayout::general}});
-		dsu.uniform({{{ubo_}}});
+		dsu.storage(heightmap_.imageView());
+		dsu.uniform(ubo_);
 		dsu.apply();
 
 		auto spec = tkn::ComputeGroupSizeSpec(genGroupDimSize, genGroupDimSize, 1u);
@@ -504,29 +503,21 @@ public:
 	void updateAtmosphereDs() {
 		auto& sky = atmosphere_.sky;
 		vpp::DescriptorSetUpdate dsuAtmos(atmosphere_.ds);
-		dsuAtmos.uniform({{{atmosphere_.ubo}}});
-		dsuAtmos.imageSampler({{{}, sky.transTable().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuAtmos.imageSampler({{{}, sky.scatTableRayleigh().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuAtmos.imageSampler({{{}, sky.scatTableMie().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuAtmos.imageSampler({{{}, sky.scatTableCombined().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuAtmos.uniform(atmosphere_.ubo);
+		dsuAtmos.imageSampler(sky.transTable().imageView());
+		dsuAtmos.imageSampler(sky.scatTableRayleigh().imageView());
+		dsuAtmos.imageSampler(sky.scatTableMie().imageView());
+		dsuAtmos.imageSampler(sky.scatTableCombined().imageView());
 
 		// window-size-dependent buffers
-		dsuAtmos.imageSampler({{{}, terrain_.depth.imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuAtmos.storage({{{}, terrain_.color.imageView(),
-			vk::ImageLayout::general}});
+		dsuAtmos.imageSampler(terrain_.depth.imageView());
+		dsuAtmos.storage(terrain_.color.imageView());
 
 		// terrain ds
 		vpp::DescriptorSetUpdate dsuTerrain(terrain_.ds);
 		dsuTerrain.skip(4);
-		dsuTerrain.imageSampler({{{{}, sky.transTable().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}}});
-		dsuTerrain.imageSampler({{{{}, sky.irradianceTable().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}}});
+		dsuTerrain.imageSampler(sky.transTable().imageView());
+		dsuTerrain.imageSampler(sky.irradianceTable().imageView());
 
 	}
 
@@ -578,17 +569,14 @@ public:
 		nameHandle(terrain_.ds);
 
 		vpp::DescriptorSetUpdate dsu(terrain_.ds);
-		dsu.uniform({{{ubo_}}});
-		dsu.storage({{{vertices_}}});
-		dsu.storage({{{indices_}}});
-		dsu.imageSampler({{{{}, heightmap_.imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}}});
+		dsu.uniform(ubo_);
+		dsu.storage(vertices_);
+		dsu.storage(indices_);
+		dsu.imageSampler(heightmap_.imageView());
 
 		auto& sky = atmosphere_.sky;
-		dsu.imageSampler({{{{}, sky.transTable().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}}});
-		dsu.imageSampler({{{{}, sky.irradianceTable().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}}});
+		dsu.imageSampler(sky.transTable().imageView());
+		dsu.imageSampler(sky.irradianceTable().imageView());
 
 		auto vert = vpp::ShaderModule(dev, planet_model_vert_data);
 		auto frag = vpp::ShaderModule(dev, planet_model_frag_data);
@@ -947,16 +935,13 @@ public:
 		updateAtmosphereDs();
 
 		vpp::DescriptorSetUpdate dsuApply(applyPass_.ds);
-		dsuApply.uniform({{{applyPass_.ubo}}});
-		dsuApply.imageSampler({{{}, highlight_.target().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuApply.storage({{{}, terrain_.color.imageView(),
-			vk::ImageLayout::general}});
+		dsuApply.uniform(applyPass_.ubo);
+		dsuApply.imageSampler(highlight_.target().imageView());
+		dsuApply.storage(terrain_.color.imageView());
 
 		vpp::DescriptorSetUpdate dsuPP(pp_.ds);
-		dsuPP.imageSampler({{{}, terrain_.color.imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuPP.uniform({{{pp_.ubo}}});
+		dsuPP.imageSampler(terrain_.color.imageView());
+		dsuPP.uniform(pp_.ubo);
 
 		vpp::apply({{{dsuPP}, {dsuApply}}});
 

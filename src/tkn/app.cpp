@@ -39,6 +39,7 @@
 namespace tkn {
 
 Features::Features() {
+	multiview.pNext = &descriptorIndexing;
 	base.pNext = &multiview;
 }
 
@@ -267,7 +268,6 @@ bool App::init(nytl::Span<const char*> args) {
 }
 
 bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
-	constexpr auto outputExtensions = false;
 	impl_ = std::make_unique<Impl>();
 
 	// We set a custom dlg handler that allows to set breakpoints
@@ -337,9 +337,7 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	auto iniexts = vk::enumerateInstanceExtensionProperties(nullptr);
 	for(auto& ext : iniexts) {
 		auto name = std::string_view(ext.extensionName.data());
-		if(outputExtensions) {
-			dlg_trace("Instance extension: {}", name);
-		}
+		dlg_tracet(("vulkan-ini-exts"), "Instance extension: {}", name);
 
 		if(name == VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME) {
 			dlg_info("Found ext_swapchain_color_space");
@@ -502,13 +500,16 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 
 	for(auto& ext : devexts) {
 		auto name = std::string_view(ext.extensionName.data());
-		if(outputExtensions) {
-			dlg_trace("Device extension: {}", name);
-		}
+		dlg_tracet(("vulkan-dev-exts"), "Device extension: {}", name);
 
 		if(name == VK_EXT_HDR_METADATA_EXTENSION_NAME) {
 			hasExtHdrMetadata_ = true;
 			devExts.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+		}
+
+		if(name == VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) {
+			hasDescriptorIndexing_ = true;
+			devExts.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
 		}
 	}
 

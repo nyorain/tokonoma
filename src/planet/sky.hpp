@@ -410,40 +410,40 @@ public:
 
 	void updateDescriptors() {
 		vpp::DescriptorSetUpdate dsuMScat(preMultiScat_.ds);
-		dsuMScat.uniform({{{ubo_}}});
-		dsuMScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuMScat.imageSampler({{{}, inScatTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuMScat.storage({{{}, scatTableMulti_.imageView(), vk::ImageLayout::general}});
-		dsuMScat.storage({{{}, scatTableCombined_.imageView(), vk::ImageLayout::general}});
+		dsuMScat.uniform(ubo_);
+		dsuMScat.imageSampler(transTable_.imageView());
+		dsuMScat.imageSampler(inScatTable_.imageView());
+		dsuMScat.storage(scatTableMulti_.imageView());
+		dsuMScat.storage(scatTableCombined_.imageView());
 
 		vpp::DescriptorSetUpdate dsuInScat(preInScat_.ds);
-		dsuInScat.uniform({{{ubo_}}});
-		dsuInScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.imageSampler({{{}, deltaIrradianceTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.storage({{{}, inScatTable_.imageView(), vk::ImageLayout::general}});
+		dsuInScat.uniform(ubo_);
+		dsuInScat.imageSampler(transTable_.imageView());
+		dsuInScat.imageSampler(scatTableRayleigh_.imageView());
+		dsuInScat.imageSampler(scatTableMie_.imageView());
+		dsuInScat.imageSampler(scatTableMulti_.imageView());
+		dsuInScat.imageSampler(deltaIrradianceTable_.imageView());
+		dsuInScat.storage(inScatTable_.imageView());
 
 		vpp::DescriptorSetUpdate dsuIrrad(preIrrad_.ds);
-		dsuIrrad.uniform({{{ubo_}}});
-		dsuIrrad.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuIrrad.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuIrrad.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuIrrad.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuIrrad.storage({{{}, deltaIrradianceTable_.imageView(), vk::ImageLayout::general}});
-		dsuIrrad.storage({{{}, irradianceTable_.imageView(), vk::ImageLayout::general}});
+		dsuIrrad.uniform(ubo_);
+		dsuIrrad.imageSampler(transTable_.imageView());
+		dsuIrrad.imageSampler(scatTableRayleigh_.imageView());
+		dsuIrrad.imageSampler(scatTableMie_.imageView());
+		dsuIrrad.imageSampler(scatTableMulti_.imageView());
+		dsuIrrad.storage(deltaIrradianceTable_.imageView());
+		dsuIrrad.storage(irradianceTable_.imageView());
 
 		vpp::DescriptorSetUpdate dsuTrans(preTrans_.ds);
-		dsuTrans.uniform({{{ubo_}}});
-		dsuTrans.storage({{{}, transTable_.imageView(), vk::ImageLayout::general}});
+		dsuTrans.uniform(ubo_);
+		dsuTrans.storage(transTable_.imageView());
 
 		vpp::DescriptorSetUpdate dsuSScat(preSingleScat_.ds);
-		dsuSScat.uniform({{{ubo_}}});
-		dsuSScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuSScat.storage({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::general}});
-		dsuSScat.storage({{{}, scatTableMie_.imageView(), vk::ImageLayout::general}});
-		dsuSScat.storage({{{}, scatTableCombined_.imageView(), vk::ImageLayout::general}});
+		dsuSScat.uniform(ubo_);
+		dsuSScat.imageSampler(transTable_.imageView());
+		dsuSScat.storage(scatTableRayleigh_.imageView());
+		dsuSScat.storage(scatTableMie_.imageView());
+		dsuSScat.storage(scatTableCombined_.imageView());
 	}
 
 	bool loadGenPipes() {
@@ -456,7 +456,7 @@ public:
 		auto preMultiScat = sc.load("planet/preMultiScat.comp");
 		auto preInScat = sc.load("planet/preInScat.comp");
 		auto preIrradiance = sc.load("planet/preIrradiance.comp");
-		if(!preTrans || !preSingleScat || !preMultiScat) {
+		if(!preTrans.mod || !preSingleScat.mod || !preMultiScat.mod) {
 			dlg_error("Failed to reload/compile pcs computation shaders");
 			return false;
 		}
@@ -468,28 +468,28 @@ public:
 		// 2D
 		tkn::ComputeGroupSizeSpec specTrans(config_.groupDimSize2D, config_.groupDimSize2D);
 		cpi.layout = preTrans_.pipeLayout;
-		cpi.stage.module = preTrans;
+		cpi.stage.module = preTrans.mod;
 		cpi.stage.pSpecializationInfo = &specTrans.spec;
 		preTrans_.pipe = {dev, cpi, pipeCache_};
 
 		cpi.layout = preIrrad_.pipeLayout;
-		cpi.stage.module = preIrradiance;
+		cpi.stage.module = preIrradiance.mod;
 		preIrrad_.pipe = {dev, cpi, pipeCache_};
 
 		// 3D
 		auto sgds = config_.groupDimSize3D;
 		tkn::ComputeGroupSizeSpec specScat(sgds, sgds, sgds);
 		cpi.layout = preSingleScat_.pipeLayout;
-		cpi.stage.module = preSingleScat;
+		cpi.stage.module = preSingleScat.mod;
 		cpi.stage.pSpecializationInfo = &specScat.spec;
 		preSingleScat_.pipe = {dev, cpi, pipeCache_};
 
 		cpi.layout = preMultiScat_.pipeLayout;
-		cpi.stage.module = preMultiScat;
+		cpi.stage.module = preMultiScat.mod;
 		preMultiScat_.pipe = {dev, cpi, pipeCache_};
 
 		cpi.layout = preInScat_.pipeLayout;
-		cpi.stage.module = preInScat;
+		cpi.stage.module = preInScat.mod;
 		preInScat_.pipe = {dev, cpi, pipeCache_};
 
 		vpp::save(pipeCache_, pipeCachePath);

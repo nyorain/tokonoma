@@ -220,6 +220,7 @@ protected:
 
 	bool hasExtColorSpace_ {};
 	bool hasExtHdrMetadata_ {};
+	bool hasDescriptorIndexing_ {};
 };
 
 

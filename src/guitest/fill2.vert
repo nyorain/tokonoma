@@ -15,19 +15,25 @@ layout(location = 4) out flat uint outCmdIndex;
 
 //////////////////////////////////////////////////////////////////////////////
 // - Multidraw implementation -
-// When indirect multidraw is supported by the device, we will use it.
-// But since vulkan does not require it, we need a custom workaround. In
-// this case we simply use a push constant.
-// Either way, we will define 'uint cmdIndex' that holds the command id.
-#ifndef MULTIDRAW
-
-layout(push_constant) uniform DrawID {
-	uint cmdIndex;
+layout(push_constant) uniform DrawIDPCR {
+	// Rendering viewport size
+	layout(offset = 0) uvec2 targetSize;
+	// We always pass the offset into the bindings buffer (cmds) as push constant.
+	// When multidraw is supported, we use gl_DrawID to determine the draw
+	// id that we add to the general offer. But since vulkan does not require 
+	// multidraw support, we need a custom workaround. In this case we simply update
+	// the offset push constant before each draw call.
+	// Either way, we will define 'uint cmdIndex' that holds the command id.
+	layout(offset = 8) uint cmdOffset;
 };
+
+#ifdef MULTIDRAW
+
+uint cmdIndex = cmdOffset + gl_DrawID;
 
 #else // MULTIDRAW
 
-/*const*/ uint cmdIndex = gl_DrawID;
+uint cmdIndex = cmdOffset;
 
 #endif // MULTIDRAW
 
@@ -50,7 +56,7 @@ layout(push_constant) uniform DrawID {
 			if(i >= planeCount) {
 				gl_ClipDistance[i] = 1.f;
 			} else {
-				vec3 plane = clipPlanes[planeStart + i];	
+				vec4 plane = clipPlanes[planeStart + i];	
 				gl_ClipDistance[i] = dot(plane.xy, inPos) - plane.z;
 			}
 		}
@@ -73,6 +79,7 @@ void main() {
 	clipDists(cmd.clipStart, cmd.clipCount);
 
 	vec4 pos = transforms[cmd.transform] * vec4(inPos, 0.0, 1.0);
+	pos.xy = -1 + pos.xy / targetSize;
 	gl_Position = pos;
 
 	vec3 ppos = mat3(paints[cmd.paint].transform) * vec3(inPos, 1.0);

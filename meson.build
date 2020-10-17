@@ -223,6 +223,9 @@ executable('rvgscene', [
 		'src/guitest/scene.cpp',
 		'src/guitest/buffer.cpp',
 		'src/guitest/context.cpp',
+		'src/guitest/paint.cpp',
+		'src/guitest/draw.cpp',
+		'src/guitest/polygon.cpp',
 		guitest_shaders,
 	], dependencies: [tkn_dep, dep_playground])
 

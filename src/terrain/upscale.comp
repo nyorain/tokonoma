@@ -15,7 +15,7 @@ layout(set = 0, binding = 4, row_major) uniform UBO {
 	UboData ubo;
 };
 
-const float bias = 0.001;
+const float bias = 0.01;
 
 float remap(float x, float lowOld, float highOld, float lowNew, float highNew) {
 	return lowNew + ((x - lowOld) / (highOld - lowOld)) * (highNew - lowNew);
@@ -58,9 +58,9 @@ void main() {
 	};
 
 	float weights[4];
-	float weightSum = 0.0;
 	float maxDepthDiff = 0.0;
 	vec4 samples[4];
+	float weightSum = 0.0;
 
 	for(uint i = 0u; i < 4u; ++i) {
 		ivec2 off = offsets[i];
@@ -68,24 +68,31 @@ void main() {
 
 		float srcDepth = texelFetch(lrDepth, srcTexel, 0).r;
 		float srcZ = depthtoz(ubo.invProjMtx, srcDepth);
-		float diff = abs(srcZ - dstZ) / min(srcZ, dstZ);
+		float diff = abs(srcZ - dstZ) / (0.001 + min(srcZ, dstZ));
 		float weight = 1 / (bias + diff);
 
+		//  TODO: use transmittance
 		samples[i] = texelFetch(lrColor, srcTexel, 0);
+
 		weights[i] = weight;
 		weightSum += weight;
+
 		maxDepthDiff = max(maxDepthDiff, diff);
 	}
 
-	float discontinuity = linearStep(0.0, 0.1, maxDepthDiff);
+	float discontinuity = linearStep(0.05, 0.15, maxDepthDiff);
 
+	float resSum = 0.0;
 	vec4 result = vec4(0.0);
 	for(uint i = 0u; i < 4u; ++i) {
 		float linWeight = linWeights[i];
 		float depthWeight = weights[i] / weightSum;
 		float weight = mix(linWeight, depthWeight, discontinuity);
 		result += weight * samples[i];
+		resSum += weight;
 	}
+
+	result /= resSum;
 
 	// apply scattering
 	vec3 color = imageLoad(hrColor, ivec2(texel)).rgb;

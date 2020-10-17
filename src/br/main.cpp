@@ -254,21 +254,18 @@ public:
 
 		// descriptors
 		vpp::DescriptorSetUpdate sdsu(cameraDs_);
-		sdsu.uniform({{{cameraUbo_}}});
+		sdsu.uniform(cameraUbo_);
 		sdsu.apply();
 
 		vpp::DescriptorSetUpdate edsu(envCameraDs_);
-		edsu.uniform({{{envCameraUbo_}}});
+		edsu.uniform(envCameraUbo_);
 		edsu.apply();
 
 		vpp::DescriptorSetUpdate adsu(aoDs_);
-		adsu.imageSampler({{{}, env_.envMap().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.imageSampler({{{}, brdfLut_.imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.imageSampler({{{}, env_.irradiance().imageView(),
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.uniform({{{aoUbo_}}});
+		adsu.imageSampler(env_.envMap().imageView());
+		adsu.imageSampler(brdfLut_.imageView());
+		adsu.imageSampler(env_.irradiance().imageView());
+		adsu.uniform(aoUbo_);
 		adsu.apply();
 
 		// PERF: do this in scene initialization to avoid additional

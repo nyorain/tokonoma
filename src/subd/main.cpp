@@ -130,11 +130,11 @@ public:
 
 		dlg_assert(shape.indices.size() % 3 == 0);
 		auto numTris = shape.indices.size() / 3;
-		write(data0, u32(numTris)); // counter
-		write(data0, 0.f); // padding
+		tkn::write(data0, u32(numTris)); // counter
+		tkn::write(data0, 0.f); // padding
 
 		for(auto i = 0u; i < numTris; ++i) {
-			write(data0, nytl::Vec2u32 {1, i});
+			tkn::write(data0, nytl::Vec2u32 {1, i});
 		}
 
 		struct {
@@ -188,9 +188,9 @@ public:
 
 		gfx_.ds = {dev.descriptorAllocator(), gfx_.dsLayout};
 		vpp::DescriptorSetUpdate dsu(gfx_.ds);
-		dsu.uniform({{{ubo_}}});
-		dsu.storage({{{vertices_}}});
-		dsu.storage({{{indices_}}});
+		dsu.uniform(ubo_);
+		dsu.storage(vertices_);
+		dsu.storage(indices_);
 	}
 
 	void initUpdateComp() {
@@ -209,12 +209,12 @@ public:
 
 		comp_.update.ds = {dev.descriptorAllocator(), comp_.update.dsLayout};
 		vpp::DescriptorSetUpdate dsu(comp_.update.ds);
-		dsu.storage({{{keys0_}}});
-		dsu.storage({{{keys1_}}});
-		dsu.uniform({{{ubo_}}});
-		dsu.storage({{{vertices_}}});
-		dsu.storage({{{indices_}}});
-		dsu.storage({{{keysCulled_}}});
+		dsu.storage(keys0_);
+		dsu.storage(keys1_);
+		dsu.uniform(ubo_);
+		dsu.storage(vertices_);
+		dsu.storage(indices_);
+		dsu.storage(keysCulled_);
 	}
 
 	void initIndirectComp() {
@@ -230,9 +230,9 @@ public:
 
 		comp_.indirect.ds = {dev.descriptorAllocator(), comp_.indirect.dsLayout};
 		vpp::DescriptorSetUpdate dsu(comp_.indirect.ds);
-		dsu.storage({{{comp_.dispatch}}});
-		dsu.storage({{{keys1_}}});
-		dsu.storage({{{keysCulled_}}});
+		dsu.storage(comp_.dispatch);
+		dsu.storage(keys1_);
+		dsu.storage(keysCulled_);
 	}
 
 	bool createPipes() {

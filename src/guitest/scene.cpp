@@ -1,5 +1,6 @@
 #include "scene.hpp"
 #include <vpp/vk.hpp>
+#include <vpp/debug.hpp>
 #include <dlg/dlg.hpp>
 #include <nytl/bytes.hpp>
 #include <katachi/stroke.hpp>
@@ -68,21 +69,40 @@ TransformPool::TransformPool(Context& ctx, DevMemBits bits) :
 }
 
 // ClipPool
-ClipPool::ClipPool(Context& ctx, DevMemBits) :
+ClipPool::ClipPool(Context& ctx, DevMemBits bits) :
 	Buffer(ctx, vk::BufferUsageBits::storageBuffer, bits) {
 }
 
 // PaintPool
-PaintPool::PaintPool(Context& ctx, DevMemBits) :
+PaintPool::PaintPool(Context& ctx, DevMemBits bits) :
 	Buffer(ctx, vk::BufferUsageBits::storageBuffer, bits) {
 }
 
 void PaintPool::setTexture(unsigned i, vk::ImageView texture) {
 	dlg_assert(i < context().numBindableTextures());
-	textures_.resize(std::max<std::size_t>(i, textures_.size()));
+	if(textures_.size() <= i) {
+		textures_.resize(i);
+	}
+
+	texturesChanged_ |= (textures_[i] != texture);
 	textures_[i] = texture;
 }
 
+u32 PaintPool::freeTextureSlot() const {
+	for(auto i = 0u; i < textures_.size(); ++i) {
+		if(!textures_[i]) {
+			return i;
+		}
+	}
+
+	if(textures_.size() < context().numBindableTextures()) {
+		return textures_.size();
+	}
+
+	return invalid;
+}
+
+/*
 // Scene
 Scene::Scene(Context& ctx) : context_(&ctx) {
 }
@@ -361,33 +381,153 @@ void DrawRecorder::draw(const DrawCall& call) {
 	static_cast<DrawCall&>(cmd) = call;
 	current_.commands.push_back(cmd);
 }
+*/
+
+std::vector<Vec4f> polygonClip(nytl::Span<const Vec2f> points, bool closed) {
+	if(points.size() < 2) {
+		return {};
+	}
+
+	// bring in clockwise order
+	auto a = ktc::area(points);
+	auto fac = (a > 0.f) ? -1.f : 1.f;
+
+	// when the polygon is closed we consider the plane from
+	// the last point to the first one.
+	auto count = points.size() - (closed ? 0u : 1u);
+	std::vector<Vec4f> planes;
+	planes.reserve(count);
+
+	for(auto i = 0u; i < count; ++i) {
+		auto curr = points[i];
+		auto next = points[(i + 1) % points.size()];
+		auto line = fac * (next - curr);
+		dlg_assert(dot(line, line) > 0.0001);
+		auto normal = normalized(Vec2f{line.y, -line.x}); // right normal
+		auto d = dot(normal, curr);
+		planes.push_back({normal.x, normal.y, d, 0.f});
+	}
+
+	return planes;
+}
+
+std::vector<Vec4f> rectClip(Vec2f position, Vec2f size) {
+	auto points = std::array {
+		position + Vec2f{0.f, 0.f},
+		position + Vec2f{size.x, 0.f},
+		position + size,
+		position + Vec2f{0.f, size.y},
+	};
+
+	return polygonClip(points, true);
+}
 
 // PolygonClip
-PolygonClip::PolygonClip(ClipPool& pool, std::vector<Vec2f> points) :
-		pool_(&pool), points_(std::move(points)) {
-	if(points.empty()) {
-		id_ = 0u;
+Clip::Clip(ClipPool& pool, nytl::Span<const Vec4f> planes) : pool_(&pool) {
+	if(planes.empty()) {
 		return;
 	}
 
-	ktc::enforceWinding(points, false); // counter-clockwise
-	std::vector<Vec3f> planes;
-	for(auto i = 0u; i < points.size(); ++i) {
-		auto curr = points[i];
-		auto next = points[(i + 1) % points.size()];
-		auto line = next - curr;
-		auto normal = Vec2f{line.y, -line.x}; // right normal
-		auto d = dot(normal, curr);
-		planes.push_back({normal.x, normal.y, d});
-	}
-
 	id_ = pool_->create(planes);
+	count_ = planes.size();
 }
 
-PolygonClip::~PolygonClip() {
-	if(pool_) {
-		pool_->free(id_, points.size());
+Clip::~Clip() {
+	if(valid()) {
+		pool_->free(id_, count_);
 	}
+}
+
+void Clip::planes(nytl::Span<const Vec4f> np) {
+	dlg_assert(valid());
+	if(np.size() != count_) {
+		pool_->free(id_, count_);
+		id_ = pool_->create(np);
+		count_ = np.size();
+		return;
+	}
+
+	// TODO: could check for changes here and only write changed elements
+	pool_->write(id_, np);
+}
+
+void swap(Clip& a, Clip& b) {
+	using std::swap;
+	swap(a.pool_, b.pool_);
+	swap(a.id_, b.id_);
+	swap(a.count_, b.count_);
+}
+
+// Transform
+Transform::Transform(TransformPool& pool, const Matrix& mat) :
+		pool_(&pool) {
+	id_ = pool_->create(mat);
+}
+
+Transform::~Transform() {
+	if(valid()) {
+		pool_->free(id_, 1);
+	}
+}
+
+void swap(Transform& a, Transform& b) {
+	using std::swap;
+	swap(a.pool_, b.pool_);
+	swap(a.id_, b.id_);
+}
+
+// Paint
+Paint::Paint(PaintPool& pool, const PaintData& data, vk::ImageView iv) :
+		pool_(&pool) {
+	id_ = pool_->create(data);
+	texture(iv);
+}
+
+Paint::~Paint() {
+	if(valid()) {
+		pool_->free(id_, 1);
+		if(texID_ != invalid) {
+			dlg_assert(pool_->textures().size() < texID_);
+			pool_->setTexture(texID_, {});
+		}
+	}
+}
+
+void Paint::data(const PaintData& data, vk::ImageView view) {
+	dlg_assert(valid());
+	texture(view);
+	pool_->write(id_, data);
+}
+
+void Paint::texture(vk::ImageView view) {
+	if(texID_ == invalid && view) {
+		texID_ = pool_->freeTextureSlot();
+		if(texID_ == invalid) {
+			throw std::runtime_error("No free texture slot in pool");
+		}
+
+		pool_->setTexture(texID_, view);
+	} else if(!view && texID_ != invalid) {
+		dlg_assert(pool_->textures().size() < texID_);
+		pool_->setTexture(texID_, {});
+		texID_ = invalid;
+	} else if(view && texID_ != invalid) {
+		dlg_assert(pool_->textures().size() < texID_);
+		pool_->setTexture(texID_, view);
+	}
+}
+
+vk::ImageView Paint::texture() const {
+	dlg_assert(valid() && texID_ != invalid);
+	dlg_assert(pool_->textures().size() < texID_);
+	return pool_->textures()[texID_];
+}
+
+void swap(Paint& a, Paint& b) {
+	using std::swap;
+	swap(a.pool_, b.pool_);
+	swap(a.id_, b.id_);
+	swap(a.texID_, b.texID_);
 }
 
 } // namespace rvg2

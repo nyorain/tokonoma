@@ -12,7 +12,7 @@ const uint paintTypePointColor = 6u;
 layout(constant_id = 0) const uint maxTextures = 15;
 
 layout(set = 0, binding = 0) buffer ClipSet {
-	vec3 clipPlanes[];
+	vec4 clipPlanes[];
 };
 
 layout(set = 0, binding = 1, row_major) buffer TransformSet {

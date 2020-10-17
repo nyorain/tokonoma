@@ -1,9 +1,13 @@
 #pragma once
 
-#include "scene.hpp"
+#include "draw.hpp"
 #include <nytl/matOps.hpp>
 
 namespace rvg2 {
+
+// NOTE: only works for convex polygons at the moment.
+// For non-convex ones you can triangulate them and manually
+// use the VertexPool + IndexPool api.
 
 /// Specifies in which way a polygon can be drawn.
 struct DrawMode {
@@ -41,44 +45,38 @@ struct DrawMode {
 	} color {};
 
 	/// Whether to enable anti aliased fill
-	/// Antialiasing must be enabled for the context.
+	/// Antialiasing must be enabled for the context if this is true.
 	/// Changing this will always trigger a rerecord.
 	/// May have really large performance impact.
 	bool aaFill {};
 
 	/// Whether to enable anti aliased stroking
-	/// Antialiasing must be enabled for the context.
+	/// Antialiasing must be enabled for the context if this is true.
 	/// Changing this will always trigger a rerecord.
 	/// May have some performance impact but way less then aaFill.
 	bool aaStroke {};
-
-	/// Whether to use deviceLocal memory.
-	/// Usually makes updates slower and draws faster so use this
-	/// for polygons that don't change often but are drawn.
-	/// If this is false, hostVisible memory will be used.
-	bool deviceLocal {};
-
-	/// Pre-transform that is applied while baking the primitive.
-	/// Comparison to the post-transform state via rvg::Transform:
-	/// - Every time the pre-transform changes the polygon has to be
-	///   rebaked/updated. More expensive
-	/// - Doing scaling via the post transform has serious problems:
-	///   anti aliasing might break and for shapes (that use this
-	///   pre transform as well) curves might not be correctly tesselated.
-	nytl::Mat3f transform = nytl::identity<3, float>();
-};
-
-enum class DrawType {
-	stroke,
-	fill,
-	strokeFill
 };
 
 // Polygon
 class Polygon {
 public:
+	struct Draw {
+		unsigned vertexStart {invalid};
+		unsigned indexStart {invalid};
+		unsigned vertexCount {};
+		unsigned indexCount {};
+	};
+
+public:
 	Polygon() = default;
-	Polygon(Context&);
+	Polygon(IndexPool&, VertexPool&);
+	~Polygon();
+
+	Polygon(Polygon&& rhs) { swap(*this, rhs); }
+	Polygon& operator=(Polygon rhs) {
+		swap(*this, rhs);
+		return *this;
+	}
 
 	/// Can be called at any time, computes the polygon from the given
 	/// points and draw mode. The DrawMode specifies whether this polygon
@@ -86,22 +84,45 @@ public:
 	/// Automatically registers this object for the next updateDevice call.
 	void update(Span<const Vec2f> points, const DrawMode&);
 
-	/// Changes the disable state of this polygon.
-	/// Cheap way to hide/unhide the polygon, can be called at any
-	/// time and will never trigger a rerecord.
-	/// Automatically registers this object for the next updateDevice call.
-	void disable(bool, DrawType = DrawType::strokeFill);
-	bool disabled(DrawType = DrawType::strokeFill) const;
-
 	/// Records commands to fill this polygon into the given DrawRecorder.
 	/// Undefined behaviour if it was updated without fill support in
 	/// the DrawMode.
-	DrawInstance fill(DrawRecorder& recorder);
+	DrawInstance fill(DrawRecorder& recorder) const;
 
 	/// Records commands to stroke this polygon into the given DrawRecorder.
 	/// Undefined behaviour if it was updates without stroke support in
 	/// the DrawMode.
 	DrawInstance stroke(DrawRecorder& recorder) const;
+
+	const auto& indexPool() const { return *indexPool_; }
+	const auto& vertexPool() const { return *vertexPool_; }
+
+	const auto& fillDraw() const { return fill_; }
+	const auto& strokeDraw() const { return stroke_; }
+
+	friend void swap(Polygon& a, Polygon& b);
+
+protected:
+	IndexPool* indexPool_ {};
+	VertexPool* vertexPool_ {};
+
+	Draw fill_;
+	Draw stroke_;
+};
+
+template<typename T>
+struct ObjectDraws {
+	T object;
+
+	DrawInstance stroke;
+	DrawInstance fill;
+
+	bool enable(bool set) {
+	}
+
+	bool enabled() const {
+		if(stroke.drawID.
+	}
 };
 
 } // namespace rvg2

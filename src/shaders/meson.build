@@ -275,7 +275,11 @@ shaders_src = {
 	],
 	'guitest': [
 		['fill2.vert'],
+		['fill2.vert', [], 'fill2.multidraw.vert', ['-DMULTIDRAW']],
+		['fill2.vert', [], 'fill2.clip.vert', ['-DVERTEX_CLIP_DISTANCE']],
+		['fill2.vert', [], 'fill2.multidraw.clip.vert', ['-DMULTIDRAW', '-DVERTEX_CLIP_DISTANCE']],
 		['fill2.frag'],
+		['fill2.frag', [], 'fill2.clip.frag', ['-DVERTEX_CLIP_DISTANCE']],
 	],
 }
 

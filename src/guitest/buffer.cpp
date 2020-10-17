@@ -19,9 +19,9 @@ GpuBuffer::GpuBuffer(Context& ctx, vk::BufferUsageFlags usage, DevMemBits memBit
 		[](u32 memBits) { return memBits; },
 		[&](DevMemType mt) -> u32 {
 			switch(mt) {
-				case DevMemType::all: return 0xFFFFFFFFu;
 				case DevMemType::hostVisible: return ctx.device().hostMemoryTypes();
 				case DevMemType::deviceLocal: return ctx.device().deviceMemoryTypes();
+				default: case DevMemType::all: return 0xFFFFFFFFu;
 			}
 		}}, memBits);
 
@@ -94,7 +94,7 @@ bool GpuBuffer::updateDevice(unsigned typeSize, nytl::Span<const std::byte> data
 				copy.size = data.size();
 				copy.srcOffset = stage.offset();
 				copy.dstOffset = buffer_.offset();
-				dlg_trace("copying full buffer, size: {}", data.size());
+				// dlg_trace("copying full buffer, size: {}", data.size());
 			} else {
 				auto srcSpan = bytes(data);
 				copies.reserve(updates_.size());
@@ -103,7 +103,7 @@ bool GpuBuffer::updateDevice(unsigned typeSize, nytl::Span<const std::byte> data
 					auto size = typeSize * update.count;
 
 					dlg_assert(offset + size <= data.size());
-					dlg_trace("copying buffer: {} {}", offset, size);
+					// dlg_trace("copying buffer: {} {}", offset, size);
 
 					auto& copy = copies.emplace_back();
 					copy.size = size;

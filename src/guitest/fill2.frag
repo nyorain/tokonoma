@@ -16,7 +16,7 @@ void doClipping(int planeStart, int planeCount) {
 	// If vertex plane clipping is supported, we already performed clipping
 	// for the first planes (the maximum supported number) in the vertex
 	// shader. Ideally, we won't have to do any clipping here.
-	planeStart += maxClipPlanes;
+	planeStart += int(maxClipPlanes);
 	planeCount -= int(maxClipPlanes);
 #endif // VERTEX_CLIP_DISTANCE
 
