@@ -79,7 +79,7 @@ void main() {
 	clipDists(cmd.clipStart, cmd.clipCount);
 
 	vec4 pos = transforms[cmd.transform] * vec4(inPos, 0.0, 1.0);
-	pos.xy = -1 + pos.xy / targetSize;
+	pos.xy = -1 + 2 * pos.xy / targetSize;
 	gl_Position = pos;
 
 	vec3 ppos = mat3(paints[cmd.paint].transform) * vec3(inPos, 1.0);

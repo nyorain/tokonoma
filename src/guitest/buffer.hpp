@@ -1,18 +1,17 @@
 #pragma once
 
+#include "update.hpp"
+#include "context.hpp"
 #include <vpp/fwd.hpp>
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <nytl/bytes.hpp>
 #include <nytl/span.hpp>
+#include <nytl/flags.hpp>
 #include <cstdint>
 #include <algorithm>
 
 namespace rvg2 {
-
-class Context;
-using u32 = std::uint32_t;
-static constexpr auto invalid = u32(0xFFFFFFFFu);
 
 enum class DevMemType {
 	all,
@@ -21,6 +20,8 @@ enum class DevMemType {
 };
 
 using DevMemBits = std::variant<u32, DevMemType>;
+u32 resolve(DevMemBits, const vpp::Device& dev);
+u32 resolve(DevMemBits, const vpp::Device& dev, vk::BufferUsageFlags& addFlags);
 
 namespace detail {
 
@@ -36,11 +37,9 @@ struct BufferSpan {
 // TODO: support deferred initialization
 // TODO: don't rely on typeSize? make this a pure byte buffer?
 struct GpuBuffer {
-	// the associated context, needed e.g. for allocators
-	Context* context_;
 	// usage and memBits are stored for when the buffer needs to be recreated
-	vk::BufferUsageFlags usage_;
-	u32 memBits_;
+	vk::BufferUsageFlags usage_ {};
+	u32 memBits_ {};
 	// ranges that have to be updated
 	std::vector<BufferSpan> updates_;
 	// ranges that are still free
@@ -48,36 +47,44 @@ struct GpuBuffer {
 	vpp::SubBuffer buffer_;
 
 
-	GpuBuffer(Context& ctx, vk::BufferUsageFlags usage, DevMemBits memBits);
+	void init(vk::BufferUsageFlags usage, u32 memBits);
 	u32 allocate(u32 count);
 	void free(u32 id, u32 count);
-	bool updateDevice(u32 typeSize, nytl::Span<const std::byte> data);
+	bool updateDevice(UpdateContext& ctx, u32 typeSize,
+		nytl::Span<const std::byte> data);
 };
 
 } // namespace detail
 
-template<typename T>
-class Buffer {
+template<typename T, UpdateFlags U>
+class Buffer : public DeviceObject {
 public:
 	using Type = T;
 
 public:
-	Buffer(Context& ctx, vk::BufferUsageFlags usage, DevMemBits memBits) :
-		buffer_(ctx, usage, memBits) {
+	Buffer() = default;
+	Buffer(UpdateContext& ctx, vk::BufferUsageFlags usage, DevMemBits memBits)  {
+		init(ctx, usage, memBits);
 	}
-
-	// TODO: revisit/fix
-	~Buffer() = default;
 
 	Buffer(Buffer&&) = delete;
 	Buffer& operator=(Buffer&&) = delete;
+
+	void init(UpdateContext& ctx, vk::BufferUsageFlags usage, DevMemBits memBits) {
+		context_ = &ctx;
+		u32 bits = resolve(memBits, ctx.context().device(), usage);
+		buffer_.init(usage, bits);
+	}
 
 	unsigned allocate(unsigned count = 1) {
 		auto id = buffer_.allocate(count);
 		if(id == invalid) {
 			id = data_.size();
 		}
-		data_.resize(std::max<unsigned>(data_.size(), id + count));
+		if(id + count > data_.size()) {
+			data_.resize(std::max<unsigned>(data_.size(), id + count));
+			registerDeviceUpdate();
+		}
 		return id;
 	}
 
@@ -130,6 +137,7 @@ public:
 		buffer_.updates_.push_back({startID, data.size()});
 		NYTL_BYTES_ASSERT(data_.size() >= startID + data.size());
 		std::copy(data.begin(), data.end(), data_.begin() + startID);
+		registerDeviceUpdate();
 	}
 
 	void write(unsigned startID, const T& data) {
@@ -162,6 +170,7 @@ public:
 	nytl::Span<T> writable(unsigned startID, unsigned count) {
 		NYTL_BYTES_ASSERT(data_.size() >= startID + count);
 		buffer_.updates_.push_back({startID, count});
+		registerDeviceUpdate();
 		auto full = nytl::span(data_);
 		return full.subspan(startID, count);
 	}
@@ -169,6 +178,7 @@ public:
 	T& writable(unsigned id) {
 		NYTL_BYTES_ASSERT(data_.size() > id);
 		buffer_.updates_.push_back({id, 1u});
+		registerDeviceUpdate();
 		return data_[id];
 	}
 
@@ -183,11 +193,11 @@ public:
 		return full.subspan(startID, count);
 	}
 
-	bool updateDevice() {
-		return buffer_.updateDevice(sizeof(T), nytl::bytes(data_));
+	UpdateFlags updateDevice() override {
+		auto r = buffer_.updateDevice(updateContext(), sizeof(T), nytl::bytes(data_));
+		return r ? U : UpdateFlags::none;
 	}
 
-	Context& context() const { return *buffer_.context_; }
 	const vpp::SubBuffer& buffer() const { return buffer_.buffer_; }
 	const std::vector<T>& data() const { return data_; }
 	std::size_t logicalSize() const { return data_.size(); }

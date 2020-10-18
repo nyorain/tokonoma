@@ -5,10 +5,87 @@
 
 namespace rvg2 {
 
+const BufferRef::Allocation& BufferRef::fullAllocation() {
+	static Allocation ret {0, vk::wholeSize};
+	return ret;
+}
+
+BufferRef::BufferRef(const vpp::SubBuffer& sb) :
+		ref(Sub{&sb.bufferPtr(), &sb.allocation()}) {
+}
+
+BufferRef::BufferRef(vpp::BufferSpan span) : ref(span) {
+}
+
+BufferRef::BufferRef(const vk::Buffer& buf, const Allocation& alloc) :
+		ref(Raw{&buf, &alloc}) {
+}
+
+vk::DescriptorBufferInfo BufferRef::info() const {
+	return std::visit(Visitor{
+		[](vpp::BufferSpan span) ->vk::DescriptorBufferInfo {
+			return {span.buffer(), span.offset(), span.size()};
+		}, [](Raw raw) -> vk::DescriptorBufferInfo {
+			if(!raw.buffer || !raw.allocation) {
+				return {};
+			}
+			return {*raw.buffer, raw.allocation->offset, raw.allocation->size};
+		}, [](Sub sub) -> vk::DescriptorBufferInfo {
+			if(!sub.buffer || !sub.allocation) {
+				return {};
+			}
+			return {(*sub.buffer)->vkHandle(), sub.allocation->offset, sub.allocation->size};
+		}}, ref);
+}
+
+bool BufferRef::valid() const {
+	return std::visit(Visitor{
+		[](vpp::BufferSpan span) { return span.valid(); },
+		[](Raw raw) { return raw.buffer && raw.allocation; },
+		[](Sub sub) { return sub.buffer && sub.allocation; }
+	}, ref);
+}
+
+bool BufferRef::nonempty() const {
+	return std::visit(Visitor{
+		[](vpp::BufferSpan span) { return span.valid(); },
+		[](Raw raw) { return raw.buffer && raw.allocation && raw.allocation->size; },
+		[](Sub sub) { return sub.buffer && sub.allocation && sub.allocation->size; }
+	}, ref);
+}
+
+bool same(const vk::DescriptorBufferInfo& a, const vk::DescriptorBufferInfo& b) {
+	return a.buffer == b.buffer &&
+		((!a.buffer && !b.buffer) || (a.offset == b.offset && a.range == b.range));
+}
+
+bool operator==(const BufferRef& a, const BufferRef& b) {
+	if(a.ref.index() != b.ref.index()) {
+		return false;
+	}
+
+	if(auto sa = std::get_if<vpp::BufferSpan>(&a.ref)) {
+		auto sb = std::get_if<vpp::BufferSpan>(&b.ref);
+		return *sa == *sb;
+	} else if(auto sa = std::get_if<BufferRef::Raw>(&a.ref)) {
+		auto sb = std::get_if<BufferRef::Raw>(&b.ref);
+		return sa->buffer == sb->buffer && sa->allocation == sb->allocation;
+	} else if(auto sa = std::get_if<BufferRef::Sub>(&a.ref)) {
+		auto sb = std::get_if<BufferRef::Sub>(&b.ref);
+		return sa->buffer == sb->buffer && sa->allocation == sb->allocation;
+	}
+
+	return false;
+}
+
 // DrawPool
-DrawPool::DrawPool(Context& ctx, DevMemBits memBits) :
-		indirectCmdBuf(ctx, vk::BufferUsageBits::indirectBuffer, memBits),
-		bindingsCmdBuf(ctx, vk::BufferUsageBits::storageBuffer, memBits) {
+DrawPool::DrawPool(UpdateContext& ctx, DevMemBits memBits) {
+	init(ctx, memBits);
+}
+
+void DrawPool::init(UpdateContext& ctx, DevMemBits memBits) {
+	indirectCmdBuf.init(ctx, vk::BufferUsageBits::indirectBuffer, memBits);
+	bindingsCmdBuf.init(ctx, vk::BufferUsageBits::storageBuffer, memBits);
 }
 
 // free util
@@ -17,8 +94,6 @@ bool operator==(const DrawState& a, const DrawState& b) {
 		a.transformBuffer == b.transformBuffer &&
 		a.clipBuffer == b.clipBuffer &&
 		a.paintBuffer == b.paintBuffer &&
-		a.vertexBuffer == b.vertexBuffer &&
-		a.indexBuffer == b.indexBuffer &&
 		a.drawBuffer == b.drawBuffer &&
 		a.fontAtlas == b.fontAtlas &&
 		std::equal(
@@ -30,9 +105,7 @@ bool valid(const DrawState& state) {
 	return state.drawBuffer.valid() &&
 		state.clipBuffer.valid() &&
 		state.transformBuffer.valid() &&
-		state.indexBuffer.valid() &&
 		state.paintBuffer.valid() &&
-		state.vertexBuffer.valid() &&
 		state.fontAtlas;
 }
 
@@ -47,7 +120,7 @@ DrawCall::~DrawCall() {
 	}
 }
 
-void DrawCall::record(vk::CommandBuffer cb, bool bindPipe, bool bindDrawPool) const {
+void DrawCall::record(vk::CommandBuffer cb, bool bindPipe, bool bindVertsInds) const {
 	dlg_assert(pool_);
 	dlg_assert(ds_);
 	dlg_assert(indexBuffer_.valid());
@@ -58,11 +131,14 @@ void DrawCall::record(vk::CommandBuffer cb, bool bindPipe, bool bindDrawPool) co
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, context().pipe());
 	}
 
-	if(bindDrawPool) {
+	if(bindVertsInds) {
+		auto vertInfo = vertexBuffer_.info();
+		auto indsInfo = indexBuffer_.info();
+
 		vk::cmdBindVertexBuffers(cb, 0,
-			{{vertexBuffer_.buffer()}}, {{vertexBuffer_.offset()}});
-		vk::cmdBindIndexBuffer(cb, indexBuffer_.buffer(),
-			indexBuffer_.offset(), vk::IndexType::uint32);
+			{{vertInfo.buffer}}, {{vertInfo.offset}});
+		vk::cmdBindIndexBuffer(cb, indsInfo.buffer,
+			indsInfo.offset, vk::IndexType::uint32);
 	}
 
 	vk::cmdBindDescriptorSets(cb, vk::PipelineBindPoint::graphics,
@@ -88,11 +164,11 @@ void DrawCall::record(vk::CommandBuffer cb, bool bindPipe, bool bindDrawPool) co
 }
 
 void DrawCall::record(vk::CommandBuffer cb, const vk::Extent2D& viewportSize,
-		bool bindPipe, bool bindDrawPool) const {
+		bool bindPipe, bool bindVertsInds) const {
 	dlg_assert(pool_);
 	vk::cmdPushConstants(cb, context().pipeLayout(),
 		vk::ShaderStageBits::vertex, 0, 8u, &viewportSize);
-	record(cb, bindPipe, bindDrawPool);
+	record(cb, bindPipe, bindVertsInds);
 }
 
 void DrawCall::reserve(unsigned i) {
@@ -175,7 +251,7 @@ Draw DrawCall::get(unsigned id) {
 	draw.clipCount = bindings.clipCount;
 	draw.transform = bindings.transform;
 	draw.paint = bindings.paint;
-	draw.type = bindings.type;
+	draw.type = DrawType(bindings.type);
 	draw.uvFadeWidth = bindings.uvFadeWidth;
 
 	return draw;
@@ -203,12 +279,12 @@ void DrawCall::descriptor(vk::DescriptorSet ds) {
 	ds_ = ds;
 }
 
-void DrawCall::vertexBuffer(vpp::BufferSpan v) {
+void DrawCall::vertexBuffer(BufferRef v) {
 	rerecord_ |= !(vertexBuffer_ == v);
 	vertexBuffer_ = v;
 }
 
-void DrawCall::indexBuffer(vpp::BufferSpan i) {
+void DrawCall::indexBuffer(BufferRef i) {
 	rerecord_ |= !(indexBuffer_ == i);
 	indexBuffer_ = i;
 }
@@ -220,10 +296,10 @@ DrawRecorder::DrawRecorder(DrawPool& drawPool, std::vector<DrawCall>& drawCalls,
 	auto& ctx = drawPool.bindingsCmdBuf.context();
 
 	// dummy image as font atlas
-	pending_.fontAtlas = ctx.dummyImageView();
+	pending_.fontAtlas = &ctx.dummyImageView();
 
 	// no clip by default
-	pending_.clipBuffer = ctx.dummyBuffer();
+	pending_.clipBuffer = ctx.defaultTransform(); // content irrelevant
 	clipStart_ = 0u;
 	clipCount_ = 0u;
 
@@ -253,27 +329,27 @@ DrawRecorder::~DrawRecorder() {
 	}
 }
 
-void DrawRecorder::bindTransformBuffer(vpp::BufferSpan pool) {
+void DrawRecorder::bindTransformBuffer(BufferRef pool) {
 	dlg_assert(pool.valid());
 	pending_.transformBuffer = pool;
 }
 
-void DrawRecorder::bindClipBuffer(vpp::BufferSpan pool) {
+void DrawRecorder::bindClipBuffer(BufferRef pool) {
 	dlg_assert(pool.valid());
 	pending_.clipBuffer = pool;
 }
 
-void DrawRecorder::bindPaintBuffer(vpp::BufferSpan pool) {
+void DrawRecorder::bindPaintBuffer(BufferRef pool) {
 	dlg_assert(pool.valid());
 	pending_.paintBuffer = pool;
 }
 
-void DrawRecorder::bindVertexBuffer(vpp::BufferSpan pool) {
+void DrawRecorder::bindVertexBuffer(BufferRef pool) {
 	dlg_assert(pool.valid());
 	pending_.vertexBuffer = pool;
 }
 
-void DrawRecorder::bindIndexBuffer(vpp::BufferSpan pool) {
+void DrawRecorder::bindIndexBuffer(BufferRef pool) {
 	dlg_assert(pool.valid());
 	pending_.indexBuffer = pool;
 }
@@ -282,9 +358,8 @@ void DrawRecorder::bindTextures(std::vector<vk::ImageView> textures) {
 	pending_.textures = std::move(textures);
 }
 
-void DrawRecorder::bindFontAtlas(vk::ImageView atlas) {
-	dlg_assert(atlas);
-	pending_.fontAtlas = atlas;
+void DrawRecorder::bindFontAtlas(const vk::ImageView& atlas) {
+	pending_.fontAtlas = &atlas;
 }
 
 void DrawRecorder::bindTransform(u32 id) {
@@ -303,7 +378,6 @@ void DrawRecorder::flush() {
 		return;
 	}
 
-	dlg_assert(vpp::BufferSpan(drawPool_->bindingsCmdBuf.buffer()).valid());
 	current_.drawBuffer = drawPool_->bindingsCmdBuf.buffer();
 
 	// find or create descriptor
@@ -317,7 +391,7 @@ void DrawRecorder::flush() {
 
 	if(!ds) {
 		if(descriptors_->size() < ++numDescriptors_) {
-			descriptors_->emplace_back(drawPool_->bindingsCmdBuf.context());
+			descriptors_->emplace_back(drawPool_->bindingsCmdBuf.updateContext());
 		}
 
 		auto& nds = (*descriptors_)[numDescriptors_ - 1];
@@ -347,6 +421,8 @@ void DrawRecorder::flush() {
 
 DrawInstance DrawRecorder::draw(u32 indexStart, u32 indexCount, u32 firstVertex,
 		DrawType type, float uvFadeWidth) {
+	dlg_assert(indexCount > 0);
+
 	// check if flush is needed
 	if(!draws_.empty() && current_ != pending_) {
 		flush();
@@ -355,11 +431,25 @@ DrawInstance DrawRecorder::draw(u32 indexStart, u32 indexCount, u32 firstVertex,
 	current_ = pending_;
 
 	// validate state (what is possible at least)
-	dlg_assert(!clipCount_ || (clipStart_ != invalid && clipStart_ + clipCount_ <= current_.clipBuffer.size() / sizeof(ClipPool::Plane)));
-	dlg_assert(paint_ != invalid && paint_ < current_.paintBuffer.size() / sizeof(PaintData));
-	dlg_assert(transform_ != invalid && transform_ < current_.transformBuffer.size() / sizeof(TransformPool::Matrix));
-	dlg_assert(indexStart + indexCount <= current_.indexBuffer.size() / sizeof(Index));
-	dlg_assert(firstVertex < current_.vertexBuffer.size() / sizeof(Vertex));
+	/*
+	dlg_check({
+		auto fitsBuffer = [&](auto& buf, auto id, auto count, auto size) {
+			if(!count) {
+				return true;
+			}
+
+			return !count || (
+				id != invalid &&
+				buf.valid() &&
+				(id + count) < buf.allocation->size / size);
+		};
+
+		dlg_assert(fitsBuffer(current_.clipBuffer, clipStart_, clipCount_, sizeof(ClipPool::Plane)));
+		dlg_assert(fitsBuffer(current_.transformBuffer, transform_, 1, sizeof(TransformPool::Matrix)));
+		dlg_assert(fitsBuffer(current_.vertexBuffer, firstVertex, 1, sizeof(Vertex)));
+		dlg_assert(fitsBuffer(current_.indexBuffer, indexStart, indexCount, sizeof(Index)));
+	});
+	*/
 
 	auto& draw = draws_.emplace_back();
 	draw.clipStart = clipStart_;
@@ -377,23 +467,23 @@ DrawInstance DrawRecorder::draw(u32 indexStart, u32 indexCount, u32 firstVertex,
 }
 
 // DrawDescriptor
-DrawDescriptor::DrawDescriptor(Context& ctx) : context_(&ctx) {
-	ds_ = {ctx.dsAllocator(), ctx.dsLayout()};
+DrawDescriptor::DrawDescriptor(UpdateContext& ctx) : DeviceObject(ctx) {
+	ds_ = {ctx.dsAllocator(), context().dsLayout()};
 }
 
-bool DrawDescriptor::updateDevice() {
-	if(!updateDs_) {
-		return false;
-	}
-
-	updateDs_ = false;
+UpdateFlags DrawDescriptor::updateDevice() {
 	vpp::DescriptorSetUpdate dsu(ds_);
+
+	auto validate = [](const auto& info) {
+		dlg_assert(info.buffer && info.range);
+		return info;
+	};
 
 	// TODO: bind dummy buffer as fallback?
 	// or warn about them here
-	dsu.storage(state_.clipBuffer);
-	dsu.storage(state_.transformBuffer);
-	dsu.storage(state_.paintBuffer);
+	dsu.storage({validate(state_.clipBuffer.info())});
+	dsu.storage({validate(state_.transformBuffer.info())});
+	dsu.storage({validate(state_.paintBuffer.info())});
 
 	auto& texs = state_.textures;
 	auto binding = dsu.currentBinding();
@@ -409,20 +499,23 @@ bool DrawDescriptor::updateDevice() {
 		dsu.imageSampler(tex, sampler, binding, i);
 	}
 
-	dsu.storage(state_.drawBuffer);
-	dsu.imageSampler(state_.fontAtlas);
+	dsu.storage({validate(state_.drawBuffer.info())});
+	dlg_assert(state_.fontAtlas && *state_.fontAtlas);
+	dsu.imageSampler(*state_.fontAtlas);
 
 	// when descriptor indexing is active, no rerecord is needed
 	if(!context().descriptorIndexingFeatures()) {
-		return true;
+		return UpdateFlags::rerec;
 	}
 
 	// TODO: track what was actually updated. If device e.g. supports
 	// texture updates but not storage buffer updates and we only update
 	// the texture we don't have to rerecord.
 	auto& indexingFeatures = *context().descriptorIndexingFeatures();
-	return indexingFeatures.descriptorBindingSampledImageUpdateAfterBind &&
+	bool rec = indexingFeatures.descriptorBindingSampledImageUpdateAfterBind &&
 		indexingFeatures.descriptorBindingStorageBufferUpdateAfterBind;
+
+	return rec ? UpdateFlags::rerec : UpdateFlags::none;
 }
 
 // util

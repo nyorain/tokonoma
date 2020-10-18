@@ -21,7 +21,7 @@ void doClipping(int planeStart, int planeCount) {
 #endif // VERTEX_CLIP_DISTANCE
 
 	while(planeCount > 0) {
-		vec3 plane = clipPlanes[planeStart];
+		vec3 plane = clipPlanes[planeStart].xyz;
 		if(dot(plane.xy, inPos) - plane.z < 0.0) {
 			discard;
 		}
@@ -70,14 +70,15 @@ void main() {
 		outColor.a *= texture(fontAtlas, inUV).a;
 	}
 
-#ifdef EDGE_AA
-	if(type.type == drawTypeStroke) {
+	if(cmd.type == drawTypeStroke) {
 		float fw = cmd.uvFadeWidth;
 		// reference/alternative formulation for y antialiasing:
-		// min(1.0, 1.0 - (abs(inUV.y) - (1 - fw)) / fw)
-		float aaFacY = min(1.0, (1.0 - abs(inUv.y)) / fw);
+		// min(1.0, 1.0 - (abs(inUV.y) - (1 - 1 / fw)) * fw)
+		float aaFacY = min(1.0, (1.0 - abs(inUV.y)) * fw);
 		float aaFacX = inUV.x;
+
 		outColor.a *= aaFacX * aaFacY;
+		// outColor.rgb = vec3(aaFacX * abs(inUV.y));
+		// outColor.a = 1.0;
 	}
-#endif // EDGE_AA
 }

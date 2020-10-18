@@ -4,40 +4,45 @@
 #include <vpp/vk.hpp>
 
 namespace rvg2 {
-namespace detail {
 
-template<typename ...Ts>
-struct Visitor : Ts...  {
-    Visitor(const Ts&... args) : Ts(args)...  {}
-    using Ts::operator()...;
-};
-
-GpuBuffer::GpuBuffer(Context& ctx, vk::BufferUsageFlags usage, DevMemBits memBits) :
-		context_(&ctx), usage_(usage) {
-
-	memBits_ = std::visit(Visitor{
+u32 resolve(DevMemBits memBits, const vpp::Device& dev) {
+	return std::visit(Visitor{
 		[](u32 memBits) { return memBits; },
 		[&](DevMemType mt) -> u32 {
 			switch(mt) {
-				case DevMemType::hostVisible: return ctx.device().hostMemoryTypes();
-				case DevMemType::deviceLocal: return ctx.device().deviceMemoryTypes();
+				case DevMemType::hostVisible: return dev.hostMemoryTypes();
+				case DevMemType::deviceLocal: return dev.deviceMemoryTypes();
 				default: case DevMemType::all: return 0xFFFFFFFFu;
 			}
 		}}, memBits);
+}
 
+u32 resolve(DevMemBits mb, const vpp::Device& dev, vk::BufferUsageFlags& addFlags) {
+	auto ret = resolve(mb, dev);
 	// if buffer might be allocated on non-host-visible memory, make sure
 	// to include transferDst flag
 	// TODO: ignore invalid bits that don't correspond to heap?
-	if((memBits_ & ~ctx.device().hostMemoryTypes()) != 0) {
-		usage_ |= vk::BufferUsageBits::transferDst;
+	// important e.g. on cards that only have host visible memory
+	// when memBits_ is 0xFFFFFFFF
+	if((ret & ~dev.hostMemoryTypes()) != 0) {
+		addFlags |= vk::BufferUsageBits::transferDst;
 	}
+
+	return ret;
 }
 
-bool GpuBuffer::updateDevice(unsigned typeSize, nytl::Span<const std::byte> data) {
-	dlg_assert(context_);
+namespace detail {
+
+void GpuBuffer::init(vk::BufferUsageFlags usage, u32 memBits) {
+	usage_ = usage;
+	memBits_ = memBits;
+}
+
+bool GpuBuffer::updateDevice(UpdateContext& ctx,
+		unsigned typeSize, nytl::Span<const std::byte> data) {
+	dlg_assertm(memBits_, "GpuBuffer is not valid");
 
 	// check if re-allocation is needed
-	auto& ctx = *context_;
 	auto realloc = false;
 	if(buffer_.size() < data.size()) {
 		auto size = data.size() * 2; // overallocate
@@ -83,7 +88,7 @@ bool GpuBuffer::updateDevice(unsigned typeSize, nytl::Span<const std::byte> data
 
 			auto stage = vpp::SubBuffer(ctx.bufferAllocator(),
 				stageSize, vk::BufferUsageBits::transferSrc,
-				ctx.device().hostMemoryTypes());
+				ctx.context().device().hostMemoryTypes());
 			auto map = stage.memoryMap();
 			auto span = map.span();
 			std::vector<vk::BufferCopy> copies;

@@ -10,6 +10,9 @@
 #include <variant>
 
 // TODO
+#include <dlg/dlg.hpp>
+
+// TODO
 // - allow pool deferred initilization? but maybe each pool should have
 //   its dedicated allocation after all
 
@@ -17,20 +20,24 @@ namespace rvg2 {
 
 using namespace nytl;
 
-class TransformPool : public Buffer<Mat4f> {
+class TransformPool : public Buffer<Mat4f, UpdateFlags::descriptors> {
 public:
 	using Matrix = Mat4f;
-	TransformPool(Context&, DevMemBits = DevMemType::deviceLocal);
+	TransformPool() = default;
+	TransformPool(UpdateContext&, DevMemBits = DevMemType::deviceLocal);
+	void init(UpdateContext&, DevMemBits = DevMemType::deviceLocal);
 };
 
-class ClipPool : public Buffer<nytl::Vec4f> {
+class ClipPool : public Buffer<nytl::Vec4f, UpdateFlags::descriptors> {
 public:
 	// Plane is all points x for which: dot(plane.xy, x) - plane.z == 0.
 	// The inside of the plane are all points for which it's >0.
 	// Everything <0 gets clipped. Fourth component is unused, needed
 	// for padding.
 	using Plane = nytl::Vec4f;
-	ClipPool(Context&, DevMemBits = DevMemType::deviceLocal);
+	ClipPool() = default;
+	ClipPool(UpdateContext&, DevMemBits mb = DevMemType::deviceLocal);
+	void init(UpdateContext&, DevMemBits = DevMemType::deviceLocal);
 };
 
 struct PaintData {
@@ -40,24 +47,28 @@ struct PaintData {
 	nytl::Mat4f transform; // mat3 + additional data
 };
 
-class PaintPool : public Buffer<PaintData> {
+class PaintPool : public Buffer<PaintData, UpdateFlags::descriptors> {
 public:
-	PaintPool(Context& ctx, DevMemBits = DevMemType::deviceLocal);
+	PaintPool() = default;
+	PaintPool(UpdateContext& ctx, DevMemBits = DevMemType::deviceLocal);
+	void init(UpdateContext& ctx, DevMemBits = DevMemType::deviceLocal);
 
 	void setTexture(unsigned i, vk::ImageView);
 	const auto& textures() const { return textures_; }
 
-	bool updateDevice() {
-		bool rerec = texturesChanged_;
-		rerec |= Buffer::updateDevice();
-		return rerec;
+	UpdateFlags updateDevice() {
+		auto flags = Buffer::updateDevice();
+		if(texturesChanged_) {
+			flags |= UpdateFlags::descriptors;
+		}
+		return flags;
 	}
 
 	// Returns the first free texture slot.
 	// If there is none, returns 'invalid'.
 	// This does not actually allocate something, it can be used to
 	// check whether this pool has free texture slots left.
-	u32 freeTextureSlot() const;
+	u32 findTextureSlot() const;
 
 protected:
 	std::vector<vk::ImageView> textures_;
@@ -71,14 +82,18 @@ struct Vertex {
 	Vec4u8 color;
 };
 
-class VertexPool : public Buffer<Vertex> {
+class VertexPool : public Buffer<Vertex, UpdateFlags::rerec> {
 public:
-	VertexPool(Context& ctx, DevMemBits = DevMemType::deviceLocal);
+	VertexPool() = default;
+	VertexPool(UpdateContext& ctx, DevMemBits = DevMemType::deviceLocal);
+	void init(UpdateContext& ctx, DevMemBits = DevMemType::deviceLocal);
 };
 
-class IndexPool : public Buffer<Index> {
+class IndexPool : public Buffer<Index, UpdateFlags::rerec> {
 public:
-	IndexPool(Context& ctx, DevMemBits = DevMemType::deviceLocal);
+	IndexPool() = default;
+	IndexPool(UpdateContext& ctx, DevMemBits = DevMemType::deviceLocal);
+	void init(UpdateContext& ctx, DevMemBits = DevMemType::deviceLocal);
 };
 
 std::vector<Vec4f> polygonClip(nytl::Span<const Vec2f> points, bool close);

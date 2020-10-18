@@ -1,5 +1,6 @@
 #pragma once
 
+#include "update.hpp"
 #include <vpp/fwd.hpp>
 #include <vpp/handles.hpp>
 #include <vpp/sharedBuffer.hpp>
@@ -77,27 +78,29 @@ public:
 	Context(Context&&) = delete;
 	Context& operator=(Context&&) = delete;
 
+	/*
 	vk::Semaphore endFrameSubmit(vk::SubmitInfo&);
 	const vk::CommandBuffer* endFrameWork();
-
 	vk::CommandBuffer recordableUploadCmdBuf();
 	void keepAlive(vpp::SubBuffer);
 	void keepAlive(vpp::ViewableImage);
-
 	vpp::BufferAllocator& bufferAllocator();
 	vpp::DescriptorAllocator& dsAllocator();
 	vpp::DeviceMemoryAllocator& devMemAllocator();
+	*/
+
+	const UpdateContext& updateContext() const { return uc_; }
+	UpdateContext& updateContext() { return uc_; }
 
 	const vpp::Device& device() const { return dev_; }
 	const vpp::TrDsLayout& dsLayout() const { return dsLayout_; }
 	vk::Sampler sampler() const { return sampler_; }
 	vk::PipelineLayout pipeLayout() const { return pipeLayout_; }
 	vk::Pipeline pipe() const { return pipe_; }
-	vk::ImageView dummyImageView() const { return dummyImage_.vkImageView(); }
-	vpp::BufferSpan dummyBuffer() const { return dummyBuffer_; }
+	const auto& dummyImageView() const { return dummyImage_.vkImageView(); }
 
-	vpp::BufferSpan defaultTransform() const;
-	vpp::BufferSpan defaultPaint() const;
+	const vpp::SubBuffer& defaultTransform() const { return dummyTransform_; }
+	const vpp::SubBuffer& defaultPaint() const { return dummyPaint_; }
 
 	const ContextSettings& settings() const { return settings_; }
 	unsigned numBindableTextures() const { return numBindableTextures_; }
@@ -117,10 +120,12 @@ private:
 	vpp::Sampler sampler_;
 
 	vpp::ViewableImage dummyImage_;
-	vpp::SubBuffer dummyBuffer_;
+	vpp::SubBuffer dummyTransform_;
+	vpp::SubBuffer dummyPaint_;
 
 	nytl::Flags<DeviceFeature> features_;
 
+	/*
 	vpp::Semaphore uploadSemaphore_;
 	vpp::CommandBuffer uploadCb_;
 	bool uploadWork_ {};
@@ -132,12 +137,15 @@ private:
 
 	KeepAlive keepAlive_;
 	KeepAlive keepAliveLast_;
+	*/
 
 	ContextSettings settings_;
 	unsigned numBindableTextures_ {};
 
 	std::unique_ptr<vk::PhysicalDeviceDescriptorIndexingFeaturesEXT> descriptorIndexing_ {};
-	vpp::DescriptorAllocator dsAlloc_ {};
+	// vpp::DescriptorAllocator dsAlloc_ {};
+
+	UpdateContext uc_;
 };
 
 } // namespace rvg2

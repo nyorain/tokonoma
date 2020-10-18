@@ -5,6 +5,7 @@
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/buffer.hpp>
 #include <vector>
+#include <variant>
 
 namespace rvg2 {
 
@@ -31,22 +32,76 @@ struct DrawBindingsData {
 	u32 _pad[2];
 };
 
+// TODO: we should probably combine those two buffers into one.
 struct DrawPool {
-	DrawPool(Context& ctx, DevMemBits memBits = DevMemType::deviceLocal);
+	DrawPool() = default;
+	DrawPool(UpdateContext& ctx, DevMemBits memBits = DevMemType::deviceLocal);
+	void init(UpdateContext& ctx, DevMemBits memBits = DevMemType::deviceLocal);
 
-	Buffer<vk::DrawIndexedIndirectCommand> indirectCmdBuf;
-	Buffer<DrawBindingsData> bindingsCmdBuf;
+	// When the indirect-command buffer gets recreated, we always have to
+	// rerecord the command buffer, rebatching won't detect the change.
+	static constexpr auto indirectUpdateFlags = UpdateFlags::rerec;
+	static constexpr auto bindingsUpdateFlags = UpdateFlags::descriptors;
+
+	Buffer<vk::DrawIndexedIndirectCommand, indirectUpdateFlags> indirectCmdBuf;
+	Buffer<DrawBindingsData, bindingsUpdateFlags> bindingsCmdBuf;
 };
 
+/// Bundles different ways to reference a buffer allocation.
+/// In comparision to vpp::BufferSpan, this can reference a vk::Buffer
+/// variable, meaning it can propagate buffer recreation.
+/// so can remain valid after a buffer recreation.
+struct BufferRef {
+	using Allocation = vpp::BasicAllocation<vk::DeviceSize>;
+	static const Allocation& fullAllocation();
+
+	BufferRef() = default;
+
+	/// The referenced resources (themselves, *not* just what they reference)
+	/// must stay valid as long as this BufferRef is used.
+	BufferRef(const vpp::SubBuffer&);
+	BufferRef(const vk::Buffer&, const Allocation&);
+
+	// NOTE: when you pass a BufferRef constructed from a BufferSpan
+	// to a DrawDescriptor/DrawCall/DrawRecorder, the exact allocation
+	// must stay valid as long as the call uses it.
+	// The other constructors just require that e.g. the SubBuffer itself
+	// stays valid, while its allocation/underlaying buffer can change
+	// (that might require a rerecord/descriptor update though).
+	BufferRef(vpp::BufferSpan span);
+
+	vk::DescriptorBufferInfo info() const;
+
+	// Returns whether this actually references a resource.
+	// The referenced allocation may be empty though.
+	bool valid() const;
+
+	// Returns whether this is valid *and* references a nonempty allocation.
+	bool nonempty() const;
+
+	struct Raw {
+		const vk::Buffer* buffer {};
+		const Allocation* allocation {&fullAllocation()};
+	};
+
+	struct Sub {
+		const vpp::SharedBuffer* const * buffer {};
+		const Allocation* allocation {&fullAllocation()};
+	};
+
+	std::variant<vpp::BufferSpan, Raw, Sub> ref;
+};
+
+bool operator==(const BufferRef& a, const BufferRef& b);
+bool same(const vk::DescriptorBufferInfo& a, const vk::DescriptorBufferInfo& b);
+
 struct DrawState {
-	vpp::BufferSpan transformBuffer; // TransformPool
-	vpp::BufferSpan clipBuffer; // ClipPool
-	vpp::BufferSpan paintBuffer; // PaintPool
-	vpp::BufferSpan vertexBuffer; // VertexPool
-	vpp::BufferSpan indexBuffer; // IndexPool
-	vpp::BufferSpan drawBuffer; // DrawPool: bindingsCmdBuf
+	BufferRef transformBuffer; // TransformPool
+	BufferRef clipBuffer; // ClipPool
+	BufferRef paintBuffer; // PaintPool
+	BufferRef drawBuffer; // DrawPool: bindingsCmdBuf
 	std::vector<vk::ImageView> textures;
-	vk::ImageView fontAtlas;
+	const vk::ImageView* fontAtlas {};
 };
 
 bool operator==(const DrawState& a, const DrawState& b);
@@ -68,14 +123,17 @@ struct Draw {
 	float uvFadeWidth {0.f};
 };
 
-class DrawDescriptor {
+class DrawDescriptor : public DeviceObject {
 public:
-	DrawDescriptor(Context&);
+	DrawDescriptor(UpdateContext&);
 
-	bool updateDevice();
+	/// Returns whether a rerecord is needed.
+	UpdateFlags updateDevice() override;
 
 	void state(const DrawState& state) {
-		updateDs_ = !(state_ == state);
+		if(state_ != state) {
+			// registerDeviceUpdate();
+		}
 		state_ = state;
 	}
 	const DrawState& state() const {
@@ -83,17 +141,14 @@ public:
 	}
 
 	DrawState& changeState() {
-		updateDs_ = true;
+		registerDeviceUpdate();
 		return state_;
 	}
 
 	const auto& ds() const { return ds_; }
-	const Context& context() const { return *context_; }
 
 protected:
-	bool updateDs_ {true};
 	DrawState state_;
-	Context* context_ {};
 	vpp::TrDs ds_;
 };
 
@@ -112,11 +167,11 @@ public:
 	// changing the state will require a subsequent rerecord.
 	void record(vk::CommandBuffer cb,
 		bool bindPipe = true,
-		bool bindDrawPool = true) const;
+		bool bindVertsInds = true) const;
 	void record(vk::CommandBuffer cb,
 		const vk::Extent2D& targetSize,
 		bool bindPipe = true,
-		bool bindDrawPool = true) const;
+		bool bindVertsInds = true) const;
 
 	void write(unsigned id, nytl::Span<const Draw> draw);
 	void write(unsigned id, const Draw& draw);
@@ -130,12 +185,12 @@ public:
 	void remove(unsigned id);
 
 	void descriptor(vk::DescriptorSet ds);
-	void vertexBuffer(vpp::BufferSpan);
-	void indexBuffer(vpp::BufferSpan);
+	void vertexBuffer(BufferRef);
+	void indexBuffer(BufferRef);
 
 	vk::DescriptorSet descriptor() const { return ds_; }
-	vpp::BufferSpan indexBuffer() const { return indexBuffer_; }
-	vpp::BufferSpan vertexBuffer() const { return vertexBuffer_; }
+	BufferRef indexBuffer() const { return indexBuffer_; }
+	BufferRef vertexBuffer() const { return vertexBuffer_; }
 
 	// TODO: remove(unsigned id, unsigned count)?
 	// TODO: add insert api (positional addition).
@@ -159,8 +214,8 @@ protected:
 	u32 reserved_ {};
 
 	vk::DescriptorSet ds_ {};
-	vpp::BufferSpan indexBuffer_ {};
-	vpp::BufferSpan vertexBuffer_ {};
+	BufferRef indexBuffer_ {};
+	BufferRef vertexBuffer_ {};
 	bool rerecord_ {true};
 };
 
@@ -185,12 +240,12 @@ public:
 		std::vector<DrawDescriptor>& descriptors);
 	~DrawRecorder();
 
-	void bindTransformBuffer(vpp::BufferSpan);
-	void bindClipBuffer(vpp::BufferSpan);
-	void bindPaintBuffer(vpp::BufferSpan);
-	void bindVertexBuffer(vpp::BufferSpan);
-	void bindIndexBuffer(vpp::BufferSpan);
-	void bindFontAtlas(vk::ImageView);
+	void bindTransformBuffer(BufferRef);
+	void bindClipBuffer(BufferRef);
+	void bindPaintBuffer(BufferRef);
+	void bindVertexBuffer(BufferRef);
+	void bindIndexBuffer(BufferRef);
+	void bindFontAtlas(const vk::ImageView&);
 	void bindTextures(std::vector<vk::ImageView>);
 
 	void bindTransform(u32);
@@ -242,8 +297,13 @@ public:
 	// void bind(FontAtlas&);
 
 protected:
-	DrawState current_ {};
-	DrawState pending_ {};
+	struct State : DrawState {
+		BufferRef vertexBuffer; // VertexPool
+		BufferRef indexBuffer; // VertexPool
+	};
+
+	State current_ {};
+	State pending_ {};
 	std::vector<Draw> draws_;
 
 	u32 transform_ {invalid};
@@ -260,5 +320,6 @@ protected:
 
 void record(vk::CommandBuffer cb, nytl::Span<const DrawCall> draws,
 		const vk::Extent2D& extent);
+
 
 } // namespace rvg

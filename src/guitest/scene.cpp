@@ -54,41 +54,67 @@ nytl::Span<const T> asSpan(nytl::Span<const std::byte> bytes) {
 // std::vector<Vec2f> polygonUnion(Span<const Vec2f> a, Span<const Vec2f> b);
 //
 // VertexPool
-VertexPool::VertexPool(Context& ctx, DevMemBits bits) :
-	Buffer(ctx, vk::BufferUsageBits::vertexBuffer, bits) {
+VertexPool::VertexPool(UpdateContext& ctx, DevMemBits bits) {
+	init(ctx, bits);
+}
+
+void VertexPool::init(UpdateContext& ctx, DevMemBits bits) {
+	Buffer::init(ctx, vk::BufferUsageBits::vertexBuffer, bits);
 }
 
 // IndexPool
-IndexPool::IndexPool(Context& ctx, DevMemBits bits) :
-	Buffer(ctx, vk::BufferUsageBits::indexBuffer, bits) {
+IndexPool::IndexPool(UpdateContext& ctx, DevMemBits bits) {
+	init(ctx, bits);
+}
+
+void IndexPool::init(UpdateContext& ctx, DevMemBits bits) {
+	Buffer::init(ctx, vk::BufferUsageBits::indexBuffer, bits);
 }
 
 // TransformPool
-TransformPool::TransformPool(Context& ctx, DevMemBits bits) :
-	Buffer(ctx, vk::BufferUsageBits::storageBuffer, bits) {
+TransformPool::TransformPool(UpdateContext& ctx, DevMemBits bits) {
+	init(ctx, bits);
+}
+
+void TransformPool::init(UpdateContext& ctx, DevMemBits bits) {
+	Buffer::init(ctx, vk::BufferUsageBits::storageBuffer, bits);
 }
 
 // ClipPool
-ClipPool::ClipPool(Context& ctx, DevMemBits bits) :
-	Buffer(ctx, vk::BufferUsageBits::storageBuffer, bits) {
+ClipPool::ClipPool(UpdateContext& ctx, DevMemBits bits) {
+	init(ctx, bits);
+}
+
+void ClipPool::init(UpdateContext& ctx, DevMemBits bits) {
+	Buffer::init(ctx, vk::BufferUsageBits::storageBuffer, bits);
 }
 
 // PaintPool
-PaintPool::PaintPool(Context& ctx, DevMemBits bits) :
-	Buffer(ctx, vk::BufferUsageBits::storageBuffer, bits) {
+PaintPool::PaintPool(UpdateContext& ctx, DevMemBits bits) {
+	init(ctx, bits);
+}
+
+void PaintPool::init(UpdateContext& ctx, DevMemBits bits) {
+	Buffer::init(ctx, vk::BufferUsageBits::storageBuffer, bits);
 }
 
 void PaintPool::setTexture(unsigned i, vk::ImageView texture) {
 	dlg_assert(i < context().numBindableTextures());
 	if(textures_.size() <= i) {
+		dlg_assert(texture);
 		textures_.resize(i);
 	}
 
-	texturesChanged_ |= (textures_[i] != texture);
+	if(textures_[i] == texture) {
+		return;
+	}
+
+	texturesChanged_ = true;
 	textures_[i] = texture;
+	registerDeviceUpdate();
 }
 
-u32 PaintPool::freeTextureSlot() const {
+u32 PaintPool::findTextureSlot() const {
 	for(auto i = 0u; i < textures_.size(); ++i) {
 		if(!textures_[i]) {
 			return i;
@@ -501,7 +527,7 @@ void Paint::data(const PaintData& data, vk::ImageView view) {
 
 void Paint::texture(vk::ImageView view) {
 	if(texID_ == invalid && view) {
-		texID_ = pool_->freeTextureSlot();
+		texID_ = pool_->findTextureSlot();
 		if(texID_ == invalid) {
 			throw std::runtime_error("No free texture slot in pool");
 		}

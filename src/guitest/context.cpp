@@ -45,30 +45,40 @@ Context::Context(vpp::Device& dev, const ContextSettings& settings) :
 		settings_.samples = vk::SampleCountBits::e1;
 	}
 
-	uploadCb_ = dev.commandAllocator().get(settings_.uploadQueueFamily,
-		vk::CommandPoolCreateBits::resetCommandBuffer);
-	uploadSemaphore_ = vpp::Semaphore(dev);
+	// uploadCb_ = dev.commandAllocator().get(settings_.uploadQueueFamily,
+	// 	vk::CommandPoolCreateBits::resetCommandBuffer);
+	// uploadSemaphore_ = vpp::Semaphore(dev);
+	uc_.init(*this, settings.uploadQueueFamily);
 
 	// dummies
-	struct {
-		nytl::Mat4f mat;
-		PaintData data;
-	} bufData = {
-		nytl::identity<4, float>(),
-		colorPaint({1.f, 0.f, 1.f, 1.f}),
-	};
+	// struct {
+	// 	nytl::Mat4f mat;
+	// 	PaintData data;
+	// } bufData = {
+	// 	nytl::identity<4, float>(),
+	// 	colorPaint({1.f, 0.f, 1.f, 1.f}),
+	// };
 
-	dummyBuffer_ = {bufferAllocator(), sizeof(bufData),
+	dummyTransform_ = {uc_.bufferAllocator(), sizeof(nytl::Mat4f),
+		vk::BufferUsageBits::storageBuffer | vk::BufferUsageBits::transferDst,
+		dev.deviceMemoryTypes()};
+	dummyPaint_ = {uc_.bufferAllocator(), sizeof(PaintData),
 		vk::BufferUsageBits::storageBuffer | vk::BufferUsageBits::transferDst,
 		dev.deviceMemoryTypes()};
 
+	auto defaultTransform = nytl::identity<4, float>();
+	auto defaultPaint = colorPaint({1.f, 0.f, 1.f, 1.f});
+
 	auto imgInfo = vpp::ViewableImageCreateInfo(vk::Format::r8g8b8a8Unorm,
 		vk::ImageAspectBits::color, {1, 1}, vk::ImageUsageBits::sampled);
-	dummyImage_ = {devMemAllocator(), imgInfo};
+	dummyImage_ = {uc_.devMemAllocator(), imgInfo};
 
 	// prepare layouts
 	// TODO: fill dummy image with white or something?
-	auto cb = recordableUploadCmdBuf();
+	// TODO(important): using the default upload context here is problematic
+	// since it may never be used by the user, i.e. these commands
+	// never executed.
+	auto cb = uc_.recordableUploadCmdBuf();
 	vk::ImageMemoryBarrier barrier;
 	barrier.image = dummyImage_.image();
 	barrier.oldLayout = vk::ImageLayout::undefined;
@@ -78,8 +88,10 @@ Context::Context(vpp::Device& dev, const ContextSettings& settings) :
 	vk::cmdPipelineBarrier(cb, vk::PipelineStageBits::topOfPipe,
 		vk::PipelineStageBits::allGraphics, {}, {}, {}, {{barrier}});
 
-	vk::cmdUpdateBuffer(cb, dummyBuffer_.buffer(), dummyBuffer_.offset(),
-		sizeof(bufData), &bufData);
+	vk::cmdUpdateBuffer(cb, dummyTransform_.buffer(), dummyTransform_.offset(),
+		sizeof(defaultTransform), &defaultTransform);
+	vk::cmdUpdateBuffer(cb, dummyPaint_.buffer(), dummyPaint_.offset(),
+		sizeof(defaultPaint), &defaultPaint);
 
 	// dsLayout
 	// sampler
@@ -98,10 +110,10 @@ Context::Context(vpp::Device& dev, const ContextSettings& settings) :
 
 	// figure out limits
 	constexpr auto nonTextureResources = 10u;
-	vk::DescriptorPoolCreateFlags dsAllocFlags {};
+	// vk::DescriptorPoolCreateFlags dsAllocFlags {};
 	if(settings_.descriptorIndexingFeatures) {
 		descriptorIndexing_ = std::make_unique<vk::PhysicalDeviceDescriptorIndexingFeaturesEXT>(*settings_.descriptorIndexingFeatures);
-		dsAllocFlags |= vk::DescriptorPoolCreateBits::updateAfterBindEXT;
+		// dsAllocFlags |= vk::DescriptorPoolCreateBits::updateAfterBindEXT;
 
 		if(descriptorIndexing_->descriptorBindingSampledImageUpdateAfterBind) {
 			vk::PhysicalDeviceDescriptorIndexingPropertiesEXT indexingProps;
@@ -142,7 +154,7 @@ Context::Context(vpp::Device& dev, const ContextSettings& settings) :
 	// We need to subtract once for the font atlas
 	--numBindableTextures_;
 
-	dsAlloc_.init(dev, dsAllocFlags);
+	// dsAlloc_.init(dev, dsAllocFlags);
 
 	const auto stages = vk::ShaderStageBits::vertex | vk::ShaderStageBits::fragment;
 	auto bindings = std::array{
@@ -289,6 +301,7 @@ Context::Context(vpp::Device& dev, const ContextSettings& settings) :
 	pipe_ = {dev, gpi.info(), settings_.pipelineCache};
 }
 
+/*
 vk::Semaphore Context::endFrameSubmit(vk::SubmitInfo& si) {
 	auto* cb = endFrameWork();
 	if(!cb) {
@@ -342,14 +355,15 @@ void Context::keepAlive(vpp::SubBuffer buf) {
 void Context::keepAlive(vpp::ViewableImage img) {
 	keepAlive_.imgs.emplace_back(std::move(img));
 }
+*/
 
-vpp::BufferSpan Context::defaultTransform() const {
-	return {dummyBuffer_.buffer(), sizeof(Mat4f), dummyBuffer_.offset()};
-}
-
-vpp::BufferSpan Context::defaultPaint() const {
-	return {dummyBuffer_.buffer(), sizeof(PaintData),
-		dummyBuffer_.offset() + sizeof(Mat4f)};
-}
+// vpp::BufferSpan Context::defaultTransform() const {
+// 	return {dummyBuffer_.buffer(), sizeof(Mat4f), dummyBuffer_.offset()};
+// }
+//
+// vpp::BufferSpan Context::defaultPaint() const {
+// 	return {dummyBuffer_.buffer(), sizeof(PaintData),
+// 		dummyBuffer_.offset() + sizeof(Mat4f)};
+// }
 
 } // namespace rvg2

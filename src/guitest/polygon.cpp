@@ -20,6 +20,22 @@ Polygon::~Polygon() {
 		dlg_assert(!vertexPool_ && !indexPool_);
 		return;
 	}
+
+	if(fill_.indexCount) {
+		dlg_assert(fill_.indexStart != invalid);
+		dlg_assert(fill_.vertexStart != invalid && fill_.vertexCount);
+
+		indexPool_->free(fill_.indexStart, fill_.indexCount);
+		vertexPool_->free(fill_.vertexStart, fill_.vertexCount);
+	}
+
+	if(stroke_.indexCount) {
+		dlg_assert(stroke_.indexStart != invalid);
+		dlg_assert(stroke_.vertexStart != invalid && stroke_.vertexCount);
+
+		indexPool_->free(stroke_.indexStart, stroke_.indexCount);
+		vertexPool_->free(stroke_.vertexStart, stroke_.vertexCount);
+	}
 }
 
 void swap(Polygon& a, Polygon& b) {
@@ -34,8 +50,6 @@ void swap(Polygon& a, Polygon& b) {
 
 	swapDraw(a.fill_, b.fill_);
 	swapDraw(a.stroke_, b.stroke_);
-	swapDraw(a.fillAA_, b.fillAA_);
-	swap(a.strokeWidth_, b.strokeWidth_);
 	swap(a.indexPool_, b.indexPool_);
 	swap(a.vertexPool_, b.vertexPool_);
 }
@@ -74,7 +88,7 @@ void Polygon::update(Span<const Vec2f> points, const DrawMode& dm) {
 			}
 
 			// TODO: fix handling of looping
-			auto fill = ktc::bakeCombinedFillAA(points, color, 1.f);
+			auto fill = ktc::bakeCombinedFillAA(points, color, fringe);
 
 			vertexPool_->reallocRef(fill_.vertexStart, fill_.vertexCount, fill.vertices.size());
 			indexPool_->reallocRef(fill_.indexStart, fill_.indexCount, fill.indices.size());
@@ -102,7 +116,7 @@ void Polygon::update(Span<const Vec2f> points, const DrawMode& dm) {
 			for(auto i = 0u; i < points.size(); ++i) {
 				Vertex vtx;
 				vtx.pos = points[i];
-				vtx.uv = {0.f, 0.f};
+				vtx.uv = {1.f, 0.f};
 				vtx.color = dm.color.fill ? dm.color.points[i] : Vec4u8{0, 0, 0, 0};
 				write(verts, vtx);
 			}
@@ -117,7 +131,7 @@ void Polygon::update(Span<const Vec2f> points, const DrawMode& dm) {
 	// update stroke
 	if(dm.stroke) {
 		std::vector<Vertex> vts;
-		auto writer = [&](const ktc::Vertex& vtx) {
+		auto writer = [&](ktc::Vertex vtx) {
 			vts.push_back(convertVertex(vtx));
 		};
 
@@ -126,10 +140,13 @@ void Polygon::update(Span<const Vec2f> points, const DrawMode& dm) {
 			color = {};
 		}
 
+
 		ktc::StrokeSettings settings;
-		settings.capFringe = dm.aaStroke ? 1.f : 0.f;
+		settings.capFringe = fringe;
 		settings.width = dm.stroke;
 		settings.loop = dm.loop;
+		settings.extrude = dm.strokeExtrude;
+		settings.fringe = fringe;
 
 		ktc::bakeStroke(points, settings, color, writer);
 
@@ -141,26 +158,31 @@ void Polygon::update(Span<const Vec2f> points, const DrawMode& dm) {
 		auto inds = indexPool_->writable(stroke_.indexStart, stroke_.indexCount);
 		ktc::triangleStripIndices(inds, vts.size());
 	}
+
+	strokeWidth_ = dm.stroke + fringe; // half on each side
 }
 
-std::array<DrawInstance, 2> Polygon::fill(DrawRecorder& rec) const {
+DrawInstance Polygon::fill(DrawRecorder& rec) const {
+	dlg_assert(indexPool_ && vertexPool_);
 	dlg_assertm(fill_.vertexCount, "Polygon can't be filled");
 
-	std::array<DrawInstance, 2> ret;
-	ret[0] = rec.draw(fill_.indexStart, fill_.indexCount, fill_.vertexStart,
-		DrawType::fill, 0.f);
-	if(fillAA_.vertexCount) {
-		ret[1] = rec.draw(fillAA_.indexStart, fillAA_.indexCount, fillAA_.vertexStart,
-			DrawType::stroke, 1.f);
-	}
+	rec.bind(*indexPool_);
+	rec.bind(*vertexPool_);
 
-	return ret;
+	// We need the stroke type here so we possibly get antialiasing
+	// TODO: don't use drawType for this...
+	return rec.draw(fill_.indexStart, fill_.indexCount, fill_.vertexStart,
+		DrawType::stroke, 1.f);
 }
 
 DrawInstance Polygon::stroke(DrawRecorder& rec) const {
+	dlg_assert(indexPool_ && vertexPool_);
 	dlg_assertm(stroke_.vertexCount, "Polygon can't be stroked");
+
+	rec.bind(*indexPool_);
+	rec.bind(*vertexPool_);
 	return rec.draw(stroke_.indexStart, stroke_.indexCount, stroke_.vertexStart,
-		DrawType::stroke, 1.f);
+		DrawType::stroke, 0.5f * strokeWidth_);
 }
 
 } // namespace rvg2

@@ -64,3 +64,80 @@ objects every frame requires potentially a lot of re-baking and re-uploading.
 A lot of other toolkits re-bake and re-upload *everything*, *every frame*
 so for most usecases this should not be a problem. Just something to keep
 in mind when optimizing and thinking about large-scale usecases.
+
+---
+
+sketch #1:
+
+At the end of update(), call update() on all buffers. It's important though
+that they are not changed after that until updateDevice(). If any
+of the update functions returns true, a buffer was changed and so the
+draw descriptor has to be updated (without descriptor indexing, that
+means that also a re-record is needed but this will automatically
+correctly be returned by updateDevice() on the updated descriptor).
+
+Alternative: just put all that update check logic in updateDevice for now?
+mean we do all the recording in updateDevice() but that shouldn't be
+such a huge problem I guess (for now at least).
+
+So, when any buffer returned true from updateDevice (or anything
+in your scene changed), just re-batch the whole scene (with rvg, see draw.hpp). 
+Then (should be done in every frame but if DrawInstance's aren't used to manually manipulate
+a recorded DrawCall or manually change DrawDescriptors it's ok to only do it
+after re-batching) call updateDevice on all draw calls and draw descriptors.
+If any of those return true, you need to rerecord the vulkan command buffer.
+This happens if:
+- a descriptor buffer (clip/transform/paint/cmdBuf) is recreated and there is no
+  descriptor indexing
+- textures of a DrawDescriptor are changed and there is no descriptor indexing
+- a vertex or index buffer changes
+- a new draw descriptor or draw call is created
+- the number of draws in a draw call changes
+
+---
+
+easy-to-use api, old style:
+
+1. create a rvg context
+2. create all your primitives and paints (directly from the context)
+3. use directly the DrawRecorder from rvg, the default scene
+4. when rvg updateDevice returns rerecord; rerecord!
+
+Basically: rvg::Context has a default of everything: scene and pools etc
+	that can be used for simple drawing. Automatically managed multiple
+	DrawPools for all the required texture slots.
+
+could make it even closer to rvg 0.1 style by combining the draw batching
+and command buffer recording into one step? Like
+
+```
+rvg::DrawBufRecorder rec = ctx.record(cb);
+// ... do stuff with rec, paint and shit ...
+
+// when rec goes out of scope, the commands are recorded to the command buffer
+```
+
+have to evaluate whether this has a big performance impact though. I think
+there might be some cases where only rebatching would be needed and not actual
+rerecording.
+
+---
+
+on the other hand, the new lowest level api:
+
+- create your pools on your own
+- manage scenes, only rebatch scenes that need it
+	- also: can record different scenes to different command buffers
+
+---
+
+initialization:
+
+- create pool objects (no gpu buffers yet)
+- allocate stuff from pools (only in logical state, still no gpu buffers)
+- updateDevice on pools
+
+- (if needed) update DrawCalls & DrawDescriptors
+	- this will possibly increase the needed size of the DrawPool
+- updateDevice on DrawPool
+- (if needed) record command buffers

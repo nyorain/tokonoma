@@ -28,6 +28,12 @@ struct DrawMode {
 	/// Must not be negative.
 	float stroke {};
 
+	/// In which direction to extrude the stroke:
+	/// -1: purely inwards
+	///  0: equally inwards and outwards (making the given points the center)
+	///  1: purely outwards
+	float strokeExtrude {};
+
 	/// Whether to loop the stroked points
 	/// Has no effect for filling.
 	bool loop {};
@@ -45,16 +51,8 @@ struct DrawMode {
 	} color {};
 
 	/// Whether to enable anti aliased fill
-	/// Antialiasing must be enabled for the context if this is true.
-	/// Changing this will always trigger a rerecord.
-	/// May have really large performance impact.
+	/// May have large performance impact.
 	bool aaFill {};
-
-	/// Whether to enable anti aliased stroking
-	/// Antialiasing must be enabled for the context if this is true.
-	/// Changing this will always trigger a rerecord.
-	/// May have some performance impact but way less then aaFill.
-	bool aaStroke {};
 };
 
 // Polygon
@@ -66,6 +64,8 @@ public:
 		unsigned vertexCount {};
 		unsigned indexCount {};
 	};
+
+	static constexpr auto fringe = 1.f;
 
 public:
 	Polygon() = default;
@@ -108,6 +108,7 @@ protected:
 
 	Draw fill_;
 	Draw stroke_;
+	float strokeWidth_ {};
 };
 
 template<typename T>
@@ -116,13 +117,6 @@ struct ObjectDraws {
 
 	DrawInstance stroke;
 	DrawInstance fill;
-
-	bool enable(bool set) {
-	}
-
-	bool enabled() const {
-		if(stroke.drawID.
-	}
 };
 
 } // namespace rvg2
