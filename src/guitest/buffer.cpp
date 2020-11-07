@@ -38,6 +38,21 @@ void GpuBuffer::init(vk::BufferUsageFlags usage, u32 memBits) {
 	memBits_ = memBits;
 }
 
+void GpuBuffer::ensureReserved(vpp::BufferAllocator& alloc, vk::DeviceSize size) {
+	if(buffer_.size() >= size || reservationSize_ >= size) {
+		return;
+	}
+
+	if(reservation_) {
+		alloc.cancel(reservation_);
+		reservation_ = 0u;
+	}
+
+	// over-reserve
+	reservationSize_ = 2 * size;
+	reservation_ = alloc.reserve(reservationSize_, usage_, memBits_);
+}
+
 bool GpuBuffer::updateDevice(UpdateContext& ctx,
 		unsigned typeSize, nytl::Span<const std::byte> data) {
 	dlg_assertm(memBits_, "GpuBuffer is not valid");
@@ -45,9 +60,20 @@ bool GpuBuffer::updateDevice(UpdateContext& ctx,
 	// check if re-allocation is needed
 	auto realloc = false;
 	if(buffer_.size() < data.size()) {
-		auto size = data.size() * 2; // overallocate
-		buffer_ = {ctx.bufferAllocator(), size, usage_, memBits_};
+		dlg_assert(reservation_);
+		dlg_assert(data.size() <= reservationSize_);
+
+		// auto size = data.size() * 2; // overallocate
+		// buffer_ = {ctx.bufferAllocator(), size, usage_, memBits_};
+
+		auto alloc = ctx.bufferAllocator().alloc(reservation_);
+		buffer_ = {alloc.buffer, alloc.allocation};
+		reservation_ = 0u;
+
 		realloc = true;
+	} else if(reservation_) {
+		ctx.bufferAllocator().cancel(reservation_);
+		reservation_ = 0u;
 	}
 
 	using nytl::write;

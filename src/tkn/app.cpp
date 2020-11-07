@@ -372,6 +372,10 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 	instanceInfo.ppEnabledExtensionNames = iniExts.data();
 
 	std::vector<const char*> layers;
+
+	// TODO: for testing
+	layers.push_back("VK_LAYER_fuencaliente");
+
 	if(argsOut.layers) {
 		layers.push_back("VK_LAYER_KHRONOS_validation");
 	}
@@ -1171,7 +1175,7 @@ void App::dlgHandler(const struct dlg_origin* origin, const char* string) {
 	impl_->dlg.oldHandler(origin, string, impl_->dlg.oldData);
 
 	if(origin->level == dlg_level_error) {
-		std::raise(SIGINT); // tmp
+		// std::raise(SIGINT); // tmp
 	}
 }
 

@@ -18,6 +18,7 @@
 #include <vpp/shader.hpp>
 #include <vpp/trackedDescriptor.hpp>
 #include <vpp/pipeline.hpp>
+#include <vpp/debug.hpp>
 #include <vpp/vk.hpp>
 
 #include <dlg/dlg.hpp>
@@ -92,7 +93,10 @@ public:
 		wb.cb = cb;
 
 		auto initTex = createTexture(wb, std::move(p), params);
-		std::tie(image_, view_) = initTexture(initTex, wb).split();
+		auto vi = initTexture(initTex, wb);
+		vpp::nameHandle(vi, "viewed image");
+		std::tie(image_, view_) = vi.split();
+
 
 		// sampler
 		auto sci = tkn::linearSamplerInfo();

@@ -34,9 +34,11 @@ struct BufferSpan {
 // TODO: add more intelligent realloc here
 // TODO: more intelligent over-allocation, also make sure we never
 //   allocate buffer sizes below a certain threshold
-// TODO: support deferred initialization
 // TODO: don't rely on typeSize? make this a pure byte buffer?
+// TODO: more intelligent allocation of stage buffers. Reserve it as
+//   well (when neededc)?
 struct GpuBuffer {
+public:
 	// usage and memBits are stored for when the buffer needs to be recreated
 	vk::BufferUsageFlags usage_ {};
 	u32 memBits_ {};
@@ -46,10 +48,15 @@ struct GpuBuffer {
 	std::vector<BufferSpan> free_;
 	vpp::SubBuffer buffer_;
 
+	// ID and size of the reservation done for the next resize.
+	vpp::BufferAllocator::ReservationID reservation_ {};
+	vk::DeviceSize reservationSize_ {};
 
+public:
 	void init(vk::BufferUsageFlags usage, u32 memBits);
 	u32 allocate(u32 count);
 	void free(u32 id, u32 count);
+	void ensureReserved(vpp::BufferAllocator& alloc, vk::DeviceSize size);
 	bool updateDevice(UpdateContext& ctx, u32 typeSize,
 		nytl::Span<const std::byte> data);
 };
@@ -83,6 +90,7 @@ public:
 		}
 		if(id + count > data_.size()) {
 			data_.resize(std::max<unsigned>(data_.size(), id + count));
+			buffer_.ensureReserved(updateContext().bufferAllocator(), sizeof(T) * data_.size());
 			registerDeviceUpdate();
 		}
 		return id;
@@ -108,21 +116,32 @@ public:
 		if(startID + count == data_.size()) {
 			// If so, we resize our logical state to tightly fit the new
 			// allocation.
-			auto newEnd = (id == data_.size()) ? (startID + newCount) : startID;
-			data_.resize(newEnd);
-		} else {
+			if(id == data_.size()) { // didn't find allocation in buffer
+				data_.resize(startID + newCount);
+				buffer_.ensureReserved(updateContext().bufferAllocator(), sizeof(T) * data_.size());
+				registerDeviceUpdate();
+			} else {
+				// If the allocation was moved to some other spot
+				// before that last one, cut off the now unused last elements.
+				data_.resize(startID);
+			}
+		} else if(id + newCount > data_.size()) {
 			// Otherwise, just make sure our logical state is large enough.
-			data_.resize(std::max<unsigned>(data_.size(), id + newCount));
+			data_.resize(id + newCount);
+			buffer_.ensureReserved(updateContext().bufferAllocator(), sizeof(T) * data_.size());
+			registerDeviceUpdate();
 		}
 
 		// Now copy from the old allocation in our logical state to the
 		// new allocation.
 		auto mcount = std::min(count, newCount);
 		auto b = data_.data();
+
 		// We don't use std::copy since our ranges may overlap in any way.
 		// std::memmove guarantees out it works, and Buffer is designed
 		// for trivial types anyways.
 		// std::copy(b + id, b + id + mcount, b + startID);
+		static_assert(std::is_trivially_copyable_v<T>);
 		std::memmove(b + id, b + startID, mcount);
 		return id;
 	}

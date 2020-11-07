@@ -228,6 +228,36 @@ public:
 		return true;
 	}
 
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
+			return true;
+		}
+
+		if(ev.pressed && ev.keycode == swa_key_p) {
+			auto& uc = context_->updateContext();
+			dlg_info("{} draw calls", drawCalls_.size());
+			dlg_info("{} draw descriptors", drawDescriptors_.size());
+
+			auto sum = 0u;
+			for(auto& dc : drawCalls_) {
+				sum += dc.size();
+			}
+			dlg_info("{} draws", sum);
+
+			dlg_info("{} descriptor allocators", uc.dsAllocator().pools().size());
+			dlg_info("{} shared buffers", uc.bufferAllocator().buffers().size());
+			for(auto& buf : uc.bufferAllocator().buffers()) {
+				dlg_info("   size {}", buf.buffer->size());
+			}
+
+			dlg_info("{} memories", uc.devMemAllocator().memories().size());
+
+			return true;
+		}
+
+		return false;
+	}
+
 	const char* name() const override { return "rvg-scene-test"; }
 
 protected:
