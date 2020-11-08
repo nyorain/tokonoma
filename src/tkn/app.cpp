@@ -13,6 +13,7 @@
 #include <vpp/device.hpp>
 #include <vpp/submit.hpp>
 #include <vpp/physicalDevice.hpp>
+#include <vkpp/names.hpp>
 #include <nytl/scope.hpp>
 #include <rvg/context.hpp>
 #include <rvg/font.hpp>
@@ -373,10 +374,9 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 
 	std::vector<const char*> layers;
 
-	// TODO: for testing
-	layers.push_back("VK_LAYER_fuencaliente");
-
 	if(argsOut.layers) {
+		// TODO: for testing
+		layers.push_back("VK_LAYER_fuencaliente");
 		layers.push_back("VK_LAYER_KHRONOS_validation");
 	}
 

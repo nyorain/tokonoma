@@ -2,6 +2,7 @@
 #include <tkn/features.hpp>
 #include <vpp/vk.hpp>
 #include <vpp/physicalDevice.hpp>
+#include <vkpp/names.hpp>
 #include <dlg/dlg.hpp>
 
 namespace tkn {

@@ -96,13 +96,10 @@ void SSRPass::initBuffers(InitBufferData& data, vk::ImageView ldepth,
 	vpp::nameHandle(target_.imageView(), "SSRPass:target_.imageView");
 
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.imageSampler({{{}, ldepth,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, normals,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.storage({{{}, target_.vkImageView(),
-		vk::ImageLayout::general}});
-	dsu.uniform({{{ubo_}}});
+	dsu.imageSampler(ldepth);
+	dsu.imageSampler(normals);
+	dsu.storage(target_.vkImageView());
+	dsu.uniform(ubo_);
 }
 
 void SSRPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,

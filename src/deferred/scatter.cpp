@@ -130,8 +130,8 @@ void LightScatterPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 	vpp::nameHandle(fb_, "LightScatterPass:fb");
 
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.imageSampler({{{}, depth, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.uniform({{{ubo_}}});
+	dsu.imageSampler(depth);
+	dsu.uniform(ubo_);
 	dsu.apply();
 }
 

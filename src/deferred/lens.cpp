@@ -95,13 +95,10 @@ void HighLightPass::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 	vpp::nameHandle(target_, "HightLightPass:target");
 
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.imageSampler({{{}, lightInput,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, emissionInput,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.storage({{{}, target_.vkImageView(),
-		vk::ImageLayout::general}});
-	dsu.uniform({{{ubo_}}});
+	dsu.imageSampler(lightInput);
+	dsu.imageSampler(emissionInput);
+	dsu.storage(target_.vkImageView());
+	dsu.uniform(ubo_);
 }
 
 void HighLightPass::record(vk::CommandBuffer cb, vk::Extent2D size) {
@@ -235,11 +232,9 @@ void LensFlare::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 	blur.updateInstance(blur_, target_.vkImageView(), tmpTarget_.vkImageView());
 
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.imageSampler({{{}, lightInput,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.storage({{{}, target_.vkImageView(),
-		vk::ImageLayout::general}});
-	dsu.uniform({{{ubo_}}});
+	dsu.imageSampler(lightInput);
+	dsu.storage(target_.vkImageView());
+	dsu.uniform(ubo_);
 }
 
 void LensFlare::record(vk::CommandBuffer cb, const GaussianBlur& blur,

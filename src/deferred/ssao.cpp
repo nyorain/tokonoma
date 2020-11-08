@@ -347,7 +347,7 @@ void SSAOPass::initBuffers(InitBufferData& data, vk::ImageView depth,
 	}
 
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.uniform({{{samples_}}});
+	dsu.uniform(samples_);
 	dsu.imageSampler({{{}, noise_.imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.imageSampler({{{}, depth, vk::ImageLayout::shaderReadOnlyOptimal}});

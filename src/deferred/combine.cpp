@@ -78,13 +78,13 @@ void CombinePass::updateInputs(vk::ImageView output, vk::ImageView light,
 		vk::ImageView ldepth, vk::ImageView bloom,
 		vk::ImageView ssr, vk::ImageView scattering) {
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.storage({{{}, output, vk::ImageLayout::general}});
-	dsu.imageSampler({{{}, light, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, ldepth, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, bloom, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, ssr, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, scattering, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.uniform({{{ubo_}}});
+	dsu.storage(output);
+	dsu.imageSampler(light);
+	dsu.imageSampler(ldepth);
+	dsu.imageSampler(bloom);
+	dsu.imageSampler(ssr);
+	dsu.imageSampler(scattering);
+	dsu.uniform(ubo_);
 }
 
 void CombinePass::record(vk::CommandBuffer cb, vk::Extent2D size) {

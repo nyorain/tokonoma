@@ -416,7 +416,8 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 
 	tkn::initShadowData(shadowData_, dev, depthFormat_,
 		scene_.dsLayout(), multiview_, depthClamp_);
-	auto initDirt = createTexture(wb, tkn::loadImage("dirt.jpg"));
+	auto dirtPath = TKN_BASE_DIR "/assets/lens/LensDirt_60.JPG";
+	auto initDirt = createTexture(wb, tkn::loadImage(dirtPath));
 
 	initPasses(wb);
 
@@ -482,11 +483,11 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 	// scene descriptor, used for some pipelines as set 0 for camera
 	// matrix and view position
 	vpp::DescriptorSetUpdate sdsu(cameraDs_);
-	sdsu.uniform({{{cameraUbo_}}});
+	sdsu.uniform(cameraUbo_);
 	sdsu.apply();
 
 	vpp::DescriptorSetUpdate edsu(envCameraDs_);
-	edsu.uniform({{{envCameraUbo_}}});
+	edsu.uniform(envCameraUbo_);
 	edsu.apply();
 
 	currentID_ = scene_.primitives().size();
@@ -1489,10 +1490,10 @@ void ViewApp::screenshot() {
 			face.envDs = {dev.descriptorAllocator(), cameraDsLayout_};
 
 			vpp::DescriptorSetUpdate dsu(face.ds);
-			dsu.uniform({{{face.ubo}}});
+			dsu.uniform(face.ubo);
 
 			vpp::DescriptorSetUpdate edsu(face.envDs);
-			edsu.uniform({{{face.envUbo}}});
+			edsu.uniform(face.envUbo);
 		}
 
 		probe_.retrieve = {dev.bufferAllocator(), probeFaceSize * 6,

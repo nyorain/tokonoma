@@ -93,16 +93,16 @@ void AOPass::updateInputs(vk::ImageView light,
 	envFilterLods_ = filteredEnvLods;
 
 	vpp::DescriptorSetUpdate dsu(ds_);
-	dsu.storage({{{}, light, vk::ImageLayout::general}});
-	dsu.imageSampler({{{}, albeo, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, emission, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, ldepth, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, normal, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, ssao, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, irradiance, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, filteredEnv, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.imageSampler({{{}, brdflut, vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.uniform({{{ubo_}}});
+	dsu.storage(light);
+	dsu.imageSampler(albeo);
+	dsu.imageSampler(emission);
+	dsu.imageSampler(ldepth);
+	dsu.imageSampler(normal);
+	dsu.imageSampler(ssao);
+	dsu.imageSampler(irradiance);
+	dsu.imageSampler(filteredEnv);
+	dsu.imageSampler(brdflut);
+	dsu.uniform(ubo_);
 }
 
 void AOPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,

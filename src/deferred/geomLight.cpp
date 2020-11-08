@@ -237,6 +237,12 @@ void GeomLightPass::create(InitData& data, const PassCreateInfo& info,
 		vpp::descriptorBinding( // depth
 			vk::DescriptorType::inputAttachment,
 			vk::ShaderStageBits::fragment),
+		// emission input attachment.
+		// never needed in the light pass, only added in case we render
+		// the ao pass, all input attachments must be bound
+		vpp::descriptorBinding(
+			vk::DescriptorType::inputAttachment,
+			vk::ShaderStageBits::fragment),
 	};
 
 	lightDsLayout_.init(dev, lightBindings);
@@ -493,22 +499,24 @@ void GeomLightPass::initBuffers(InitBufferData& data, vk::Extent2D size,
 		vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.inputAttachment({{{}, ldepth_.imageView(),
 		vk::ImageLayout::shaderReadOnlyOptimal}});
+	dsu.inputAttachment({{{}, emission_.imageView(),
+		vk::ImageLayout::shaderReadOnlyOptimal}});
 	dsu.apply();
 
 	if(renderAO()) {
-		vpp::DescriptorSetUpdate dsu(aoDs_);
-		dsu.inputAttachment({{{}, normals_.vkImageView(),
+		vpp::DescriptorSetUpdate aoDsu(aoDs_);
+		aoDsu.inputAttachment({{{}, normals_.vkImageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.inputAttachment({{{}, albedo_.vkImageView(),
+		aoDsu.inputAttachment({{{}, albedo_.vkImageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.inputAttachment({{{}, ldepth_.imageView(),
+		aoDsu.inputAttachment({{{}, ldepth_.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.inputAttachment({{{}, emission_.imageView(),
+		aoDsu.inputAttachment({{{}, emission_.imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, irradiance, vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, envMap, vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, brdflut, vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.uniform({{{aoUbo_}}});
+		aoDsu.imageSampler({{{}, irradiance, vk::ImageLayout::shaderReadOnlyOptimal}});
+		aoDsu.imageSampler({{{}, envMap, vk::ImageLayout::shaderReadOnlyOptimal}});
+		aoDsu.imageSampler({{{}, brdflut, vk::ImageLayout::shaderReadOnlyOptimal}});
+		aoDsu.uniform(aoUbo_);
 
 		aoEnvLods_ = envLods;
 	}

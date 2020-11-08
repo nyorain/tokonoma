@@ -174,17 +174,13 @@ void BloomPass::initBuffers(InitBufferData& data, vk::ImageView lightInput) {
 		targetLevels_[i].view = {dev, ivi};
 
 		vpp::DescriptorSetUpdate dsu(tmpLevels_[i].ds);
-		dsu.imageSampler({{{}, targetLevels_[i].view,
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.storage({{{}, tmpLevels_[i].view,
-			vk::ImageLayout::general}});
+		dsu.imageSampler(targetLevels_[i].view);
+		dsu.storage(tmpLevels_[i].view);
 		dsu.apply();
 
 		dsu = {targetLevels_[i].ds};
-		dsu.imageSampler({{{}, tmpLevels_[i].view,
-			vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.storage({{{}, targetLevels_[i].view,
-			vk::ImageLayout::general}});
+		dsu.imageSampler(tmpLevels_[i].view);
+		dsu.storage(targetLevels_[i].view);
 	}
 
 	ivi.image = target_;
@@ -194,11 +190,9 @@ void BloomPass::initBuffers(InitBufferData& data, vk::ImageView lightInput) {
 	vpp::nameHandle(fullView_, "BloomPass:fullView_");
 
 	vpp::DescriptorSetUpdate dsu(filter_.ds);
-	dsu.imageSampler({{{}, lightInput,
-		vk::ImageLayout::shaderReadOnlyOptimal}});
-	dsu.storage({{{}, targetLevels_[0].view,
-		vk::ImageLayout::general}});
-	dsu.uniform({{{filter_.ubo}}});
+	dsu.imageSampler(lightInput);
+	dsu.storage(targetLevels_[0].view);
+	dsu.uniform(filter_.ubo);
 }
 
 void BloomPass::recordBlur(vk::CommandBuffer cb, unsigned mip, vk::Extent2D size) {
