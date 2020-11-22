@@ -1,20 +1,10 @@
+#include "particle.glsl"
+
 layout(local_size_x = 64) in;
 
-struct Particle {
-	vec3 pos;
-	float lifetime;
-	vec3 vel;
-	float mass;
-};
-
 layout(set = 0, binding = 0) uniform Ubo {
-	mat4 vp;
-	vec3 camPos;
-	float dt;
-	vec3 attrPos;
-	float targetZ;
-	float attrStrength;
-} ubo;
+	UboData ubo;
+};
 
 layout(set = 0, binding = 1) buffer Particles {
 	Particle particles[];
@@ -38,7 +28,8 @@ void main() {
 
 	vec3 dist = ubo.attrPos - particle.pos;
 	float l = dot(dist, dist);
-	accel += ubo.dt * ubo.attrStrength * normalize(dist) / (0.01 + l);
+	float attrStrength = ubo.attrStrength * pow(ubo.targetZ, 2); // optional
+	accel += ubo.dt * attrStrength * normalize(dist) / (0.01 * ubo.targetZ + l);
 
 	particle.vel += accel / particle.mass;
 

@@ -6,48 +6,76 @@ namespace tkn {
 // Spaceship
 bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 		const SpaceshipCamControls& controls) {
-	auto updated = checkMovement(cam, dpy, dt, controls.move);
+	Vec3f move = checkMovement(cam.rot, dpy, controls.move);
+	con.moveVel += dt * move;
+
+	auto updated = false;
 
 	// check if we are currently rotating
 	auto rot = swa_display_mouse_button_pressed(dpy, controls.rotateButton);
 	if(con.mposStart.x != con.mposInvalid) {
 		if(rot) {
+			// update going-on rotation
 			Vec2i mpos;
 			swa_display_mouse_position(dpy, &mpos.x, &mpos.y);
-			auto d = controls.rotateFac * dt * Vec2f(mpos - con.mposStart);
+			auto d = controls.rotateFac * Vec2f(mpos - con.mposStart);
 
 			auto sign = [](auto f) { return f > 0.f ? 1.f : -1.f; };
-			auto yaw = sign(d.x) * std::pow(std::abs(d.x), controls.rotatePow);
-			auto pitch = sign(d.y) * std::pow(std::abs(d.y), controls.rotatePow);
-			tkn::rotateView(cam, yaw, pitch, 0.f);
-			cam.update = true;
-			updated = true;
+			float yawAcc = sign(d.x) * std::pow(std::abs(d.x), controls.rotatePow);
+			float pitchAcc = sign(d.y) * std::pow(std::abs(d.y), controls.rotatePow);
+
+			con.yawVel += dt * yawAcc;
+			con.pitchVel += dt * pitchAcc;
 		} else {
+			// rotation ended
 			con.mposStart.x = con.mposInvalid;
 		}
 	} else if(rot) {
+		// rotation was started
 		swa_display_mouse_position(dpy,
 			&con.mposStart.x, &con.mposStart.y);
 	}
 
+	if(std::abs(con.yawVel) + std::abs(con.pitchVel) > 0.0001) {
+		tkn::rotateView(cam, dt * con.yawVel, dt * con.pitchVel, 0.f);
+		cam.update = true;
+		updated = true;
+	}
+
+	// update movement
+	if(dot(con.moveVel, con.moveVel) > 0.0000001) {
+		cam.pos += dt * con.moveVel;
+		cam.update = true;
+		updated = true;
+	}
+
 	// update roll
+	float rollAcc = 0.0;
 	if(swa_display_key_pressed(dpy, controls.rollLeft)) {
-		con.rollVel -= controls.rollFac * dt;
+		rollAcc -= controls.rollFac;
 		updated = true;
 	}
 
 	if(swa_display_key_pressed(dpy, controls.rollRight)) {
-		con.rollVel += controls.rollFac * dt;
+		rollAcc += controls.rollFac;
 		updated = true;
 	}
 
+	con.rollVel += dt * rollAcc;
 	if(std::abs(con.rollVel) > 0.0001) {
 		tkn::rotateView(cam, 0.f, 0.f, dt * con.rollVel);
 		cam.update = true;
 		updated = true;
 	}
 
-	con.rollVel *= std::pow(1.f - controls.rollFriction, dt);
+	// con.rollVel *= std::pow(1.f - controls.rollFriction, dt);
+	// con.yawVel *= std::pow(1.f - controls.yawFriction, dt);
+	// con.pitchVel *= std::pow(1.f - controls.pitchFriction, dt);
+	con.rollVel *= std::exp(-dt * controls.rollFriction);
+	con.yawVel *= std::exp(-dt * controls.yawFriction);
+	con.pitchVel *= std::exp(-dt * controls.pitchFriction);
+	con.moveVel *= std::exp(-dt * controls.moveFriction);
+
 	return updated;
 }
 
@@ -165,10 +193,9 @@ void mouseWheelZoom(Camera& cam, ArcballCamCon& arc, float delta, float zoomFac)
 	cam.update = true;
 }
 
-bool checkMovement(Camera& c, swa_display* dpy, float dt,
+Vec3f checkMovement(const Quaternion& rot, swa_display* dpy,
 		const CamMoveControls& params) {
-
-	auto fac = params.mult * dt;
+	auto fac = params.mult;
 	if(swa_display_active_keyboard_mods(dpy) & params.fastMod) {
 		fac *= params.fastMult;
 	}
@@ -176,42 +203,45 @@ bool checkMovement(Camera& c, swa_display* dpy, float dt,
 		fac *= params.slowMult;
 	}
 
-	auto right = apply(c.rot, nytl::Vec3f{1.f, 0.f, 0.f});
+	auto right = apply(rot, nytl::Vec3f{1.f, 0.f, 0.f});
 	auto up = params.respectRotationY ?
-		apply(c.rot, nytl::Vec3f{0.f, 1.f, 0.f}) :
+		apply(rot, nytl::Vec3f{0.f, 1.f, 0.f}) :
 		nytl::Vec3f{0.f, 1.f, 0.f};
-	auto fwd = apply(c.rot, nytl::Vec3f{0.f, 0.f, -1.f});
-	bool update = false;
+	auto fwd = apply(rot, nytl::Vec3f{0.f, 0.f, -1.f});
+	Vec3f accel {};
 	if(swa_display_key_pressed(dpy, params.right)) { // right
-		c.pos += fac * right;
-		update = true;
+		accel += fac * right;
 	}
 	if(swa_display_key_pressed(dpy, params.left)) { // left
-		c.pos += -fac * right;
-		update = true;
+		accel += -fac * right;
 	}
 	if(swa_display_key_pressed(dpy, params.forward)) { // forward
-		c.pos += fac * fwd;
-		update = true;
+		accel += fac * fwd;
 	}
 	if(swa_display_key_pressed(dpy, params.backward)) { // backwards
-		c.pos += -fac * fwd;
-		update = true;
+		accel += -fac * fwd;
 	}
 	if(swa_display_key_pressed(dpy, params.up)) { // up
-		c.pos += fac * up;
-		update = true;
+		accel += fac * up;
 	}
 	if(swa_display_key_pressed(dpy, params.down)) { // down
-		c.pos += -fac * up;
-		update = true;
+		accel += -fac * up;
 	}
 
-	if(update) {
+	return accel;
+}
+
+bool checkMovement(Camera& c, swa_display* dpy, float dt,
+		const CamMoveControls& params) {
+
+	Vec3f move = checkMovement(c.rot, dpy, params);
+	if(move != Vec3f {}) {
 		c.update = true;
+		c.pos += dt * move;
+		return true;
 	}
 
-	return update;
+	return false;
 }
 
 } // namespace tkn

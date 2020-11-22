@@ -19,6 +19,10 @@
 #include <nytl/bytes.hpp>
 #include <dlg/dlg.hpp>
 
+#include <vui/gui.hpp>
+#include <vui/dat.hpp>
+#include <vui/textfield.hpp>
+
 #include <random>
 
 using namespace tkn::types;
@@ -35,6 +39,7 @@ public:
 		float dt;
 		Vec3f attrPos;
 		float targetZ;
+		Vec3f camAccel {0.f, 0.f, 0.f}; // written from shader, read on cpu
 		float attrStrength;
 	};
 
@@ -45,9 +50,10 @@ public:
 		float mass;
 	};
 
-	static constexpr auto numParticles = 1024 * 256;
+	static constexpr auto numParticles = 1024 * 1024;
+	static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Unorm;
 	// static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
-	static constexpr auto offscreenFormat = vk::Format::r32g32b32a32Sfloat;
+	// static constexpr auto offscreenFormat = vk::Format::r32g32b32a32Sfloat;
 
 public:
 	using Base = tkn::SinglePassApp;
@@ -55,6 +61,10 @@ public:
 		if(!Base::init(args)) {
 			return false;
 		}
+
+		rvgInit();
+
+		cam_.near(-0.0001);
 
 		auto& dev = vkDevice();
 		auto& qs = dev.queueSubmitter();
@@ -87,8 +97,10 @@ public:
 		offscreen_.rp = {vkDevice(), rpi.info()};
 
 		// buffers
+		// We also have a shader that writes into this buffer.
 		ubo_ = {dev.bufferAllocator(), sizeof(UboData),
-			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
+			vk::BufferUsageBits::uniformBuffer | vk::BufferUsageBits::storageBuffer,
+			dev.hostMemoryTypes()};
 		uboMap_ = ubo_.memoryMap();
 
 		std::vector<Particle> particles(numParticles);
@@ -131,23 +143,6 @@ public:
 				{0, sizeof(Particle), vk::VertexInputRate::vertex},
 			}};
 
-			static vk::PipelineColorBlendAttachmentState blend = {
-				true,
-				// color
-				vk::BlendFactor::srcAlpha, // src
-				vk::BlendFactor::one, // dst
-				vk::BlendOp::add,
-				// alpha, don't care
-				vk::BlendFactor::zero, // src
-				vk::BlendFactor::one, // dst
-				vk::BlendOp::add,
-				// color write mask
-				vk::ColorComponentBits::r |
-					vk::ColorComponentBits::g |
-					vk::ColorComponentBits::b |
-					vk::ColorComponentBits::a,
-			};
-
 			vpp::GraphicsPipelineInfo gpi;
 			gpi.assembly.topology = vk::PrimitiveTopology::pointList;
 			gpi.rasterization.polygonMode = vk::PolygonMode::point;
@@ -157,7 +152,7 @@ public:
 			gpi.depthStencil.depthTestEnable = false;
 			gpi.depthStencil.depthWriteEnable = false;
 			gpi.blend.attachmentCount = 1u;
-			gpi.blend.pAttachments = &blend;
+			gpi.blend.pAttachments = &blend_;
 
 			auto provider = tkn::GraphicsPipeInfoProvider::create(gpi);
 			particlesGfxPipe_ = {dev, {"p3/p3.vert"}, {"p3/p3.frag"}, fswatch_,
@@ -181,11 +176,74 @@ public:
 				std::move(provider)};
 		}
 
+		// camera velocity pipe
+		{
+			camVelPipe_ = {dev, {"p3/camVel.comp"}, fswatch_};
+			auto& dsu =camVelPipe_.dsu();
+			dsu(ubo_);
+			dsu(curlNoise_, noiseSampler_);
+		}
+
 		// finish
 		vk::endCommandBuffer(cb);
 		qs.wait(qs.add(cb));
 
+		// init gui
+		auto& gui = this->gui();
+
+		using namespace vui::dat;
+		auto pos = nytl::Vec2f {100.f, 0};
+		auto& panel = gui.create<vui::dat::Panel>(pos, 300.f);
+
+		auto createCheckbox = [&](auto* name, auto& value) -> decltype(auto) {
+			auto& cb = panel.create<Checkbox>(name);
+			cb.checkbox().set(value);
+			cb.checkbox().onToggle = [&](auto& val) {
+				value = val.checked();
+			};
+			return cb;
+		};
+
+		createCheckbox("Accelerate Camera", accelCam_);
+
+		auto& spaceshipCb = panel.create<Checkbox>("Spaceship Camera").checkbox();
+		spaceshipCb.set(spaceshipCam_);
+		spaceshipCb.onToggle = [&](auto& cb) {
+			spaceshipCam_ = cb.checked();
+			updateCam();
+		};
+		updateCam();
+
+		auto& blendCb = panel.create<Checkbox>("Blend OneMinusSrc").checkbox();
+		blendCb.set(true);
+		blendCb.onToggle = [&](auto& cb) {
+			if(cb.checked()) {
+				blend_.dstColorBlendFactor = vk::BlendFactor::oneMinusSrcAlpha;
+			} else {
+				blend_.dstColorBlendFactor = vk::BlendFactor::one;
+			}
+
+			particlesGfxPipe_.reload();
+		};
+
 		return true;
+	}
+
+	void updateCam() {
+		tkn::CamMoveControls move;
+		move.mult = 0.25f;
+		move.slowMult = 0.05f;
+		if(spaceshipCam_) {
+			tkn::SpaceshipCamControls controls;
+			controls.yawFriction = 10.f;
+			controls.pitchFriction = 10.f;
+			controls.moveFriction = 10.f;
+			controls.move = move;
+			controls.move.mult = 5.f;
+			cam_.useSpaceshipControl(controls);
+		} else {
+			cam_.useFirstPersonControl({}, move);
+		}
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
@@ -221,6 +279,11 @@ public:
 		vk::cmdDraw(cb, numParticles, 1, 0, 0);
 
 		vk::cmdEndRenderPass(cb);
+
+		if(camVelPipe_.pipe()) {
+			tkn::cmdBind(cb, camVelPipe_);
+			vk::cmdDispatch(cb, 1, 1, 1);
+		}
 	}
 
 	void render(vk::CommandBuffer cb) override {
@@ -228,6 +291,8 @@ public:
 			tkn::cmdBind(cb, ppPipe_);
 			vk::cmdDraw(cb, 4, 1, 0, 0);
 		}
+
+		gui().draw(cb);
 	}
 
 	void update(double dt) override {
@@ -239,6 +304,7 @@ public:
 		particlesComputePipe_.update();
 		particlesGfxPipe_.update();
 		ppPipe_.update();
+		camVelPipe_.update();
 
 		Base::scheduleRedraw();
 	}
@@ -251,12 +317,45 @@ public:
 		rerec |= particlesComputePipe_.updateDevice();
 		rerec |= particlesGfxPipe_.updateDevice();
 		rerec |= ppPipe_.updateDevice();
+		rerec |= camVelPipe_.updateDevice();
 		if(rerec) {
 			Base::scheduleRerecord();
 		}
 
-		// write ubo data
+		uboMap_.invalidate();
 		auto uboData = reinterpret_cast<UboData*>(uboMap_.ptr());
+
+		// update camera position
+		if(accelCam_ && cam_.spaceshipControl().has_value()) {
+			Vec3f& camVel = cam_.spaceshipControl().value()->con.moveVel;
+			camVel += uboData->camAccel;
+
+			// adjust camera rotation based on velocity/curl
+			auto last = normalized(lastCamVel_);
+			auto now = normalized(uboData->camAccel);
+			auto half = last + now;
+			if(length(half) > 0.000001) {
+				half = normalized(half);
+
+				auto c = cross(half, last);
+				tkn::Quaternion oriChange;
+				oriChange.x = -c.x;
+				oriChange.y = -c.y;
+				oriChange.z = -c.z;
+				oriChange.w = dot(last, half);
+
+				auto rot = cam_.orientation();
+				rot = normalized(normalized(oriChange) * rot);
+				cam_.orientation(rot);
+			}
+
+			lastCamVel_ = uboData->camAccel;
+		} else {
+			uboData->camAccel = {};
+			lastCamVel_ = {0.f, 0.f, 0.f};
+		}
+
+		// write ubo data
 		uboData->vp = cam_.viewProjectionMatrix();
 		uboData->camPos = cam_.position();
 		uboData->dt = dt;
@@ -320,7 +419,7 @@ public:
 			return true;
 		}
 
-		targetZ_ += 0.05 * dy;
+		targetZ_ *= std::pow(1.05, dy);
 		targetZ_ = std::max(targetZ_, 0.0001f);
 		return true;
 	}
@@ -332,6 +431,8 @@ protected:
 	tkn::ManagedComputePipe particlesComputePipe_;
 	tkn::ManagedGraphicsPipe particlesGfxPipe_;
 	tkn::ManagedGraphicsPipe ppPipe_;
+
+	tkn::ManagedComputePipe camVelPipe_;
 
 	vpp::ViewableImage curlNoise_;
 	vpp::Sampler noiseSampler_;
@@ -350,6 +451,28 @@ protected:
 		vpp::Framebuffer fb;
 		vpp::ViewableImage image;
 	} offscreen_;
+
+	bool spaceshipCam_ {false};
+	bool accelCam_ {false};
+	Vec3f lastCamVel_ {};
+
+	vk::PipelineColorBlendAttachmentState blend_ = {
+		true,
+		// color
+		vk::BlendFactor::srcAlpha, // src
+		vk::BlendFactor::oneMinusSrcAlpha, // dst
+		vk::BlendOp::add,
+		// alpha, don't care
+		vk::BlendFactor::zero, // src
+		vk::BlendFactor::one, // dst
+		vk::BlendOp::add,
+		// color write mask
+		vk::ColorComponentBits::r |
+			vk::ColorComponentBits::g |
+			vk::ColorComponentBits::b |
+			vk::ColorComponentBits::a,
+	};
+
 };
 
 int main(int argc, const char** argv) {

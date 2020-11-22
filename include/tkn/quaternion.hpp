@@ -69,6 +69,11 @@ public:
 		return {ax * ha, ay * ha, az * ha, std::cos(angle / 2)};
 	}
 
+	[[nodiscard]] static
+	Quaternion axisAngle(const nytl::Vec3f& axis, double angle) {
+		return axisAngle(axis.x, axis.y, axis.z, angle);
+	}
+
 	// Creates a quaternion from a yxz rotation sequence, where
 	// 'yaw' is the rotation around the y axis, 'pitch' around
 	// the x axis and 'roll' around the z axis.
@@ -157,9 +162,35 @@ public:
 inline Quaternion operator*(Quaternion a, const Quaternion& b) {
 	return (a *= b);
 }
+
+inline Quaternion operator*(double a, Quaternion b) {
+	b.x *= a;
+	b.y *= a;
+	b.z *= a;
+	b.w *= a;
+	return b;
+}
+
+inline Quaternion operator-(Quaternion a, const Quaternion& b) {
+	a.x -= b.x;
+	a.y -= b.y;
+	a.z -= b.z;
+	a.w -= b.w;
+	return a;
+}
+
+inline Quaternion operator+(Quaternion a, const Quaternion& b) {
+	a.x += b.x;
+	a.y += b.y;
+	a.z += b.z;
+	a.w += b.w;
+	return a;
+}
+
 inline bool operator==(const Quaternion& a, const Quaternion& b) {
 	return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
 }
+
 inline bool operator!=(const Quaternion& a, const Quaternion& b) {
 	return a.x != b.x || a.y != b.y || a.z != b.z || a.w != b.w;
 }
@@ -233,6 +264,47 @@ template<typename T>
 	// auto qr = (q * qv) * conjugated(q);
 	// // assert(std::abs(qr.w) < 0.01f);
 	// return {T(qr.x), T(qr.y), T(qr.z)};
+}
+
+inline double dot(const Quaternion& a, const Quaternion& b) {
+	return a.x * b.x + a.y * b.y + a.z * b.y * a.w * b.y;
+}
+
+// https://en.wikipedia.org/wiki/Slerp
+// Assumes q0 and q1 to be normalized.
+[[nodiscard]] inline Quaternion slerp(Quaternion v0, Quaternion v1, double t) {
+    // Compute the cosine of the angle between the two vectors.
+    double d = dot(v0, v1);
+
+    // If the dot product is negative, slerp won't take
+    // the shorter path. Note that v1 and -v1 are equivalent when
+    // the negation is applied to all four components. Fix by
+    // reversing one quaternion.
+    if (d < 0.0f) {
+        v1.x = v1.x;
+        v1.y = v1.y;
+        v1.z = v1.z;
+        v1.w = v1.w;
+        d = -d;
+    }
+
+    if (d > 0.9995) {
+        // If the inputs are too close for comfort, linearly interpolate
+        // and normalize the result.
+        Quaternion result = v0 + t*(v1 - v0);
+        return normalized(result);
+    }
+
+    // Since dot is in range [0, DOT_THRESHOLD], acos is safe
+    double theta_0 = std::acos(d);   		// theta_0 = angle between input vectors
+    double theta = theta_0 * t;          	// theta = angle between v0 and result
+    double sin_theta = std::sin(theta);     // compute this value only once
+    double sin_theta_0 = std::sin(theta_0); // compute this value only once
+
+    double s0 = cos(theta) - d * sin_theta / sin_theta_0;  // == sin(theta_0 - theta) / sin(theta_0)
+    double s1 = sin_theta / sin_theta_0;
+
+    return (s0 * v0) + (s1 * v1);
 }
 
 // Sequences of rotation around axes.
@@ -390,6 +462,7 @@ eulerAngles(const Quaternion& q, RotationSequence seq) {
 		return {};
    }
 }
+
 
 } // namespace tkn
 

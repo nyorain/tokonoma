@@ -78,7 +78,7 @@ struct CamMoveControls {
 	float mult = 1.f;
 
 	// Specifies by how much the modifiers make the movement
-	// faster or slower.
+	// faster or slower (applied in addition to 'mult').
 	float fastMult = 5.f;
 	float slowMult = 0.2f;
 
@@ -92,6 +92,9 @@ struct CamMoveControls {
 // Implements direct (first-person) camera movement via the specified keys.
 bool checkMovement(Camera&, swa_display* dpy, float dt,
 	const CamMoveControls& params = {});
+// Returns the acceleration instead of instantly moving.
+Vec3f checkMovement(const Quaternion&, swa_display* dpy,
+	const CamMoveControls& params = {});
 
 // camera controllers
 // spaceship: no fixed up firection, uses quaternion for orientation.
@@ -100,13 +103,23 @@ struct SpaceshipCamCon {
 	static constexpr auto mposInvalid = 0x7FFF;
 	Vec2i mposStart {mposInvalid, mposInvalid};
 	float rollVel {0.f};
+	float yawVel {0.f};
+	float pitchVel {0.f};
+	Vec3f moveVel {0.f, 0.f, 0.f};
 };
 
 struct SpaceshipCamControls {
-	float rotateFac = 0.0025f;
+	static constexpr auto inf = std::numeric_limits<float>::infinity();
+
+	float rotateFac = 0.05f;
 	float rotatePow = 1.f;
-	float rollFac = 25.f; // roll velocity per second
-	float rollFriction = 0.9999f;
+	float rollFac = 50.f; // roll velocity per second
+	// how quickly velocity is lost. Set to infinity for a completely stiff system
+	float rollFriction = 5.f;
+	float yawFriction = inf;
+	float pitchFriction = inf;
+	float moveFriction = inf;
+
 	swa_mouse_button rotateButton = swa_mouse_button_left;
 	swa_key rollLeft = swa_key_z;
 	swa_key rollRight = swa_key_x;

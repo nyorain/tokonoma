@@ -8,10 +8,6 @@ void main() {
 		discard;
 	}
 
-	vec4 color = inColor;
-
-	// aa
-	color.a *= smoothstep(1.0, 0.95, ndistCenter);
-
-	outFragColor = vec4(color.rgb, color.a);
+	float alpha = smoothstep(1.0, 0.95, ndistCenter);
+	outFragColor = vec4(inColor.rgb, inColor.a * alpha);
 }

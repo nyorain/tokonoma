@@ -1,0 +1,115 @@
+#include "particle.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0) uniform Ubo {
+	mat4 vp;
+	vec3 camPos;
+	float dt;
+	vec3 attrPos;
+	float targetZ;
+	float attrStrength;
+} ubo;
+
+layout(set = 0, binding = 1) buffer Particles {
+	Particle particles[];
+};
+
+layout(set = 0, binding = 2, r32ui) uniform uimage2D outColorR;
+layout(set = 0, binding = 3, r32ui) uniform uimage2D outColorG;
+layout(set = 0, binding = 4, r32ui) uniform uimage2D outColorB;
+
+uint floatToUint(float value) {
+	return uint(value * 4294967296.0);
+}
+
+void main() {
+	uint id = gl_GlobalInvocationID.x;
+	if(id > particles.length()) {
+		return;
+	}
+
+	Particle particle = particles[id];
+	vec4 pos4 = ubo.vp * vec4(particle.pos, 1.0);
+	vec3 pos = pos4.xyz / pos4.w;
+
+	ivec2 center = ivec2((0.5 + 0.5 * pos.xy) * imageSize(outColorR));
+
+	// clip, NOTE: nah, we have to do it on per pixel basis.
+	// TODO: could have an efficient early-out here tho. Likely not too useful
+	// since particles in one warp aren't really realted by position...
+	// if(pos.xy != clamp(pos.xy, -1, 1) || pos.z != clamp(pos.z, 0, 1)) {
+	// 	return;
+	// }
+
+	float dist = 0.001 + distance(ubo.camPos, particle.pos);
+	float radius = 0.5;
+
+	radius /= clamp(5 * dist, 0.01, 100); // perspective; larger near camera
+
+	float alpha = 0.5;
+	if(radius < 1.0) {
+		alpha *= radius;
+		radius = 1.0;
+	}
+
+	if(radius > 5) {
+		alpha *= radius / 5;
+		radius = 5;
+	}
+
+	float md = max(dist / ubo.targetZ, ubo.targetZ / dist);
+	md = clamp(pow(max(md - 0.5, 0.0), 2), 0.f, 999.9);
+
+	float coc = 1.0 * md;
+	alpha *= 1 / (1 + coc * coc);
+
+	radius *= (1 + coc);
+	radius = clamp(radius, 0.0, 400);
+
+#define FAST_LARGE
+#ifdef FAST_LARGE
+	// Sketch of more complex implementation with some advantages.
+	// Maybe we can replicate this in a simpler way?
+	float alphaFac = 1.0;
+	for(uint i = 1u; i < 50; ++i) {
+		// if(coc < i * 10) {
+		if(radius < i * 10) {
+			break; // pass test
+		}
+
+		alphaFac *= 2.0;
+		if(id % uint(exp2(i)) == exp2(i - 1)) {
+			return;
+		}
+	}
+
+	alpha *= min(alphaFac, 10.0);
+#endif // FAST_LARGE
+
+	// fade out at end of lifetime
+	alpha *= smoothstep(1.0, 0.9, particle.lifetime);	
+
+	// color based on velocity and lifetime
+	float g = mix(0.3, 1.0, particle.lifetime);
+	float b = mix(0.3, 1.0, 3 * length(particle.vel));
+	vec3 color = vec3(1.0, g, b);
+	color *= alpha;
+
+	// draw quad
+	int iradius = int(ceil(radius));
+	for(int y = -iradius; y < iradius; ++y) {
+		for(int x = -iradius; x < iradius; ++x) {
+			float ndistCenter = length(vec2(x, y));
+			// if(ndistCenter > radius) {
+			// 	continue;
+			// }
+			float alpha = smoothstep(1.0, 0.95, ndistCenter);
+			ivec2 coords = center + ivec2(x, y);
+
+			imageAtomicAdd(outColorR, coords, floatToUint(alpha * color.r));
+			imageAtomicAdd(outColorG, coords, floatToUint(alpha * color.g));
+			imageAtomicAdd(outColorB, coords, floatToUint(alpha * color.b));
+		}
+	}
+}
