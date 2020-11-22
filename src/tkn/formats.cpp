@@ -139,7 +139,7 @@ vk::ImageType minImageType(vk::Extent3D size, unsigned minDim) {
 vk::ImageViewType minImageViewType(vk::Extent3D size, unsigned layers,
 		bool cubemap, unsigned minDim) {
 	if(size.depth > 1 || minDim > 2) {
-		dlg_assertm(layers == 0 && cubemap == 0,
+		dlg_assertm(layers <= 1 && cubemap == 0,
 			"Layered or cube 3D images are not allowed");
 		return vk::ImageViewType::e3d;
 	}

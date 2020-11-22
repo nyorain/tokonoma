@@ -107,7 +107,7 @@ void AOPass::updateInputs(vk::ImageView light,
 
 void AOPass::record(vk::CommandBuffer cb, vk::DescriptorSet sceneDs,
 		vk::Extent2D size) {
-	vpp::DebugLabel(pipe_.device(), cb, "AOPass");
+	vpp::DebugLabel debugLabel(pipe_.device(), cb, "AOPass");
 	dlg_assert(envFilterLods_);
 
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);

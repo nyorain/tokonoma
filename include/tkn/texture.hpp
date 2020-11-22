@@ -65,6 +65,9 @@ struct TextureCreateParams {
 	// Useful to make even 1-height images 2D textures or
 	// 1-depth textured 3D textures.
 	unsigned minTypeDim {2};
+
+	// Flags passed to iamge creation
+	vk::ImageCreateFlags imageCreateFlags {};
 };
 
 // new, low-level experimental api

@@ -48,6 +48,12 @@ public:
 		std::string file;
 	};
 
+	enum class ImageType {
+		e2d,
+		e3d,
+		cubemap,
+	};
+
 public:
 	bool init(nytl::Span<const char*> args) override {
 		Args parsed;
@@ -69,18 +75,31 @@ public:
 			return false;
 		}
 
-		cubemap_ = !parsed.noCube && p->cubemap();
+		if(!parsed.noCube && p->cubemap()) {
+			imageType_ = ImageType::cubemap;
+		} else if(p->size().z > 1) {
+			imageType_ = ImageType::e3d;
+		} else {
+			imageType_ = ImageType::e2d;
+		}
+
+		bool cubemap = (imageType_ == ImageType::cubemap);
 
 		tkn::TextureCreateParams params;
-		params.cubemap = cubemap_;
+		params.cubemap = cubemap;
 		params.format = p->format();
 		params.view.levelCount = 1u;
-		params.view.layerCount = cubemap_ ? 6u : 1u;
+		params.view.layerCount = cubemap ? 6u : 1u;
 		params.format = displayFormat(p->format());
 		params.usage = vk::ImageUsageBits::sampled;
 
+		// TODO: Only for vulkan 1.1
+		// if(p->size().z > 1) {
+		// 	params.imageCreateFlags |= vk::ImageCreateBits::e2dArrayCompatible;
+		// }
+
 		format_ = p->format();
-		layerCount_ = p->layers() / (cubemap_ ? 6u : 1u);
+		layerCount_ = p->layers() / (cubemap ? 6u : 1u);
 		levelCount_ = p->mipLevels();
 
 		dlg_info("Image has size {}", p->size());
@@ -109,7 +128,7 @@ public:
 		vpp::GraphicsPipelineInfo gpi;
 		gpi.renderPass(renderPass());
 
-		if(cubemap_) {
+		if(cubemap) {
 			vertShader = "tkn/shaders/skybox.vert";
 			fragShader = "tkn/shaders/skybox.frag";
 			gpi.assembly.topology = vk::PrimitiveTopology::triangleStrip;
@@ -121,7 +140,10 @@ public:
 
 		std::string fragPreamble;
 		if(tonemap_) {
-			fragPreamble += "#define TONEMAP";
+			fragPreamble += "#define TONEMAP\n";
+		}
+		if(imageType_ == ImageType::e3d) {
+			fragPreamble += "#define TEX3D\n";
 		}
 
 		pipe_ = {dev, {vertShader}, {fragShader, fragPreamble},
@@ -132,8 +154,9 @@ public:
 
 		// camera
 		auto uboSize = std::max<vk::DeviceSize>(4u,
-			(cubemap_ ? sizeof(nytl::Mat4f) : 2 * sizeof(nytl::Vec2f)) +
-			(tonemap_ ? sizeof(float) : 0));
+			(cubemap ? sizeof(nytl::Mat4f) : 2 * sizeof(nytl::Vec2f)) +
+			(tonemap_ ? sizeof(float) : 0)) +
+			(imageType_ == ImageType::e3d ? sizeof(float) : 0);
 		ubo_ = {dev.bufferAllocator(), uboSize,
 			vk::BufferUsageBits::uniformBuffer, dev.hostMemoryTypes()};
 
@@ -144,7 +167,7 @@ public:
 
 	void updateDs() {
 		auto& dsu = pipe_.dsu();
-		if(cubemap_) {
+		if(imageType_ == ImageType::cubemap) {
 			dsu(ubo_);
 			dsu(view_);
 		} else {
@@ -196,7 +219,7 @@ public:
 	void render(vk::CommandBuffer cb) override {
 		if(pipe_.pipe()) {
 			tkn::cmdBind(cb, pipe_);
-			vk::cmdDraw(cb, cubemap_ ? 14 : 4, 1, 0, 0, 0);
+			vk::cmdDraw(cb, imageType_ == ImageType::cubemap ? 14 : 4, 1, 0, 0, 0);
 
 			// make sure redraw is triggered
 			camera_.needsUpdate = true;
@@ -222,7 +245,7 @@ public:
 
 			auto map = ubo_.memoryMap();
 			auto span = map.span();
-			if(cubemap_) {
+			if(imageType_ == ImageType::cubemap) {
 				tkn::write(span, camera_.fixedViewProjectionMatrix());
 			} else {
 				auto off = nytl::Vec2f(levelView_.center - 0.5f * levelView_.size);
@@ -233,6 +256,11 @@ public:
 			if(tonemap_) {
 				tkn::write(span, exposure_);
 			}
+
+			if(imageType_ == ImageType::e3d) {
+				tkn::write(span, depth_);
+			}
+
 			map.flush();
 		}
 
@@ -240,15 +268,24 @@ public:
 			recreateView_ = false;
 
 			vk::ImageViewCreateInfo viewInfo;
-			viewInfo.viewType = cubemap_ ?
-				vk::ImageViewType::cube :
-				vk::ImageViewType::e2d;
+			switch(imageType_) {
+				case ImageType::e2d:
+					viewInfo.viewType = vk::ImageViewType::e2d;
+					break;
+				case ImageType::e3d:
+					viewInfo.viewType = vk::ImageViewType::e3d;
+					break;
+				case ImageType::cubemap:
+					viewInfo.viewType = vk::ImageViewType::cube;
+					break;
+			}
+
 			viewInfo.format = format_;
 			viewInfo.image = image_;
 			viewInfo.subresourceRange.aspectMask = vk::ImageAspectBits::color;
-			viewInfo.subresourceRange.baseArrayLayer = cubemap_ ? 6u * layer_ : layer_;
+			viewInfo.subresourceRange.baseArrayLayer = isCubemap() ? 6u * layer_ : layer_;
 			viewInfo.subresourceRange.baseMipLevel = level_;
-			viewInfo.subresourceRange.layerCount = cubemap_ ? 6u : 1u;
+			viewInfo.subresourceRange.layerCount = isCubemap() ? 6u : 1u;
 			viewInfo.subresourceRange.levelCount = 1u;
 			view_ = {vkDevice(), viewInfo};
 
@@ -261,14 +298,26 @@ public:
 		}
 	}
 
+	bool isCubemap() const {
+		return imageType_ == ImageType::cubemap;
+	}
+
+	bool is3D() const {
+		return imageType_ == ImageType::e3d;
+	}
+
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
-		if(cubemap_) {
+		if(isCubemap()) {
 			camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 		} else if(swa_display_mouse_button_pressed(swaDisplay(), swa_mouse_button_left)) {
 			float dx = levelView_.size.x * float(ev.dx) / windowSize().x;
 			float dy = levelView_.size.y * float(ev.dy) / windowSize().y;
 			levelView_.center -= nytl::Vec2f{dx, dy};
+			camera_.needsUpdate = true;
+		} else if(is3D() && swa_display_mouse_button_pressed(swaDisplay(), swa_mouse_button_right)) {
+			depth_ += 0.005 * ev.dx;
+			depth_ = std::clamp(depth_, 0.f, 1.f);
 			camera_.needsUpdate = true;
 		}
 	}
@@ -278,7 +327,7 @@ public:
 			return true;
 		}
 
-		if(cubemap_) {
+		if(isCubemap()) {
 			camera_.mouseWheel(dy);
 		} else {
 			levelView_.size *= std::pow(1.025f, dy);
@@ -363,6 +412,7 @@ public:
 		}
 	}
 
+	// Even for 3D cubemap visualization, we don't need depth
 	bool needsDepth() const override { return false; }
 	const char* name() const override { return "iv"; }
 	const char* usageParams() const override { return "file [options]"; }
@@ -384,9 +434,10 @@ protected:
 
 	bool tonemap_ {};
 	float exposure_ {1.f};
+	float depth_ {0.f};
 
 	// cubemap
-	bool cubemap_ {};
+	ImageType imageType_;
 	vpp::SubBuffer ubo_;
 	tkn::ControlledCamera camera_;
 

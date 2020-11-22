@@ -102,7 +102,7 @@ void HighLightPass::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 }
 
 void HighLightPass::record(vk::CommandBuffer cb, vk::Extent2D size) {
-	vpp::DebugLabel(target_.device(), cb, "HighlightPass");
+	vpp::DebugLabel debugLabel(target_.device(), cb, "HighlightPass");
 
 	vk::ImageMemoryBarrier barrier;
 	barrier.image = target_.image();
@@ -239,7 +239,7 @@ void LensFlare::initBuffers(InitBufferData& data, vk::ImageView lightInput,
 
 void LensFlare::record(vk::CommandBuffer cb, const GaussianBlur& blur,
 		vk::Extent2D size) {
-	vpp::DebugLabel(target_.device(), cb, "LensFlare");
+	vpp::DebugLabel debugLabel(target_.device(), cb, "LensFlare");
 
 	vk::ImageMemoryBarrier barrier;
 	barrier.image = target_.image();

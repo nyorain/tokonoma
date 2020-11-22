@@ -240,6 +240,12 @@ particles = build_target('particles', [
 		dep_pulse_simple_optional
 	], target_type: exetarget)
 
+p3 = build_target('p3', [
+		'src/p3/main.cpp'
+	], dependencies: [
+		tkn_dep,
+	], target_type: exetarget)
+
 executable('automaton', [
 	  'src/automaton/main.cpp',
 	  'src/automaton/automaton.cpp',

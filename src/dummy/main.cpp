@@ -9,8 +9,6 @@ public:
 			return false;
 		}
 
-		dlg_error("Error!");
-
 		return true;
 	}
 

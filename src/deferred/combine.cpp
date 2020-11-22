@@ -88,7 +88,7 @@ void CombinePass::updateInputs(vk::ImageView output, vk::ImageView light,
 }
 
 void CombinePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
-	vpp::DebugLabel(pipe_.device(), cb, "CombinePass");
+	vpp::DebugLabel debugLabel(pipe_.device(), cb, "CombinePass");
 	vk::cmdBindPipeline(cb, vk::PipelineBindPoint::compute, pipe_);
 	tkn::cmdBindComputeDescriptors(cb, pipeLayout_, 0, {ds_});
 	auto cx = std::ceil(size.width / float(groupDimSize));

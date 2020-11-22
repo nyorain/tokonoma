@@ -105,6 +105,20 @@ struct SyncScope {
 			vk::AccessBits::shaderWrite,
 		};
 	}
+	static inline SyncScope transferRead() {
+		return {
+			vk::PipelineStageBits::transfer,
+			vk::ImageLayout::transferSrcOptimal,
+			vk::AccessBits::transferRead
+		};
+	}
+	static inline SyncScope transferWrite() {
+		return {
+			vk::PipelineStageBits::transfer,
+			vk::ImageLayout::transferDstOptimal,
+			vk::AccessBits::transferWrite
+		};
+	}
 };
 
 bool operator==(SyncScope a, SyncScope b);
@@ -310,5 +324,18 @@ struct PipelineVertexInfo {
 		return ret;
 	}
 };
+
+inline vk::ImageSubresourceRange imageSubresourceRange(
+		vk::ImageAspectFlags aspect = vk::ImageAspectBits::color,
+		u32 baseLayer = 0u, u32 layerCount = 1u,
+		u32 baseLevel = 0u, u32 levelCount = 1u) {
+	vk::ImageSubresourceRange range;
+	range.aspectMask = aspect;
+	range.baseArrayLayer = baseLayer;
+	range.layerCount = layerCount;
+	range.baseMipLevel = baseLevel;
+	range.levelCount = levelCount;
+	return range;
+}
 
 } // namespace tkn

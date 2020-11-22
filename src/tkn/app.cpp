@@ -376,7 +376,7 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 
 	if(argsOut.layers) {
 		// TODO: for testing
-		layers.push_back("VK_LAYER_fuencaliente");
+		// layers.push_back("VK_LAYER_fuencaliente");
 		layers.push_back("VK_LAYER_KHRONOS_validation");
 	}
 

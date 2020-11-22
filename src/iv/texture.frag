@@ -8,22 +8,35 @@
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outFragColor;
 
-layout(set = 0, binding = 0) uniform sampler2D tex;
+#ifdef TEX3D
+  layout(set = 0, binding = 0) uniform sampler3D tex;
+#else // TEX3D
+  layout(set = 0, binding = 0) uniform sampler2D tex;
+#endif // TEX3D
 
 layout(set = 0, binding = 1) uniform UBO {
 	vec2 offset;
 	vec2 size;
+
 #ifdef TONEMAP
 	float exposure;
 #endif // TONEMAP
+
+#ifdef TEX3D
+	float depth;
+#endif // TEX3D
 } ubo;
 
 void main() {
 	vec2 uv = ubo.offset + ubo.size * inUV;
 
+#ifdef TEX3D
+	vec4 color = 0.5 + 0.05 * texture(tex, vec3(uv, ubo.depth));
+#else // TEX3D
 	// vec4 color = textureBicubic(tex, uv);
 	// vec4 color = textureBicubicCatmull(tex, uv);
 	vec4 color = texture(tex, uv);
+#endif // TEX3D
 
 #ifdef TONEMAP
 	color.rgb = 1.0 - exp(-ubo.exposure * color.rgb);

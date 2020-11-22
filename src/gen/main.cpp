@@ -5,6 +5,7 @@
 #include <tkn/features.hpp>
 #include <tkn/formats.hpp>
 #include <tkn/image.hpp>
+#include <tkn/pipeline.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/scene/pbr.hpp>
 #include <tkn/scene/environment.hpp>
@@ -56,6 +57,7 @@ int saveSkies(float turbidity, const char* outEnv, const char* outData,
 	const vpp::Device& dev);
 void saveGalaxy(const char* inputDir, const char* outfile,
 	const vpp::Device& dev);
+void saveCurlNoise(const char* outfile, const vpp::Device& dev);
 
 int main(int argc, const char** argv) {
 	auto parser = tkn::HeadlessArgs::defaultParser();
@@ -86,6 +88,9 @@ int main(int argc, const char** argv) {
 	parser.definitions.push_back({
 		"galaxy", {"--galaxy"},
 		"Bakes Galaxy sky map from E. Bruneton's processed Gaia sky map", 0u});
+	parser.definitions.push_back({
+		"curlnoise", {"--curlnoise"},
+		"Generate curl noise 3D texture", 0u});
 
 	auto usage = std::string("Usage: ") + argv[0] + " [options]\n\n";
 	argagg::parser_results result;
@@ -149,12 +154,20 @@ int main(int argc, const char** argv) {
 	} else if(result.has_option("galaxy")) {
 		auto outMap = output.value_or("galaxy.ktx");
 		saveGalaxy(nullptr, outMap, dev);
+	} else if(result.has_option("curlnoise")) {
+		auto outCurl = output.value_or("curlnoise.ktx");
+		saveCurlNoise(outCurl, dev);
 	} else {
 		dlg_fatal("No/unsupported command given!");
 		argagg::fmt_ostream help(std::cerr);
 		help << usage << parser << std::endl;
 		return -1;
 	}
+
+	// TODO: kinda ugly we have to call this here because we use ManagedPipeline
+	tkn::ShaderCache::instance(dev).clear();
+	tkn::PipelineCache::finishInstance();
+	tkn::ThreadState::finishInstance();
 
 	return 0;
 }
@@ -838,5 +851,75 @@ void saveGalaxy(const char* inputDir, const char* outfile, const vpp::Device& de
 	auto provider2 = tkn::wrapImage({dimSize, dimSize, 1u}, format,
 		1u, 6u, span2, true);
 	res = tkn::writeKtx("galaxy2.ktx", *provider2);
+	dlg_assertm(res == tkn::WriteError::none, (int) res);
+}
+
+void saveCurlNoise(const char* outFile, const vpp::Device& dev) {
+	// TODO: generate mip levels as well
+
+	// settings
+	constexpr auto format = vk::Format::r16g16b16a16Sfloat;
+	constexpr auto extent = vk::Extent3D {256, 256, 256};
+	constexpr auto groupSize = vk::Extent3D {4, 4, 4}; // see curlnoise.comp
+
+	// resources & pipe
+	// image
+	vk::ImageCreateInfo ici;
+	ici.format = format;
+	ici.extent = extent;
+	ici.imageType = vk::ImageType::e3d;
+	ici.samples = vk::SampleCountBits::e1;
+	ici.arrayLayers = 1u;
+	ici.mipLevels = 1u;
+	ici.initialLayout = vk::ImageLayout::undefined;
+	ici.tiling = vk::ImageTiling::optimal;
+	ici.usage = vk::ImageUsageBits::storage | vk::ImageUsageBits::transferSrc;
+
+	vk::ImageViewCreateInfo ivi;
+	ivi.viewType = vk::ImageViewType::e3d;
+	ivi.format = format;
+	ivi.subresourceRange = tkn::imageSubresourceRange();
+
+	auto img = vpp::ViewableImage{dev.devMemAllocator(), ici, ivi};
+
+	// pipe
+	// TODO: kinda ugly we need this dummy FileWatcher
+	tkn::FileWatcher fs;
+	auto pipe = tkn::ManagedComputePipe{dev, "gen/curlnoise.comp", fs, "", {}, false};
+
+	auto& dsu = pipe.dsu();
+	dsu(img);
+	dsu.apply();
+
+	// record cb
+	auto& qs = dev.queueSubmitter();
+	auto cb = dev.commandAllocator().get(qs.queue().family());
+
+	vk::beginCommandBuffer(cb, {});
+
+	tkn::barrier(cb, img.image(), tkn::SyncScope::discard(), tkn::SyncScope::computeWrite());
+
+	tkn::cmdBind(cb, pipe);
+	vk::cmdDispatch(cb,
+		extent.width / groupSize.width,
+		extent.height / groupSize.height,
+		extent.depth / groupSize.depth);
+
+	tkn::barrier(cb, img.image(), tkn::SyncScope::computeWrite(), tkn::SyncScope::transferRead());
+	auto readBuf = vpp::retrieveStaging(cb, img.image(), format,
+		vk::ImageLayout::transferSrcOptimal, extent, {vk::ImageAspectBits::color});
+
+	// TODO: technically, we need a buffer memory here
+
+	vk::endCommandBuffer(cb);
+
+	qs.wait(qs.add(cb));
+
+	// write image
+	auto map = readBuf.memoryMap();
+
+	auto provider = tkn::wrapImage({extent.width, extent.height, extent.depth},
+		format, 1, 1, map.span());
+	auto res = tkn::writeKtx(outFile, *provider);
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
 }

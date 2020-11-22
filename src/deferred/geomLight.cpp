@@ -529,7 +529,7 @@ void GeomLightPass::record(vk::CommandBuffer cb, const vk::Extent2D& size,
 		vk::DescriptorSet envCamDs, const tkn::Environment* env,
 		tkn::TimeWidget* time) {
 	auto& dev = rp_.device();
-	vpp::DebugLabel(dev, cb, "GeomLightPass");
+	vpp::DebugLabel debugLabel(dev, cb, "GeomLightPass");
 	auto width = size.width;
 	auto height = size.height;
 

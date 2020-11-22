@@ -20,6 +20,9 @@
 // TODO: add mechanism for descriptor sharing
 // TODO: add general mechnism for callbacks executed when a new pipe is
 //   loaded?
+// TODO: allow to have non-reloadable pipeline (not needing a file watcher)
+//   that still has the reflection mechanism? or simply allow to pass
+//   nullptr as filewatcher, shouldn't be too hard.
 
 namespace tkn {
 

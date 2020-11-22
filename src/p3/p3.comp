@@ -1,0 +1,65 @@
+layout(local_size_x = 64) in;
+
+struct Particle {
+	vec3 pos;
+	float lifetime;
+	vec3 vel;
+	float mass;
+};
+
+layout(set = 0, binding = 0) uniform Ubo {
+	mat4 vp;
+	vec3 camPos;
+	float dt;
+	vec3 attrPos;
+	float targetZ;
+	float attrStrength;
+} ubo;
+
+layout(set = 0, binding = 1) buffer Particles {
+	Particle particles[];
+};
+
+layout(set = 0, binding = 2) uniform sampler3D curlNoiseTex;
+
+void main() {
+	uint id = gl_GlobalInvocationID.x;
+	if(id > particles.length()) {
+		return;
+	}
+
+	Particle particle = particles[id];
+
+	particle.pos += ubo.dt * particle.vel;
+
+	vec3 accel = vec3(0.0);
+	accel -= (1 - exp(-10.0 * ubo.dt)) * particle.vel; // friction
+	accel += 0.5 * ubo.dt * textureLod(curlNoiseTex, 0.5 + 0.1 * particle.pos, 0).rgb; // acceleration
+
+	vec3 dist = ubo.attrPos - particle.pos;
+	float l = dot(dist, dist);
+	accel += ubo.dt * ubo.attrStrength * normalize(dist) / (0.01 + l);
+
+	particle.vel += accel / particle.mass;
+
+	particle.lifetime += 0.01 * ubo.dt;
+	if(particle.lifetime > 1.0) {
+		particle.lifetime -= 1.0;
+		particle.pos = vec3(0.0);
+	}
+
+	float bounds = 10.0;
+	for(uint i = 0u; i < 3; ++i) {
+		if(particle.pos[i] > bounds) {
+			particle.pos[i] = bounds;
+			particle.vel[i] *= -1;
+		}
+
+		if(particle.pos[i] < -bounds) {
+			particle.pos[i] = -bounds;
+			particle.vel[i] *= -1;
+		}
+	}
+
+	particles[id] = particle;
+}

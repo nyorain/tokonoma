@@ -304,7 +304,7 @@ void LuminancePass::initBuffers(InitBufferData& data, vk::ImageView light,
 }
 
 void LuminancePass::record(vk::CommandBuffer cb, vk::Extent2D size) {
-	vpp::DebugLabel(dstBuffer_.device(), cb, "LuminancePass");
+	vpp::DebugLabel debugLabel(dstBuffer_.device(), cb, "LuminancePass");
 	auto levelCount = vpp::mipmapLevels(size); // full mip chain
 	auto width = size.width;
 	auto height = size.height;

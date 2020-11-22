@@ -284,7 +284,10 @@ ReadError loadKtx(std::unique_ptr<Stream>&& stream, KtxReader& reader) {
 
 	// fixup
 	if(header.pixelDepth > 1 && (header.numberFaces > 1 || header.numberArrayElements > 1)) {
-		dlg_warn("KTX 3D image with faces/layers unsupported");
+		dlg_warn("KTX 3D image with faces/layers unsupported: "
+			"size: {} {} {}, layers {}, faces {}",
+			header.pixelWidth, header.pixelHeight, header.pixelDepth,
+			header.numberArrayElements, header.numberFaces);
 		return ReadError::cantRepresent;
 	}
 

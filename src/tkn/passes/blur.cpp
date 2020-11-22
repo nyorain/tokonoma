@@ -153,7 +153,7 @@ void GaussianBlur::record(vk::CommandBuffer cb, const Instance& instance,
 		const Kernel& kernel, vk::ImageAspectBits aspect) const {
 	dlg_assert(dstSize.width > 0 && dstSize.height > 0);
 	dlg_assert(kernel[0].x > 1);
-	vpp::DebugLabel(instance.ping.device(), cb, "GaussianBlur");
+	vpp::DebugLabel debugLabel(instance.ping.device(), cb, "GaussianBlur");
 
 	// basically ceil(dstSize / float(groupDimSize))
 	auto gx = ceilDivide(dstSize.width, groupDimSize);

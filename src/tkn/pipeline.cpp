@@ -554,6 +554,10 @@ ManagedComputePipe::ManagedComputePipe(const vpp::Device& dev,
 	};
 
 	pipe_ = {dev, {stage}, creatorFunc, fswatch, async, std::move(name)};
+
+	if(!async && pipe()) {
+		updater_.init(state_->descriptors);
+	}
 }
 
 ManagedComputePipe::ManagedComputePipe(const vpp::Device& dev,
@@ -667,6 +671,10 @@ ManagedGraphicsPipe::ManagedGraphicsPipe(const vpp::Device& dev,
 	};
 	pipe_ = {dev, std::move(stages), creatorFunc, fswatch,
 		async, std::move(name)};
+
+	if(!async && pipe()) {
+		updater_.init(state_->descriptors);
+	}
 }
 
 vpp::Pipeline ManagedGraphicsPipe::recreate(
@@ -776,7 +784,7 @@ ThreadState::~ThreadState() {
 	auto lock = std::lock_guard(mgr.mutex);
 	auto it = mgr.states.find(std::this_thread::get_id());
 	if(it == mgr.states.end()) {
-		dlg_error("~ThreadState: not present in manager list");
+		dlg_warn("~ThreadState: not present in manager list");
 		return;
 	}
 

@@ -1,0 +1,31 @@
+#include "snoise.glsl"
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+layout(set = 0, binding = 0, rgba16f) writeonly uniform image3D outCurlNoise;
+
+void main() {
+	const uvec3 invID = gl_GlobalInvocationID.xyz;
+	const uvec3 imgSize = imageSize(outCurlNoise);
+	if(any(greaterThanEqual(invID, imgSize))) {
+		return;
+	}
+
+	const float scale = 10.0;
+	const vec3 coords = (scale * invID) / imgSize;
+
+	// get two random gradients
+	vec3 g1, g2, g3;
+	snoise(coords, g1);
+	snoise(-10 - coords.xzy, g2);
+	snoise(-50 - coords.xzy, g3);
+
+	// vec3 curlNoise = cross(g1, g2);
+	vec3 curlNoise = vec3(
+		g3.y - g2.z,
+		g1.z - g3.x,
+		g2.x - g1.y
+	);
+
+	imageStore(outCurlNoise, ivec3(invID), vec4(curlNoise, 1.0));
+}

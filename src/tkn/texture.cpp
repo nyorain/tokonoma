@@ -429,6 +429,7 @@ TextureInitData createTexture(WorkBatcher& wb,
 	ici.imageType = minImageType(ici.extent, params.minTypeDim);
 	ici.tiling = vk::ImageTiling::optimal;
 	ici.samples = vk::SampleCountBits::e1;
+	ici.flags = params.imageCreateFlags;
 
 	data.cubemap = params.cubemap ? *params.cubemap : img->cubemap();
 	if(data.cubemap) {
@@ -436,7 +437,7 @@ TextureInitData createTexture(WorkBatcher& wb,
 		dlg_assertm(params.view.layerCount % 6u == 0u, "A cubemap image view "
 			"must have 6 layers (or a multiple of 6 for cubemap arrays)");
 
-		ici.flags = vk::ImageCreateBits::cubeCompatible;
+		ici.flags |= vk::ImageCreateBits::cubeCompatible;
 	}
 
 	// TODO: evaluate this with all needed features.

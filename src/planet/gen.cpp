@@ -11,9 +11,9 @@
 #include <vpp/sharedBuffer.hpp>
 #include <vpp/formats.hpp>
 #include <vpp/image.hpp>
-#include <vpp/shader.hpp>
 #include <vpp/queue.hpp>
 #include <vpp/submit.hpp>
+#include <tkn/shader.hpp>
 #include <vpp/commandAllocator.hpp>
 #include <vpp/vk.hpp>
 #include <dlg/dlg.hpp>
