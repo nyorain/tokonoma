@@ -9,6 +9,6 @@ layout(set = 0, binding = 1) uniform sampler3D curlNoiseTex;
 void main() {
 	vec3 accel = vec3(0.0);
 	// accel -= (1 - exp(-10.0 * data.dt)) * data.camAccel; // friction
-	accel += 0.5 * data.dt * textureLod(curlNoiseTex, 0.5 + 0.1 * data.camPos, 0).rgb; // acceleration
+	accel += 0.1 * data.dt * textureLod(curlNoiseTex, 0.5 + 0.1 * data.camPos, 0).rgb; // acceleration
 	data.camAccel = accel;
 }

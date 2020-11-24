@@ -204,6 +204,21 @@ void ControlledCamera::mouseMove(swa_display* dpy, nytl::Vec2i delta,
 	}, controls_);
 }
 
+void ControlledCamera::mouseButton(swa_mouse_button button, bool pressed) {
+	std::visit(Visitor {
+		[&](FirstPerson& fp) {
+			tkn::mouseButton(fp.con, button, pressed, fp.controls);
+		},
+		[&](Arcball& arcball) {
+			tkn::mouseButton(arcball.con, button, pressed, arcball.controls);
+		},
+		[&](Spaceship& spaceship) {
+			tkn::mouseButton(spaceship.con, button, pressed, spaceship.controls);
+		},
+		[&](const auto&) {}
+	}, controls_);
+}
+
 void ControlledCamera::mouseWheel(float delta) {
 	if(auto* arcball = std::get_if<Arcball>(&controls_)) {
 		mouseWheelZoom(camera_, arcball->con, delta, arcball->zoomFac);

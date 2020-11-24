@@ -12,9 +12,8 @@ bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 	auto updated = false;
 
 	// check if we are currently rotating
-	auto rot = swa_display_mouse_button_pressed(dpy, controls.rotateButton);
 	if(con.mposStart.x != con.mposInvalid) {
-		if(rot) {
+		if(con.rotating) {
 			// update going-on rotation
 			Vec2i mpos;
 			swa_display_mouse_position(dpy, &mpos.x, &mpos.y);
@@ -30,7 +29,7 @@ bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 			// rotation ended
 			con.mposStart.x = con.mposInvalid;
 		}
-	} else if(rot) {
+	} else if(con.rotating) {
 		// rotation was started
 		swa_display_mouse_position(dpy,
 			&con.mposStart.x, &con.mposStart.y);
@@ -79,6 +78,13 @@ bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 	return updated;
 }
 
+void mouseButton(SpaceshipCamCon& con, swa_mouse_button button,
+		bool pressed, const SpaceshipCamControls& controls) {
+	if(button == controls.rotateButton) {
+		con.rotating = pressed;
+	}
+}
+
 // FPS
 FPCamCon FPCamCon::fromOrientation(const Quaternion& q) {
 	auto [yaw, pitch, roll] = eulerAngles(q, RotationSequence::yxz);
@@ -91,8 +97,7 @@ bool mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
 		Vec2i delta, const FPCamControls& controls) {
 	auto res = false;
 	using nytl::constants::pi;
-	if(controls.rotateButton == swa_mouse_button_none ||
-			swa_display_mouse_button_pressed(dpy, controls.rotateButton)) {
+	if(controls.rotateButton == swa_mouse_button_none || con.rotating) {
 		con.yaw = std::fmod(con.yaw - controls.fac * delta.x, 2 * pi);
 		con.pitch -= controls.fac * delta.y;
 
@@ -130,6 +135,13 @@ bool mouseMove(Camera& cam, FPCamCon& con, swa_display* dpy,
 	return res;
 }
 
+void mouseButton(FPCamCon& con, swa_mouse_button button,
+		bool pressed, const FPCamControls& controls) {
+	if(button == controls.rotateButton) {
+		con.rotating = pressed;
+	}
+}
+
 // Arcball
 Vec3f center(const Camera& cam, const ArcballCamCon& con) {
 	return cam.pos + con.offset * dir(cam);
@@ -139,8 +151,7 @@ bool mouseMove(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
 		Vec2i delta, const ArcballControls& controls, Vec2f panFac) {
 	bool ret = false;
 	auto mods = swa_display_active_keyboard_mods(dpy);
-	if(swa_display_mouse_button_pressed(dpy, controls.panButton) &&
-			mods == controls.panMod) {
+	if(arc.panning && mods == controls.panMod) {
 		// y is double flipped because of y-down convention for
 		// mouse corrds vs y-up convention of rendering
 		// TODO: maybe don't do this here but let the user decide
@@ -154,8 +165,7 @@ bool mouseMove(Camera& cam, ArcballCamCon& arc, swa_display* dpy,
 		ret = true;
 	}
 
-	if(swa_display_mouse_button_pressed(dpy, controls.rotateButton) &&
-			mods == controls.rotateMod) {
+	if(arc.rotating && mods == controls.rotateMod) {
 		auto c = center(cam, arc);
 		float yaw = controls.rotateFac.x * delta.x;
 		float pitch = controls.rotateFac.y * delta.y;
@@ -193,6 +203,16 @@ void mouseWheelZoom(Camera& cam, ArcballCamCon& arc, float delta, float zoomFac)
 	cam.update = true;
 }
 
+void mouseButton(ArcballCamCon& con, swa_mouse_button button,
+		bool pressed, const ArcballControls& controls) {
+	if(button == controls.panButton) {
+		con.panning = pressed;
+	}
+	if(button == controls.rotateButton) {
+		con.rotating = pressed;
+	}
+}
+
 Vec3f checkMovement(const Quaternion& rot, swa_display* dpy,
 		const CamMoveControls& params) {
 	auto fac = params.mult;
@@ -209,6 +229,8 @@ Vec3f checkMovement(const Quaternion& rot, swa_display* dpy,
 		nytl::Vec3f{0.f, 1.f, 0.f};
 	auto fwd = apply(rot, nytl::Vec3f{0.f, 0.f, -1.f});
 	Vec3f accel {};
+
+	// TODO: replace with states given over input to filter out gui input.
 	if(swa_display_key_pressed(dpy, params.right)) { // right
 		accel += fac * right;
 	}

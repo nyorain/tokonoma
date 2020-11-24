@@ -23,8 +23,8 @@ void main() {
 	particle.pos += ubo.dt * particle.vel;
 
 	vec3 accel = vec3(0.0);
-	accel -= (1 - exp(-10.0 * ubo.dt)) * particle.vel; // friction
-	accel += 0.5 * ubo.dt * textureLod(curlNoiseTex, 0.5 + 0.1 * particle.pos, 0).rgb; // acceleration
+	accel -= (1 - exp(-3.0 * ubo.dt)) * particle.vel; // friction
+	accel += 0.1 * ubo.dt * textureLod(curlNoiseTex, 0.5 + 0.1 * particle.pos, 0).rgb; // acceleration
 
 	vec3 dist = ubo.attrPos - particle.pos;
 	float l = dot(dist, dist);

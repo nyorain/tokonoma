@@ -237,7 +237,7 @@ public:
 			tkn::SpaceshipCamControls controls;
 			controls.yawFriction = 10.f;
 			controls.pitchFriction = 10.f;
-			controls.moveFriction = 10.f;
+			controls.moveFriction = 3.f;
 			controls.move = move;
 			controls.move.mult = 5.f;
 			cam_.useSpaceshipControl(controls);
@@ -374,7 +374,7 @@ public:
 		});
 
 		uboData->attrPos = attrPos;
-		uboData->attrStrength = swa_display_mouse_button_pressed(swaDisplay(), swa_mouse_button_right) ? 1.f : 0.f;
+		uboData->attrStrength = attracting_ ? 1.f : 0.f;
 
 		uboMap_.flush();
 	}
@@ -405,6 +405,7 @@ public:
 
 		auto& dsu = ppPipe_.dsu();
 		dsu(offscreen_.image, noiseSampler_);
+		dsu.apply();
 
 		Base::initBuffers(size, buffers);
 	}
@@ -412,6 +413,19 @@ public:
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
 		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
+	}
+
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
+			return true;
+		}
+
+		cam_.mouseButton(ev.button, ev.pressed);
+		if(ev.button == swa_mouse_button_right) {
+			attracting_ = ev.pressed;
+		}
+
+		return true;
 	}
 
 	bool mouseWheel(float dx, float dy) override {
@@ -445,6 +459,7 @@ protected:
 	tkn::FileWatcher fswatch_;
 
 	float targetZ_ {1.f};
+	bool attracting_ {};
 
 	struct {
 		vpp::RenderPass rp;

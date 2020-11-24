@@ -4,6 +4,7 @@
 #include <tkn/shader.hpp>
 #include <tkn/pipeline.hpp>
 #include <tkn/threadPool.hpp>
+#include <tkn/util.hpp>
 #include <dlg/dlg.hpp>
 #include <dlg/output.h>
 #include <vpp/vk.hpp>
@@ -21,6 +22,7 @@
 #include <vui/style.hpp>
 #include <nytl/vecOps.hpp>
 #include <nytl/matOps.hpp>
+#include <fuen_api.h>
 #include <argagg.hpp>
 #include <iostream>
 #include <thread>
@@ -239,6 +241,9 @@ struct App::Impl {
 		dlg_handler oldHandler {};
 		void* oldData {};
 	} dlg;
+
+	bool hasFuen {};
+	FuenApi fuenApi;
 };
 
 App::App() = default;
@@ -374,9 +379,11 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 
 	std::vector<const char*> layers;
 
+	if(argsOut.fuencaliente) {
+		layers.push_back("VK_LAYER_fuencaliente");
+	}
+
 	if(argsOut.layers) {
-		// TODO: for testing
-		// layers.push_back("VK_LAYER_fuencaliente");
 		layers.push_back("VK_LAYER_KHRONOS_validation");
 	}
 
@@ -585,6 +592,12 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 		}
 	}
 
+	impl_->hasFuen = false;
+	if(argsOut.fuencaliente) {
+		impl_->hasFuen = fuenLoadApi(&impl_->fuenApi);
+		dlg_info("Loading of fuen api returned {}", impl_->hasFuen);
+	}
+
 	return true;
 }
 
@@ -656,6 +669,9 @@ argagg::parser App::argParser() const {
 			"phdev", {"--phdev"},
 			"Sets the physical device id to use."
 			"Can be id, name or {igpu, dgpu, auto}", 1
+		}, {
+			"fuen", {"--fuen"},
+			"Load fuencaliente vulkan layer overlay", 0
 		}
 	}};
 }
@@ -664,6 +680,7 @@ bool App::handleArgs(const argagg::parser_results& result, Args& args) {
 	args.layers = !result["no-validation"];
 	args.vsync = !result["no-vsync"];
 	args.renderdoc = result["renderdoc"];
+	args.fuencaliente = result["fuen"];
 
 	auto& phdev = result["phdev"];
 	args.phdev = DevType::choose;
@@ -989,6 +1006,14 @@ void App::resize(unsigned width, unsigned height) {
 }
 
 bool App::key(const swa_key_event& ev) {
+	if(impl_->hasFuen) {
+		auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
+		auto vkSwapchain = bit_cast<VkSwapchainKHR>(renderer().swapchain().vkHandle());
+		if(impl_->fuenApi.overlayKeyEvent(vkDev, vkSwapchain, ev.keycode, ev.pressed)) {
+			return true;
+		}
+	}
+
 	if(impl_->gui) {
 		auto ret = false;
 		auto vev = vui::KeyEvent {};
@@ -1011,6 +1036,14 @@ bool App::key(const swa_key_event& ev) {
 }
 
 bool App::mouseButton(const swa_mouse_button_event& ev) {
+	if(impl_->hasFuen) {
+		auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
+		auto vkSwapchain = bit_cast<VkSwapchainKHR>(renderer().swapchain().vkHandle());
+		if(impl_->fuenApi.overlayMouseButtonEvent(vkDev, vkSwapchain, ev.button - 1, ev.pressed)) {
+			return true;
+		}
+	}
+
 	if(impl_->gui) {
 		auto p = nytl::Vec2f{float(ev.x), float(ev.y)};
 		auto num = static_cast<unsigned>(ev.button) + 1;
@@ -1021,11 +1054,25 @@ bool App::mouseButton(const swa_mouse_button_event& ev) {
 	return false;
 }
 void App::mouseMove(const swa_mouse_move_event& ev) {
+	if(impl_->hasFuen) {
+		auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
+		auto vkSwapchain = bit_cast<VkSwapchainKHR>(renderer().swapchain().vkHandle());
+		impl_->fuenApi.overlayMouseMoveEvent(vkDev, vkSwapchain, ev.x, ev.y);
+	}
+
 	if(impl_->gui) {
 		gui().mouseMove({nytl::Vec2f{float(ev.x), float(ev.y)}});
 	}
 }
 bool App::mouseWheel(float x, float y) {
+	if(impl_->hasFuen) {
+		auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
+		auto vkSwapchain = bit_cast<VkSwapchainKHR>(renderer().swapchain().vkHandle());
+		if(impl_->fuenApi.overlayMouseWheelEvent(vkDev, vkSwapchain, x, y)) {
+			return true;
+		}
+	}
+
 	if(impl_->gui) {
 		int mx, my;
 		swa_display_mouse_position(swaDisplay(), &mx, &my);

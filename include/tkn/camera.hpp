@@ -106,6 +106,7 @@ struct SpaceshipCamCon {
 	float yawVel {0.f};
 	float pitchVel {0.f};
 	Vec3f moveVel {0.f, 0.f, 0.f};
+	bool rotating {};
 };
 
 struct SpaceshipCamControls {
@@ -113,7 +114,7 @@ struct SpaceshipCamControls {
 
 	float rotateFac = 0.05f;
 	float rotatePow = 1.f;
-	float rollFac = 50.f; // roll velocity per second
+	float rollFac = 20.f; // roll velocity per second
 	// how quickly velocity is lost. Set to infinity for a completely stiff system
 	float rollFriction = 5.f;
 	float yawFriction = inf;
@@ -129,6 +130,8 @@ struct SpaceshipCamControls {
 // Calls checkMovement as well.
 bool update(Camera&, SpaceshipCamCon&, swa_display* dpy, float dt,
 	const SpaceshipCamControls& = {});
+void mouseButton(SpaceshipCamCon&, swa_mouse_button button,
+	bool pressed, const SpaceshipCamControls& controls = {});
 
 // First-person camera controller.
 // Permits no roll by default, limits pitch to positive or negative 90 degs.
@@ -138,6 +141,7 @@ struct FPCamCon {
 	float yaw {0.f};
 	float pitch {0.f};
 	float roll {0.f};
+	bool rotating {};
 
 	[[nodiscard]] static FPCamCon fromOrientation(const Quaternion&);
 };
@@ -161,6 +165,8 @@ struct FPCamControls {
 
 bool mouseMove(Camera&, FPCamCon&, swa_display*, Vec2i delta,
 	const FPCamControls& controls = {});
+void mouseButton(FPCamCon&, swa_mouse_button button,
+	bool pressed, const FPCamControls& controls = {});
 
 // Third-person arcball controller.
 // Has a dynamic center around which it rotates, the distance
@@ -168,6 +174,9 @@ bool mouseMove(Camera&, FPCamCon&, swa_display*, Vec2i delta,
 struct ArcballCamCon {
 	// Describes how far the rotation center is in front of the camera.
 	float offset {1.f};
+
+	bool rotating {};
+	bool panning {};
 };
 
 struct ArcballControls {
@@ -203,5 +212,8 @@ bool mouseMovePersp(Camera&, ArcballCamCon&, swa_display*, Vec2i delta,
 // Implements zooming for the given vertical mouse wheel delta.
 void mouseWheelZoom(Camera&, ArcballCamCon&, float delta,
 	float zoomFac = 1.05f);
+
+void mouseButton(ArcballCamCon&, swa_mouse_button button,
+	bool pressed, const ArcballControls& controls = {});
 
 } // namespace tkn

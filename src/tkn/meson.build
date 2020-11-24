@@ -24,6 +24,8 @@ tkn_deps = [
 	dep_vulkan,
 	dep_png,
 	gltf_dep,
+
+	dep_dl,
 ]
 
 tkn_src = [

@@ -134,6 +134,7 @@ public:
 
 	void update(swa_display* dpy, double dt);
 	void mouseMove(swa_display* dpy, nytl::Vec2i delta, nytl::Vec2ui winSize);
+	void mouseButton(swa_mouse_button button, bool pressed);
 	void mouseWheel(float delta);
 
 	// - projection-

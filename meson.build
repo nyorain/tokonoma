@@ -97,6 +97,10 @@ dep_png = dependency('libpng', fallback: ['png', 'png_dep'])
 dep_swa = dependency('swa', fallback: ['swa', 'swa_dep'])
 dep_glslang = dependency('glslang', fallback: ['glslang', 'glslang_dep'])
 
+# TODO: needed for fuen api atm.
+# Port that to windows when needed.
+dep_dl = cc.find_library('dl')
+
 # turbojpeg is optional, there exists no meson wrap for it.
 # if we can't find it, we just fall back to the stbi loader, i.e. make
 # tkn::JpegLoader a dummy that never works.
