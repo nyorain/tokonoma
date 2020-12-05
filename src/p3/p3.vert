@@ -45,7 +45,6 @@ void main() {
 	alpha *= 1 / (1 + coc * coc);
 
 	radius *= (1 + coc);
-
 	radius = clamp(radius, 0.0, 400);
 
 	/*

@@ -140,6 +140,10 @@ struct PipeLayoutDescriptors {
 //   or have *something* in ManagedPipeline that owns it and then make
 //   this just an operator that modifies it (and every call to pipe.dsu()
 //   returns a new operator starting at 0,0).
+//   XXX NO! instead, this should rather be something like 'PipelineDescriptors'
+//   and completely separate from a pipeline. For a single pipeline there
+//   can be multiple PipelineDescriptorState. Also allow not binding
+//   certain sets that might be pre-bound.
 class DescriptorUpdater {
 public:
 	// Does *not* apply updates in its destructor

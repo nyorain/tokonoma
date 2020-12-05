@@ -457,8 +457,8 @@ bool ViewApp::init(const nytl::Span<const char*> pargs) {
 		l.data.dir = {-3.8f, -9.2f, -5.2f};
 		l.data.color = {2.f, 1.7f, 0.8f};
 		l.data.color *= 2;
-		l.updateDevice(camera_.viewProjectionMatrix(), -camera_.near(),
-			-camera_.far());
+		l.updateDevice(camera_.viewProjectionMatrix(), 0.1f, 3.f,
+			-camera_.near(), -camera_.far());
 		// pp_.params.scatterLightColor = 0.05f * l.data.color;
 	}
 
@@ -1699,6 +1699,8 @@ bool ViewApp::mouseButton(const swa_mouse_button_event& ev) {
 		return true;
 	}
 
+	camera_.mouseButton(ev.button, ev.pressed);
+
 	if(ev.pressed && ev.button == swa_mouse_button_right) {
 		auto ipos = nytl::Vec2i {ev.x, ev.y};
 		auto& ie = swapchainInfo().imageExtent;
@@ -1840,7 +1842,8 @@ void ViewApp::updateDevice() {
 			l.updateDevice();
 		}
 		for(auto& l : dirLights_) {
-			l.updateDevice(camera_.viewProjectionMatrix(), near, far);
+			l.updateDevice(camera_.viewProjectionMatrix(), 0.1f, 4.f,
+				near, far);
 		}
 		updateLights_ = false;
 	}

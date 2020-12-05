@@ -480,6 +480,7 @@ bool ShaderCache::reparse(std::string_view source,
 			continue;
 		}
 
+		// TODO: better check for includes
 		sha.add(line.data(), line.size());
 		const auto incStr = std::string_view("#include \"");
 		if(line.substr(0, incStr.size()) != incStr) {

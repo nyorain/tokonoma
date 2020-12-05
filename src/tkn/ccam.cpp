@@ -204,6 +204,16 @@ void ControlledCamera::mouseMove(swa_display* dpy, nytl::Vec2i delta,
 	}, controls_);
 }
 
+void ControlledCamera::key(swa_key key, bool pressed) {
+	std::visit(Visitor {
+		[&](Spaceship& spaceship) {
+			keyEvent(spaceship.con.move, key, pressed);
+		},
+		[](const auto&) {
+		}
+	}, controls_);
+}
+
 void ControlledCamera::mouseButton(swa_mouse_button button, bool pressed) {
 	std::visit(Visitor {
 		[&](FirstPerson& fp) {

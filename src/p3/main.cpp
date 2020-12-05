@@ -2,6 +2,7 @@
 #include <tkn/pipeline.hpp>
 #include <tkn/ccam.hpp>
 #include <tkn/util.hpp>
+#include <tkn/formats.hpp>
 #include <tkn/image.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/render.hpp>
@@ -55,6 +56,8 @@ public:
 	// static constexpr auto offscreenFormat = vk::Format::r16g16b16a16Sfloat;
 	// static constexpr auto offscreenFormat = vk::Format::r32g32b32a32Sfloat;
 
+	static constexpr auto rastFormat = vk::Format::r32Uint;
+
 public:
 	using Base = tkn::SinglePassApp;
 	bool init(nytl::Span<const char*> args) override {
@@ -67,6 +70,8 @@ public:
 		cam_.near(-0.0001);
 
 		auto& dev = vkDevice();
+		// depthFormat_ = tkn::findDepthFormat(dev);
+
 		auto& qs = dev.queueSubmitter();
 		auto cb = dev.commandAllocator().get(qs.queue().family());
 		vk::beginCommandBuffer(cb, {});
@@ -82,6 +87,9 @@ public:
 
 		noiseSampler_ = {dev, tkn::linearSamplerInfo(vk::SamplerAddressMode::repeat)};
 		nameHandle(noiseSampler_);
+
+		nearestSampler_ = {dev, tkn::nearestSamplerInfo()};
+		nameHandle(nearestSampler_);
 
 		// offscreen render pass
 		auto pass0i = {0u};
@@ -179,9 +187,28 @@ public:
 		// camera velocity pipe
 		{
 			camVelPipe_ = {dev, {"p3/camVel.comp"}, fswatch_};
-			auto& dsu =camVelPipe_.dsu();
+			auto& dsu = camVelPipe_.dsu();
 			dsu(ubo_);
 			dsu(curlNoise_, noiseSampler_);
+		}
+
+		// compRast
+		{
+			compRast_.compPipe = {dev, {"p3/render.comp"}, fswatch_};
+			auto& dsuComp = compRast_.compPipe.dsu();
+			dsuComp(ubo_);
+			dsuComp(particlesBuffer_);
+
+			vpp::GraphicsPipelineInfo gpi;
+			gpi.assembly.topology = vk::PrimitiveTopology::triangleFan;
+			gpi.rasterization.polygonMode = vk::PolygonMode::fill;
+			gpi.renderPass(renderPass());
+			gpi.depthStencil.depthTestEnable = false;
+			gpi.depthStencil.depthWriteEnable = false;
+
+			auto provider = tkn::GraphicsPipeInfoProvider::create(gpi);
+			compRast_.combinePipe = {dev, {"tkn/shaders/fullscreen.vert"}, {"p3/combine.frag"},
+				fswatch_, std::move(provider)};
 		}
 
 		// finish
@@ -226,6 +253,13 @@ public:
 			particlesGfxPipe_.reload();
 		};
 
+		auto& compRastCb = panel.create<Checkbox>("Compute Render").checkbox();
+		compRastCb.set(compRast_.use);
+		compRastCb.onToggle = [&](auto& cb) {
+			compRast_.use = cb.checked();
+			Base::scheduleRerecord();
+		};
+
 		return true;
 	}
 
@@ -237,9 +271,9 @@ public:
 			tkn::SpaceshipCamControls controls;
 			controls.yawFriction = 10.f;
 			controls.pitchFriction = 10.f;
-			controls.moveFriction = 3.f;
+			// controls.moveFriction = 1.f;
 			controls.move = move;
-			controls.move.mult = 5.f;
+			// controls.move.mult = 5.f;
 			cam_.useSpaceshipControl(controls);
 		} else {
 			cam_.useFirstPersonControl({}, move);
@@ -247,38 +281,64 @@ public:
 	}
 
 	void beforeRender(vk::CommandBuffer cb) override {
-		if(!particlesComputePipe_.pipe() || !particlesGfxPipe_.pipe()) {
+		if(!particlesComputePipe_.pipe()) {
 			return;
 		}
 
 		tkn::cmdBind(cb, particlesComputePipe_);
-		auto groups = tkn::ceilDivide(numParticles, 64);
+		auto groups = tkn::ceilDivide(numParticles, 128);
 		vk::cmdDispatch(cb, groups, 1, 1);
 
 		// TODO: technically, we need a buffer mem barrier here
 
-		auto [width, height] = swapchainInfo().imageExtent;
+		if(compRast_.use && compRast_.compPipe.pipe()) {
+			auto bR = tkn::ImageBarrier{compRast_.imgR.image(), tkn::SyncScope::discard(), tkn::SyncScope::transferWrite()};
+			auto bG = tkn::ImageBarrier{compRast_.imgG.image(), tkn::SyncScope::discard(), tkn::SyncScope::transferWrite()};
+			auto bB = tkn::ImageBarrier{compRast_.imgB.image(), tkn::SyncScope::discard(), tkn::SyncScope::transferWrite()};
+			tkn::barrier(cb, {{bR, bG, bB}});
 
-		auto cvs = {
-			vk::ClearValue{0.f, 0.f, 0.f, 0.f},
-			vk::ClearValue{1.f, 0u},
-		};
-		vk::cmdBeginRenderPass(cb, {
-			offscreen_.rp,
-			offscreen_.fb,
-			{0u, 0u, width, height},
-			std::uint32_t(cvs.size()), cvs.begin()
-		}, {});
+			vk::ClearColorValue cc {};
+			auto subres = vk::ImageSubresourceRange{vk::ImageAspectBits::color, 0, 1, 0, 1};
+			vk::cmdClearColorImage(cb, bR.image, vk::ImageLayout::transferDstOptimal, cc, 1, subres);
+			vk::cmdClearColorImage(cb, bG.image, vk::ImageLayout::transferDstOptimal, cc, 1, subres);
+			vk::cmdClearColorImage(cb, bB.image, vk::ImageLayout::transferDstOptimal, cc, 1, subres);
 
-		vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
-		vk::cmdSetViewport(cb, 0, 1, vp);
-		vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
+			tkn::nextDst(bR, tkn::SyncScope::computeReadWrite());
+			tkn::nextDst(bG, tkn::SyncScope::computeReadWrite());
+			tkn::nextDst(bB, tkn::SyncScope::computeReadWrite());
+			tkn::barrier(cb, {{bR, bG, bB}});
 
-		tkn::cmdBindVertexBuffers(cb, {{particlesBuffer_}});
-		tkn::cmdBind(cb, particlesGfxPipe_);
-		vk::cmdDraw(cb, numParticles, 1, 0, 0);
+			tkn::cmdBind(cb, compRast_.compPipe);
+			vk::cmdDispatch(cb, groups, 1, 1);
 
-		vk::cmdEndRenderPass(cb);
+			tkn::nextDst(bR, tkn::SyncScope::fragmentSampled());
+			tkn::nextDst(bG, tkn::SyncScope::fragmentSampled());
+			tkn::nextDst(bB, tkn::SyncScope::fragmentSampled());
+			tkn::barrier(cb, {{bR, bG, bB}});
+		} else if(!compRast_.use && particlesGfxPipe_.pipe()) {
+			auto [width, height] = swapchainInfo().imageExtent;
+
+			auto cvs = {
+				vk::ClearValue{0.f, 0.f, 0.f, 0.f},
+				vk::ClearValue{1.f, 0u},
+			};
+			vk::cmdBeginRenderPass(cb, {
+				offscreen_.rp,
+				offscreen_.fb,
+				{0u, 0u, width, height},
+				std::uint32_t(cvs.size()), cvs.begin()
+			}, {});
+
+			vk::Viewport vp {0.f, 0.f, (float) width, (float) height, 0.f, 1.f};
+			vk::cmdSetViewport(cb, 0, 1, vp);
+			vk::cmdSetScissor(cb, 0, 1, {0, 0, width, height});
+
+			tkn::cmdBindVertexBuffers(cb, {{particlesBuffer_}});
+			tkn::cmdBind(cb, particlesGfxPipe_);
+			vk::cmdDraw(cb, numParticles, 1, 0, 0);
+
+			vk::cmdEndRenderPass(cb);
+		}
 
 		if(camVelPipe_.pipe()) {
 			tkn::cmdBind(cb, camVelPipe_);
@@ -287,9 +347,18 @@ public:
 	}
 
 	void render(vk::CommandBuffer cb) override {
-		if(ppPipe_.pipe() && particlesComputePipe_.pipe() && particlesGfxPipe_.pipe()) {
-			tkn::cmdBind(cb, ppPipe_);
-			vk::cmdDraw(cb, 4, 1, 0, 0);
+		if(particlesComputePipe_.pipe() && particlesGfxPipe_.pipe()) {
+			if(compRast_.use) {
+				if(compRast_.combinePipe.pipe()) {
+					tkn::cmdBind(cb, compRast_.combinePipe);
+					vk::cmdDraw(cb, 4, 1, 0, 0);
+				}
+			} else {
+				if(ppPipe_.pipe()) {
+					tkn::cmdBind(cb, ppPipe_);
+					vk::cmdDraw(cb, 4, 1, 0, 0);
+				}
+			}
 		}
 
 		gui().draw(cb);
@@ -306,6 +375,9 @@ public:
 		ppPipe_.update();
 		camVelPipe_.update();
 
+		compRast_.compPipe.update();
+		compRast_.combinePipe.update();
+
 		Base::scheduleRedraw();
 	}
 
@@ -318,6 +390,8 @@ public:
 		rerec |= particlesGfxPipe_.updateDevice();
 		rerec |= ppPipe_.updateDevice();
 		rerec |= camVelPipe_.updateDevice();
+		rerec |= compRast_.compPipe.updateDevice();
+		rerec |= compRast_.combinePipe.updateDevice();
 		if(rerec) {
 			Base::scheduleRerecord();
 		}
@@ -327,8 +401,8 @@ public:
 
 		// update camera position
 		if(accelCam_ && cam_.spaceshipControl().has_value()) {
-			Vec3f& camVel = cam_.spaceshipControl().value()->con.moveVel;
-			camVel += uboData->camAccel;
+			// Vec3f& camVel = cam_.spaceshipControl().value()->con.move.moveVel;
+			// camVel += uboData->camAccel;
 
 			// adjust camera rotation based on velocity/curl
 			auto last = normalized(lastCamVel_);
@@ -393,19 +467,50 @@ public:
 		offscreen_.image = {dev.devMemAllocator(), info};
 		nameHandle(offscreen_.image);
 
+		// info = vpp::ViewableImageCreateInfo(depthFormat_,
+		// 	vk::ImageAspectBits::depth, size,
+		// 	vk::ImageUsageBits::depthStencilAttachment);
+		// offscreen_.depth = {dev.devMemAllocator(), info};
+		// nameHandle(offscreen_.depth);
+
 		vk::FramebufferCreateInfo fbi;
 		fbi.width = size.width;
 		fbi.height = size.height;
 		fbi.layers = 1u;
 		fbi.renderPass = offscreen_.rp;
-		fbi.attachmentCount = 1u;
-		fbi.pAttachments = &offscreen_.image.vkImageView();
+		auto atts = {offscreen_.image.vkImageView()}; // , offscreen_.depth.vkImageView()};
+		fbi.attachmentCount = atts.size();
+		fbi.pAttachments = atts.begin();
 		offscreen_.fb = {dev, fbi};
 		nameHandle(offscreen_.fb);
 
 		auto& dsu = ppPipe_.dsu();
 		dsu(offscreen_.image, noiseSampler_);
 		dsu.apply();
+
+		// compRast
+		info = vpp::ViewableImageCreateInfo(rastFormat,
+			vk::ImageAspectBits::color, size,
+			vk::ImageUsageBits::storage | vk::ImageUsageBits::sampled | vk::ImageUsageBits::transferDst);
+		compRast_.imgR = {dev.devMemAllocator(), info};
+		compRast_.imgG = {dev.devMemAllocator(), info};
+		compRast_.imgB = {dev.devMemAllocator(), info};
+		nameHandle(compRast_.imgR);
+		nameHandle(compRast_.imgG);
+		nameHandle(compRast_.imgB);
+
+		auto& dsuCompRast = compRast_.compPipe.dsu();
+		dsuCompRast.skip(2);
+		dsuCompRast(compRast_.imgR);
+		dsuCompRast(compRast_.imgG);
+		dsuCompRast(compRast_.imgB);
+		dsuCompRast.apply();
+
+		auto& dsuCombine = compRast_.combinePipe.dsu();
+		dsuCombine(compRast_.imgR, nearestSampler_);
+		dsuCombine(compRast_.imgG, nearestSampler_);
+		dsuCombine(compRast_.imgB, nearestSampler_);
+		dsuCombine.apply();
 
 		Base::initBuffers(size, buffers);
 	}
@@ -425,6 +530,15 @@ public:
 			attracting_ = ev.pressed;
 		}
 
+		return true;
+	}
+
+	bool key(const swa_key_event& ev) override {
+		if(Base::key(ev)) {
+			return true;
+		}
+
+		cam_.key(ev.keycode, ev.pressed);
 		return true;
 	}
 
@@ -450,6 +564,7 @@ protected:
 
 	vpp::ViewableImage curlNoise_;
 	vpp::Sampler noiseSampler_;
+	vpp::Sampler nearestSampler_;
 
 	vpp::SubBuffer particlesBuffer_;
 	vpp::SubBuffer ubo_;
@@ -465,7 +580,20 @@ protected:
 		vpp::RenderPass rp;
 		vpp::Framebuffer fb;
 		vpp::ViewableImage image;
+		// vpp::ViewableImage depth;
 	} offscreen_;
+
+	// compoute rasterizer data
+	struct {
+		bool use {};
+
+		tkn::ManagedComputePipe compPipe;
+		tkn::ManagedGraphicsPipe combinePipe;
+
+		vpp::ViewableImage imgR;
+		vpp::ViewableImage imgG;
+		vpp::ViewableImage imgB;
+	} compRast_;
 
 	bool spaceshipCam_ {false};
 	bool accelCam_ {false};
@@ -488,6 +616,7 @@ protected:
 			vk::ColorComponentBits::a,
 	};
 
+	// vk::Format depthFormat_ {};
 };
 
 int main(int argc, const char** argv) {

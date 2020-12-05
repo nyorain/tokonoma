@@ -136,6 +136,7 @@ public:
 	void mouseMove(swa_display* dpy, nytl::Vec2i delta, nytl::Vec2ui winSize);
 	void mouseButton(swa_mouse_button button, bool pressed);
 	void mouseWheel(float delta);
+	void key(swa_key key, bool pressed);
 
 	// - projection-
 	void orthographic(const Orthographic& = defaultOrtho);

@@ -507,6 +507,15 @@ public:
 		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
+			return true;
+		}
+
+		cam_.mouseButton(ev.button, ev.pressed);
+		return true;
+	}
+
 	bool mouseWheel(float dx, float dy) override {
 		if(Base::mouseWheel(dx, dy)) {
 			return true;
@@ -538,7 +547,6 @@ public:
 			cam_.needsUpdate = false;
 		}
 
-		// auto semaphore = scene_.updateDevice(cameraVP());
 		auto semaphore = scene_.updateDevice(cam_.viewProjectionMatrix());
 		if(semaphore) {
 			addSemaphore(semaphore, vk::PipelineStageBits::allGraphics);
@@ -547,8 +555,10 @@ public:
 
 		if(updateLight_) {
 			if(mode_ & modeDirLight) {
+				float near = 0.1f;
+				float far = 5.f;
 				dirLight_.updateDevice(cam_.viewProjectionMatrix(),
-					-cam_.near(), -cam_.far());
+					near, far, -cam_.near(), -cam_.far());
 			}
 			if(mode_ & modePointLight) {
 				pointLight_.updateDevice();

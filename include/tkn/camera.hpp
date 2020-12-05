@@ -20,7 +20,7 @@ namespace tkn {
 struct Camera {
 	Vec3f pos {0.f, 0.f, 1.f}; // position of camera in world space
 	Quaternion rot {}; // transforms from camera/view space to world space
-	bool update {true};
+	bool update {true}; // stores whether camera was modified
 };
 
 [[nodiscard]] inline nytl::Vec3f dir(const Camera& c) {
@@ -54,6 +54,7 @@ inline void rotateView(Camera& c, float yaw, float pitch, float roll) {
 	c.update = true;
 }
 
+static constexpr auto inf = std::numeric_limits<float>::infinity();
 
 /// Arguments (with defaults) for checkMovement.
 /// Only exists so movement keys and multipliers are not hardcoded
@@ -74,7 +75,7 @@ struct CamMoveControls {
 	swa_keyboard_mod fastMod = swa_keyboard_mod_shift;
 	swa_keyboard_mod slowMod = swa_keyboard_mod_ctrl;
 
-	// Multiplier that is always applied
+	// Multiplier that is always applied.
 	float mult = 1.f;
 
 	// Specifies by how much the modifiers make the movement
@@ -87,12 +88,31 @@ struct CamMoveControls {
 	// always use the (global) Y axis statically instead of the upwards
 	// pointing vector from the camera.
 	bool respectRotationY = true;
+
+	// The friction with which the camera should move.
+	float moveFriction = inf;
 };
 
+struct CamMoveCon {
+	bool forward {};
+	bool backward {};
+	bool left {};
+	bool right {};
+	bool up {};
+	bool down {};
+	Vec3f moveVel {0.f, 0.f, 0.f};
+};
+
+void keyEvent(CamMoveCon&, swa_key, bool pressed, const CamMoveControls& = {});
+bool update(Camera&, CamMoveCon&, swa_keyboard_mod modifiers, float dt,
+	const CamMoveControls& = {});
+
 // Implements direct (first-person) camera movement via the specified keys.
+[[deprecated]]
 bool checkMovement(Camera&, swa_display* dpy, float dt,
 	const CamMoveControls& params = {});
 // Returns the acceleration instead of instantly moving.
+[[deprecated]]
 Vec3f checkMovement(const Quaternion&, swa_display* dpy,
 	const CamMoveControls& params = {});
 
@@ -101,16 +121,16 @@ Vec3f checkMovement(const Quaternion&, swa_display* dpy,
 // might look weird when rotating on ground since up isn't fixed.
 struct SpaceshipCamCon {
 	static constexpr auto mposInvalid = 0x7FFF;
+
+	CamMoveCon move;
 	Vec2i mposStart {mposInvalid, mposInvalid};
 	float rollVel {0.f};
 	float yawVel {0.f};
 	float pitchVel {0.f};
-	Vec3f moveVel {0.f, 0.f, 0.f};
 	bool rotating {};
 };
 
 struct SpaceshipCamControls {
-	static constexpr auto inf = std::numeric_limits<float>::infinity();
 
 	float rotateFac = 0.05f;
 	float rotatePow = 1.f;
@@ -124,10 +144,9 @@ struct SpaceshipCamControls {
 	swa_mouse_button rotateButton = swa_mouse_button_left;
 	swa_key rollLeft = swa_key_z;
 	swa_key rollRight = swa_key_x;
-	CamMoveControls move = {};
+	CamMoveControls move;
 };
 
-// Calls checkMovement as well.
 bool update(Camera&, SpaceshipCamCon&, swa_display* dpy, float dt,
 	const SpaceshipCamControls& = {});
 void mouseButton(SpaceshipCamCon&, swa_mouse_button button,

@@ -3,13 +3,95 @@
 
 namespace tkn {
 
+// Movement
+void keyEvent(CamMoveCon& con, swa_key key, bool pressed, const CamMoveControls& controls) {
+	if(key == controls.left) {
+		con.left = pressed;
+	} else if(key == controls.right) {
+		con.right = pressed;
+	} else if(key == controls.up) {
+		con.up = pressed;
+	} else if(key == controls.down) {
+		con.down = pressed;
+	} else if(key == controls.forward) {
+		con.forward = pressed;
+	} else if(key == controls.backward) {
+		con.backward = pressed;
+	}
+}
+
+bool update(Camera& cam, CamMoveCon& con, swa_keyboard_mod modifiers, float dt,
+		const CamMoveControls& controls) {
+	auto right = apply(cam.rot, nytl::Vec3f{1.f, 0.f, 0.f});
+	auto up = controls.respectRotationY ?
+		apply(cam.rot, nytl::Vec3f{0.f, 1.f, 0.f}) :
+		nytl::Vec3f{0.f, 1.f, 0.f};
+	auto fwd = apply(cam.rot, nytl::Vec3f{0.f, 0.f, -1.f});
+	Vec3f accel {};
+
+	// TODO: replace with states given over input to filter out gui input.
+	if(con.right) {
+		accel += right;
+	}
+	if(con.left) {
+		accel += -right;
+	}
+	if(con.forward) {
+		accel += fwd;
+	}
+	if(con.backward) {
+		accel += -fwd;
+	}
+	if(con.up) {
+		accel += up;
+	}
+	if(con.down) {
+		accel += -up;
+	}
+
+	auto fac = controls.mult;
+	if(modifiers & controls.fastMod) {
+		fac *= controls.fastMult;
+	}
+	if(modifiers & controls.slowMod) {
+		fac *= controls.slowMult;
+	}
+
+	accel *= fac;
+
+	// There are multiple considerations to integrating input to acceleration
+	// and velocity to position like this here:
+	// - we want effective movement to be framerate independent
+	//   (in the case where no input change happens: it should not matter
+	//   whether the forward key is pressed for 10 frames with dt = 100ms
+	//   or 100 frames with dt = 10ms).
+	// - we don't want friction to influence the overall multiplier, i.e.
+	//   infinite friction should just mean that no velocity is moved to the
+	//   next frame.
+	// Below is the solution of the differential equation: y'(t) = f * (m - y)
+	// where y is velocity, f is friction and m is our input-based acceleration.
+	// We multiply our input by friction to achieve our second goal from above.
+	// With that we achieve a smooth and continuous transition from a fully
+	// stiff camera movement (infinite friction) to a high-friction system.
+	// https://www.wolframalpha.com/input/?i=y%27%28t%29+%3D+-f+*+y+%2B+f+*+m%3B+y%280%29+%3D+c
+	auto eft = std::exp(-dt * controls.moveFriction);
+	con.moveVel = nytl::mix(accel, con.moveVel, eft); // eft * (con.moveVel - accel) + accel;
+	cam.pos += dt * con.moveVel;
+
+	auto changed = dot(con.moveVel, con.moveVel) > 0.00001 * controls.mult;
+	return changed;
+}
+
 // Spaceship
 bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 		const SpaceshipCamControls& controls) {
+	/*
 	Vec3f move = checkMovement(cam.rot, dpy, controls.move);
 	con.moveVel += dt * move;
+	*/
 
-	auto updated = false;
+	auto mods = swa_display_active_keyboard_mods(dpy);
+	auto updated = update(cam, con.move, mods, dt, controls.move);
 
 	// check if we are currently rotating
 	if(con.mposStart.x != con.mposInvalid) {
@@ -42,12 +124,15 @@ bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 	}
 
 	// update movement
+	/*
 	if(dot(con.moveVel, con.moveVel) > 0.0000001) {
-		cam.pos += dt * con.moveVel;
+		cam.pos += con.moveVel; // TODO
 		cam.update = true;
 		updated = true;
 	}
+	*/
 
+	// TODO: update this to the way we handle move friction
 	// update roll
 	float rollAcc = 0.0;
 	if(swa_display_key_pressed(dpy, controls.rollLeft)) {
@@ -73,7 +158,6 @@ bool update(Camera& cam, SpaceshipCamCon& con, swa_display* dpy, float dt,
 	con.rollVel *= std::exp(-dt * controls.rollFriction);
 	con.yawVel *= std::exp(-dt * controls.yawFriction);
 	con.pitchVel *= std::exp(-dt * controls.pitchFriction);
-	con.moveVel *= std::exp(-dt * controls.moveFriction);
 
 	return updated;
 }

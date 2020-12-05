@@ -1090,6 +1090,15 @@ public:
 		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
+			return true;
+		}
+
+		cam_.mouseButton(ev.button, ev.pressed);
+		return true;
+	}
+
 	void resize(unsigned w, unsigned h) override {
 		Base::resize(w, h);
 		cam_.aspect({w, h});

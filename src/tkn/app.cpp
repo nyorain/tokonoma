@@ -1009,7 +1009,11 @@ bool App::key(const swa_key_event& ev) {
 	if(impl_->hasFuen) {
 		auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
 		auto vkSwapchain = bit_cast<VkSwapchainKHR>(renderer().swapchain().vkHandle());
-		if(impl_->fuenApi.overlayKeyEvent(vkDev, vkSwapchain, ev.keycode, ev.pressed)) {
+
+		bool ret = false;
+		ret |= impl_->fuenApi.overlayKeyEvent(vkDev, vkSwapchain, ev.keycode, ev.pressed);
+		ret |= ev.utf8 && impl_->fuenApi.overlayTextEvent(vkDev, vkSwapchain, ev.utf8);
+		if(ret) {
 			return true;
 		}
 	}

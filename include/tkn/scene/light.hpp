@@ -47,7 +47,7 @@ using SceneRenderFunc = std::function<void(vk::CommandBuffer, vk::PipelineLayout
 
 class DirLight {
 public:
-	static constexpr u32 cascadeCount = 2u;
+	static constexpr u32 cascadeCount = 4u;
 
 	struct {
 		nytl::Vec3f color {1.f, 1.f, 1.f}; // unit: illuminance
@@ -65,7 +65,8 @@ public:
 	void render(vk::CommandBuffer cb, const ShadowData&,
 		const SceneRenderFunc& renderScene);
 
-	void updateDevice(const nytl::Mat4f& camvp, float near, float far);
+	void updateDevice(const nytl::Mat4f& camvp, float near, float far,
+		float camNear, float camFar);
 	const auto& ds() const { return ds_; }
 	vk::ImageView shadowMap() const { return target_.vkImageView(); }
 

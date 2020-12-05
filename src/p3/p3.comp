@@ -1,6 +1,6 @@
 #include "particle.glsl"
 
-layout(local_size_x = 64) in;
+layout(local_size_x = 128) in;
 
 layout(set = 0, binding = 0) uniform Ubo {
 	UboData ubo;

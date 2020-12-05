@@ -1,8 +1,8 @@
 #include "particle.glsl"
 
-layout(local_size_x = 64) in;
+layout(local_size_x = 128) in;
 
-layout(set = 0, binding = 0) uniform Ubo {
+layout(set = 0, binding = 0, row_major) uniform Ubo {
 	mat4 vp;
 	vec3 camPos;
 	float dt;
@@ -33,14 +33,16 @@ void main() {
 	vec4 pos4 = ubo.vp * vec4(particle.pos, 1.0);
 	vec3 pos = pos4.xyz / pos4.w;
 
-	ivec2 center = ivec2((0.5 + 0.5 * pos.xy) * imageSize(outColorR));
+	ivec2 imgSize = imageSize(outColorR);
+	vec2 centerf = (0.5 + 0.5 * pos.xy) * imgSize;
+	ivec2 center = ivec2(round(centerf));
 
 	// clip, NOTE: nah, we have to do it on per pixel basis.
 	// TODO: could have an efficient early-out here tho. Likely not too useful
 	// since particles in one warp aren't really realted by position...
-	// if(pos.xy != clamp(pos.xy, -1, 1) || pos.z != clamp(pos.z, 0, 1)) {
-	// 	return;
-	// }
+	if(pos.xy != clamp(pos.xy, -1, 1) || pos.z != clamp(pos.z, 0, 1)) {
+		return;
+	}
 
 	float dist = 0.001 + distance(ubo.camPos, particle.pos);
 	float radius = 0.5;
@@ -84,7 +86,7 @@ void main() {
 		}
 	}
 
-	alpha *= min(alphaFac, 10.0);
+	alpha *= min(alphaFac, 1000.0);
 #endif // FAST_LARGE
 
 	// fade out at end of lifetime
@@ -94,22 +96,34 @@ void main() {
 	float g = mix(0.3, 1.0, particle.lifetime);
 	float b = mix(0.3, 1.0, 3 * length(particle.vel));
 	vec3 color = vec3(1.0, g, b);
-	color *= alpha;
+
+	// alpha = clamp(alpha, 0, 1);
 
 	// draw quad
-	int iradius = int(ceil(radius));
+	radius *= 0.5;
+	int iradius = int(ceil(radius)); // gl_PointSize isn't really the radius...
 	for(int y = -iradius; y < iradius; ++y) {
 		for(int x = -iradius; x < iradius; ++x) {
-			float ndistCenter = length(vec2(x, y));
 			// if(ndistCenter > radius) {
 			// 	continue;
 			// }
-			float alpha = smoothstep(1.0, 0.95, ndistCenter);
-			ivec2 coords = center + ivec2(x, y);
+			ivec2 coords = clamp(center + ivec2(x, y), ivec2(0, 0), imgSize - 1);
+			float ndistCenter = length(coords - centerf) / radius;
+			float aa = alpha * smoothstep(1.0, 0.95, ndistCenter);
 
-			imageAtomicAdd(outColorR, coords, floatToUint(alpha * color.r));
-			imageAtomicAdd(outColorG, coords, floatToUint(alpha * color.g));
-			imageAtomicAdd(outColorB, coords, floatToUint(alpha * color.b));
+			float fr = imageLoad(outColorR, coords).r / 4294967296.0;
+			float fg = imageLoad(outColorG, coords).r / 4294967296.0;
+			float fb = imageLoad(outColorB, coords).r / 4294967296.0;
+
+			/*
+			imageAtomicAdd(outColorR, coords, floatToUint((1 - fr) * aa * color.r));
+			imageAtomicAdd(outColorG, coords, floatToUint((1 - fg) * aa * color.g));
+			imageAtomicAdd(outColorB, coords, floatToUint((1 - fb) * aa * color.b));
+			*/
+
+			imageStore(outColorR, coords, uvec4(floatToUint(mix(fr, color.r, aa))));
+			imageStore(outColorG, coords, uvec4(floatToUint(mix(fg, color.g, aa))));
+			imageStore(outColorB, coords, uvec4(floatToUint(mix(fb, color.b, aa))));
 		}
 	}
 }

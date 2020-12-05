@@ -327,12 +327,14 @@ void DirLight::render(vk::CommandBuffer cb, const ShadowData& data,
 }
 
 // TODO: calculate stuff in update, not updateDevice
-void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
+// TODO: use actual scene bounds. SDSM?
+void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far,
+		float camNear, float camFar) {
 	nytl::normalize(this->data.dir);
 
 	// calculate split depths
 	// https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html
-	constexpr auto splitLambda = 0.8f; // higher: nearer at log split scheme
+	constexpr auto splitLambda = 0.7f; // higher: nearer at log split scheme
 
 	// 1: calculate split depths
 	std::array<float, cascadeCount> splits;
@@ -341,6 +343,7 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 		float uniform = near + (far - near) * fi;
 		float log = near * std::pow(far / near, fi);
 		splits[i] = nytl::mix(uniform, log, splitLambda);
+		dlg_info("shadow split {}: {}", i, splits[i]);
 	}
 
 	// 2: (un)project frustum to world space
@@ -348,6 +351,7 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 	auto frustum = ndcFrustum();
 	for(auto& p : frustum) {
 		p = tkn::multPos(invVP, p);
+		dlg_info("view frust: {}", p);
 	}
 
 	// 3: calculate cascade projections
@@ -355,9 +359,11 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 	std::array<nytl::Vec4f, cascadeCount> projMin;
 	std::array<nytl::Vec4f, cascadeCount> projMax;
 
-	float splitBegin = near;
+
+	float splitBegin = 0.0;
 	for(auto i = 0u; i < cascadeCount; ++i) {
-		auto splitEnd = (splits[i] - near) / (far - near);
+		// auto splitEnd = (splits[i] - near) / (far - near);
+		auto splitEnd = (splits[i] - near) / (camFar - camNear);
 		Frustum frusti;
 
 		// get frustum for this split
@@ -366,6 +372,9 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 			auto diff = frustum[j + 4] - frustum[j];
 			frusti[j] = frustum[j] + splitBegin * diff;
 			frusti[j + 4] = frustum[j] + splitEnd * diff;
+
+			dlg_info("shadow split frust {}, {}: {}", i, j, frusti[j]);
+			dlg_info("shadow split frust {}, {}: {}", i, j + 4, frusti[j + 4]);
 
 			frustCenter += frusti[j];
 			frustCenter += frusti[j + 4];
@@ -376,6 +385,8 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far) {
 		for(auto& p : frusti) {
 			radius = std::max(radius, length(p - frustCenter));
 		}
+
+		dlg_info("shadow split radius {}: {}", i, radius);
 
 		// quantization to get stable shadow maps
 		// this makes sure that even when moving the camera the shadows

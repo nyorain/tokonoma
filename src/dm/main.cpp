@@ -953,7 +953,8 @@ public:
 		if(updateLight_) {
 			if(mode_ & modeDirLight) {
 				// dirLight_.updateDevice(cameraVP(), near, far);
-				dirLight_.updateDevice(cam_.viewProjectionMatrix(), near, far);
+				dirLight_.updateDevice(cam_.viewProjectionMatrix(), 0.1f, 4.f,
+					near, far);
 			}
 			if(mode_ & modePointLight) {
 				pointLight_.updateDevice();

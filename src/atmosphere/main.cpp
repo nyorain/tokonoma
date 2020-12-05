@@ -72,7 +72,7 @@ public:
 		// ds
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
 		vpp::DescriptorSetUpdate dsu(ds_);
-		dsu.uniform({{{ubo_}}});
+		dsu.uniform(ubo_);
 
 		// initial camera pos
 		const float planetRadius = 6300000;
@@ -122,7 +122,7 @@ public:
 		}
 
 		camera_.update(swaDisplay(), dt);
-		if(camera_.needsUpdate) {
+		if(true || camera_.needsUpdate) {
 			Base::scheduleRedraw();
 		}
 	}
@@ -187,6 +187,15 @@ public:
 		}
 
 		return false;
+	}
+
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
+			return true;
+		}
+
+		camera_.mouseButton(ev.button, ev.pressed);
+		return true;
 	}
 
 	void resize(unsigned w, unsigned h) override {

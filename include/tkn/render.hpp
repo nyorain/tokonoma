@@ -137,6 +137,12 @@ struct ImageBarrier {
 	};
 };
 
+// Moves dst to src and fill dst with the given value
+inline void nextDst(ImageBarrier& b, const SyncScope& newDst) {
+	b.src = b.dst;
+	b.dst = newDst;
+}
+
 void barrier(vk::CommandBuffer cb, nytl::Span<const ImageBarrier> barriers);
 void barrier(vk::CommandBuffer cb, vk::Image image, SyncScope src,
 		SyncScope dst, vk::ImageSubresourceRange subres =
