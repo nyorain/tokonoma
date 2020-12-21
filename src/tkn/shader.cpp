@@ -618,7 +618,13 @@ ShaderCache::CompiledShaderView ShaderCache::find(
 
 	auto compiled = CompiledShader{std::move(newMod), std::move(spv)};
 	auto [it, emplaced] = knownIt->second.modules.try_emplace(hash, std::move(compiled));
-	dlg_assertm(emplaced, "Could not insert compiled shader module since it "
+
+	// NOTE: this can realistically happen, for instance if two pipelines
+	// initialized at the same time share a shader. We can just assume
+	// sha1 never collides. See e.g.
+	// - https://crypto.stackexchange.com/questions/2583
+	// - https://stackoverflow.com/questions/862346
+	dlg_assertlm(dlg_level_trace, emplaced, "Could not insert compiled shader module since it "
 		"already existed. Either this is a sha1 collision or another thread "
 		"compiled and inserted it at the same time as this one");
 

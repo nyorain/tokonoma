@@ -242,7 +242,7 @@ struct App::Impl {
 		void* oldData {};
 	} dlg;
 
-	bool hasFuen {};
+	FuenOverlay fuenOverlay {};
 	FuenApi fuenApi;
 };
 
@@ -592,10 +592,11 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 		}
 	}
 
-	impl_->hasFuen = false;
+	impl_->fuenApi = {};
 	if(argsOut.fuencaliente) {
-		impl_->hasFuen = fuenLoadApi(&impl_->fuenApi);
-		dlg_info("Loading of fuen api returned {}", impl_->hasFuen);
+		if(!fuenLoadApi(&impl_->fuenApi)) {
+			dlg_warn("Failed to load fuen");
+		}
 	}
 
 	return true;
@@ -855,6 +856,13 @@ void App::run() {
 					impl_->swapchainInfo, {winSize_.x, winSize_.y});
 				impl_->renderer.init(swapchainInfo(), *impl_->presentq,
 					nullptr, vpp::Renderer::RecordMode::onDemand);
+
+				if(impl_->fuenApi.CreateOverlayForLastCreatedSwapchain) {
+					auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
+					impl_->fuenOverlay = impl_->fuenApi.
+						CreateOverlayForLastCreatedSwapchain(vkDev);
+					dlg_trace("created fuen overlay {}", impl_->fuenOverlay);
+				}
 			} else {
 				impl_->renderer.recreate({winSize_.x, winSize_.y}, swapchainInfo());
 			}
@@ -1006,13 +1014,10 @@ void App::resize(unsigned width, unsigned height) {
 }
 
 bool App::key(const swa_key_event& ev) {
-	if(impl_->hasFuen) {
-		auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
-		auto vkSwapchain = bit_cast<VkSwapchainKHR>(renderer().swapchain().vkHandle());
-
+	if(impl_->fuenOverlay) {
 		bool ret = false;
-		ret |= impl_->fuenApi.overlayKeyEvent(vkDev, vkSwapchain, ev.keycode, ev.pressed);
-		ret |= ev.utf8 && impl_->fuenApi.overlayTextEvent(vkDev, vkSwapchain, ev.utf8);
+		ret |= impl_->fuenApi.OverlayKeyEvent(impl_->fuenOverlay, ev.keycode, ev.pressed);
+		ret |= ev.utf8 && impl_->fuenApi.OverlayTextEvent(impl_->fuenOverlay, ev.utf8);
 		if(ret) {
 			return true;
 		}
@@ -1040,10 +1045,8 @@ bool App::key(const swa_key_event& ev) {
 }
 
 bool App::mouseButton(const swa_mouse_button_event& ev) {
-	if(impl_->hasFuen) {
-		auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
-		auto vkSwapchain = bit_cast<VkSwapchainKHR>(renderer().swapchain().vkHandle());
-		if(impl_->fuenApi.overlayMouseButtonEvent(vkDev, vkSwapchain, ev.button - 1, ev.pressed)) {
+	if(impl_->fuenOverlay) {
+		if(impl_->fuenApi.OverlayMouseButtonEvent(impl_->fuenOverlay, ev.button - 1, ev.pressed)) {
 			return true;
 		}
 	}
@@ -1058,10 +1061,8 @@ bool App::mouseButton(const swa_mouse_button_event& ev) {
 	return false;
 }
 void App::mouseMove(const swa_mouse_move_event& ev) {
-	if(impl_->hasFuen) {
-		auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
-		auto vkSwapchain = bit_cast<VkSwapchainKHR>(renderer().swapchain().vkHandle());
-		impl_->fuenApi.overlayMouseMoveEvent(vkDev, vkSwapchain, ev.x, ev.y);
+	if(impl_->fuenOverlay) {
+		impl_->fuenApi.OverlayMouseMoveEvent(impl_->fuenOverlay, ev.x, ev.y);
 	}
 
 	if(impl_->gui) {
@@ -1069,10 +1070,8 @@ void App::mouseMove(const swa_mouse_move_event& ev) {
 	}
 }
 bool App::mouseWheel(float x, float y) {
-	if(impl_->hasFuen) {
-		auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
-		auto vkSwapchain = bit_cast<VkSwapchainKHR>(renderer().swapchain().vkHandle());
-		if(impl_->fuenApi.overlayMouseWheelEvent(vkDev, vkSwapchain, x, y)) {
+	if(impl_->fuenOverlay) {
+		if(impl_->fuenApi.OverlayMouseWheelEvent(impl_->fuenOverlay, x, y)) {
 			return true;
 		}
 	}

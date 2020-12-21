@@ -4,3 +4,4 @@ subprojects/*/
 external/include/asio/*
 compile_commands.json
 .clangd
+.cache

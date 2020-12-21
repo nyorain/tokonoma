@@ -38,10 +38,15 @@ void main() {
 	}
 	*/
 
-	float md = max(dist / ubo.targetZ, ubo.targetZ / dist);
-	md = clamp(pow(max(md - 0.5, 0.0), 2), 0.f, 999.9);
+	// float md = max(dist / ubo.targetZ, ubo.targetZ / dist);
+	// md = clamp(pow(max(md - 0.5, 0.0), 2), 0.f, 999.9);
+	float F = 0.01f; // focal length, 50mm
+	float A = F / 1.0; // aperature
+	float unitFactor = 1000.f; // how many meters are one world-space unit
+	float maxBgCoc = A * F / (unitFactor * ubo.targetZ - F);
+	float md = 1000 * unitFactor * (1 - ubo.targetZ / dist) * maxBgCoc;
 
-	float coc = 1.0 * md;
+	float coc = 1.0 * abs(md);
 	alpha *= 1 / (1 + coc * coc);
 
 	radius *= (1 + coc);

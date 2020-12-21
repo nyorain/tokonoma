@@ -431,8 +431,10 @@ public:
 		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.pipe);
 		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
 
-		vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.wirePipe);
-		vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
+		if(addWire_) {
+			vk::cmdBindPipeline(cb, vk::PipelineBindPoint::graphics, gfx_.wirePipe);
+			vk::cmdDrawIndirect(cb, comp_.dispatch.buffer(), comp_.dispatch.offset(), 1, 0);
+		}
 
 		rvgContext().bindDefaults(cb);
 		rvgWindowTransform().bind(cb);
@@ -502,6 +504,8 @@ public:
 			return true;
 		}
 
+		camera_.key(ev.keycode, ev.pressed);
+
 		if(!ev.pressed) {
 			return false;
 		}
@@ -518,9 +522,28 @@ public:
 			update_ = !update_;
 			dlg_info("update: {}", update_);
 			return true;
+		} else if(ev.keycode == swa_key_t) { // wirte
+			addWire_ = !addWire_;
+			dlg_info("wire: {}", addWire_);
+			Base::scheduleRerecord();
+			return true;
 		}
 
 		return false;
+	}
+
+	void mouseMove(const swa_mouse_move_event& ev) override {
+		Base::mouseMove(ev);
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
+	}
+
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
+			return true;
+		}
+
+		camera_.mouseButton(ev.button, ev.pressed);
+		return true;
 	}
 
 	void resize(unsigned w, unsigned h) override {
@@ -578,6 +601,7 @@ protected:
 
 	bool update_ {false};
 	bool updateStep_ {false};
+	bool addWire_ {false};
 
 	tkn::TimeWidget timeWidget_;
 

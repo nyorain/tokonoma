@@ -123,6 +123,9 @@ int main(int argc, const char** argv) {
 		};
 	}
 
+	// TODO: testing
+	args.iniExts.push_back("VK_KHR_surface");
+	args.iniExts.push_back("VK_KHR_wayland_surface");
 	auto headless = tkn::Headless(args);
 
 	auto& dev = *headless.device;
@@ -922,4 +925,7 @@ void saveCurlNoise(const char* outFile, const vpp::Device& dev) {
 		format, 1, 1, map.span());
 	auto res = tkn::writeKtx(outFile, *provider);
 	dlg_assertm(res == tkn::WriteError::none, (int) res);
+
+	dlg_info("Completed! Press char to continue");
+	std::getchar();
 }

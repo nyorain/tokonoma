@@ -269,6 +269,7 @@ public:
 		move.slowMult = 0.05f;
 		if(spaceshipCam_) {
 			tkn::SpaceshipCamControls controls;
+			controls.rotateFac = 0.05;
 			controls.yawFriction = 10.f;
 			controls.pitchFriction = 10.f;
 			// controls.moveFriction = 1.f;

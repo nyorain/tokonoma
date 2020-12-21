@@ -343,7 +343,7 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far,
 		float uniform = near + (far - near) * fi;
 		float log = near * std::pow(far / near, fi);
 		splits[i] = nytl::mix(uniform, log, splitLambda);
-		dlg_info("shadow split {}: {}", i, splits[i]);
+		// dlg_info("shadow split {}: {}", i, splits[i]);
 	}
 
 	// 2: (un)project frustum to world space
@@ -351,7 +351,7 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far,
 	auto frustum = ndcFrustum();
 	for(auto& p : frustum) {
 		p = tkn::multPos(invVP, p);
-		dlg_info("view frust: {}", p);
+		// dlg_info("view frust: {}", p);
 	}
 
 	// 3: calculate cascade projections
@@ -373,8 +373,8 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far,
 			frusti[j] = frustum[j] + splitBegin * diff;
 			frusti[j + 4] = frustum[j] + splitEnd * diff;
 
-			dlg_info("shadow split frust {}, {}: {}", i, j, frusti[j]);
-			dlg_info("shadow split frust {}, {}: {}", i, j + 4, frusti[j + 4]);
+			// dlg_info("shadow split frust {}, {}: {}", i, j, frusti[j]);
+			// dlg_info("shadow split frust {}, {}: {}", i, j + 4, frusti[j + 4]);
 
 			frustCenter += frusti[j];
 			frustCenter += frusti[j + 4];
@@ -386,7 +386,7 @@ void DirLight::updateDevice(const nytl::Mat4f& camvp, float near, float far,
 			radius = std::max(radius, length(p - frustCenter));
 		}
 
-		dlg_info("shadow split radius {}: {}", i, radius);
+		// dlg_info("shadow split radius {}: {}", i, radius);
 
 		// quantization to get stable shadow maps
 		// this makes sure that even when moving the camera the shadows

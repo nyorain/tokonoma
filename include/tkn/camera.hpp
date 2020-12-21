@@ -131,8 +131,7 @@ struct SpaceshipCamCon {
 };
 
 struct SpaceshipCamControls {
-
-	float rotateFac = 0.05f;
+	float rotateFac = 0.2f;
 	float rotatePow = 1.f;
 	float rollFac = 20.f; // roll velocity per second
 	// how quickly velocity is lost. Set to infinity for a completely stiff system
