@@ -141,7 +141,7 @@ public:
 
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
 		vpp::DescriptorSetUpdate dsu(ds_);
-		dsu.uniform({{{cameraUbo_}}});
+		dsu.uniform(cameraUbo_);
 		dsu.apply();
 
 		return true;
@@ -268,6 +268,8 @@ public:
 
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
+		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
+
 		auto p = Vec2f{float(ev.x), float(ev.y)};
 		if(drag_) {
 			// unproject
@@ -308,23 +310,21 @@ public:
 		}
 
 		if(ev.button == swa_mouse_button_left) {
-			if(!ev.pressed) {
+			if(!ev.pressed && drag_) {
 				drag_ = {};
-				rotateView_ = false;
 				return true;
+			} else if(ev.pressed) {
+				drag_ = pointAt(Vec2f{float(ev.x), float(ev.y)});
+				if(drag_) {
+					swa_cursor c {};
+					c.type = swa_cursor_hand;
+					swa_window_set_cursor(swaWindow(), c);
+					return true;
+				}
 			}
-
-			drag_ = pointAt(Vec2f{float(ev.x), float(ev.y)});
-			if(drag_) {
-				swa_cursor c {};
-				c.type = swa_cursor_hand;
-				swa_window_set_cursor(swaWindow(), c);
-			} else {
-				rotateView_ = ev.pressed;
-			}
-
-			return true;
 		}
+
+		camera_.mouseButton(ev.button, ev.pressed);
 
 		return false;
 	}
@@ -407,7 +407,6 @@ public:
 protected:
 	tkn::ControlledCamera camera_;
 	std::variant<Bezier<3>, std::vector<Vec3f>> controlPoints_;
-	bool rotateView_ {};
 	std::vector<Vec3f> flattened_;
 
 	std::optional<Drag> drag_ {};

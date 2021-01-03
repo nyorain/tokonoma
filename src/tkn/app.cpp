@@ -925,6 +925,9 @@ void App::run() {
 			update(dt(lastUpdate));
 		}
 	}
+
+	// make sure everything has finished before teardown begins
+	vk::deviceWaitIdle(vkDevice());
 }
 
 void App::dispatch() {
@@ -949,6 +952,9 @@ void App::update(double dt) {
 	if(impl_->gui) {
 		redraw_ |= gui().update(dt);
 	}
+
+	// TODO
+	redraw_ = true;
 }
 
 void App::updateDevice(double dt) {

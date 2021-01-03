@@ -320,7 +320,7 @@ public:
 			auto [width, height] = swapchainInfo().imageExtent;
 
 			auto cvs = {
-				vk::ClearValue{0.f, 0.f, 0.f, 0.f},
+				vk::ClearValue{0.f, 0.f, 0.f, 1.f},
 				vk::ClearValue{1.f, 0u},
 			};
 			vk::cmdBeginRenderPass(cb, {
