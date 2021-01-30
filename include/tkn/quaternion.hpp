@@ -9,7 +9,6 @@
 #include <nytl/vec.hpp>
 #include <nytl/vecOps.hpp>
 #include <nytl/mat.hpp>
-#include <nytl/matOps.hpp>
 
 // What makes quaternions somewhat hard to work with is that once again
 // everybody has a different convention regarding roll, pitch, yaw and
@@ -198,10 +197,10 @@ inline bool operator!=(const Quaternion& a, const Quaternion& b) {
 // Returns a row-major NxN matrix that represents the given Quaternion.
 // Same as an identity matrix with the first 3 colums being
 //   apply(q, {1, 0, 0}), apply(q, {0, 1, 0}), apply(q, {0, 0, 1})
-template<std::size_t N, typename T = float> [[nodiscard]]
-nytl::SquareMat<N, T> toMat(const Quaternion& q) {
+template<std::size_t N, typename T = float>
+[[nodiscard]] nytl::SquareMat<N, T> toMat(const Quaternion& q) {
 	static_assert(N >= 3);
-	auto ret = nytl::identity<N, T>();
+	nytl::SquareMat<N, T> ret {};
 
 	auto wz = q.w * q.z;
 	auto wy = q.w * q.y;
@@ -224,6 +223,11 @@ nytl::SquareMat<N, T> toMat(const Quaternion& q) {
 	ret[2][0] = 2 * (xz - wy);
 	ret[2][1] = 2 * (wx + yz);
 	ret[2][2] = 1 - 2 * (xx + yy);
+
+	// Make sure the remaining rows/cols are initialized like identiy matrix
+	for(auto i = 3; i < N; ++i) {
+		ret[i][i] = 1.f;
+	}
 
 	return ret;
 }
@@ -266,7 +270,7 @@ template<typename T>
 	// return {T(qr.x), T(qr.y), T(qr.z)};
 }
 
-inline double dot(const Quaternion& a, const Quaternion& b) {
+[[nodiscard]] inline double dot(const Quaternion& a, const Quaternion& b) {
 	return a.x * b.x + a.y * b.y + a.z * b.y * a.w * b.y;
 }
 

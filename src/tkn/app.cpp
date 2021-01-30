@@ -22,7 +22,7 @@
 #include <vui/style.hpp>
 #include <nytl/vecOps.hpp>
 #include <nytl/matOps.hpp>
-#include <fuen_api.h>
+#include <vil_api.h>
 #include <argagg.hpp>
 #include <iostream>
 #include <thread>
@@ -242,8 +242,8 @@ struct App::Impl {
 		void* oldData {};
 	} dlg;
 
-	FuenOverlay fuenOverlay {};
-	FuenApi fuenApi;
+	VilOverlay vilOverlay {};
+	VilApi vilApi;
 };
 
 App::App() = default;
@@ -379,8 +379,8 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 
 	std::vector<const char*> layers;
 
-	if(argsOut.fuencaliente) {
-		layers.push_back("VK_LAYER_fuencaliente");
+	if(argsOut.vil) {
+		layers.push_back("VK_LAYER_live_introspection");
 	}
 
 	if(argsOut.layers) {
@@ -592,10 +592,10 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 		}
 	}
 
-	impl_->fuenApi = {};
-	if(argsOut.fuencaliente) {
-		if(!fuenLoadApi(&impl_->fuenApi)) {
-			dlg_warn("Failed to load fuen");
+	impl_->vilApi = {};
+	if(argsOut.vil) {
+		if(!vilLoadApi(&impl_->vilApi)) {
+			dlg_warn("Failed to load VIL");
 		}
 	}
 
@@ -671,8 +671,8 @@ argagg::parser App::argParser() const {
 			"Sets the physical device id to use."
 			"Can be id, name or {igpu, dgpu, auto}", 1
 		}, {
-			"fuen", {"--fuen"},
-			"Load fuencaliente vulkan layer overlay", 0
+			"vil", {"--vil"},
+			"Load live introspection vulkan layer overlay", 0
 		}
 	}};
 }
@@ -681,7 +681,7 @@ bool App::handleArgs(const argagg::parser_results& result, Args& args) {
 	args.layers = !result["no-validation"];
 	args.vsync = !result["no-vsync"];
 	args.renderdoc = result["renderdoc"];
-	args.fuencaliente = result["fuen"];
+	args.vil = result["vil"];
 
 	auto& phdev = result["phdev"];
 	args.phdev = DevType::choose;
@@ -857,11 +857,11 @@ void App::run() {
 				impl_->renderer.init(swapchainInfo(), *impl_->presentq,
 					nullptr, vpp::Renderer::RecordMode::onDemand);
 
-				if(impl_->fuenApi.CreateOverlayForLastCreatedSwapchain) {
+				if(impl_->vilApi.CreateOverlayForLastCreatedSwapchain) {
 					auto vkDev = bit_cast<VkDevice>(vkDevice().vkHandle());
-					impl_->fuenOverlay = impl_->fuenApi.
+					impl_->vilOverlay = impl_->vilApi.
 						CreateOverlayForLastCreatedSwapchain(vkDev);
-					dlg_trace("created fuen overlay {}", impl_->fuenOverlay);
+					dlg_trace("created vil overlay {}", impl_->vilOverlay);
 				}
 			} else {
 				impl_->renderer.recreate({winSize_.x, winSize_.y}, swapchainInfo());
@@ -1020,10 +1020,10 @@ void App::resize(unsigned width, unsigned height) {
 }
 
 bool App::key(const swa_key_event& ev) {
-	if(impl_->fuenOverlay) {
+	if(impl_->vilOverlay) {
 		bool ret = false;
-		ret |= impl_->fuenApi.OverlayKeyEvent(impl_->fuenOverlay, ev.keycode, ev.pressed);
-		ret |= ev.utf8 && impl_->fuenApi.OverlayTextEvent(impl_->fuenOverlay, ev.utf8);
+		ret |= impl_->vilApi.OverlayKeyEvent(impl_->vilOverlay, ev.keycode, ev.pressed);
+		ret |= ev.utf8 && impl_->vilApi.OverlayTextEvent(impl_->vilOverlay, ev.utf8);
 		if(ret) {
 			return true;
 		}
@@ -1051,8 +1051,8 @@ bool App::key(const swa_key_event& ev) {
 }
 
 bool App::mouseButton(const swa_mouse_button_event& ev) {
-	if(impl_->fuenOverlay) {
-		if(impl_->fuenApi.OverlayMouseButtonEvent(impl_->fuenOverlay, ev.button - 1, ev.pressed)) {
+	if(impl_->vilOverlay) {
+		if(impl_->vilApi.OverlayMouseButtonEvent(impl_->vilOverlay, ev.button - 1, ev.pressed)) {
 			return true;
 		}
 	}
@@ -1067,8 +1067,8 @@ bool App::mouseButton(const swa_mouse_button_event& ev) {
 	return false;
 }
 void App::mouseMove(const swa_mouse_move_event& ev) {
-	if(impl_->fuenOverlay) {
-		impl_->fuenApi.OverlayMouseMoveEvent(impl_->fuenOverlay, ev.x, ev.y);
+	if(impl_->vilOverlay) {
+		impl_->vilApi.OverlayMouseMoveEvent(impl_->vilOverlay, ev.x, ev.y);
 	}
 
 	if(impl_->gui) {
@@ -1076,8 +1076,8 @@ void App::mouseMove(const swa_mouse_move_event& ev) {
 	}
 }
 bool App::mouseWheel(float x, float y) {
-	if(impl_->fuenOverlay) {
-		if(impl_->fuenApi.OverlayMouseWheelEvent(impl_->fuenOverlay, x, y)) {
+	if(impl_->vilOverlay) {
+		if(impl_->vilApi.OverlayMouseWheelEvent(impl_->vilOverlay, x, y)) {
 			return true;
 		}
 	}

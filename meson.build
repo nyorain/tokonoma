@@ -99,7 +99,7 @@ dep_glslang = dependency('glslang', fallback: ['glslang', 'glslang_dep'])
 
 # TODO: needed for fuen api atm.
 # Port that to windows when needed.
-dep_dl = cc.find_library('dl')
+dep_dl = cc.find_library('dl', required: false)
 
 # turbojpeg is optional, there exists no meson wrap for it.
 # if we can't find it, we just fall back to the stbi loader, i.e. make

@@ -97,9 +97,9 @@ void initShadowData(ShadowData& data, const vpp::Device& dev, vk::Format depthFo
 	rpi.pDependencies = &dependency;
 	rpi.dependencyCount = 1u;
 
+	vk::RenderPassMultiviewCreateInfo rpm;
 	if(multiview) {
 		u32 viewMask = nlastbits(DirLight::cascadeCount);
-		vk::RenderPassMultiviewCreateInfo rpm;
 		rpm.subpassCount = 1u;
 		rpm.pViewMasks = &viewMask;
 		rpi.pNext = &rpm;
