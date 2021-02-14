@@ -29,7 +29,6 @@ bool update(Camera& cam, CamMoveCon& con, swa_keyboard_mod modifiers, float dt,
 	auto fwd = apply(cam.rot, nytl::Vec3f{0.f, 0.f, -1.f});
 	Vec3f accel {};
 
-	// TODO: replace with states given over input to filter out gui input.
 	if(con.right) {
 		accel += right;
 	}
@@ -76,6 +75,7 @@ bool update(Camera& cam, CamMoveCon& con, swa_keyboard_mod modifiers, float dt,
 	// https://www.wolframalpha.com/input/?i=y%27%28t%29+%3D+-f+*+y+%2B+f+*+m%3B+y%280%29+%3D+c
 	auto eft = std::exp(-dt * controls.moveFriction);
 	con.moveVel = nytl::mix(accel, con.moveVel, eft); // eft * (con.moveVel - accel) + accel;
+
 	cam.pos += dt * con.moveVel;
 
 	auto changed = dot(con.moveVel, con.moveVel) > 0.00001 * controls.mult;

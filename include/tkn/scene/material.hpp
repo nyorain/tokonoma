@@ -19,7 +19,7 @@ public:
 	};
 
 	struct Tex {
-		u32 coords {0};
+		u32 coords {0}; // uv coordinate set (texCoords0 or texCoords1)
 		u32 texID {0}; // 0: dummy texture
 		u32 samplerID {0}; // 0: default sampler
 	};

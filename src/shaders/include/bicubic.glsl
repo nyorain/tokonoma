@@ -1,6 +1,6 @@
 // Bicubic filtering
 // https://stackoverflow.com/questions/13501081
-vec4 cubic(float v) {
+vec4 cubic1(float v) {
     vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
     vec4 s = n * n * n;
     float x = s.x;
@@ -20,8 +20,8 @@ vec4 textureBicubic(sampler2D tex, vec2 texCoords) {
     vec2 fxy = fract(texCoords);
     texCoords -= fxy;
 
-    vec4 xcubic = cubic(fxy.x);
-    vec4 ycubic = cubic(fxy.y);
+    vec4 xcubic = cubic1(fxy.x);
+    vec4 ycubic = cubic1(fxy.y);
 
     vec4 c = texCoords.xxyy + vec2 (-0.5, +1.5).xyxy;
 

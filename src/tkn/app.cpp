@@ -594,8 +594,8 @@ bool App::doInit(nytl::Span<const char*> args, Args& argsOut) {
 
 	impl_->vilApi = {};
 	if(argsOut.vil) {
-		if(!vilLoadApi(&impl_->vilApi)) {
-			dlg_warn("Failed to load VIL");
+		if(auto res = vilLoadApi(&impl_->vilApi); res) {
+			dlg_warn("Failed to load vil: error code {}", res);
 		}
 	}
 

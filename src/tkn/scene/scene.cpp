@@ -1,4 +1,3 @@
-#define VPP_NO_DEBUG_MARKER
 #include <tkn/scene/scene.hpp>
 #include <tkn/scene/shape.hpp>
 #include <tkn/quaternion.hpp>
@@ -1176,13 +1175,9 @@ void Scene::render(vk::CommandBuffer cb, vk::PipelineLayout pl, bool blend) cons
 
 	vk::cmdBindVertexBuffers(cb, 0, bufs, offsets);
 	if(multiDrawIndirect_) {
-		// dlg_info("{} {} {} {}", cb, cmds.buffer().vkHandle(), cmds.offset(), count);
-		std::fflush(stdout);
-
 		auto stride = sizeof(vk::DrawIndexedIndirectCommand);
 		vk::cmdDrawIndexedIndirect(cb, cmds.buffer(), cmds.offset(),
 			count, stride);
-
 	} else {
 		auto off = cmds.offset();
 		for(auto i = 0u; i < count; ++i) {

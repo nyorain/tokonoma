@@ -786,6 +786,15 @@ public:
 		cam_.aspect({w, h});
 	}
 
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(Base::mouseButton(ev)) {
+			return true;
+		}
+
+		cam_.mouseButton(ev.button, ev.pressed);
+		return true;
+	}
+
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
 		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
@@ -898,6 +907,8 @@ public:
 				return true;
 			}
 		}
+
+		cam_.key(ev.keycode, ev.pressed);
 
 		return false;
 	}
