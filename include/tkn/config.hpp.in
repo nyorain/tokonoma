@@ -4,3 +4,4 @@
 #mesondefine TKN_WITH_BULLET
 #mesondefine TKN_WITH_B2D
 #mesondefine TKN_WITH_PULSE_SIMPLE
+#mesondefine TKN_WITH_WL_PROTOS

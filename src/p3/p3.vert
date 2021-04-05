@@ -40,7 +40,7 @@ void main() {
 
 	// float md = max(dist / ubo.targetZ, ubo.targetZ / dist);
 	// md = clamp(pow(max(md - 0.5, 0.0), 2), 0.f, 999.9);
-	float F = 0.01f; // focal length, 50mm
+	float F = 0.1f; // focal length, 50mm
 	float A = F / 1.0; // aperature
 	float unitFactor = 1000.f; // how many meters are one world-space unit
 	float maxBgCoc = A * F / (unitFactor * ubo.targetZ - F);

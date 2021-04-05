@@ -108,6 +108,35 @@ else
 	tkn_src += 'fswatch_stdfs.cpp'
 endif
 
+# wl-tablet implementation
+if dep_wl_protos.found() and wl_scanner.found()
+	protocols = {
+		'tablet-unstable-v2': wl_protocol_dir / 'unstable/tablet/tablet-unstable-v2.xml',
+	}
+
+	foreach name, path : protocols
+		code = custom_target(
+			name.underscorify() + '_c',
+			input: path,
+			output: '@BASENAME@-protocol.c',
+			command: [wl_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+		)
+		tkn_src += code
+
+		client_header = custom_target(
+			name.underscorify() + '_client_h',
+			input: path,
+			output: '@BASENAME@-client-protocol.h',
+			command: [wl_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+			build_by_default: false,
+		)
+		tkn_src += client_header
+	endforeach
+
+	tkn_src += 'wlTablet.cpp'
+	tkn_deps += [dep_wl_client]
+endif
+
 tkn_lib = library('tkn',
 	sources: tkn_src,
 	dependencies: tkn_deps,

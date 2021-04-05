@@ -1,3 +1,4 @@
+#include <tkn/config.hpp>
 #include <tkn/singlePassApp.hpp>
 #include <tkn/pipeline.hpp>
 #include <tkn/ccam.hpp>
@@ -6,6 +7,11 @@
 #include <tkn/image.hpp>
 #include <tkn/texture.hpp>
 #include <tkn/render.hpp>
+
+#ifdef TKN_WITH_WL_PROTOS
+	#include <tkn/wlTablet.hpp>
+	#include <swa/wayland.h>
+#endif // TKN_WITH_WL_PROTOS
 
 #include <vpp/handles.hpp>
 #include <vpp/debug.hpp>
@@ -26,13 +32,22 @@
 
 #include <random>
 
+// This application renders a 3D particle system that is accelerated according
+// to a 3D curl noise texture. Implements drawing tablet input on wayland.
+
 using namespace tkn::types;
 using vpp::nameHandle;
-using tkn::nameHandle;
 
 #define nameHandle(x) nameHandle(x, #x)
 
-class P3App : public tkn::SinglePassApp {
+#ifdef TKN_WITH_WL_PROTOS
+	using TabletListenerBase = tkn::wlt::Listener;
+#else // TKN_WITH_WL_PROTOS
+	struct TabletListenerBase {};
+#endif // TKN_WITH_WL_PROTOS
+
+class P3App : public tkn::SinglePassApp, public TabletListenerBase
+{
 public:
 	struct UboData {
 		Mat4f vp;
@@ -42,6 +57,8 @@ public:
 		float targetZ;
 		Vec3f camAccel {0.f, 0.f, 0.f}; // written from shader, read on cpu
 		float attrStrength;
+		Vec3f attrDir;
+		u32 useAttrDir;
 	};
 
 	struct Particle {
@@ -66,6 +83,17 @@ public:
 		}
 
 		rvgInit();
+
+#ifdef TKN_WITH_WL_PROTOS
+		auto* dpy = swaDisplay();
+		if(swa_display_is_wl(dpy)) {
+			dlg_info("Trying to initialize tablet manager...");
+			auto wlDisplay = swa_display_wl_get_display(dpy);
+			auto wlSeat = swa_display_wl_get_seat(dpy);
+			tkn::wlt::init(tabletManager_, wlDisplay, wlSeat);
+			tabletManager_.listener = this;
+		}
+#endif // TKN_WITH_WL_PROTOS
 
 		cam_.near(-0.0001);
 
@@ -368,6 +396,10 @@ public:
 	void update(double dt) override {
 		Base::update(dt);
 
+#ifdef TKN_WITH_WL_PROTOS
+		tkn::wlt::dispatch(tabletManager_);
+#endif // TKN_WITH_WL_PROTOS
+
 		cam_.update(swaDisplay(), dt);
 
 		fswatch_.update();
@@ -436,20 +468,23 @@ public:
 		uboData->dt = dt;
 		uboData->targetZ = targetZ_;
 
-		int x, y;
-		swa_display_mouse_position(swaDisplay(), &x, &y);
+		// int x, y;
+		// swa_display_mouse_position(swaDisplay(), &x, &y);
 		auto [w, h] = windowSize();
 
 		auto invViewProj = Mat4f(nytl::inverse(cam_.viewProjectionMatrix()));
 		float targetDepth = tkn::multPos(cam_.projectionMatrix(), Vec3f{0.f, 0.f, -targetZ_}).z;
 		auto attrPos = tkn::multPos(invViewProj, Vec3f{
-			-1.f + 2.f * float(x) / w,
-			-1.f + 2.f * float(y) / h,
+			-1.f + 2.f * float(attractionPos_.x) / w,
+			-1.f + 2.f * float(attractionPos_.y) / h,
 			targetDepth,
 		});
 
 		uboData->attrPos = attrPos;
-		uboData->attrStrength = attracting_ ? 1.f : 0.f;
+		uboData->attrStrength = attracationStrength_;
+
+		uboData->attrDir = attractionDir_;
+		uboData->useAttrDir = useAttrDir_;
 
 		uboMap_.flush();
 	}
@@ -519,6 +554,8 @@ public:
 	void mouseMove(const swa_mouse_move_event& ev) override {
 		Base::mouseMove(ev);
 		cam_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
+
+		attractionPos_ = Vec2f{float(ev.x), float(ev.y)};
 	}
 
 	bool mouseButton(const swa_mouse_button_event& ev) override {
@@ -527,8 +564,10 @@ public:
 		}
 
 		cam_.mouseButton(ev.button, ev.pressed);
+
 		if(ev.button == swa_mouse_button_right) {
-			attracting_ = ev.pressed;
+			attracationStrength_ = ev.pressed ? 1.f : 0.f;
+			useAttrDir_ = false;
 		}
 
 		return true;
@@ -556,6 +595,120 @@ public:
 	const char* name() const override { return "p3"; }
 	bool needsDepth() const override { return false; }
 
+#ifdef TKN_WITH_WL_PROTOS
+	// tablet functions
+	void toolButton(u32 button, bool state) override {
+		if(button == 1u) {
+			toolButtonPressed_ = state;
+
+			if(!state && toolDown_) {
+				cam_.mouseButton(swa_mouse_button_left, false);
+			}
+		}
+	}
+
+	void toolDown() override {
+		// NOTE: we currently wait for the pressure event
+		// attracationStrength_ = 1.f;
+		toolDown_ = true;
+
+		if(toolButtonPressed_) {
+			cam_.mouseButton(swa_mouse_button_left, true);
+		}
+	}
+
+	void toolUp() override {
+		attracationStrength_ = 0.f;
+		toolDown_ = false;
+
+		if(toolButtonPressed_) {
+			cam_.mouseButton(swa_mouse_button_left, false);
+		}
+	}
+
+	void toolPressure(float pressure) override {
+		if(!toolButtonPressed_) {
+			attracationStrength_ = std::pow(pressure, 2);
+		}
+	}
+
+	void toolMotion(float x, float y) override {
+		auto newPos = Vec2f{x, y};
+
+		if(toolButtonPressed_) {
+			// This is the moment I realized that our current camera system
+			// is very focused on mouse position. And that its entanglement
+			// with swa display may be convenient but eventually makes it
+			// less flexible. Should probably completely separate it from
+			// swa_display in future; iro. Or maybe just add a new
+			// TabletCamController?
+
+			// TODO: use Vec2f in mouseMove instead
+			// cam_.mouseMove(swaDisplay(),
+		}
+
+		attractionPos_ = newPos;
+	}
+
+	void toolTilt(float x, float y) override {
+		float rx = nytl::radians(x);
+		float ry = nytl::radians(y);
+
+		Vec3f dir; // direction the tool points to in view space
+		dir.x = -std::sin(rx);
+		dir.y = std::sin(ry); // inversed since window and tablet space is y-down
+		dir.z = -std::cos(rx) * std::cos(ry); // forwards is negative z
+		dir.z = 0.0;  // just ignore Z for now, make them move parallel to cam planes
+
+		auto invViewMat = nytl::inverse(Mat3f(cam_.viewMatrix()));
+		Vec3f worldDir = Mat3f(invViewMat) * dir;
+
+		attractionDir_ = worldDir;
+		useAttrDir_ = true;
+
+		// dlg_info("viewDir: {}, worldDir: {}", dir, worldDir);
+	}
+
+	void ringAngle(float degrees) override {
+		// TODO: for some reason we don't get the angle it degrees, but
+		// in radians. Maybe a wlroots bug?
+		// Nah, it's not radians either. Range [0, 1.4). No idea what this is.
+
+		using nytl::constants::pi;
+
+		// relative approach
+		if(lastAngle_ == -1.f) {
+			lastAngle_ = degrees;
+		} else {
+			dlg_info("deg {}", degrees);
+
+			// figure out wrap-around
+			auto ndeg = degrees;
+			if(degrees - lastAngle_ > 0.5) {
+				lastAngle_ += 1.4;
+			} else if(lastAngle_ - degrees > 0.5) {
+				ndeg += 1.4;
+			}
+
+			float dy = (ndeg - lastAngle_);
+			targetZ_ *= std::pow(1.5, dy);
+			targetZ_ = std::max(targetZ_, 0.0001f);
+
+			dlg_info("targetZ: {}", targetZ_);
+
+			lastAngle_ = degrees;
+		}
+
+		// absolute approach
+		// targetZ_ = std::exp(4 * degrees);
+		// targetZ_ = std::max(targetZ_, 0.0001f);
+	}
+
+	void ringStop() override {
+		lastAngle_ = -1.f;
+	}
+#endif // TKN_WITH_WL_PROTOS
+
 protected:
 	tkn::ManagedComputePipe particlesComputePipe_;
 	tkn::ManagedGraphicsPipe particlesGfxPipe_;
@@ -575,7 +728,10 @@ protected:
 	tkn::FileWatcher fswatch_;
 
 	float targetZ_ {1.f};
-	bool attracting_ {};
+	float attracationStrength_ {0.f};
+	Vec2f attractionPos_ {};
+	Vec3f attractionDir_ {};
+	bool useAttrDir_ {false};
 
 	struct {
 		vpp::RenderPass rp;
@@ -618,6 +774,13 @@ protected:
 	};
 
 	// vk::Format depthFormat_ {};
+
+#ifdef TKN_WITH_WL_PROTOS
+	tkn::wlt::TabletManager tabletManager_ {};
+	float lastAngle_ {-1.f};
+	bool toolButtonPressed_ {};
+	bool toolDown_ {};
+#endif // TKN_WITH_WL_PROTOS
 };
 
 int main(int argc, const char** argv) {

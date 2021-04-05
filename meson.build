@@ -87,6 +87,7 @@ add_project_arguments('-DASIO_STANDALONE', language: 'cpp')
 
 # required dependencies
 # TODO: remove ugly MASTER hacks that prevent installed version to be found
+# should probably just use 'subproject' instead in those cases
 dep_vpp = dependency('vpp', fallback: ['vpp', 'vpp_dep'])
 dep_nytl = dependency('nytl MASTER', fallback: ['nytl', 'nytl_dep'])
 dep_dlg = dependency('dlg MASTER', fallback: ['dlg', 'dlg_dep'])
@@ -97,8 +98,25 @@ dep_png = dependency('libpng', fallback: ['png', 'png_dep'])
 dep_swa = dependency('swa', fallback: ['swa', 'swa_dep'])
 dep_glslang = dependency('glslang', fallback: ['glslang', 'glslang_dep'])
 
-# TODO: needed for fuen api atm.
-# Port that to windows when needed.
+# wayland protocols
+dep_wl_client = dependency('wayland-client', required: false)
+dep_wl_protos = dependency('wayland-protocols',
+	version: '>=1.17',
+	required: false)
+wl_protocol_dir = dep_wl_protos.get_variable(pkgconfig: 'pkgdatadir')
+
+dep_wl_scanner = dependency('wayland-scanner', required: false, native: true)
+if dep_wl_scanner.found()
+	wl_scanner = find_program(
+		dep_wl_scanner.get_variable(pkgconfig: 'wayland_scanner'),
+		requireds: false,
+		native: true)
+else
+	wl_scanner = find_program('wayland-scanner', native: true, required: false)
+endif
+
+
+# Needed for fuen/vil
 dep_dl = cc.find_library('dl', required: false)
 
 # turbojpeg is optional, there exists no meson wrap for it.
@@ -167,6 +185,7 @@ cd.set('TKN_WITH_AUDIO3D', with_audio3D)
 cd.set('TKN_WITH_BULLET', with_bullet)
 cd.set('TKN_WITH_B2D', with_b2d)
 cd.set('TKN_WITH_PULSE_SIMPLE', dep_pulse_simple.found())
+cd.set('TKN_WITH_WL_PROTOS', dep_wl_protos.found() and wl_scanner.found())
 subdir('include/tkn')
 
 external_inc = include_directories('external/include')

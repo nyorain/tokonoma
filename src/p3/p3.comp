@@ -20,23 +20,38 @@ void main() {
 
 	Particle particle = particles[id];
 
-	particle.pos += ubo.dt * particle.vel;
+	vec3 dpos = ubo.dt * particle.vel;
+	particle.pos += dpos;
+
+	const float friction = 2.0;
+	const float curlAccel = 0.1;
+	const float massMult = 1;
+	const float attrMult = 2.f;
 
 	vec3 accel = vec3(0.0);
-	accel -= (1 - exp(-3.0 * ubo.dt)) * particle.vel; // friction
-	accel += 0.1 * ubo.dt * textureLod(curlNoiseTex, 0.5 + 0.1 * particle.pos, 0).rgb; // acceleration
+	accel -= (1 - exp(-friction * ubo.dt)) * particle.vel; // friction
+	accel += curlAccel * ubo.dt * textureLod(curlNoiseTex, 0.5 + 0.1 * particle.pos, 0).rgb; // acceleration
 
+	// attractation acceleration
 	vec3 dist = ubo.attrPos - particle.pos;
 	float l = dot(dist, dist);
 	float attrStrength = ubo.attrStrength * pow(ubo.targetZ, 2); // optional
-	accel += ubo.dt * attrStrength * normalize(dist) / (0.01 * ubo.targetZ + l);
+	vec3 attrAccel = attrMult * attrStrength * normalize(dist) / (0.01 * ubo.targetZ + l);
 
-	particle.vel += accel / particle.mass;
+	if(ubo.useAttrDir) {
+		// attrAccel *= max(dot(ubo.attrDir, -dist), 0);
+		// attrAccel *= dot(ubo.attrDir, dist);
+		// attrAccel = attrMult * attrStrength * ubo.attrDir / (0.01 * ubo.targetZ + l);
+	}
+
+	accel += ubo.dt * attrAccel;
+
+	particle.vel += accel / (massMult * particle.mass);
 
 	particle.lifetime += 0.01 * ubo.dt;
 	if(particle.lifetime > 1.0) {
 		particle.lifetime -= 1.0;
-		particle.pos = vec3(0.0);
+		particle.pos = dpos; // basically 0.0
 	}
 
 	float bounds = 10.0;

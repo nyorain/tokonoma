@@ -13,4 +13,6 @@ struct UboData {
 	float targetZ;
 	vec3 camAccel; // writeback
 	float attrStrength;
+	vec3 attrDir;
+	bool useAttrDir;
 };
