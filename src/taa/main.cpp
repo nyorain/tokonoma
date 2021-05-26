@@ -80,8 +80,8 @@ public:
 			return false;
 		}
 
-		camera_.near(-0.1f);
-		camera_.far(-8.f);
+		camera_.near(-0.01f);
+		camera_.far(-20.f);
 
 		auto& dev = vkDevice();
 		auto hostMem = dev.hostMemoryTypes();
@@ -336,11 +336,11 @@ public:
 
 		// descriptors
 		vpp::DescriptorSetUpdate sdsu(cameraDs_);
-		sdsu.uniform({{{cameraUbo_}}});
+		sdsu.uniform(cameraUbo_);
 		sdsu.apply();
 
 		vpp::DescriptorSetUpdate edsu(envCameraDs_);
-		edsu.uniform({{{envCameraUbo_}}});
+		edsu.uniform(envCameraUbo_);
 		edsu.apply();
 
 		vpp::DescriptorSetUpdate adsu(aoDs_);
@@ -350,7 +350,7 @@ public:
 			vk::ImageLayout::shaderReadOnlyOptimal}});
 		adsu.imageSampler({{{}, env_.irradiance().imageView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		adsu.uniform({{{aoUbo_}}});
+		adsu.uniform(aoUbo_);
 		adsu.apply();
 
 		vk::endCommandBuffer(cb);
@@ -587,7 +587,7 @@ public:
 		// outHistory back to inHistory
 		pdsu.imageSampler({{{}, taa_.targetView(),
 			vk::ImageLayout::shaderReadOnlyOptimal}});
-		pdsu.uniform({{{pp_.ubo}}});
+		pdsu.uniform(pp_.ubo);
 	}
 
 	bool features(tkn::Features& enable,
@@ -817,6 +817,15 @@ public:
 		camera_.mouseMove(swaDisplay(), {ev.dx, ev.dy}, windowSize());
 	}
 
+	bool mouseButton(const swa_mouse_button_event& ev) override {
+		if(App::mouseButton(ev)) {
+			return true;
+		}
+
+		camera_.mouseButton(ev.button, ev.pressed);
+		return true;
+	}
+
 	bool mouseWheel(float dx, float dy) override {
 		if(App::mouseWheel(dx, dy)) {
 			return true;
@@ -875,7 +884,9 @@ public:
 
 		if(updateLight_) {
 			if(mode_ & modeDirLight) {
-				dirLight_.updateDevice(vp, -camera_.near(), -camera_.far());
+				float near = 0.1f;
+				float far = 5.f;
+				dirLight_.updateDevice(vp, near, far, -camera_.near(), -camera_.far());
 
 				// NOTE: tight view frustum just for shadow mapping
 				// should be easier than this...

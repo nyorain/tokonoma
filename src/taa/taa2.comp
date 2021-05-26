@@ -219,6 +219,17 @@ void main() {
 		weight = mix(ubo.minFac, ubo.maxFac, diff * diff);
 	}
 
+	// the more movement, the less we trust the history value
+	// this helps to fight blurriness but obviously decreases
+	// AA quality for quick movement.
+	weight *= exp(-ubo.velWeight * length(vel));
+
+	// WIP: dist reject for fast movement
+	// TODO: take dt into account?
+	// if(length(vel.xy / pixelSize) > 10) {
+	// 	weight = 0.0;
+	// }
+
 	if((ubo.flags & flagDepthReject) != 0) {
 		weight *= irdr(uv, vel.z, tc.z, histZ);
 
@@ -226,10 +237,6 @@ void main() {
 		z = mix(z, npz, weight);
 	}
 
-	// the more movement, the less we trust the history value
-	// this helps to fight blurriness but obviously decreases
-	// AA quality for quick movement.
-	weight *= exp(-ubo.velWeight * length(vel));
 	color = mix(color, hist.rgb, weight);
 
 

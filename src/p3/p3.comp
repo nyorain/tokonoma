@@ -41,7 +41,7 @@ void main() {
 	if(ubo.useAttrDir) {
 		// attrAccel *= max(dot(ubo.attrDir, -dist), 0);
 		// attrAccel *= dot(ubo.attrDir, dist);
-		// attrAccel = attrMult * attrStrength * ubo.attrDir / (0.01 * ubo.targetZ + l);
+		attrAccel = attrMult * attrStrength * ubo.attrDir / (0.01 * ubo.targetZ + l);
 	}
 
 	accel += ubo.dt * attrAccel;

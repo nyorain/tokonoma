@@ -597,7 +597,12 @@ public:
 
 #ifdef TKN_WITH_WL_PROTOS
 	// tablet functions
+	void padButton(u32 button, bool state) override {
+		dlg_info("padButton: {} {}", button, state);
+	}
+
 	void toolButton(u32 button, bool state) override {
+		dlg_info("toolButton: {} {}", button, state);
 		if(button == 1u) {
 			toolButtonPressed_ = state;
 

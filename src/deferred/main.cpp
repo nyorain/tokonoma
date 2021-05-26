@@ -835,13 +835,15 @@ void ViewApp::initPasses(tkn::WorkBatcher& wb) {
 		timeWidget_.addTimestamp(cb);
 
 		// gui stuff
-		vpp::DebugLabel debugLabel(vkDevice(), cb, "GUI");
-		rvgContext().bindDefaults(cb);
-		gui().draw(cb);
+		{
+			vpp::DebugLabel debugLabel(vkDevice(), cb, "GUI");
+			rvgContext().bindDefaults(cb);
+			gui().draw(cb);
 
-		rvgContext().bindDefaults(cb);
-		rvgWindowTransform().bind(cb);
-		timeWidget_.draw(cb);
+			rvgContext().bindDefaults(cb);
+			rvgWindowTransform().bind(cb);
+			timeWidget_.draw(cb);
+		}
 
 		vk::cmdEndRenderPass(cb);
 	};

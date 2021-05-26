@@ -1022,7 +1022,7 @@ void App::resize(unsigned width, unsigned height) {
 bool App::key(const swa_key_event& ev) {
 	if(impl_->vilOverlay) {
 		bool ret = false;
-		ret |= impl_->vilApi.OverlayKeyEvent(impl_->vilOverlay, ev.keycode, ev.pressed);
+		ret |= impl_->vilApi.OverlayKeyEvent(impl_->vilOverlay, vilKey(ev.keycode), ev.pressed);
 		ret |= ev.utf8 && impl_->vilApi.OverlayTextEvent(impl_->vilOverlay, ev.utf8);
 		if(ret) {
 			return true;

@@ -108,7 +108,7 @@ void main() {
 	float metalness = material.metallicFac * mr.b;
 	float roughness = material.roughnessFac * mr.g;
 
-	bool taaShadow = false;
+	bool taaShadow = true;
 	if(bool(params.mode & modeDirLight)) {
 		float between;
 		float linearz = depthtoz(gl_FragCoord.z, scene.near, scene.far);
@@ -151,12 +151,12 @@ void main() {
 				   vec2( 0.14383161, -0.14100790 ) 
 				);
 
-				for (int i = 0; i < 7; i++){
+				for (int i = 0; i < 4; i++){
 					// we could make the length dependent on the
 					// distance behind the first sample or something... (i.e.
 					// make the shadow smoother when further away from
 					// shadow caster).
-					float len = 2 * mrandom(vec4(gl_FragCoord.xyy + 100 * inPos.xyz, i));
+					float len = 8 * mrandom(vec4(gl_FragCoord.xyy + 100 * inPos.xyz, i));
 					float rid = mrandom(vec4(0.1 * gl_FragCoord.yxy - 32 * inPos.yzx, i));
 					int id = int(16.0 * rid) % 16;
 					vec2 off = len * poissonDisk[id] / textureSize(shadowMap, 0).xy;
