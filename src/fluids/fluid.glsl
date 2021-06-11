@@ -4,13 +4,13 @@
 bool obstacle(ivec2 pos) {
 	// currently simple a small box
 	return clamp(pos.x, 81, 119) == pos.x &&
-		clamp(pos.y, 51, 79) == pos.y;
+		clamp(pos.y, 51, 300) == pos.y;
 }
 
 bool boundary(ivec2 pos) {
 	// currently simple a small box
 	return clamp(pos.x, 80, 120) == pos.x &&
-		clamp(pos.y, 50, 80) == pos.y;
+		clamp(pos.y, 50, 301) == pos.y;
 }
 
 vec2 velocity(sampler2D tex, vec2 pos) {

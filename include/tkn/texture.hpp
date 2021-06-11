@@ -8,6 +8,7 @@
 #include <nytl/stringParam.hpp>
 #include <nytl/span.hpp>
 #include <nytl/vec.hpp>
+#include <optional>
 
 // NOTE: none of the functions/classes have support for compressed/packed
 // or depth/stencil formats

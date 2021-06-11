@@ -44,7 +44,7 @@
 // == FluidSystem ==
 class FluidSystem {
 public:
-	unsigned pressureIterations = 40u;
+	unsigned pressureIterations; // intialized by App::pressureIterations_
 	// static constexpr auto diffuseDensIterations = 0u;
 
 	float velocityFac {0.0};
@@ -273,7 +273,7 @@ FluidSystem::FluidSystem(vpp::Device& dev, nytl::Vec2ui size) {
 			update.skip();
 		}
 
-		update.uniform({{ubo_.buffer(), ubo_.offset(), ubo_.size()}});
+		update.uniform(ubo_);
 	};
 
 	// == naming and swapping convention ==
@@ -489,7 +489,7 @@ void FluidSystem::compute(vk::CommandBuffer cb) {
 // == FluidApp ==
 class FluidApp : public tkn::SinglePassApp {
 public:
-	static constexpr auto defaultGridWidth = 2048;
+	static constexpr auto defaultGridWidth = 1024;
 	using Base = tkn::SinglePassApp;
 
 public:
@@ -649,7 +649,7 @@ public:
 		if(changeView_) {
 			vpp::DescriptorSetUpdate update(ds_);
 			update.imageSampler({{{}, changeView_, vk::ImageLayout::general}});
-			update.uniform({{{mouseUbo_}}});
+			update.uniform(mouseUbo_);
 			changeView_ = {};
 			Base::scheduleRerecord();
 		}
@@ -761,7 +761,7 @@ protected:
 	vpp::Pipeline pipe_;
 
 	unsigned gridWidth_ {defaultGridWidth};
-	unsigned pressureIterations_ {100};
+	unsigned pressureIterations_ {20};
 };
 
 // main
