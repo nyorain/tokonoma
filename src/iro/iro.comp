@@ -127,7 +127,6 @@ void main() {
 	// XXX: some randomness
 	// currently not precision-guaranteed but we could use a texture for
 	// random values; noise can probably be done precision-guaranteed
-	/*
 	if(field.type == FieldEmpty && field.player != none) {
 		float a = ubo.step;
 		float f = 0.01 * alength(field.velocity);
@@ -138,7 +137,6 @@ void main() {
 		field.velocity.x += f * sgradientNoise(r + vec2(0.01 * a, 0));
 		field.velocity.y += f * sgradientNoise(r + vec2(0, 0.01 * a));
 	}
-	*/
 
 	// diffuse
 	// 1: depart/general

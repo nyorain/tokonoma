@@ -457,13 +457,13 @@ public:
 
 	void updateDescriptors() {
 		vpp::DescriptorSetUpdate dsuRender(render_.ds);
-		dsuRender.uniform({{{ubo_}}});
-		dsuRender.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, scatTableCombined_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, irradianceTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuRender.imageSampler({{{}, starmap_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsuRender.uniform(ubo_);
+		dsuRender.imageSampler(transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuRender.imageSampler(scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuRender.imageSampler(scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuRender.imageSampler(scatTableCombined_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuRender.imageSampler(irradianceTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuRender.imageSampler(starmap_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
 
 		// debugging, for seeing muli scat textures in renderdoc.
 		// The first three textures are not used for multi-scat-lookup anyways.
@@ -475,40 +475,40 @@ public:
 		// dsu.imageSampler({{{}, groundTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
 
 		vpp::DescriptorSetUpdate dsuMScat(preMultiScat_.ds);
-		dsuMScat.uniform({{{ubo_}}});
-		dsuMScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuMScat.imageSampler({{{}, inScatTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuMScat.storage({{{}, scatTableMulti_.imageView(), vk::ImageLayout::general}});
-		dsuMScat.storage({{{}, scatTableCombined_.imageView(), vk::ImageLayout::general}});
+		dsuMScat.uniform(ubo_);
+		dsuMScat.imageSampler(transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuMScat.imageSampler(inScatTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuMScat.storage(scatTableMulti_.imageView(), vk::ImageLayout::general);
+		dsuMScat.storage(scatTableCombined_.imageView(), vk::ImageLayout::general);
 
 		vpp::DescriptorSetUpdate dsuInScat(preInScat_.ds);
-		dsuInScat.uniform({{{ubo_}}});
-		dsuInScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.imageSampler({{{}, deltaIrradianceTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuInScat.storage({{{}, inScatTable_.imageView(), vk::ImageLayout::general}});
+		dsuInScat.uniform(ubo_);
+		dsuInScat.imageSampler(transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuInScat.imageSampler(scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuInScat.imageSampler(scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuInScat.imageSampler(scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuInScat.imageSampler(deltaIrradianceTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuInScat.storage(inScatTable_.imageView(), vk::ImageLayout::general);
 
 		vpp::DescriptorSetUpdate dsuIrrad(preIrrad_.ds);
-		dsuIrrad.uniform({{{ubo_}}});
-		dsuIrrad.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuIrrad.imageSampler({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuIrrad.imageSampler({{{}, scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuIrrad.imageSampler({{{}, scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuIrrad.storage({{{}, deltaIrradianceTable_.imageView(), vk::ImageLayout::general}});
-		dsuIrrad.storage({{{}, irradianceTable_.imageView(), vk::ImageLayout::general}});
+		dsuIrrad.uniform(ubo_);
+		dsuIrrad.imageSampler(transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuIrrad.imageSampler(scatTableRayleigh_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuIrrad.imageSampler(scatTableMie_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuIrrad.imageSampler(scatTableMulti_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuIrrad.storage(deltaIrradianceTable_.imageView(), vk::ImageLayout::general);
+		dsuIrrad.storage(irradianceTable_.imageView(), vk::ImageLayout::general);
 
 		vpp::DescriptorSetUpdate dsuTrans(preTrans_.ds);
-		dsuTrans.uniform({{{ubo_}}});
-		dsuTrans.storage({{{}, transTable_.imageView(), vk::ImageLayout::general}});
+		dsuTrans.uniform(ubo_);
+		dsuTrans.storage(transTable_.imageView(), vk::ImageLayout::general);
 
 		vpp::DescriptorSetUpdate dsuSScat(preSingleScat_.ds);
-		dsuSScat.uniform({{{ubo_}}});
-		dsuSScat.imageSampler({{{}, transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsuSScat.storage({{{}, scatTableRayleigh_.imageView(), vk::ImageLayout::general}});
-		dsuSScat.storage({{{}, scatTableMie_.imageView(), vk::ImageLayout::general}});
-		dsuSScat.storage({{{}, scatTableCombined_.imageView(), vk::ImageLayout::general}});
+		dsuSScat.uniform(ubo_);
+		dsuSScat.imageSampler(transTable_.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsuSScat.storage(scatTableRayleigh_.imageView(), vk::ImageLayout::general);
+		dsuSScat.storage(scatTableMie_.imageView(), vk::ImageLayout::general);
+		dsuSScat.storage(scatTableCombined_.imageView(), vk::ImageLayout::general);
 	}
 
 	bool loadGenPipes() {

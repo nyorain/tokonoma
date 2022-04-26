@@ -118,7 +118,7 @@ vec3 getIn() {
 void main() {
 	vec3 scat = getIn();
 	
-	float exposure = 4.f;
+	float exposure = 4 + 10 * exp(-clamp(25 * sunDir.y, -6, 6));
 	scat = 1.0 - exp(-exposure * scat);
 	outColor = vec4(clamp(scat, 0.f, 1.f), 1.0);
 

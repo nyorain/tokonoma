@@ -107,10 +107,10 @@ public:
 
 		ds_ = {dev.descriptorAllocator(), dsLayout_};
 		vpp::DescriptorSetUpdate dsu(ds_);
-		dsu.uniform({{{ubo_}}});
-		dsu.imageSampler({{{}, tables_.f.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, tables_.g.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
-		dsu.imageSampler({{{}, tables_.fhh.imageView(), vk::ImageLayout::shaderReadOnlyOptimal}});
+		dsu.uniform(ubo_);
+		dsu.imageSampler(tables_.f.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsu.imageSampler(tables_.g.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
+		dsu.imageSampler(tables_.fhh.imageView(), vk::ImageLayout::shaderReadOnlyOptimal);
 		dsu.apply();
 
 		if(!loadPipe()) {

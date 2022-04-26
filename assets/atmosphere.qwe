@@ -4,7 +4,7 @@ meta:
 	# whether to recreate table textures on each config reload
 	recreateTables: true
 	# whether to reload generation pipeline
-	reloadGen: true
+	reloadGen: false
 	# compute work group sizes (per dimension)
 	# Aiming for a total of ~64 invorcations per WorkGroup is usually
 	# a good idea. Could do less if the done work is heavy
@@ -55,10 +55,10 @@ atmosphere:
 		0.3
 		0.3
 	mie:
-		g: 0.7
+		g: 0.8
 		# ref: 1200
 		scaleHeight: 1200
-		strength: 0.001
+		strength: 1.0
 		scattering:
 			# compute: generate it manually, physically based. 
 			#   Uses 'alpha', 'beta', 'scatterAlbedo' parameter.
@@ -67,7 +67,7 @@ atmosphere:
 			# ref: 0.0
 			alpha: 0.0
 			beta: 5.328e-3
-			# beta: 1.328e-2
+			# beta: 4.328e-2
 			scatterAlbedo: 0.95
 			# only for use: rgb
 			rgb:
@@ -75,7 +75,7 @@ atmosphere:
 				8.e-5
 				8.e-5
 	rayleigh:
-		strength: 2.0
+		strength: 1.0
 		scattering:
 			use: compute
 			# Bruneton's reference: 1.8402e-6
